@@ -141,17 +141,74 @@ app.put("/bots/:id/config", async (req, res) => {
 });
 
 app.post("/bots/:id/start", async (req, res) => {
-  await prisma.bot.update({ where: { id: req.params.id }, data: { status: "RUNNING" } });
+  const id = req.params.id;
+
+  await prisma.bot.update({
+    where: { id },
+    data: { status: "RUNNING" }
+  });
+
+  await prisma.botRuntime.upsert({
+    where: { botId: id },
+    create: {
+      botId: id,
+      status: "RUNNING",
+      reason: null
+    },
+    update: {
+      status: "RUNNING",
+      reason: null
+    }
+  });
+
   res.json({ ok: true });
 });
 
 app.post("/bots/:id/pause", async (req, res) => {
-  await prisma.bot.update({ where: { id: req.params.id }, data: { status: "PAUSED" } });
+  const id = req.params.id;
+
+  await prisma.bot.update({
+    where: { id },
+    data: { status: "PAUSED" }
+  });
+
+  await prisma.botRuntime.upsert({
+    where: { botId: id },
+    create: {
+      botId: id,
+      status: "PAUSED",
+      reason: "Paused from UI"
+    },
+    update: {
+      status: "PAUSED",
+      reason: "Paused from UI"
+    }
+  });
+
   res.json({ ok: true });
 });
 
 app.post("/bots/:id/stop", async (req, res) => {
-  await prisma.bot.update({ where: { id: req.params.id }, data: { status: "STOPPED" } });
+  const id = req.params.id;
+
+  await prisma.bot.update({
+    where: { id },
+    data: { status: "STOPPED" }
+  });
+
+  await prisma.botRuntime.upsert({
+    where: { botId: id },
+    create: {
+      botId: id,
+      status: "STOPPED",
+      reason: "Stopped from UI"
+    },
+    update: {
+      status: "STOPPED",
+      reason: "Stopped from UI"
+    }
+  });
+
   res.json({ ok: true });
 });
 
