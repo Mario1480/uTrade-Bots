@@ -37,13 +37,11 @@ export function ConfigForm({ mm, vol, risk, onMmChange, onVolChange, onRiskChang
 
       <Section title="Volume Bot">
         <div style={{ fontSize: 12, opacity: 0.8, marginBottom: 8 }}>
-          Passive = post-only around mid. Mixed may place occasional market orders.
+          Passive = post-only around mid. Mixed may place occasional market orders. Runs 24/7.
         </div>
         <Field label="Daily Notional (USDT)" hint="Target daily volume" value={vol.dailyNotionalUsdt} onChange={(v) => onVolChange({ ...vol, dailyNotionalUsdt: toNumber(v, vol.dailyNotionalUsdt) })} />
         <Field label="Min Trade (USDT)" hint="Lower bound per trade" value={vol.minTradeUsdt} onChange={(v) => onVolChange({ ...vol, minTradeUsdt: toNumber(v, vol.minTradeUsdt) })} />
         <Field label="Max Trade (USDT)" hint="Upper bound per trade" value={vol.maxTradeUsdt} onChange={(v) => onVolChange({ ...vol, maxTradeUsdt: toNumber(v, vol.maxTradeUsdt) })} />
-        <Field label="Active From (HH:MM)" hint="Trading window start" value={vol.activeFrom} onChange={(v) => onVolChange({ ...vol, activeFrom: v })} />
-        <Field label="Active To (HH:MM)" hint="Trading window end" value={vol.activeTo} onChange={(v) => onVolChange({ ...vol, activeTo: v })} />
         <SelectField
           label="Mode"
           hint="Passive or mixed execution"

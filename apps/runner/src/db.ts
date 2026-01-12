@@ -30,8 +30,8 @@ export async function loadBotAndConfigs(botId: string) {
     dailyNotionalUsdt: bot.volConfig.dailyNotionalUsdt,
     minTradeUsdt: bot.volConfig.minTradeUsdt,
     maxTradeUsdt: bot.volConfig.maxTradeUsdt,
-    activeFrom: bot.volConfig.activeFrom,
-    activeTo: bot.volConfig.activeTo,
+    activeFrom: "00:00",
+    activeTo: "23:59",
     mode: bot.volConfig.mode as any
   };
 

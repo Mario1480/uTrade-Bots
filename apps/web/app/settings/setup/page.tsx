@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useState } from "react";
-import { apiPost } from "../../lib/api";
+import { apiPost } from "../../../lib/api";
 
 export default function Setup() {
   const [msg, setMsg] = useState("");
@@ -24,7 +24,10 @@ export default function Setup() {
 
   return (
     <div>
-      <div style={{ marginBottom: 10 }}>
+      <div style={{ marginBottom: 10, display: "flex", gap: 8, flexWrap: "wrap" }}>
+        <Link href="/settings" className="btn">
+          ← Back to settings
+        </Link>
         <Link href="/" className="btn">
           ← Back to dashboard
         </Link>

@@ -121,8 +121,8 @@ app.post("/bots", async (req, res) => {
           dailyNotionalUsdt: 5000,
           minTradeUsdt: 10,
           maxTradeUsdt: 40,
-          activeFrom: "08:00",
-          activeTo: "22:00",
+          activeFrom: "00:00",
+          activeTo: "23:59",
           mode: "MIXED"
         }
       },
