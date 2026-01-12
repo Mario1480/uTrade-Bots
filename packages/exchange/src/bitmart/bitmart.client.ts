@@ -2,6 +2,7 @@ import crypto from "node:crypto";
 import type { Balance, MidPrice, Order, Quote } from "@mm/core";
 import { nowMs } from "@mm/core";
 import { normalizeSymbol } from "./bitmart.mapper.js";
+import { checkMins, normalizePrice, normalizeQty, type SymbolMeta } from "./bitmart.meta.js";
 
 /**
  * Bitmart Spot docs: base url and signature:
@@ -15,6 +16,56 @@ export class BitmartRestClient {
     private readonly apiSecret: string,
     private readonly apiMemo: string
   ) {}
+
+  private readonly metaCache = new Map<string, { meta: SymbolMeta; ts: number }>();
+
+  private async getSymbolMeta(symbol: string): Promise<SymbolMeta | undefined> {
+    const s = normalizeSymbol(symbol);
+
+    const cached = this.metaCache.get(s);
+    if (cached && Date.now() - cached.ts < 10 * 60_000) return cached.meta;
+
+    const candidates = [
+      "/spot/v1/symbols/details",
+      "/spot/v1/symbols"
+    ];
+
+    for (const path of candidates) {
+      try {
+        const url = new URL(path, this.baseUrl);
+        const res = await fetch(url, { method: "GET" });
+        const json: any = await res.json();
+
+        if (!res.ok || (json?.code && json.code !== 1000)) continue;
+
+        const list: any[] =
+          json?.data?.symbols ??
+          json?.data?.symbol_details ??
+          json?.data ??
+          [];
+
+        const row = list.find((x) => (x.symbol ?? x.symbol_id ?? x.trading_pair) === s);
+        if (!row) continue;
+
+        const meta: SymbolMeta = {
+          symbol: s,
+          priceStep: Number(row.price_increment ?? row.price_min_increment ?? row.price_step ?? row.tick_size) || undefined,
+          qtyStep: Number(row.base_increment ?? row.size_increment ?? row.qty_step ?? row.lot_size) || undefined,
+          pricePrecision: Number(row.price_precision ?? row.pricePrecision) || undefined,
+          qtyPrecision: Number(row.base_precision ?? row.basePrecision ?? row.size_precision ?? row.amount_precision) || undefined,
+          minQty: Number(row.min_size ?? row.min_order_size ?? row.min_amount ?? row.minQty) || undefined,
+          minNotional: Number(row.min_value ?? row.min_notional ?? row.minOrderValue ?? row.minBuyValue) || undefined
+        };
+
+        this.metaCache.set(s, { meta, ts: Date.now() });
+        return meta;
+      } catch {
+        // try next endpoint
+      }
+    }
+
+    return undefined;
+  }
 
   private signBody(body: string, timestamp: number): string {
     const payload = `${timestamp}#${this.apiMemo}#${body}`;
@@ -100,6 +151,7 @@ export class BitmartRestClient {
 
   async placeOrder(q: Quote): Promise<Order> {
     const symbol = normalizeSymbol(q.symbol);
+    const meta = await this.getSymbolMeta(symbol);
     if (q.type !== "limit" && q.type !== "market") {
       throw new Error("Unsupported order type");
     }
@@ -112,10 +164,38 @@ export class BitmartRestClient {
       type: q.type
     };
     if (q.type === "limit") {
-      body.price = String(q.price);
-      body.size = String(q.qty);
+      if (!q.price) throw new Error("limit order requires price");
+
+      const price0 = q.price;
+      const qty0 = q.qty;
+
+      const price = normalizePrice(price0, meta);
+      const qty = normalizeQty(qty0, meta);
+
+      if (meta && (price !== price0 || qty !== qty0)) {
+        console.warn(`[bitmart] normalized ${symbol} ${q.side} price ${price0}→${price}, qty ${qty0}→${qty}`);
+      }
+
+      const mins = checkMins({ price, qty, meta });
+      if (!mins.ok) {
+        throw new Error(`[bitmart] order below minimums: ${mins.reason}`);
+      }
+
+      body.price = String(price);
+      body.size = String(qty);
     } else {
-      body.size = String(q.qty);
+      const qty0 = q.qty;
+      const qty = normalizeQty(qty0, meta);
+
+      if (meta && qty !== qty0) {
+        console.warn(`[bitmart] normalized ${symbol} market ${q.side} qty ${qty0}→${qty}`);
+      }
+
+      if (meta?.minQty && qty < meta.minQty) {
+        throw new Error(`[bitmart] market order below minQty: ${qty} < ${meta.minQty}`);
+      }
+
+      body.size = String(qty);
     }
 
     // Post-only: Bitmart uses `post_only` or `postOnly` depending on version.
