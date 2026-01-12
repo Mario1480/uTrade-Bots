@@ -54,7 +54,7 @@ app.get("/bots", async (_req, res) => {
 app.get("/bots/:id", async (req, res) => {
   const bot = await prisma.bot.findUnique({
     where: { id: req.params.id },
-    include: { mmConfig: true, volConfig: true, riskConfig: true, BotRuntime: true } as any
+    include: { mmConfig: true, volConfig: true, riskConfig: true, runtime: true } as any
   });
   if (!bot) return res.status(404).json({ error: "not_found" });
   res.json(bot);

@@ -1,7 +1,12 @@
-const API =
+const serverApi =
+  process.env.API_URL ??
+  process.env.NEXT_PUBLIC_API_URL ??
+  "http://localhost:4000";
+const browserApi =
   process.env.NEXT_PUBLIC_API_URL ??
   process.env.API_URL ??
   "http://localhost:4000";
+const API = typeof window === "undefined" ? serverApi : browserApi;
 
 export async function apiGet<T>(path: string): Promise<T> {
   const res = await fetch(`${API}${path}`, { cache: "no-store" });

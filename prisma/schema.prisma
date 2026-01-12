@@ -1,79 +1,64 @@
-generator client {
-  provider = "prisma-client-js"
-}
+// apps/api/src/index.ts
+import express from "express";
+import { PrismaClient } from "@prisma/client";
 
-datasource db {
-  provider = "postgresql"
-  url      = env("DATABASE_URL")
-}
+const app = express();
+const prisma = new PrismaClient();
 
-model Bot {
-  id        String   @id
-  name      String
-  symbol    String
-  exchange  String
-  status    String   // STOPPED | RUNNING | PAUSED | ERROR
-  createdAt DateTime @default(now())
+app.get("/bots/:id", async (req, res) => {
+  const id = req.params.id;
+  try {
+    const bot = await prisma.bot.findUnique({
+      where: { id },
+      include: {
+        mmConfig: true,
+        volConfig: true,
+        riskConfig: true,
+        runtime: true,
+      },
+    });
+    if (!bot) {
+      return res.status(404).json({ error: "Bot not found" });
+    }
+    res.json(bot);
+  } catch (error) {
+    res.status(500).json({ error: "Internal server error" });
+  }
+});
 
-  mmConfig     MarketMakingConfig?
-  volConfig    VolumeConfig?
-  riskConfig   RiskConfig?
-  runtime      BotRuntime?
-}
+export default app;
 
-model MarketMakingConfig {
-  id              String @id @default(uuid())
-  botId           String @unique
-  bot             Bot    @relation(fields: [botId], references: [id])
-  spreadPct       Float
-  stepPct         Float
-  levelsUp        Int
-  levelsDown      Int
-  budgetQuoteUsdt Float
-  budgetBaseToken Float
-  distribution    String // LINEAR | VALLEY | RANDOM
-  jitterPct       Float  // e.g. 0.0002 = 2bp
-  skewFactor      Float
-  maxSkew         Float
-}
 
-model VolumeConfig {
-  id                String @id @default(uuid())
-  botId             String @unique
-  bot               Bot    @relation(fields: [botId], references: [id])
-  dailyNotionalUsdt Float
-  minTradeUsdt      Float
-  maxTradeUsdt      Float
-  activeFrom        String // "08:00"
-  activeTo          String // "22:00"
-  mode              String // PASSIVE | MIXED
-}
+// apps/web/app/bots/[id]/page.tsx
+import React, { useEffect, useState } from "react";
+import { useParams } from "next/navigation";
 
-model RiskConfig {
-  id                String @id @default(uuid())
-  botId             String @unique
-  bot               Bot    @relation(fields: [botId], references: [id])
-  minUsdt           Float
-  maxDeviationPct   Float
-  maxOpenOrders     Int
-  maxDailyLoss      Float
-}
+export default function BotPage() {
+  const params = useParams();
+  const id = params.id as string;
 
-model BotRuntime {
-  botId       String  @id
-  bot         Bot     @relation(fields: [botId], references: [id])
+  const [bot, setBot] = useState(null);
+  const [runtime, setRuntime] = useState(null);
 
-  updatedAt   DateTime @updatedAt
-  status      String
-  reason      String?
+  async function loadAll() {
+    // fetch bot data
+  }
 
-  mid         Float?
-  bid         Float?
-  ask         Float?
-  openOrders  Int?
+  async function loadRuntime() {
+    // fetch runtime data
+  }
 
-  freeUsdt    Float?
-  freeBase    Float?
+  useEffect(() => {
+    if (!id) return;
+    loadAll();
+    loadRuntime();
+    const t = setInterval(loadRuntime, 1200);
+    return () => clearInterval(t);
+  }, [id]);
 
-  tradedNotionalToday Float? // volume bot
+  return (
+    <div>
+      {/* JSX rendering bot details */}
+    </div>
+  );
 }

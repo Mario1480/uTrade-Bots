@@ -1,7 +1,11 @@
-FROM node:18-alpine
+FROM node:20-alpine
 
 WORKDIR /app
 
-COPY . .
+RUN apk add --no-cache libc6-compat
 
-CMD ["sh", "-c", "echo docker placeholder && sleep infinity"]
+# Enable corepack (npm/pnpm/yarn)
+RUN corepack enable
+
+# default
+CMD ["sh", "-lc", "node -v && npm -v && sleep infinity"]
