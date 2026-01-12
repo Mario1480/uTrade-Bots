@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useEffect, useState } from "react";
 import { ApiError, apiGet, apiPut } from "../../lib/api";
 
@@ -74,9 +75,9 @@ export default function SettingsPage() {
   return (
     <div style={{ maxWidth: 720 }}>
       <div style={{ marginBottom: 10 }}>
-        <a href="/" style={{ fontSize: 13 }}>
+        <Link href="/" className="btn">
           ← Back to dashboard
-        </a>
+        </Link>
       </div>
       <h2 style={{ marginTop: 0 }}>Settings</h2>
       <div style={{ fontSize: 13, opacity: 0.8, marginBottom: 12 }}>
@@ -123,7 +124,9 @@ export default function SettingsPage() {
           />
         </Field>
         <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
-          <button onClick={save}>Save</button>
+          <button onClick={save} className="btn btnPrimary">
+            Save
+          </button>
           <span style={{ fontSize: 12, opacity: 0.7 }}>{status}</span>
         </div>
       </Section>

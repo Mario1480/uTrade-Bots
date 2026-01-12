@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useState } from "react";
 import { apiPost } from "../../lib/api";
 
@@ -24,12 +25,14 @@ export default function Setup() {
   return (
     <div>
       <div style={{ marginBottom: 10 }}>
-        <a href="/" style={{ fontSize: 13 }}>
+        <Link href="/" className="btn">
           ← Back to dashboard
-        </a>
+        </Link>
       </div>
       <h2>Setup</h2>
-      <button onClick={create}>Create default bot (local-bot-1)</button>
+      <button onClick={create} className="btn btnPrimary">
+        Create default bot (local-bot-1)
+      </button>
       <p>{msg}</p>
     </div>
   );

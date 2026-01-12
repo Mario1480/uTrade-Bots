@@ -10,8 +10,8 @@ export default async function Page() {
     <div>
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
         <h2>Bots</h2>
-        <Link href="/setup">Setup</Link>{" "}
-        <Link href="/settings">Settings</Link>
+        <Link href="/setup" className="btn btnPrimary">Setup</Link>{" "}
+        <Link href="/settings" className="btn btnPrimary">Settings</Link>
       </div>
 
       <table style={{ width: "100%", borderCollapse: "collapse" }}>
