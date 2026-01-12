@@ -1,64 +1,78 @@
-// apps/api/src/index.ts
-import express from "express";
-import { PrismaClient } from "@prisma/client";
+generator client {
+  provider = "prisma-client-js"
+}
 
-const app = express();
-const prisma = new PrismaClient();
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
 
-app.get("/bots/:id", async (req, res) => {
-  const id = req.params.id;
-  try {
-    const bot = await prisma.bot.findUnique({
-      where: { id },
-      include: {
-        mmConfig: true,
-        volConfig: true,
-        riskConfig: true,
-        runtime: true,
-      },
-    });
-    if (!bot) {
-      return res.status(404).json({ error: "Bot not found" });
-    }
-    res.json(bot);
-  } catch (error) {
-    res.status(500).json({ error: "Internal server error" });
-  }
-});
+model Bot {
+  id        String   @id @default(uuid())
+  name      String
+  symbol    String
+  exchange  String
+  status    String
+  createdAt DateTime @default(now())
 
-export default app;
+  mmConfig   MarketMakingConfig?
+  volConfig  VolumeConfig?
+  riskConfig RiskConfig?
+  runtime    BotRuntime?
+}
 
+model MarketMakingConfig {
+  id              String @id @default(uuid())
+  botId           String @unique
+  bot             Bot    @relation(fields: [botId], references: [id])
+  spreadPct       Float
+  stepPct         Float
+  levelsUp        Int
+  levelsDown      Int
+  budgetQuoteUsdt Float
+  budgetBaseToken Float
+  distribution    String
+  jitterPct       Float
+  skewFactor      Float
+  maxSkew         Float
+}
 
-// apps/web/app/bots/[id]/page.tsx
-import React, { useEffect, useState } from "react";
-import { useParams } from "next/navigation";
+model VolumeConfig {
+  id                String @id @default(uuid())
+  botId             String @unique
+  bot               Bot    @relation(fields: [botId], references: [id])
+  dailyNotionalUsdt Float
+  minTradeUsdt      Float
+  maxTradeUsdt      Float
+  activeFrom        String
+  activeTo          String
+  mode              String
+}
 
-export default function BotPage() {
-  const params = useParams();
-  const id = params.id as string;
+model RiskConfig {
+  id              String @id @default(uuid())
+  botId           String @unique
+  bot             Bot    @relation(fields: [botId], references: [id])
+  minUsdt         Float
+  maxDeviationPct Float
+  maxOpenOrders   Int
+  maxDailyLoss    Float
+}
 
-  const [bot, setBot] = useState(null);
-  const [runtime, setRuntime] = useState(null);
+model BotRuntime {
+  botId     String  @id
+  bot       Bot     @relation(fields: [botId], references: [id])
+  updatedAt DateTime @updatedAt
+  status    String
+  reason    String?
 
-  async function loadAll() {
-    // fetch bot data
-  }
+  mid        Float?
+  bid        Float?
+  ask        Float?
+  openOrders Int?
 
-  async function loadRuntime() {
-    // fetch runtime data
-  }
+  freeUsdt Float?
+  freeBase Float?
 
-  useEffect(() => {
-    if (!id) return;
-    loadAll();
-    loadRuntime();
-    const t = setInterval(loadRuntime, 1200);
-    return () => clearInterval(t);
-  }, [id]);
-
-  return (
-    <div>
-      {/* JSX rendering bot details */}
-    </div>
-  );
+  tradedNotionalToday Float?
 }
