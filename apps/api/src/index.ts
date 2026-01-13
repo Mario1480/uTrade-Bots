@@ -3,6 +3,9 @@ import crypto from "node:crypto";
 import express from "express";
 import cors from "cors";
 import { prisma } from "@mm/db";
+import { BitmartRestClient } from "@mm/exchange";
+import { buildMmQuotes } from "@mm/strategy";
+import { clamp } from "@mm/core";
 import { z } from "zod";
 
 const app = express();
@@ -22,6 +25,8 @@ const MMConfig = z.object({
   levelsDown: z.number().int(),
   budgetQuoteUsdt: z.number(),
   budgetBaseToken: z.number(),
+  minOrderUsdt: z.number(),
+  maxOrderUsdt: z.number(),
   distribution: z.enum(["LINEAR", "VALLEY", "RANDOM"]),
   jitterPct: z.number(),
   skewFactor: z.number(),
@@ -56,45 +61,81 @@ const AlertConfig = z.object({
   telegramChatId: z.string().optional()
 });
 
+async function createBotAlert(params: {
+  botId: string;
+  level: "info" | "warn" | "error";
+  title: string;
+  message?: string | null;
+}) {
+  await prisma.botAlert.create({
+    data: {
+      botId: params.botId,
+      level: params.level,
+      title: params.title,
+      message: params.message ?? null
+    }
+  });
+}
+
 async function sendTelegramAlert(text: string) {
   const token = process.env.TELEGRAM_BOT_TOKEN;
   const chatId = process.env.TELEGRAM_CHAT_ID;
   if (!token || !chatId) return false;
 
+  return (await sendTelegramWithResult(token, chatId, text)).ok;
+}
+
+async function sendTelegramWithResult(token: string, chatId: string, text: string) {
   const url = `https://api.telegram.org/bot${token}/sendMessage`;
-  await fetch(url, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      chat_id: chatId,
-      text,
-      disable_web_page_preview: true
-    })
-  });
-  return true;
+  try {
+    const resp = await fetch(url, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        chat_id: chatId,
+        text,
+        disable_web_page_preview: true
+      })
+    });
+    const data = await resp.json().catch(() => ({}));
+    if (!resp.ok || data?.ok === false) {
+      const err = data?.description || data?.error || "telegram_error";
+      return { ok: false, error: err, status: resp.status };
+    }
+    return { ok: true };
+  } catch (e) {
+    return { ok: false, error: String(e) };
+  }
+}
+
+async function sendTelegramWithFallback(text: string) {
+  const envToken = process.env.TELEGRAM_BOT_TOKEN;
+  const envChatId = process.env.TELEGRAM_CHAT_ID;
+  if (envToken && envChatId) {
+    return await sendTelegramWithResult(envToken, envChatId, text);
+  }
+
+  const cfg = await prisma.alertConfig.findUnique({ where: { key: "default" } });
+  if (cfg?.telegramBotToken && cfg?.telegramChatId) {
+    return await sendTelegramWithResult(cfg.telegramBotToken, cfg.telegramChatId, text);
+  }
+
+  return { ok: false, error: "telegram_not_configured" };
 }
 
 app.get("/health", (_req, res) => res.json({ ok: true }));
 
 app.post("/alerts/test", async (_req, res) => {
-  let ok = await sendTelegramAlert(`Test alert ✅ ${new Date().toLocaleString()}`);
-  if (!ok) {
-    const cfg = await prisma.alertConfig.findUnique({ where: { key: "default" } });
-    if (cfg?.telegramBotToken && cfg?.telegramChatId) {
-      const url = `https://api.telegram.org/bot${cfg.telegramBotToken}/sendMessage`;
-      await fetch(url, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          chat_id: cfg.telegramChatId,
-          text: `Test alert ✅ ${new Date().toLocaleString()}`,
-          disable_web_page_preview: true
-        })
-      });
-      ok = true;
-    }
+  const text = `Test alert ✅ ${new Date().toLocaleString()}`;
+  const result = await sendTelegramWithFallback(text);
+
+  if (!result || !result.ok) {
+    return res.status(400).json({
+      error: "telegram_not_configured_or_unreachable",
+      details: result?.error ?? "unknown"
+    });
   }
-  if (!ok) return res.status(400).json({ error: "telegram_not_configured" });
+
   res.json({ ok: true });
 });
 
@@ -115,6 +156,130 @@ app.get("/bots/:id", async (req, res) => {
 app.get("/bots/:id/runtime", async (req, res) => {
   const rt = await prisma.botRuntime.findUnique({ where: { botId: req.params.id } });
   res.json(rt ?? null);
+});
+
+app.delete("/bots/:id", async (req, res) => {
+  const botId = req.params.id;
+  const bot = await prisma.bot.findUnique({ where: { id: botId } });
+  if (!bot) return res.status(404).json({ error: "not_found" });
+
+  await prisma.$transaction([
+    prisma.botAlert.deleteMany({ where: { botId } }),
+    prisma.botRuntime.deleteMany({ where: { botId } }),
+    prisma.marketMakingConfig.deleteMany({ where: { botId } }),
+    prisma.volumeConfig.deleteMany({ where: { botId } }),
+    prisma.riskConfig.deleteMany({ where: { botId } }),
+    prisma.bot.delete({ where: { id: botId } })
+  ]);
+
+  res.json({ ok: true });
+});
+
+app.get("/bots/:id/open-orders", async (req, res) => {
+  const bot = await prisma.bot.findUnique({ where: { id: req.params.id } });
+  if (!bot) return res.status(404).json({ error: "not_found" });
+  if (bot.exchange.toLowerCase() !== "bitmart") {
+    return res.status(400).json({ error: "unsupported_exchange" });
+  }
+
+  const cex = await prisma.cexConfig.findUnique({ where: { exchange: bot.exchange } });
+  if (!cex?.apiKey || !cex?.apiSecret) {
+    return res.status(400).json({ error: "cex_config_missing" });
+  }
+
+  const baseUrl = process.env.BITMART_BASE_URL || "https://api-cloud.bitmart.com";
+  const rest = new BitmartRestClient(baseUrl, cex.apiKey, cex.apiSecret, cex.apiMemo ?? "");
+  const orders = await rest.getOpenOrders(bot.symbol);
+
+  const normalized = orders.map((o) => ({
+    id: o.id,
+    side: o.side,
+    price: o.price,
+    qty: o.qty,
+    clientOrderId: o.clientOrderId ?? null,
+    createdAt: null
+  }));
+
+  const isMm = (cid?: string | null) => {
+    const c = cid ?? "";
+    return c.startsWith("mm-") || c.startsWith("mmb") || c.startsWith("mms");
+  };
+  const isVol = (cid?: string | null) => {
+    const c = cid ?? "";
+    return c.startsWith("vol-") || c.startsWith("vol");
+  };
+
+  res.json({
+    mm: normalized.filter((o) => isMm(o.clientOrderId)),
+    vol: normalized.filter((o) => isVol(o.clientOrderId)),
+    other: normalized.filter((o) => !isMm(o.clientOrderId) && !isVol(o.clientOrderId))
+  });
+});
+
+app.get("/bots/:id/alerts", async (req, res) => {
+  const limit = Math.min(Number(req.query.limit || "10"), 50);
+  const items = await prisma.botAlert.findMany({
+    where: { botId: req.params.id },
+    orderBy: { createdAt: "desc" },
+    take: limit
+  });
+  res.json(items);
+});
+
+app.delete("/bots/:id/alerts", async (req, res) => {
+  const id = req.params.id;
+  const r = await prisma.botAlert.deleteMany({ where: { botId: id } });
+  res.json({ ok: true, deleted: r.count });
+});
+
+app.post("/bots/:id/preview/mm", async (req, res) => {
+  const payload = z.object({
+    mm: MMConfig,
+    runtime: z
+      .object({
+        mid: z.number(),
+        freeUsdt: z.number().optional(),
+        freeBase: z.number().optional()
+      })
+      .optional(),
+    options: z
+      .object({
+        includeJitter: z.boolean().optional(),
+        seed: z.number().optional()
+      })
+      .optional()
+  }).parse(req.body);
+
+  const mid = payload.runtime?.mid;
+  if (!Number.isFinite(mid) || (mid as number) <= 0) {
+    return res.status(400).json({ error: "mid_missing" });
+  }
+
+  const freeBase = payload.runtime?.freeBase ?? 0;
+  const targetBase = payload.mm.budgetBaseToken;
+  const inventoryRatio = targetBase > 0 ? freeBase / targetBase : 1;
+  const skew = clamp((inventoryRatio - 1) * payload.mm.skewFactor, -payload.mm.maxSkew, payload.mm.maxSkew);
+
+  const quotes = buildMmQuotes({
+    symbol: "PREVIEW",
+    mid: mid as number,
+    cfg: payload.mm,
+    inventoryRatio,
+    includeJitter: payload.options?.includeJitter ?? false,
+    seed: payload.options?.seed
+  });
+
+  const bids = quotes
+    .filter((q) => q.side === "buy")
+    .map((q) => ({ price: q.price, qty: q.qty, notional: q.price * q.qty }))
+    .sort((a, b) => a.price - b.price)
+    .reverse();
+  const asks = quotes
+    .filter((q) => q.side === "sell")
+    .map((q) => ({ price: q.price, qty: q.qty, notional: q.price * q.qty }))
+    .sort((a, b) => a.price - b.price);
+
+  res.json({ mid, bids, asks, inventoryRatio, skewPct: skew * 100, skewedMid: (mid as number) * (1 + skew) });
 });
 
 app.get("/exchanges/:exchange/symbols", async (req, res) => {
@@ -224,6 +389,8 @@ app.post("/bots", async (req, res) => {
           levelsDown: 5,
           budgetQuoteUsdt: 2000,
           budgetBaseToken: 2000,
+          minOrderUsdt: 5,
+          maxOrderUsdt: 0,
           distribution: "VALLEY",
           jitterPct: 0.0002,
           skewFactor: 0.25,
@@ -276,6 +443,29 @@ app.put("/bots/:id/config", async (req, res) => {
     risk: RiskConfig
   }).parse(req.body);
 
+  const errors: Record<string, string> = {};
+  const minQuoteUsdt = 100;
+
+  if (payload.mm.budgetQuoteUsdt < minQuoteUsdt) {
+    errors.budgetQuoteUsdt = `Minimum ${minQuoteUsdt} USDT`;
+  }
+
+  const bot = await prisma.bot.findUnique({ where: { id: botId } });
+  const rt = await prisma.botRuntime.findUnique({ where: { botId } });
+  const mid = rt?.mid ?? null;
+
+  if (mid && mid > 0) {
+    const minBaseToken = minQuoteUsdt / mid;
+    if (payload.mm.budgetBaseToken < minBaseToken) {
+      const base = bot?.symbol?.split("_")[0] || "Token";
+      errors.budgetBaseToken = `Minimum ~${minBaseToken.toFixed(6)} ${base}`;
+    }
+  }
+
+  if (Object.keys(errors).length > 0) {
+    return res.status(400).json({ error: "min_budget", details: { errors } });
+  }
+
   await prisma.marketMakingConfig.update({
     where: { botId },
     data: payload.mm
@@ -296,25 +486,37 @@ app.put("/bots/:id/config", async (req, res) => {
 
 app.post("/bots/:id/mm/start", async (req, res) => {
   const botId = req.params.id;
+  const bot = await prisma.bot.findUnique({ where: { id: botId } });
+  if (!bot) return res.status(404).json({ error: "bot_not_found" });
   await prisma.bot.update({ where: { id: botId }, data: { mmEnabled: true } });
+  await sendTelegramWithFallback(`✅ MM started\nbot=${bot.name}`);
   res.json({ ok: true });
 });
 
 app.post("/bots/:id/mm/stop", async (req, res) => {
   const botId = req.params.id;
+  const bot = await prisma.bot.findUnique({ where: { id: botId } });
+  if (!bot) return res.status(404).json({ error: "bot_not_found" });
   await prisma.bot.update({ where: { id: botId }, data: { mmEnabled: false } });
+  await sendTelegramWithFallback(`🛑 MM stopped\nbot=${bot.name}`);
   res.json({ ok: true });
 });
 
 app.post("/bots/:id/vol/start", async (req, res) => {
   const botId = req.params.id;
+  const bot = await prisma.bot.findUnique({ where: { id: botId } });
+  if (!bot) return res.status(404).json({ error: "bot_not_found" });
   await prisma.bot.update({ where: { id: botId }, data: { volEnabled: true } });
+  await sendTelegramWithFallback(`✅ Volume bot started\nbot=${bot.name}`);
   res.json({ ok: true });
 });
 
 app.post("/bots/:id/vol/stop", async (req, res) => {
   const botId = req.params.id;
+  const bot = await prisma.bot.findUnique({ where: { id: botId } });
+  if (!bot) return res.status(404).json({ error: "bot_not_found" });
   await prisma.bot.update({ where: { id: botId }, data: { volEnabled: false } });
+  await sendTelegramWithFallback(`🛑 Volume bot stopped\nbot=${bot.name}`);
   res.json({ ok: true });
 });
 
@@ -391,6 +593,9 @@ app.post("/settings/cex/verify", async (req, res) => {
 app.post("/bots/:id/start", async (req, res) => {
   const id = req.params.id;
 
+  const bot = await prisma.bot.findUnique({ where: { id } });
+  if (!bot) return res.status(404).json({ error: "bot_not_found" });
+
   await prisma.bot.update({
     where: { id },
     data: { status: "RUNNING" }
@@ -409,11 +614,23 @@ app.post("/bots/:id/start", async (req, res) => {
     }
   });
 
+  await createBotAlert({
+    botId: id,
+    level: "info",
+    title: "Bot started",
+    message: "Start command received"
+  });
+
+  await sendTelegramWithFallback(`✅ Bot started\nbot=${bot.name}`);
+
   res.json({ ok: true });
 });
 
 app.post("/bots/:id/pause", async (req, res) => {
   const id = req.params.id;
+
+  const bot = await prisma.bot.findUnique({ where: { id } });
+  if (!bot) return res.status(404).json({ error: "bot_not_found" });
 
   await prisma.bot.update({
     where: { id },
@@ -433,11 +650,21 @@ app.post("/bots/:id/pause", async (req, res) => {
     }
   });
 
+  await createBotAlert({
+    botId: id,
+    level: "warn",
+    title: "Bot paused",
+    message: "Pause command received"
+  });
+
   res.json({ ok: true });
 });
 
 app.post("/bots/:id/stop", async (req, res) => {
   const id = req.params.id;
+
+  const bot = await prisma.bot.findUnique({ where: { id } });
+  if (!bot) return res.status(404).json({ error: "bot_not_found" });
 
   await prisma.bot.update({
     where: { id },
@@ -456,6 +683,15 @@ app.post("/bots/:id/stop", async (req, res) => {
       reason: "Stopped from UI"
     }
   });
+
+  await createBotAlert({
+    botId: id,
+    level: "warn",
+    title: "Bot stopped",
+    message: "Stop command received"
+  });
+
+  await sendTelegramWithFallback(`🛑 Bot stopped\nbot=${bot.name}`);
 
   res.json({ ok: true });
 });

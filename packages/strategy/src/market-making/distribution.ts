@@ -1,7 +1,8 @@
 import type { Distribution } from "@mm/core";
+import type { Rng } from "@mm/core";
 import { normalizeWeights, randBetween } from "@mm/core";
 
-export function weights(n: number, dist: Distribution): number[] {
+export function weights(n: number, dist: Distribution, rng?: Rng): number[] {
   if (n <= 0) return [];
   if (dist === "LINEAR") return Array.from({ length: n }, () => 1 / n);
 
@@ -12,6 +13,6 @@ export function weights(n: number, dist: Distribution): number[] {
   }
 
   // RANDOM
-  const ws = Array.from({ length: n }, () => randBetween(0.5, 1.5));
+  const ws = Array.from({ length: n }, () => randBetween(0.5, 1.5, rng));
   return normalizeWeights(ws);
 }

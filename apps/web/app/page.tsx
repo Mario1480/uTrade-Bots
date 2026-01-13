@@ -84,9 +84,12 @@ export default async function Page() {
                 <span className={`badge ${b.mmEnabled ? "badgeOk" : "badgeWarn"}`}>MM {b.mmEnabled ? "running" : "stopped"}</span>
                 <span className={`badge ${b.volEnabled ? "badgeOk" : "badgeWarn"}`}>Volume {b.volEnabled ? "running" : "stopped"}</span>
               </div>
-              <div style={{ marginTop: 12 }}>
+              <div style={{ marginTop: 12, display: "flex", gap: 8, flexWrap: "wrap" }}>
                 <Link href={`/bots/${b.id}`} className="btn">
                   Open bot →
+                </Link>
+                <Link href={`/bots/${b.id}/settings`} className="btn">
+                  Settings
                 </Link>
               </div>
             </div>

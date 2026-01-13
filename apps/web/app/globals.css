@@ -129,6 +129,12 @@ a { color: inherit; }
   gap: 12px;
 }
 
+.overviewGrid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+  gap: 16px;
+}
+
 .botName {
   font-weight: 700;
   font-size: 16px;
@@ -143,6 +149,12 @@ a { color: inherit; }
   margin-top: 12px;
   font-size: 12px;
   color: var(--brand);
+}
+
+@media (max-width: 900px) {
+  .overviewGrid {
+    grid-template-columns: 1fr;
+  }
 }
 
 .card {

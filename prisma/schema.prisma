@@ -21,6 +21,7 @@ model Bot {
   volConfig  VolumeConfig?
   riskConfig RiskConfig?
   runtime    BotRuntime?
+  alerts     BotAlert[]
 }
 
 model MarketMakingConfig {
@@ -33,6 +34,8 @@ model MarketMakingConfig {
   levelsDown      Int
   budgetQuoteUsdt Float
   budgetBaseToken Float
+  minOrderUsdt    Float @default(5)
+  maxOrderUsdt    Float @default(0)
   distribution    String
   jitterPct       Float
   skewFactor      Float
@@ -104,4 +107,16 @@ model AlertConfig {
   telegramChatId    String?
   createdAt         DateTime @default(now())
   updatedAt         DateTime @updatedAt
+}
+
+model BotAlert {
+  id        String   @id @default(cuid())
+  botId     String
+  level     String
+  title     String
+  message   String?
+  createdAt DateTime @default(now())
+  bot       Bot      @relation(fields: [botId], references: [id])
+
+  @@index([botId, createdAt])
 }

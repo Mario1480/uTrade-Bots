@@ -80,6 +80,7 @@ services:
       - .env
     environment:
       DATABASE_URL: postgresql://mm:mm@postgres:5432/mm?schema=public
+      RUNNER_BOT_ID: ""
       RUNNER_TICK_MS: "800"
       RUNNER_DEBUG: "1"
       BITMART_DEBUG: "1"

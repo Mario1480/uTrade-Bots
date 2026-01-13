@@ -12,6 +12,17 @@ export function normalizeWeights(ws: number[]): number[] {
   return ws.map((w) => w / s);
 }
 
-export function randBetween(min: number, max: number): number {
-  return min + Math.random() * (max - min);
+export type Rng = () => number;
+
+export function makeRng(seed: number): Rng {
+  let state = (Math.floor(seed) >>> 0) || 1;
+  return () => {
+    state = (state * 1664525 + 1013904223) >>> 0;
+    return state / 0x100000000;
+  };
+}
+
+export function randBetween(min: number, max: number, rng?: Rng): number {
+  const next = rng ? rng() : Math.random();
+  return min + next * (max - min);
 }

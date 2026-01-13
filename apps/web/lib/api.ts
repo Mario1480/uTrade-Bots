@@ -68,3 +68,7 @@ export function apiPut<T>(path: string, body: any): Promise<T> {
 export function apiDelete<T>(path: string): Promise<T> {
   return request<T>("DELETE", path);
 }
+
+export function apiDel<T>(path: string): Promise<T> {
+  return request<T>("DELETE", path);
+}

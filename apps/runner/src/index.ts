@@ -4,7 +4,7 @@ import type { Exchange } from "@mm/exchange";
 import { BotStateMachine } from "./state-machine.js";
 import { runLoop } from "./loop.js";
 import { log } from "./logger.js";
-import { loadBotAndConfigs, loadCexConfig } from "./db.js";
+import { loadBotAndConfigs, loadCexConfig, loadLatestBotAndConfigs } from "./db.js";
 
 function mustEnv(k: string): string {
   const v = process.env[k];
@@ -12,11 +12,18 @@ function mustEnv(k: string): string {
   return v;
 }
 
+function optionalEnv(k: string): string | null {
+  const v = process.env[k];
+  return v && v.trim().length > 0 ? v : null;
+}
+
 async function main() {
-  const botId = mustEnv("RUNNER_BOT_ID");
+  const requestedBotId = optionalEnv("RUNNER_BOT_ID");
   const tickMs = Number(process.env.RUNNER_TICK_MS || "800");
 
-  const { bot, mm, vol, risk } = await loadBotAndConfigs(botId);
+  const { bot, mm, vol, risk } = requestedBotId
+    ? await loadBotAndConfigs(requestedBotId)
+    : await loadLatestBotAndConfigs();
   const symbol = bot.symbol;
 
   if (bot.exchange !== "bitmart") {
@@ -41,8 +48,11 @@ async function main() {
   };
 
   const sm = new BotStateMachine();
-  log.info({ botId, symbol, tickMs }, "starting runner");
-  await runLoop({ botId, symbol, exchange, mm, vol, risk, tickMs, sm });
+  log.info(
+    { botId: bot.id, name: bot.name, symbol, tickMs },
+    requestedBotId ? "starting runner (explicit bot id)" : "starting runner (latest bot)"
+  );
+  await runLoop({ botId: bot.id, symbol, exchange, mm, vol, risk, tickMs, sm });
 }
 
 main().catch((e) => {

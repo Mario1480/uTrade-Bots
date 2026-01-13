@@ -2,13 +2,13 @@ import type { Exchange } from "@mm/exchange";
 import type { MarketMakingConfig, RiskConfig, VolumeConfig, Balance } from "@mm/core";
 import { splitSymbol } from "@mm/exchange";
 import { SlavePriceSource } from "@mm/pricing";
-import { MarketMakingStrategy, VolumeScheduler } from "@mm/strategy";
+import { buildMmQuotes, VolumeScheduler } from "@mm/strategy";
 import { RiskEngine } from "@mm/risk";
 import { BotStateMachine } from "./state-machine.js";
 import { OrderManager } from "./order-manager.js";
 import { inventoryRatio } from "./inventory.js";
 import { log } from "./logger.js";
-import { loadBotAndConfigs, writeRuntime } from "./db.js";
+import { loadBotAndConfigs, writeAlert, writeRuntime } from "./db.js";
 import { alert } from "./alerts.js";
 
 function normalizeAsset(a: string): string {
@@ -39,14 +39,13 @@ export async function runLoop(params: {
   let risk = params.risk;
 
   const priceSource = new SlavePriceSource(exchange);
-  let mmStrat = new MarketMakingStrategy(mm);
   let volSched = new VolumeScheduler(vol);
   let riskEngine = new RiskEngine(risk);
   const orderMgr = new OrderManager({ priceEpsPct: 0.0005, qtyEpsPct: 0.02 });
 
   const volState = { dayKey: "init", tradedNotional: 0, lastActionMs: 0, dailyAlertSent: false };
   const { base } = splitSymbol(symbol);
-  const mmSeed = Math.random().toString(36).slice(2, 8);
+  const mmRunId = `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`;
 
   const reloadEveryMs = 5_000;
   let lastReload = 0;
@@ -163,7 +162,6 @@ export async function runLoop(params: {
       mm = loaded.mm;
       vol = loaded.vol;
       risk = loaded.risk;
-      mmStrat = new MarketMakingStrategy(mm);
       volSched = new VolumeScheduler(vol);
       riskEngine = new RiskEngine(risk);
     }
@@ -286,12 +284,20 @@ export async function runLoop(params: {
       }
 
       const invRatio = inventoryRatio(balances, base, mm.budgetBaseToken);
-      const desiredQuotes = botRow.mmEnabled ? mmStrat.build(symbol, mid.mid, invRatio) : [];
+      const desiredQuotes = botRow.mmEnabled
+        ? buildMmQuotes({
+            symbol,
+            mid: mid.mid,
+            cfg: mm,
+            inventoryRatio: invRatio,
+            includeJitter: true
+          })
+        : [];
       const desiredWithIds = desiredQuotes.map((q) => {
         const cid = q.clientOrderId ?? "";
         const m = cid.match(/^(mmb|mms)(\d+)/);
         if (!m) return q;
-        return { ...q, clientOrderId: `${m[1]}${m[2]}${mmSeed}` };
+        return { ...q, clientOrderId: `${m[1]}${m[2]}${mmRunId}` };
       });
       const desiredFiltered = desiredWithIds.filter((q) => {
         if (q.type !== "limit" || !q.price) return true;
@@ -332,6 +338,13 @@ export async function runLoop(params: {
           freeUsdt,
           freeBase,
           tradedNotionalToday: volState.tradedNotional
+        });
+
+        await writeAlert({
+          botId,
+          level: "warn",
+          title: "Risk triggered",
+          message: `reason=${decision.reason} symbol=${symbol} mid=${mid.mid} openOrders=${open.length}`
         });
 
         await alert(
@@ -380,6 +393,12 @@ export async function runLoop(params: {
         volState.tradedNotional >= vol.dailyNotionalUsdt
       ) {
         volState.dailyAlertSent = true;
+        await writeAlert({
+          botId,
+          level: "info",
+          title: "Daily volume target reached",
+          message: `symbol=${symbol} notional=${volState.tradedNotional}`
+        });
         await alert(
           "info",
           `[VOLUME] Daily target reached`,
@@ -420,6 +439,13 @@ export async function runLoop(params: {
         openOrdersMm: 0,
         openOrdersVol: 0,
         lastVolClientOrderId: null
+      });
+
+      await writeAlert({
+        botId,
+        level: "error",
+        title: "Runner error",
+        message: `symbol=${symbol} err=${String(e)}`
       });
 
       await alert(

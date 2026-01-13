@@ -1,26 +1,74 @@
 "use client";
 
 import Link from "next/link";
-import { useState } from "react";
-import { apiPost } from "../../../lib/api";
+import { useEffect, useState } from "react";
+import { ApiError, apiDelete, apiGet, apiPost } from "../../../lib/api";
+
+type Bot = {
+  id: string;
+  name: string;
+  symbol: string;
+  exchange: string;
+  status: string;
+  createdAt: string;
+};
 
 export default function Setup() {
   const [msg, setMsg] = useState("");
+  const [bots, setBots] = useState<Bot[]>([]);
+  const [loading, setLoading] = useState(false);
+  const [deletingId, setDeletingId] = useState<string | null>(null);
+
+  function errMsg(e: any): string {
+    if (e instanceof ApiError) return `${e.message} (HTTP ${e.status})`;
+    return e?.message ? String(e.message) : String(e);
+  }
+
+  async function loadBots() {
+    try {
+      setLoading(true);
+      const list = await apiGet<Bot[]>("/bots");
+      setBots(list);
+    } catch (e) {
+      setMsg(errMsg(e));
+    } finally {
+      setLoading(false);
+    }
+  }
 
   async function create() {
     setMsg("creating...");
     try {
-      await apiPost("/bots", {
-        id: "local-bot-1",
+      const bot = await apiPost<{ id: string }>("/bots", {
         name: "USHARK MM",
         symbol: "USHARK_USDT",
         exchange: "bitmart"
       });
-      setMsg("created local-bot-1. Go back to Bots.");
+      setMsg(`created ${bot.id}.`);
+      await loadBots();
     } catch (e: any) {
-      setMsg(String(e));
+      setMsg(errMsg(e));
     }
   }
+
+  async function removeBot(bot: Bot) {
+    const ok = window.confirm(`Delete bot "${bot.name}" (${bot.symbol})? This cannot be undone.`);
+    if (!ok) return;
+    setDeletingId(bot.id);
+    try {
+      await apiDelete(`/bots/${bot.id}`);
+      setMsg(`deleted ${bot.name}`);
+      await loadBots();
+    } catch (e: any) {
+      setMsg(errMsg(e));
+    } finally {
+      setDeletingId(null);
+    }
+  }
+
+  useEffect(() => {
+    loadBots();
+  }, []);
 
   return (
     <div>
@@ -33,10 +81,60 @@ export default function Setup() {
         </Link>
       </div>
       <h2>Setup</h2>
-      <button onClick={create} className="btn btnPrimary">
-        Create default bot (local-bot-1)
-      </button>
-      <p>{msg}</p>
+      <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 12 }}>
+        <button onClick={create} className="btn btnPrimary">
+          Create default bot (USHARK)
+        </button>
+        <button onClick={loadBots} className="btn">
+          Refresh list
+        </button>
+      </div>
+      {msg ? <p>{msg}</p> : null}
+
+      <div className="card" style={{ padding: 12 }}>
+        <div style={{ fontWeight: 700, marginBottom: 8 }}>Bots</div>
+        {loading ? (
+          <div style={{ fontSize: 12, color: "var(--muted)" }}>Loading...</div>
+        ) : bots.length === 0 ? (
+          <div style={{ fontSize: 12, color: "var(--muted)" }}>No bots yet.</div>
+        ) : (
+          <div style={{ display: "grid", gap: 10 }}>
+            {bots.map((bot) => (
+              <div
+                key={bot.id}
+                className="card"
+                style={{
+                  padding: 12,
+                  display: "flex",
+                  justifyContent: "space-between",
+                  gap: 12,
+                  alignItems: "center",
+                  flexWrap: "wrap"
+                }}
+              >
+                <div style={{ minWidth: 220 }}>
+                  <div style={{ fontWeight: 700 }}>{bot.name}</div>
+                  <div style={{ fontSize: 12, color: "var(--muted)" }}>
+                    {bot.exchange} · {bot.symbol} · {bot.status}
+                  </div>
+                </div>
+                <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                  <Link href={`/bots/${bot.id}`} className="btn">
+                    Open
+                  </Link>
+                  <button
+                    className="btn btnStop"
+                    onClick={() => removeBot(bot)}
+                    disabled={deletingId === bot.id}
+                  >
+                    {deletingId === bot.id ? "Deleting..." : "Delete"}
+                  </button>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
     </div>
   );
 }

@@ -9,6 +9,8 @@ export interface MarketMakingConfig {
   levelsDown: number;
   budgetQuoteUsdt: Money;
   budgetBaseToken: Money;
+  minOrderUsdt: Money;
+  maxOrderUsdt: Money;
   distribution: Distribution;
   jitterPct: number;
   skewFactor: number;

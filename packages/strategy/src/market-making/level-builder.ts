@@ -1,4 +1,4 @@
-import type { MarketMakingConfig, Quote } from "@mm/core";
+import type { MarketMakingConfig, Quote, Rng } from "@mm/core";
 import { clamp, randBetween } from "@mm/core";
 import { weights } from "./distribution.js";
 
@@ -7,6 +7,7 @@ export function buildQuotes(params: {
   mid: number;
   cfg: MarketMakingConfig;
   inventoryRatio: number; // current_base / target_base
+  rng?: Rng;
 }): Quote[] {
   const { symbol, mid, cfg } = params;
 
@@ -16,10 +17,14 @@ export function buildQuotes(params: {
   const buyN = cfg.levelsDown;
   const sellN = cfg.levelsUp;
 
-  const buyW = weights(buyN, cfg.distribution);
-  const sellW = weights(sellN, cfg.distribution);
+  const buyW = weights(buyN, cfg.distribution, params.rng);
+  const sellW = weights(sellN, cfg.distribution, params.rng);
 
   const quotes: Quote[] = [];
+
+  const minOrderUsdt = Math.max(0, cfg.minOrderUsdt ?? 0);
+  const maxOrderUsdt = Math.max(0, cfg.maxOrderUsdt ?? 0);
+  const effectiveMaxOrder = maxOrderUsdt > 0 ? Math.max(maxOrderUsdt, minOrderUsdt) : 0;
 
   const halfMin = cfg.spreadPct / 2;
   const halfMax = cfg.maxSpreadPct / 2;
@@ -29,13 +34,21 @@ export function buildQuotes(params: {
 
   // Buy levels
   for (let i = 0; i < buyN; i++) {
-    const pct = halfMin + (i / buyDenom) * Math.max(0, halfMax - halfMin);
+    const pctRaw = halfMin + (i / buyDenom) * Math.max(0, halfMax - halfMin);
+    const pct = clamp(pctRaw, 0, 0.95);
     const base = skewedMid * (1 - pct);
-    const jitter = cfg.jitterPct > 0 ? (1 + randBetween(-cfg.jitterPct, cfg.jitterPct)) : 1;
+    const jitter = cfg.jitterPct > 0
+      ? (1 + randBetween(-cfg.jitterPct, cfg.jitterPct, params.rng))
+      : 1;
     const price = base * jitter;
 
-    const notional = cfg.budgetQuoteUsdt * buyW[i];
+    if (!Number.isFinite(price) || price <= 0) continue;
+
+    let notional = cfg.budgetQuoteUsdt * buyW[i];
+    if (minOrderUsdt > 0 && notional < minOrderUsdt) continue;
+    if (effectiveMaxOrder > 0 && notional > effectiveMaxOrder) notional = effectiveMaxOrder;
     const qty = notional / price;
+    if (!Number.isFinite(qty) || qty <= 0) continue;
 
     quotes.push({
       symbol,
@@ -50,12 +63,24 @@ export function buildQuotes(params: {
 
   // Sell levels
   for (let i = 0; i < sellN; i++) {
-    const pct = halfMin + (i / sellDenom) * Math.max(0, halfMax - halfMin);
+    const pctRaw = halfMin + (i / sellDenom) * Math.max(0, halfMax - halfMin);
+    const pct = clamp(pctRaw, 0, 0.95);
     const base = skewedMid * (1 + pct);
-    const jitter = cfg.jitterPct > 0 ? (1 + randBetween(-cfg.jitterPct, cfg.jitterPct)) : 1;
+    const jitter = cfg.jitterPct > 0
+      ? (1 + randBetween(-cfg.jitterPct, cfg.jitterPct, params.rng))
+      : 1;
     const price = base * jitter;
 
-    const qty = cfg.budgetBaseToken * sellW[i];
+    if (!Number.isFinite(price) || price <= 0) continue;
+
+    let qty = cfg.budgetBaseToken * sellW[i];
+    let notional = qty * price;
+    if (minOrderUsdt > 0 && notional < minOrderUsdt) continue;
+    if (effectiveMaxOrder > 0 && notional > effectiveMaxOrder) {
+      qty = effectiveMaxOrder / price;
+      notional = qty * price;
+    }
+    if (!Number.isFinite(qty) || qty <= 0) continue;
 
     quotes.push({
       symbol,

@@ -10,7 +10,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
         <header className="appHeader">
           <div className="container appHeaderInner">
             <Link href="/" className="appLogo" aria-label="Market Maker">
-              MM
+              uLiquid
             </Link>
             <nav className="appNav">
               <Link href="/" className="btn">Dashboard</Link>
@@ -22,7 +22,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
         <main className="container appMain">{children}</main>
         <footer className="appFooter">
           <div className="container appFooterInner">
-            <div className="appFooterCopy">© 2026 Market Maker</div>
+            <div className="appFooterCopy">© 2026 uLiquid Market-Maker</div>
             <div className="appFooterLinks">
               <a href="#" aria-label="Link 1">Link 1</a>
               <a href="#" aria-label="Link 2">Link 2</a>

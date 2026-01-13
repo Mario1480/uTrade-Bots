@@ -12,7 +12,10 @@ export default function NotificationsPage() {
   const [saving, setSaving] = useState(false);
 
   function errMsg(e: any): string {
-    if (e instanceof ApiError) return `${e.message} (HTTP ${e.status})`;
+    if (e instanceof ApiError) {
+      const detail = e.payload?.details ? ` — ${e.payload.details}` : "";
+      return `${e.message}${detail} (HTTP ${e.status})`;
+    }
     return e?.message ? String(e.message) : String(e);
   }
 
@@ -24,7 +27,7 @@ export default function NotificationsPage() {
       setMsg("Test alert sent to Telegram.");
     } catch (e) {
       const message = errMsg(e);
-      setMsg(message.includes("telegram_not_configured") ? "Telegram is not configured." : message);
+      setMsg(message.includes("telegram_not_configured") ? message : message);
     } finally {
       setSending(false);
     }
@@ -77,6 +80,9 @@ export default function NotificationsPage() {
         <div style={{ fontWeight: 700, marginBottom: 6 }}>Telegram alerts</div>
         <div style={{ color: "var(--muted)", marginBottom: 10 }}>
           Stored in DB; runner uses these when env is not set.
+        </div>
+        <div style={{ color: "var(--muted)", marginBottom: 10 }}>
+          Tip: For Telegram groups, the Chat ID usually starts with <b>-100</b>.
         </div>
         <div style={{ display: "grid", gap: 10, marginBottom: 10 }}>
           <label style={{ display: "grid", gap: 6 }}>

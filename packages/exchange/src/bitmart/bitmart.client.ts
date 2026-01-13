@@ -322,9 +322,10 @@ export class BitmartRestClient {
       {
         symbol: s,
         orderMode: "spot",
-        startTime: now - 60_000,
-        endTime: now + 1_000,
-        limit: 50,
+        // Use a wider window so open orders don't disappear from results after 60s.
+        startTime: now - 24 * 60 * 60 * 1000,
+        endTime: now + 5_000,
+        limit: 100,
         recvWindow: 5000
       },
       "SIGNED"

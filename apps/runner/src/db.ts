@@ -20,6 +20,53 @@ export async function loadBotAndConfigs(botId: string) {
     levelsDown: bot.mmConfig.levelsDown,
     budgetQuoteUsdt: bot.mmConfig.budgetQuoteUsdt,
     budgetBaseToken: bot.mmConfig.budgetBaseToken,
+    minOrderUsdt: bot.mmConfig.minOrderUsdt ?? 0,
+    maxOrderUsdt: bot.mmConfig.maxOrderUsdt ?? 0,
+    distribution: bot.mmConfig.distribution as any,
+    jitterPct: bot.mmConfig.jitterPct,
+    skewFactor: bot.mmConfig.skewFactor,
+    maxSkew: bot.mmConfig.maxSkew
+  };
+
+  const vol: VolumeConfig = {
+    dailyNotionalUsdt: bot.volConfig.dailyNotionalUsdt,
+    minTradeUsdt: bot.volConfig.minTradeUsdt,
+    maxTradeUsdt: bot.volConfig.maxTradeUsdt,
+    activeFrom: "00:00",
+    activeTo: "23:59",
+    mode: bot.volConfig.mode as any
+  };
+
+  const risk: RiskConfig = {
+    minUsdt: bot.riskConfig.minUsdt,
+    maxDeviationPct: bot.riskConfig.maxDeviationPct,
+    maxOpenOrders: bot.riskConfig.maxOpenOrders,
+    maxDailyLoss: bot.riskConfig.maxDailyLoss
+  };
+
+  return { bot, mm, vol, risk };
+}
+
+export async function loadLatestBotAndConfigs() {
+  const bot = await prisma.bot.findFirst({
+    orderBy: { createdAt: "desc" },
+    include: { mmConfig: true, volConfig: true, riskConfig: true }
+  });
+
+  if (!bot) throw new Error("No bots found in DB");
+  if (!bot.mmConfig || !bot.volConfig || !bot.riskConfig) {
+    throw new Error(`Bot missing configs (mm/vol/risk): ${bot.id}`);
+  }
+
+  const mm: MarketMakingConfig = {
+    spreadPct: bot.mmConfig.spreadPct,
+    maxSpreadPct: bot.mmConfig.maxSpreadPct,
+    levelsUp: bot.mmConfig.levelsUp,
+    levelsDown: bot.mmConfig.levelsDown,
+    budgetQuoteUsdt: bot.mmConfig.budgetQuoteUsdt,
+    budgetBaseToken: bot.mmConfig.budgetBaseToken,
+    minOrderUsdt: bot.mmConfig.minOrderUsdt ?? 0,
+    maxOrderUsdt: bot.mmConfig.maxOrderUsdt ?? 0,
     distribution: bot.mmConfig.distribution as any,
     jitterPct: bot.mmConfig.jitterPct,
     skewFactor: bot.mmConfig.skewFactor,
@@ -101,6 +148,22 @@ export async function writeRuntime(params: {
       freeUsdt: params.freeUsdt ?? null,
       freeBase: params.freeBase ?? null,
       tradedNotionalToday: params.tradedNotionalToday ?? null
+    }
+  });
+}
+
+export async function writeAlert(params: {
+  botId: string;
+  level: "info" | "warn" | "error";
+  title: string;
+  message?: string | null;
+}) {
+  await prisma.botAlert.create({
+    data: {
+      botId: params.botId,
+      level: params.level,
+      title: params.title,
+      message: params.message ?? null
     }
   });
 }
