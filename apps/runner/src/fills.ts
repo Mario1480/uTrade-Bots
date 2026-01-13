@@ -1,4 +1,4 @@
-import type { Trade } from "@mm/core";
+import type { MyTrade } from "@mm/core";
 import type { Exchange } from "@mm/exchange";
 import { prisma } from "@mm/db";
 
@@ -6,25 +6,26 @@ export function dayKeyUtc(ts = Date.now()): string {
   return new Date(ts).toISOString().slice(0, 10);
 }
 
-export async function syncFills(params: {
+export async function syncVolumeFills(params: {
   botId: string;
   symbol: string;
   exchange: Exchange;
-}): Promise<{ tradedNotionalToday: number; lastTradeId?: string; dayKey: string }> {
+}): Promise<{ tradedNotionalToday: number }> {
   const { botId, symbol, exchange } = params;
   const dayKey = dayKeyUtc();
 
   const cursor = await prisma.botFillCursor.upsert({
     where: { botId_symbol_dayKey: { botId, symbol, dayKey } },
-    create: { botId, symbol, dayKey, tradedNotionalToday: 0, lastTradeId: null },
+    create: { botId, symbol, dayKey, tradedNotionalToday: 0, lastTradeTimeMs: null },
     update: {}
   });
 
-  const trades = await exchange.getMyTrades(symbol);
+  const startTimeMs = cursor.lastTradeTimeMs ? Number(cursor.lastTradeTimeMs) : undefined;
+  const trades = await exchange.getMyTrades(symbol, { startTimeMs, limit: 200 });
   const dayTrades = trades.filter((t) => dayKeyUtc(t.timestamp) === dayKey);
 
   if (dayTrades.length === 0) {
-    return { tradedNotionalToday: cursor.tradedNotionalToday, lastTradeId: cursor.lastTradeId ?? undefined, dayKey };
+    return { tradedNotionalToday: cursor.tradedNotionalToday };
   }
 
   const orderIds = Array.from(
@@ -39,11 +40,15 @@ export async function syncFills(params: {
   const orderIdToClient = new Map(orderMaps.map((m) => [m.orderId, m.clientOrderId]));
 
   let addedNotional = 0;
-  let newest: Trade | null = null;
+  let maxTs = startTimeMs ?? 0;
 
   for (const t of dayTrades) {
     const cid = t.clientOrderId || (t.orderId ? orderIdToClient.get(t.orderId) : undefined);
     if (!cid || !cid.startsWith("vol")) continue;
+
+    if (Number.isFinite(t.timestamp) && t.timestamp > maxTs) {
+      maxTs = t.timestamp;
+    }
 
     try {
       await prisma.botFillSeen.create({
@@ -53,27 +58,24 @@ export async function syncFills(params: {
       continue;
     }
 
-    const notional = Number.isFinite(t.quoteQty as number)
-      ? (t.quoteQty as number)
-      : t.price * t.qty;
+    const notional = Number(t.notional) || (t.price * t.qty);
     if (Number.isFinite(notional)) {
       addedNotional += notional;
     }
 
-    if (!newest || t.timestamp > newest.timestamp) newest = t;
   }
 
-  if (addedNotional > 0 || newest) {
+  if (addedNotional > 0 || maxTs > (startTimeMs ?? 0)) {
     const nextTotal = cursor.tradedNotionalToday + addedNotional;
     await prisma.botFillCursor.update({
       where: { botId_symbol_dayKey: { botId, symbol, dayKey } },
       data: {
         tradedNotionalToday: nextTotal,
-        lastTradeId: newest?.id ?? cursor.lastTradeId
+        lastTradeTimeMs: maxTs > 0 ? BigInt(maxTs) : cursor.lastTradeTimeMs
       }
     });
-    return { tradedNotionalToday: nextTotal, lastTradeId: newest?.id, dayKey };
+    return { tradedNotionalToday: nextTotal };
   }
 
-  return { tradedNotionalToday: cursor.tradedNotionalToday, lastTradeId: cursor.lastTradeId ?? undefined, dayKey };
+  return { tradedNotionalToday: cursor.tradedNotionalToday };
 }

@@ -42,7 +42,7 @@ export class VolumeScheduler {
 
     // avoid spamming while a previous volume order is likely still open
     if (state.pendingClientOrderId) {
-      const m = state.pendingClientOrderId.match(/vol-(\d+)/);
+      const m = state.pendingClientOrderId.match(/^vol(\d+)/);
       if (m) {
         const ts = Number(m[1]);
         if (Number.isFinite(ts) && now - ts < 60_000) return null;

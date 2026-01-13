@@ -1,0 +1,22 @@
+Sinnvolle nächste Schritte (wenn du wieder weitermachen willst)
+
+Du kannst später sehr kontrolliert in eine dieser Richtungen gehen:
+
+A) Zweite CEX anbinden (Proof of Process)
+	•	z. B. MEXC / Gate / KuCoin
+	•	nutzt direkt Playbook + Checklist
+	•	zeigt, dass dein System wirklich skalierbar ist
+
+B) Master / Slave Preis + Deviation Risk
+	•	Voraussetzung für Multi-CEX MM
+	•	macht dein Tool deutlich professioneller
+
+C) Hardening / Production
+	•	Rate-Limit Backoff zentralisieren
+	•	Runner Watchdog
+	•	Auto-Pause bei wiederholten Exchange Errors
+
+D) SaaS Vorbereitung
+	•	Billing-Gate (nur Abo aktiv → Runner erlaubt)
+	•	Per-Workspace Limits
+	•	VPS-Heartbeat / License Check

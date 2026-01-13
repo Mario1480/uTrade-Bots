@@ -1,5 +1,5 @@
 import crypto from "node:crypto";
-import type { Balance, MidPrice, Order, Quote, Trade } from "@mm/core";
+import type { Balance, MidPrice, Order, Quote, MyTrade } from "@mm/core";
 import { nowMs } from "@mm/core";
 import { normalizeSymbol } from "./bitmart.mapper.js";
 import { checkMins, normalizePrice, normalizeQty, type SymbolMeta } from "./bitmart.meta.js";
@@ -369,77 +369,48 @@ export class BitmartRestClient {
     }));
   }
 
-  async getMyTrades(symbol: string, since?: string | number): Promise<Trade[]> {
+  async getMyTrades(
+    symbol: string,
+    params?: { startTimeMs?: number; limit?: number }
+  ): Promise<MyTrade[]> {
     const s = normalizeSymbol(symbol);
-    const startTime =
-      typeof since === "number" && Number.isFinite(since) ? Math.floor(since) : undefined;
-    const attempts = [
-      {
-        kind: "POST" as const,
-        path: "/spot/v4/query/user-trades",
-        body: { symbol: s, limit: 50, start_time: startTime }
-      },
-      {
-        kind: "GET" as const,
-        path: "/spot/v1/trades",
-        params: { symbol: s, limit: 50, start_time: startTime }
-      }
-    ];
+    const limit = Math.min(Math.max(params?.limit ?? 200, 1), 200);
+    const body: any = {
+      symbol: s,
+      orderMode: "spot",
+      limit,
+      recvWindow: 5000,
+      endTime: Date.now() + 1000
+    };
+    if (params?.startTimeMs) body.startTime = params.startTimeMs;
 
-    let lastErr: unknown = null;
+    const json: any = await this.request("POST", "/spot/v4/query/trades", body, "SIGNED");
+    const list: any[] = Array.isArray(json?.data) ? json.data : [];
 
-    for (const attempt of attempts) {
-      try {
-        const json: any =
-          attempt.kind === "POST"
-            ? await this.request("POST", attempt.path, attempt.body, "SIGNED")
-            : await this.signedGet(attempt.path, attempt.params);
-
-        const list: any[] =
-          json?.data?.trades ??
-          json?.data?.rows ??
-          json?.data?.records ??
-          json?.data ??
-          [];
-
-        if (!Array.isArray(list)) return [];
-
-        return list
-          .map((t) => {
-            const id = String(t.trade_id ?? t.tradeId ?? t.id ?? "");
-            if (!id) return null;
-            const orderId = t.order_id ?? t.orderId ?? t.order_id;
-            const clientOrderId = t.client_order_id ?? t.clientOrderId ?? t.clientOrderID ?? undefined;
-            const side = (t.side ?? t.order_side ?? "").toLowerCase();
-            const price = Number(t.price ?? t.order_price ?? t.fill_price);
-            const qty = Number(t.size ?? t.qty ?? t.amount ?? t.fill_size);
-            const quoteQty = Number(t.notional ?? t.quote_qty ?? t.quoteQty ?? t.filled_notional);
-            const ts = Number(t.create_time ?? t.createTime ?? t.timestamp ?? t.time ?? t.ts);
-            return {
-              id,
-              orderId: orderId ? String(orderId) : undefined,
-              clientOrderId: clientOrderId ? String(clientOrderId) : undefined,
-              side: side === "buy" ? "buy" : "sell",
-              price,
-              qty,
-              quoteQty: Number.isFinite(quoteQty) ? quoteQty : undefined,
-              timestamp: Number.isFinite(ts) ? ts : Date.now()
-            } as Trade;
-          })
-          .filter(Boolean) as Trade[];
-      } catch (e) {
-        lastErr = e;
-        if (String(e).includes("404")) {
-          continue;
-        }
-        throw e;
-      }
-    }
-
-    if (lastErr) {
-      return [];
-    }
-
-    return [];
+    return list
+      .map((t) => {
+        const id = String(t.tradeId ?? t.trade_id ?? t.id ?? "");
+        if (!id) return null;
+        const orderId = t.orderId ?? t.order_id ?? undefined;
+        const clientOrderId = t.clientOrderId ?? t.client_order_id ?? undefined;
+        const side = String(t.side ?? "").toLowerCase() === "buy" ? "buy" : "sell";
+        const price = Number(t.price);
+        const qty = Number(t.size ?? t.qty ?? t.amount ?? 0);
+        const notional = Number(t.notional ?? 0);
+        const ts = Number(t.createTime ?? t.create_time ?? t.updateTime ?? Date.now());
+        if (!Number.isFinite(price) || !Number.isFinite(qty)) return null;
+        const total = Number.isFinite(notional) && notional > 0 ? notional : price * qty;
+        return {
+          id,
+          orderId: orderId ? String(orderId) : undefined,
+          clientOrderId: clientOrderId ? String(clientOrderId) : undefined,
+          side,
+          price,
+          qty,
+          notional: total,
+          timestamp: Number.isFinite(ts) ? ts : Date.now()
+        } as MyTrade;
+      })
+      .filter(Boolean) as MyTrade[];
   }
 }

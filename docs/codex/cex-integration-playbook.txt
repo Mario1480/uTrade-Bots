@@ -1,0 +1,92 @@
+ROLE: You are Codex working in this repository. Implement a new CEX adapter that conforms to the existing architecture (exchange interface, runner, api, web). Do not invent new patterns; follow existing code style.
+
+GOAL:
+Add a new CEX integration with minimal disruption. The adapter must support:
+- public: getMid / getOrderbook (optional) / symbol meta (tickSize, stepSize, minQty, minNotional)
+- private: getBalances, getOpenOrders, placeOrder (limit + market if supported), cancelOrder, cancelAll
+- fills/trades: getMyTrades for fill-based volume counter
+- clientOrderId preservation (critical for mm-/vol- prefixes)
+
+CONSTRAINTS:
+- Keep existing interfaces stable. If interface must be extended, implement for all existing exchanges.
+- All “public” endpoints MUST NOT send API key headers (avoid 403 like Bitmart X-BM-KEY forbidden).
+- Private endpoints must be properly authenticated (SIGNED if required).
+- Use clientOrderId prefixes:
+  - Market Making orders: "mm-<...>"
+  - Volume orders: "vol<timestamp>" (note: no hyphen, must match /^vol(\d+)/)
+- Precision normalization must be applied before submitting orders:
+  - normalizePrice(price, tickSize)
+  - normalizeQty(qty, stepSize, minQty)
+  - enforce minNotional (price*qty)
+- Implement rate-limit/backoff in the adapter (simple retry on 429/5xx).
+- Never log secrets.
+
+DELIVERABLES:
+1) New adapter files:
+   - packages/exchange/src/<cex>/<cex>.client.ts
+   - packages/exchange/src/<cex>/index.ts (exports)
+2) Register adapter in factory/registry:
+   - packages/exchange/src/index.ts (or wherever exchange registry exists)
+3) API:
+   - /exchanges/<cex>/symbols (public symbols list for bot creation)
+   - verify endpoint should work if present (optional)
+4) Runner:
+   - must be able to create Exchange instance for the new cex
+   - getMyTrades must work (used by fill counter)
+5) Tests / smoke checks:
+   - minimal unit test for signing (if possible)
+   - local smoke: create bot, start runner, see runtime mid/balances/openOrders
+
+STEP-BY-STEP IMPLEMENTATION PLAN:
+
+A) Discover existing interfaces
+- Locate exchange interface types in packages/exchange (ExchangePublic/ExchangePrivate).
+- Identify required methods (balances, open orders, place/cancel, trades).
+- Identify normalization helpers and reuse them.
+
+B) Implement REST client core
+- Create <cex>.client.ts with:
+  - baseUrl
+  - request(method, path, body, authMode)
+  - auth modes: NONE (public), KEYED (rare), SIGNED (typical)
+  - HMAC signing according to official docs (timestamp, recvWindow if required)
+- Add robust error parsing; throw useful errors including HTTP status + exchange error codes.
+
+C) Implement symbol meta
+- Implement getSymbolMeta(symbol) and listSymbols():
+  - tickSize, stepSize, minQty, minNotional, pricePrecision/qtyPrecision
+- Ensure this call is PUBLIC (no auth headers).
+
+D) Implement balances and open orders
+- getBalances(): return { freeUsdt, freeBase } (or map multiple assets)
+- getOpenOrders(symbol): must return clientOrderId and side/price/qty.
+
+E) Implement order placement/cancel
+- placeOrder:
+  - supports LIMIT post-only for MM and Volume
+  - supports MARKET only if used and supported
+  - returns { orderId, clientOrderId }
+- cancelOrder(orderId or clientOrderId): prefer orderId
+- cancelAll(symbol): cancel all open orders on that symbol
+
+F) Implement getMyTrades (fills)
+- Must return tradeId, orderId, clientOrderId if available, price, qty, notional, timestamp (ms).
+- Prefer time-based pagination (startTime/endTime) if available.
+
+G) Wire into registry + API symbols endpoint
+- Add to exchange factory, ensure config loader supports new CEX keys in DB/env.
+- Add /exchanges/<cex>/symbols route returning list of symbol strings + base/quote.
+
+H) Runner/Strategy integration checks
+- Ensure the new exchange returns mid price for runtime.
+- Ensure clientOrderId is preserved.
+- Ensure precision normalization works (no order rejects due to step size).
+
+ACCEPTANCE CHECKS:
+1) Create bot in UI with exchange=<cex>, symbol=<pair>
+2) Start runner
+3) Runtime shows mid/bid/ask and balances
+4) MM places mm- orders, openOrdersMm increments
+5) Volume places vol... orders, openOrdersVol increments
+6) Fill counter increases only on real trades (getMyTrades works)
+7) No secrets in logs

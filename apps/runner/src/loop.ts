@@ -10,7 +10,7 @@ import { inventoryRatio } from "./inventory.js";
 import { log } from "./logger.js";
 import { loadBotAndConfigs, updateBotFlags, writeAlert, writeRuntime, upsertOrderMap } from "./db.js";
 import { alert } from "./alerts.js";
-import { syncFills } from "./fills.js";
+import { syncVolumeFills } from "./fills.js";
 
 function normalizeAsset(a: string): string {
   return a.toUpperCase().split("-")[0];
@@ -228,11 +228,7 @@ export async function runLoop(params: {
       if (t0 - lastFillSync > fillsEveryMs) {
         lastFillSync = t0;
         try {
-          const fillRes = await syncFills({ botId, symbol, exchange });
-          if (volState.dayKey !== fillRes.dayKey) {
-            volState.dayKey = fillRes.dayKey;
-            volState.dailyAlertSent = false;
-          }
+          const fillRes = await syncVolumeFills({ botId, symbol, exchange });
           volState.tradedNotional = fillRes.tradedNotionalToday;
         } catch (e) {
           log.warn({ err: String(e) }, "fills sync failed");

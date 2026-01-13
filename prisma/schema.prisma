@@ -129,7 +129,7 @@ model BotFillCursor {
   symbol              String
   dayKey              String
   tradedNotionalToday Float    @default(0)
-  lastTradeId         String?
+  lastTradeTimeMs     BigInt?
   updatedAt           DateTime @updatedAt
 
   @@unique([botId, symbol, dayKey])
@@ -144,6 +144,7 @@ model BotFillSeen {
   createdAt DateTime @default(now())
 
   @@unique([botId, symbol, tradeId])
+  @@index([botId, symbol])
 }
 
 model BotOrderMap {

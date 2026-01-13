@@ -64,6 +64,17 @@ export interface Trade {
   timestamp: number; // ms
 }
 
+export interface MyTrade {
+  id: string;
+  orderId?: string;
+  clientOrderId?: string;
+  side: Side;
+  price: number;
+  qty: number;
+  notional: number;
+  timestamp: number; // ms
+}
+
 export interface Balance {
   asset: string;
   free: number;
