@@ -163,6 +163,7 @@ export class BitmartRestClient {
       data.best_bid ??
         data.bestBid ??
         data.bid ??
+        data.bid_px ??
         data.bid_price ??
         data.bidPrice ??
         0
@@ -171,6 +172,7 @@ export class BitmartRestClient {
       data.best_ask ??
         data.bestAsk ??
         data.ask ??
+        data.ask_px ??
         data.ask_price ??
         data.askPrice ??
         0
