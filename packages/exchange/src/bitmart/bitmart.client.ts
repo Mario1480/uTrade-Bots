@@ -365,7 +365,7 @@ export class BitmartRestClient {
       price: Number(x.price),
       qty: Number(x.size ?? x.qty ?? x.amount ?? 0),
       status: "open",
-      clientOrderId: x.clientOrderId
+      clientOrderId: x.clientOrderId ?? x.client_order_id
     }));
   }
 
