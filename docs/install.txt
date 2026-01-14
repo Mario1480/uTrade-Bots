@@ -1,0 +1,235 @@
+Klar — hier ist eine saubere, genaue Installationsanleitung (VPS + Caddy + Docker + HTTPS + ENV), die du direkt als docs/INSTALL_VPS_UBUNTU22_CADDY.md in GitHub ablegen kannst.
+
+⸻
+
+Installation (Ubuntu 22.04 + Docker + Caddy + HTTPS)
+
+Diese Anleitung beschreibt die Installation des Market-Maker Projekts auf einem Ubuntu 22.04 VPS mit Caddy als Reverse Proxy und HTTPS (Let’s Encrypt).
+
+Voraussetzungen
+	•	Ubuntu 22.04 LTS VPS
+	•	Root oder sudo Zugriff
+	•	Domain/Subdomains zeigen auf den VPS:
+	•	test.uliquid.vip → VPS IP
+	•	api.test.uliquid.vip → VPS IP
+	•	Ports offen:
+	•	80/tcp
+	•	443/tcp
+	•	optional 22/tcp (SSH)
+
+⸻
+
+1) System vorbereiten
+
+sudo apt update && sudo apt upgrade -y
+sudo apt install -y curl ca-certificates gnupg unzip git
+
+Firewall (empfohlen):
+
+sudo ufw allow OpenSSH
+sudo ufw allow 80
+sudo ufw allow 443
+sudo ufw --force enable
+sudo ufw status
+
+
+⸻
+
+2) Docker + Docker Compose installieren
+
+curl -fsSL https://get.docker.com | sudo sh
+sudo usermod -aG docker $USER
+
+Neue Shell öffnen (oder logout/login), dann prüfen:
+
+docker version
+docker compose version
+
+
+⸻
+
+3) Projekt nach /opt/market-maker deployen
+
+sudo mkdir -p /opt/market-maker
+sudo chown -R $USER:$USER /opt/market-maker
+cd /opt/market-maker
+
+Repo klonen (Beispiel):
+
+git clone <REPO_URL> .
+
+
+⸻
+
+4) Caddy installieren & HTTPS aktivieren
+
+Hinweis: Diese Anleitung nutzt Caddy via Snap (wie im aktuellen Setup).
+
+sudo snap install caddy
+
+Caddy Service aktivieren:
+
+sudo snap start --enable caddy.server
+snap services | grep -i caddy
+
+Caddyfile erstellen:
+
+sudo nano /var/snap/caddy/common/Caddyfile
+
+Inhalt:
+
+test.uliquid.vip {
+  reverse_proxy 127.0.0.1:3000
+}
+
+api.test.uliquid.vip {
+  reverse_proxy 127.0.0.1:8080
+}
+
+Wichtig: Snap-Caddy nutzt intern caddy.json. Wir importieren die Caddyfile:
+
+sudo /snap/bin/caddy validate --config /var/snap/caddy/common/Caddyfile
+sudo /snap/bin/caddy adapt --config /var/snap/caddy/common/Caddyfile --adapter caddyfile --pretty > /tmp/caddy.json
+sudo cp /tmp/caddy.json /var/snap/caddy/common/caddy.json
+sudo chmod 644 /var/snap/caddy/common/caddy.json
+sudo snap restart caddy.server
+
+HTTPS testen:
+
+curl -I https://test.uliquid.vip
+curl -i https://api.test.uliquid.vip/health
+
+Beide sollten 200 liefern.
+
+Logs (wenn Zertifikat nicht klappt):
+
+sudo snap logs caddy.server -n 120
+
+
+⸻
+
+5) Environment (.env) erstellen
+
+Im Projektroot:
+
+cd /opt/market-maker
+nano .env
+
+Beispiel .env (Production/HTTPS):
+
+NODE_ENV=development
+
+# ===== Database =====
+DATABASE_URL=postgresql://mm:mm@postgres:5432/marketmaker
+
+# ===== Admin Seed =====
+ADMIN_EMAIL=admin@uliquid.vip
+ADMIN_PASSWORD=CHANGE_ME
+ADMIN_WORKSPACE_NAME=Main
+
+# ===== URLs =====
+# Browser → API
+NEXT_PUBLIC_API_URL=https://api.test.uliquid.vip
+# Container → API (intern)
+API_BASE_URL=http://api:8080
+
+# ===== Cookies / Auth =====
+COOKIE_DOMAIN=.uliquid.vip
+COOKIE_SECURE=true
+
+# ===== CORS =====
+CORS_ORIGINS=https://test.uliquid.vip,http://localhost:3000
+
+# ===== Exchange =====
+BITMART_BASE_URL=https://api-cloud.bitmart.com
+
+
+⸻
+
+6) docker-compose.dev.yml prüfen (wichtig!)
+
+Wichtig: In docker-compose.dev.yml darf kein hardcoded NEXT_PUBLIC_API_URL=http://localhost:8080 stehen, sonst wird .env überschrieben.
+
+Korrekt ist z.B.:
+
+web:
+  env_file:
+    - .env
+  environment:
+    NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL}
+    API_BASE_URL: ${API_BASE_URL}
+
+
+⸻
+
+7) Container starten
+
+cd /opt/market-maker
+docker compose -f docker-compose.dev.yml up -d --build
+
+Status prüfen:
+
+docker compose -f docker-compose.dev.yml ps
+
+Logs:
+
+docker compose -f docker-compose.dev.yml logs -f --tail=200 api
+docker compose -f docker-compose.dev.yml logs -f --tail=200 web
+docker compose -f docker-compose.dev.yml logs -f --tail=200 runner
+
+
+⸻
+
+8) Zugriff testen
+
+Web:
+	•	https://test.uliquid.vip
+
+API Health:
+	•	https://api.test.uliquid.vip/health
+
+Login:
+	•	Admin User wird beim ersten Start automatisch angelegt (Seed), wenn keine Users existieren
+	•	Login mit ADMIN_EMAIL / ADMIN_PASSWORD
+
+⸻
+
+9) Häufige Fehler & Fixes
+
+A) Login schlägt fehl / NetworkError
+
+Ursache: falsche API URL im Browser (z.B. localhost:8080).
+
+Fix:
+	•	NEXT_PUBLIC_API_URL in .env korrekt setzen
+	•	sicherstellen, dass docker-compose.dev.yml es nicht überschreibt
+	•	Web neu bauen:
+
+docker compose -f docker-compose.dev.yml down
+docker compose -f docker-compose.dev.yml build --no-cache web
+docker compose -f docker-compose.dev.yml up -d
+
+B) Runner crasht mit Missing env: BITMART_BASE_URL
+
+Fix: .env ergänzen:
+
+BITMART_BASE_URL=https://api-cloud.bitmart.com
+
+Dann:
+
+docker compose -f docker-compose.dev.yml up -d runner
+
+C) HTTPS “Connection refused”
+
+Fix:
+	•	prüfen ob Caddy läuft: snap services | grep caddy
+	•	Caddy Logs: sudo snap logs caddy.server -n 120
+	•	prüfen ob Ports lauschen: sudo ss -ltnp | egrep ':80|:443'
+
+⸻
+
+10) Updates deployen
+
+cd /opt/market-maker
+git pull
+docker compose -f docker-compose.dev.yml up -d --build
