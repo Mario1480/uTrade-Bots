@@ -43,7 +43,13 @@ export async function runLoop(params: {
   const priceSource = new SlavePriceSource(exchange);
   let volSched = new VolumeScheduler(vol);
   let riskEngine = new RiskEngine(risk);
-  const orderMgr = new OrderManager({ priceEpsPct: 0.002, qtyEpsPct: 0.02 });
+  const priceEpsPct = Number(process.env.MM_PRICE_EPS_PCT || "0.002");
+  const qtyEpsPct = Number(process.env.MM_QTY_EPS_PCT || "0.02");
+  const minRepriceMs = Number(process.env.MM_REPRICE_MS || "5000");
+  const minRepricePct = Number(process.env.MM_REPRICE_PCT || "0.003");
+  const orderMgr = new OrderManager({ priceEpsPct, qtyEpsPct });
+  let lastRepriceAt = 0;
+  let lastRepriceMid = 0;
 
   const volState = { dayKey: "init", tradedNotional: 0, lastActionMs: 0, dailyAlertSent: false };
   const { base } = splitSymbol(symbol);
@@ -395,7 +401,12 @@ export async function runLoop(params: {
       }
 
       // MM sync (only manage mm-* orders so we don't cancel volume orders)
-      const { cancel, place } = orderMgr.diff(desiredFiltered, openMm);
+      const allowReprice =
+        openMm.length === 0 ||
+        t0 - lastRepriceAt >= minRepriceMs ||
+        (lastRepriceMid > 0 && Math.abs(mid.mid - lastRepriceMid) / lastRepriceMid >= minRepricePct);
+
+      const { cancel, place } = allowReprice ? orderMgr.diff(desiredFiltered, openMm) : { cancel: [], place: [] };
       const maxOpen = risk.maxOpenOrders ?? 0;
       const projectedOpen = maxOpen > 0
         ? Math.max(0, open.length - cancel.length) + place.length
@@ -407,7 +418,7 @@ export async function runLoop(params: {
         } catch {}
       }
 
-      if (cancel.length === 0) {
+      if (allowReprice && cancel.length === 0) {
         for (const q of place) {
           try {
             await exchange.placeOrder(q);
@@ -415,8 +426,14 @@ export async function runLoop(params: {
             log.warn({ err: String(e), q }, "place failed");
           }
         }
-      } else {
+      } else if (cancel.length > 0) {
         log.debug({ cancel: cancel.length, place: place.length }, "skip place: cancel pending");
+      } else if (!allowReprice) {
+        log.debug({ minRepriceMs, minRepricePct }, "skip place: reprice cooldown");
+      }
+      if (allowReprice && (cancel.length > 0 || place.length > 0)) {
+        lastRepriceAt = t0;
+        lastRepriceMid = mid.mid;
       }
 
 
