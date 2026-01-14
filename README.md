@@ -1,203 +1,253 @@
-# Crypto Market Making & Volume Bot (TypeScript)
+Perfekt 👍
+Hier ist eine README-Version mit klarer Struktur, inkl. Quick Start, Dev vs Production, Architektur, Troubleshooting – so, dass du sie 1:1 ins GitHub-README.md übernehmen kannst.
 
-Dieses Projekt ist eine **webbasierte Market-Making- und Volume-Trading-Engine** für Kryptowährungen.
-Aktuell ist es für den **Eigenbetrieb (1 User / 1 VPS)** ausgelegt und später ohne Refactoring
-als **SaaS mit separatem VPS pro User** nutzbar.
+⸻
 
-## Ziel
-- Liquidität für Low- & Mid-Cap Token bereitstellen
-- Kontrolliertes tägliches Handelsvolumen erzeugen
-- Risiko strikt begrenzen
-- Vollständig webbasiert konfigurierbar
-- Stabiler Dauerbetrieb auf einem VPS
+uLiquid Market-Maker
 
----
+Webbasierter Crypto Market-Maker mit Market-Making-Strategien, Volume-Bot, Multi-CEX-Support und SaaS-Vorbereitung.
 
-## Features (MVP)
+⸻
 
-### Market Making
-- Grid-basiertes Market Making (Spot)
-- Einstellbare Anzahl von Orders ober- und unterhalb des Preises
-- Budget pro Seite:
-  - Quote (USDT) für Buy-Seite
-  - Base Token für Sell-Seite
-  - Min/Max pro Order für Buy und Sell Seite
-- Spread in %
-  - Min spread %
-  - Max spread %
-- Order-Verteilung:
-  - `LINEAR`
-  - `VALLEY` (mehr Volumen nahe Mid)
-  - `RANDOM`
-- Inventory-Skew (Trend-Schutz)
-- Post-Only Orders
+Features
+	•	Market Making (Bids/Asks, Spread, Skew, Jitter)
+	•	Volume Bot (fill-basiert, echte Trades)
+	•	Multi-CEX Architektur (Bitmart integriert)
+	•	Web UI (Next.js)
+	•	API (Node.js + Prisma + PostgreSQL)
+	•	Runner Service (Trading Loop)
+	•	Docker-basiert (lokal & VPS)
+	•	HTTPS via Caddy
+	•	SaaS-ready (User, Login, Lizenz vorbereitbar)
 
-### Volume Bot
-- Ziel-Notional pro Tag (USDT)
-- Zufällige Trade-Events (nicht deterministisch)
-- Zeitfenster für Aktivität
-- Maker-first Execution (optional Mixed)
-- Min/Max Tradegröße
-- Hard Limits & Kill-Switches
+⸻
 
-### Risk & Safety
-- Mindest-USDT-Saldo
-- Max. Preisabweichung
-- Max. offene Orders
-- Daily Loss Limit
-- API-Error & Reject Schutz
-- Stale Market Data Stop
-- Cancel-All & Pause-Mechanismus
+Architektur Überblick
 
-### Web UI
-- Vollständige Bot-Konfiguration über Web
-- Start / Stop / Pause
-- Live-Ansicht:
-  - Open Orders
-  - Fills
-  - Inventory
-  - Mid Price
-  - Risk-Status
-- Event- & Error-Logs
+┌─────────────┐      HTTPS       ┌─────────────┐
+│   Browser   │ ───────────────▶ │   Caddy     │
+└─────────────┘                  └──────┬──────┘
+                                         │
+                ┌────────────────────────┼────────────────────────┐
+                │                        │                        │
+        ┌───────▼───────┐       ┌────────▼────────┐       ┌───────▼───────┐
+        │   Web (3000)  │       │   API (8080)     │       │ Runner (Bot)  │
+        │ Next.js       │       │ Express + Prisma │       │ Trading Loops │
+        └───────────────┘       └────────┬────────┘       └───────────────┘
+                                         │
+                                 ┌───────▼───────┐
+                                 │ PostgreSQL    │
+                                 └───────────────┘
 
-### Telegram benachrichtigung
-  - Ereigniss Meldungen über Telegram Bot (API Key von Botfather)
 
----
+⸻
 
-## Aktueller Scope
+Quick Start (VPS, empfohlen)
 
-| Bereich        | Status |
-|----------------|--------|
-| Exchange       | Bitmart |
-| Markt          | Spot |
-| Symbol         | USHARK/USDT |
-| Tokens         | 1 (erweiterbar) |
-| Master/Slave   | Slave-only (vorbereitet für später) |
-| Betrieb        | Single VPS |
+Voraussetzungen
+	•	Ubuntu 22.04 LTS
+	•	Docker + Docker Compose
+	•	Domain + DNS:
+	•	test.uliquid.vip → VPS IP
+	•	api.test.uliquid.vip → VPS IP
+	•	Ports offen: 80, 443
 
----
+⸻
 
-## Architektur
+1️⃣ Docker installieren
 
-apps/
-├─ web/        # Web UI (Next.js)
-├─ api/        # REST API
-└─ runner/     # Bot Runner (MM + Volume + Risk)
+curl -fsSL https://get.docker.com | sudo sh
+sudo usermod -aG docker $USER
 
-packages/
-├─ core/       # Shared Types & Utils
-├─ exchange/   # Exchange Interfaces & Bitmart Connector
-├─ strategy/   # Market Making & Volume Strategien
-├─ risk/       # Risk Engine
-└─ pricing/    # Price Source Abstraction
+➡️ Neu einloggen oder neue Shell öffnen.
 
-infra/
-├─ docker/
-├─ postgres/
-└─ nginx/
+⸻
 
----
+2️⃣ Projekt deployen
 
-## Technologie-Stack
+sudo mkdir -p /opt/market-maker
+sudo chown -R $USER:$USER /opt/market-maker
+cd /opt/market-maker
+git clone <REPO_URL> .
 
-- **TypeScript**
-- **Node.js**
-- **Next.js** (Web UI)
-- **PostgreSQL**
-- **Prisma ORM**
-- **WebSockets** (Market Data & Order Updates)
-- **Docker** (Deployment)
 
----
+⸻
 
-## Bot Lifecycle
+3️⃣ Environment erstellen
 
-INIT
-↓
-SYNC_BALANCES
-↓
-START_QUOTING
-↓
-RUNNING
-↙        ↘
-PAUSED   ERROR
-↓        ↓
-RESUME   STOPPED
+nano .env
 
----
+NODE_ENV=development
 
-## Konfiguration (Webbasiert)
+# Database
+DATABASE_URL=postgresql://mm:mm@postgres:5432/marketmaker
 
-### Market Making
-- Spread (%)
-- Step (%)
-- Levels Up / Down
-- Budget Quote / Base
-- Distribution
-- Skew-Faktor
+# Admin Seed
+ADMIN_EMAIL=admin@uliquid.vip
+ADMIN_PASSWORD=CHANGE_ME
+ADMIN_WORKSPACE_NAME=Main
 
-### Volume Bot
-- Daily Notional (USDT)
-- Min / Max Tradegröße
-- Aktiv-Zeiten
-- Execution Mode
+# API URLs
+NEXT_PUBLIC_API_URL=https://api.test.uliquid.vip
+API_BASE_URL=http://api:8080
 
-### Risk
-- Mindest-USDT
-- Max Preisabweichung
-- Max offene Orders
-- Max Daily Loss
+# Cookies / Auth
+COOKIE_DOMAIN=.uliquid.vip
+COOKIE_SECURE=true
 
----
+# CORS
+CORS_ORIGINS=https://test.uliquid.vip,http://localhost:3000
 
-## Sicherheit & Verantwortung
+# Exchange
+BITMART_BASE_URL=https://api-cloud.bitmart.com
 
-⚠️ **Wichtiger Hinweis**
 
-Viele Börsen verbieten künstliches Volumen, Wash-Trading oder Self-Trading.
-Dieses Projekt ist für **Eigenbetrieb und Research** gedacht.
+⸻
 
-Der Betreiber ist selbst verantwortlich für:
-- Einhaltung der Börsen-AGB
-- Konfiguration der Risk Limits
-- Nutzung der Volume-Funktion
+4️⃣ Caddy (HTTPS) installieren
 
----
+sudo snap install caddy
+sudo snap start --enable caddy.server
 
-## Roadmap
+Caddyfile:
 
-### Phase 1 (aktuell)
-- Stabiler Market Maker + Volume Bot
-- Web UI
-- Bitmart
-- 1 Token
+sudo nano /var/snap/caddy/common/Caddyfile
 
-### Phase 2
-- Zweiter Token
-- Master/Slave Price Referenz
-- Verbesserte Inventory-Steuerung
-- Alerts (Telegram / Discord)
+test.uliquid.vip {
+  reverse_proxy 127.0.0.1:3000
+}
 
-### Phase 3 (optional SaaS)
-- VPS-Provisioning
-- Lizenz-/Abo-Check
-- User-Isolation pro VPS
-- Monitoring & Billing
+api.test.uliquid.vip {
+  reverse_proxy 127.0.0.1:8080
+}
 
----
+Aktivieren:
 
-## Entwicklung starten
+sudo caddy adapt --config /var/snap/caddy/common/Caddyfile \
+  --adapter caddyfile \
+  --pretty > /var/snap/caddy/common/caddy.json
 
-```bash
-# Abhängigkeiten installieren
-npm install
+sudo snap restart caddy.server
 
-# Datenbank starten
-docker compose up -d postgres
+Test:
 
-# Prisma
-npx prisma migrate dev
+curl -I https://test.uliquid.vip
+curl -i https://api.test.uliquid.vip/health
 
-# Development
-npm run dev
+
+⸻
+
+5️⃣ Container starten
+
+docker compose -f docker-compose.dev.yml up -d --build
+
+Status:
+
+docker compose -f docker-compose.dev.yml ps
+
+
+⸻
+
+Zugriff
+	•	Web UI
+👉 https://test.uliquid.vip
+	•	API Health
+👉 https://api.test.uliquid.vip/health
+	•	Login
+	•	User wird beim ersten Start automatisch geseedet
+	•	Login mit ADMIN_EMAIL / ADMIN_PASSWORD
+
+⸻
+
+Dev vs Production
+
+Development (aktuell)
+	•	docker-compose.dev.yml
+	•	next dev
+	•	Hot Reload
+	•	Runner startet Loops live
+
+Production (später)
+	•	docker-compose.yml
+	•	next build && next start
+	•	Runner als stabiler Service
+	•	Lizenz-Check aktiv
+
+⸻
+
+Wichtige Hinweise
+
+⚠️ NEXT_PUBLIC_API_URL
+	•	Darf nicht localhost sein, wenn über HTTPS/Domain gearbeitet wird
+	•	Browser → https://api.test.uliquid.vip
+	•	Container intern → http://api:8080
+
+⸻
+
+Troubleshooting
+
+❌ Login → NetworkError
+
+Ursache:
+	•	CORS oder falsche API URL
+
+Check:
+
+curl -i https://api.test.uliquid.vip/health
+
+Fix:
+	•	.env prüfen
+	•	docker-compose.dev.yml darf .env nicht überschreiben
+	•	Web neu bauen:
+
+docker compose -f docker-compose.dev.yml down
+docker compose -f docker-compose.dev.yml build --no-cache web
+docker compose -f docker-compose.dev.yml up -d
+
+
+⸻
+
+❌ Runner startet nicht
+
+Fehler:
+
+Missing env: BITMART_BASE_URL
+
+Fix:
+
+BITMART_BASE_URL=https://api-cloud.bitmart.com
+
+Dann:
+
+docker compose -f docker-compose.dev.yml up -d runner
+
+
+⸻
+
+❌ HTTPS geht nicht
+
+snap services | grep caddy
+sudo snap logs caddy.server -n 100
+sudo ss -ltnp | egrep ':80|:443'
+
+
+⸻
+
+Nächste Schritte (Roadmap)
+	•	✅ Login / User / Workspace
+	•	🔜 Lizenzserver (Key + Heartbeat)
+	•	🔜 Multi-Bot pro User
+	•	🔜 Multi-CEX (Slave-Exchanges)
+	•	🔜 Production Compose
+	•	🔜 Monitoring / Metrics
+	•	🔜 SaaS Billing Integration
+
+⸻
+
+Wenn du willst, mache ich dir als Nächstes:
+	•	🔑 LICENSE.md + Lizenz-Architektur
+	•	🧩 SaaS Deployment Flow (User → VPS → Key)
+	•	📦 Production docker-compose.yml
+	•	🧪 Smoke-Test Checklist nach Deploy
+
+Sag einfach 👍
