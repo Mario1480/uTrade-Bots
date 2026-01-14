@@ -1,8 +1,3 @@
-Perfekt 👍
-Hier ist eine README-Version mit klarer Struktur, inkl. Quick Start, Dev vs Production, Architektur, Troubleshooting – so, dass du sie 1:1 ins GitHub-README.md übernehmen kannst.
-
-⸻
-
 uLiquid Market-Maker
 
 Webbasierter Crypto Market-Maker mit Market-Making-Strategien, Volume-Bot, Multi-CEX-Support und SaaS-Vorbereitung.
