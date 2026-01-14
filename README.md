@@ -1,69 +1,73 @@
-Perfekt 👍
-Hier ist eine README-Version mit klarer Struktur, inkl. Quick Start, Dev vs Production, Architektur, Troubleshooting – so, dass du sie 1:1 ins GitHub-README.md übernehmen kannst.
-
-⸻
-
-uLiquid Market-Maker
+# uLiquid Market-Maker
 
 Webbasierter Crypto Market-Maker mit Market-Making-Strategien, Volume-Bot, Multi-CEX-Support und SaaS-Vorbereitung.
 
-⸻
+---
 
-Features
-	•	Market Making (Bids/Asks, Spread, Skew, Jitter)
-	•	Volume Bot (fill-basiert, echte Trades)
-	•	Multi-CEX Architektur (Bitmart integriert)
-	•	Web UI (Next.js)
-	•	API (Node.js + Prisma + PostgreSQL)
-	•	Runner Service (Trading Loop)
-	•	Docker-basiert (lokal & VPS)
-	•	HTTPS via Caddy
-	•	SaaS-ready (User, Login, Lizenz vorbereitbar)
+## Features
 
-⸻
+- Market Making (Bids/Asks, Spread, Levels)
+- Inventory Skew (Skew Factor, Max Skew)
+- Jitter (Preis-Randomisierung)
+- Volume Bot (fill-basiert, echte Trades)
+- Multi-CEX Architektur (Bitmart integriert)
+- Web UI (Next.js)
+- API (Node.js + Express + Prisma)
+- Runner Service (Trading Loops)
+- PostgreSQL
+- Docker / Docker Compose
+- HTTPS via Caddy
+- User / Login / Workspace
+- SaaS-ready Architektur
 
-Architektur Überblick
+---
+
+## Architektur Überblick
 
 ┌─────────────┐      HTTPS       ┌─────────────┐
 │   Browser   │ ───────────────▶ │   Caddy     │
 └─────────────┘                  └──────┬──────┘
-                                         │
-                ┌────────────────────────┼────────────────────────┐
-                │                        │                        │
-        ┌───────▼───────┐       ┌────────▼────────┐       ┌───────▼───────┐
-        │   Web (3000)  │       │   API (8080)     │       │ Runner (Bot)  │
-        │ Next.js       │       │ Express + Prisma │       │ Trading Loops │
-        └───────────────┘       └────────┬────────┘       └───────────────┘
-                                         │
-                                 ┌───────▼───────┐
-                                 │ PostgreSQL    │
-                                 └───────────────┘
+│
+┌────────────────────────┼────────────────────────┐
+│                        │                        │
+┌───────▼───────┐       ┌────────▼────────┐       ┌───────▼───────┐
+│   Web (3000)  │       │   API (8080)     │       │ Runner (Bot)  │
+│ Next.js       │       │ Express + Prisma │       │ Trading Loops │
+└───────────────┘       └────────┬────────┘       └───────────────┘
+│
+┌───────▼───────┐
+│ PostgreSQL    │
+└───────────────┘
 
+---
 
-⸻
+## Voraussetzungen
 
-Quick Start (VPS, empfohlen)
+- Ubuntu 22.04 LTS VPS
+- Docker & Docker Compose
+- Domain + DNS:
+  - `test.example.com` → VPS IP
+  - `api.test.example.com` → VPS IP
+- Offene Ports:
+  - `80/tcp`
+  - `443/tcp`
+  - `22/tcp` (SSH)
 
-Voraussetzungen
-	•	Ubuntu 22.04 LTS
-	•	Docker + Docker Compose
-	•	Domain + DNS:
-	•	test.uliquid.vip → VPS IP
-	•	api.test.uliquid.vip → VPS IP
-	•	Ports offen: 80, 443
+---
 
-⸻
+## Installation (VPS – empfohlen)
 
-1️⃣ Docker installieren
+### 1) Docker installieren
 
+```bash
 curl -fsSL https://get.docker.com | sudo sh
 sudo usermod -aG docker $USER
 
-➡️ Neu einloggen oder neue Shell öffnen.
+➡️ Neue Shell öffnen oder neu einloggen.
 
 ⸻
 
-2️⃣ Projekt deployen
+2) Projekt deployen
 
 sudo mkdir -p /opt/market-maker
 sudo chown -R $USER:$USER /opt/market-maker
@@ -73,38 +77,40 @@ git clone <REPO_URL> .
 
 ⸻
 
-3️⃣ Environment erstellen
+3) Environment erstellen
 
 nano .env
 
 NODE_ENV=development
 
-# Database
+# ===== Database =====
 DATABASE_URL=postgresql://mm:mm@postgres:5432/marketmaker
 
-# Admin Seed
-ADMIN_EMAIL=admin@uliquid.vip
+# ===== Admin Seed =====
+ADMIN_EMAIL=admin@example.com
 ADMIN_PASSWORD=CHANGE_ME
 ADMIN_WORKSPACE_NAME=Main
 
-# API URLs
-NEXT_PUBLIC_API_URL=https://api.test.uliquid.vip
+# ===== API URLs =====
+# Browser → API (öffentlich)
+NEXT_PUBLIC_API_URL=https://api.test.example.com
+# Container intern → API
 API_BASE_URL=http://api:8080
 
-# Cookies / Auth
-COOKIE_DOMAIN=.uliquid.vip
+# ===== Cookies / Auth =====
+COOKIE_DOMAIN=.example.com
 COOKIE_SECURE=true
 
-# CORS
-CORS_ORIGINS=https://test.uliquid.vip,http://localhost:3000
+# ===== CORS =====
+CORS_ORIGINS=https://test.example.com,http://localhost:3000
 
-# Exchange
+# ===== Exchange =====
 BITMART_BASE_URL=https://api-cloud.bitmart.com
 
 
 ⸻
 
-4️⃣ Caddy (HTTPS) installieren
+4) Caddy (HTTPS) installieren
 
 sudo snap install caddy
 sudo snap start --enable caddy.server
@@ -113,17 +119,18 @@ Caddyfile:
 
 sudo nano /var/snap/caddy/common/Caddyfile
 
-test.uliquid.vip {
+test.example.com {
   reverse_proxy 127.0.0.1:3000
 }
 
-api.test.uliquid.vip {
+api.test.example.com {
   reverse_proxy 127.0.0.1:8080
 }
 
-Aktivieren:
+Caddyfile aktivieren:
 
-sudo caddy adapt --config /var/snap/caddy/common/Caddyfile \
+sudo caddy adapt \
+  --config /var/snap/caddy/common/Caddyfile \
   --adapter caddyfile \
   --pretty > /var/snap/caddy/common/caddy.json
 
@@ -131,74 +138,61 @@ sudo snap restart caddy.server
 
 Test:
 
-curl -I https://test.uliquid.vip
-curl -i https://api.test.uliquid.vip/health
+curl -I https://test.example.com
+curl -i https://api.test.example.com/health
 
 
 ⸻
 
-5️⃣ Container starten
+5) docker-compose.dev.yml prüfen (wichtig)
+
+❗ Keine hardcodierten URLs im Web-Service:
+
+environment:
+  NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL}
+  API_BASE_URL: ${API_BASE_URL}
+
+Kein http://localhost:8080 im Compose!
+
+⸻
+
+6) Container starten
 
 docker compose -f docker-compose.dev.yml up -d --build
 
-Status:
+Status prüfen:
 
 docker compose -f docker-compose.dev.yml ps
+
+Logs:
+
+docker compose -f docker-compose.dev.yml logs -f --tail=200 api
+docker compose -f docker-compose.dev.yml logs -f --tail=200 web
+docker compose -f docker-compose.dev.yml logs -f --tail=200 runner
 
 
 ⸻
 
 Zugriff
 	•	Web UI
-👉 https://test.uliquid.vip
+👉 https://test.example.com
 	•	API Health
-👉 https://api.test.uliquid.vip/health
+👉 https://api.test.example.com/health
 	•	Login
-	•	User wird beim ersten Start automatisch geseedet
+	•	Admin User wird beim ersten Start automatisch angelegt
 	•	Login mit ADMIN_EMAIL / ADMIN_PASSWORD
 
 ⸻
 
-Dev vs Production
+Häufige Fehler & Fixes
 
-Development (aktuell)
-	•	docker-compose.dev.yml
-	•	next dev
-	•	Hot Reload
-	•	Runner startet Loops live
-
-Production (später)
-	•	docker-compose.yml
-	•	next build && next start
-	•	Runner als stabiler Service
-	•	Lizenz-Check aktiv
-
-⸻
-
-Wichtige Hinweise
-
-⚠️ NEXT_PUBLIC_API_URL
-	•	Darf nicht localhost sein, wenn über HTTPS/Domain gearbeitet wird
-	•	Browser → https://api.test.uliquid.vip
-	•	Container intern → http://api:8080
-
-⸻
-
-Troubleshooting
-
-❌ Login → NetworkError
+❌ Login → NetworkError / CORS
 
 Ursache:
-	•	CORS oder falsche API URL
-
-Check:
-
-curl -i https://api.test.uliquid.vip/health
+	•	falsche NEXT_PUBLIC_API_URL
+	•	.env wird im Compose überschrieben
 
 Fix:
-	•	.env prüfen
-	•	docker-compose.dev.yml darf .env nicht überschreiben
-	•	Web neu bauen:
 
 docker compose -f docker-compose.dev.yml down
 docker compose -f docker-compose.dev.yml build --no-cache web
@@ -224,7 +218,7 @@ docker compose -f docker-compose.dev.yml up -d runner
 
 ⸻
 
-❌ HTTPS geht nicht
+❌ HTTPS funktioniert nicht
 
 snap services | grep caddy
 sudo snap logs caddy.server -n 100
@@ -233,21 +227,45 @@ sudo ss -ltnp | egrep ':80|:443'
 
 ⸻
 
-Nächste Schritte (Roadmap)
-	•	✅ Login / User / Workspace
-	•	🔜 Lizenzserver (Key + Heartbeat)
-	•	🔜 Multi-Bot pro User
-	•	🔜 Multi-CEX (Slave-Exchanges)
-	•	🔜 Production Compose
-	•	🔜 Monitoring / Metrics
-	•	🔜 SaaS Billing Integration
+Dev vs Production
+
+Development
+	•	docker-compose.dev.yml
+	•	next dev
+	•	Hot Reload
+	•	Runner im Dev-Modus
+
+Production (geplant)
+	•	docker-compose.yml
+	•	next build && next start
+	•	Lizenzprüfung aktiv
+	•	Monitoring / Alerts
 
 ⸻
 
-Wenn du willst, mache ich dir als Nächstes:
-	•	🔑 LICENSE.md + Lizenz-Architektur
-	•	🧩 SaaS Deployment Flow (User → VPS → Key)
-	•	📦 Production docker-compose.yml
-	•	🧪 Smoke-Test Checklist nach Deploy
+Roadmap
+	•	✅ Market Making
+	•	✅ Volume Bot
+	•	✅ Multi-Service Architektur
+	•	🔜 Lizenzserver
+	•	🔜 SaaS Billing
+	•	🔜 Multi-CEX (Slave Exchanges)
+	•	🔜 Production Hardening
+	•	🔜 Metrics & Monitoring
 
-Sag einfach 👍
+⸻
+
+Lizenz
+
+Private / Proprietary – noch nicht final definiert.
+
+---
+
+Wenn du möchtest, mache ich dir als Nächstes auch:
+
+- 📄 `LICENSE.md`
+- 📄 `CEDEX_INTEGRATION_CHECKLIST.md`
+- 📄 `PRODUCTION_DEPLOYMENT.md`
+- 📄 `SECURITY.md`
+
+Sag einfach welches 👍
