@@ -21,14 +21,19 @@ import {
 } from "./auth.js";
 import { seedAdmin } from "./seed-admin.js";
 
-const app = express();
-const webOrigin = process.env.WEB_ORIGIN || "http://localhost:3000";
-app.use(
-  cors({
-    origin: webOrigin,
-    credentials: true
-  })
-);
+const origins = (process.env.CORS_ORIGINS ?? "http://localhost:3000")
+  .split(",")
+  .map(s => s.trim())
+  .filter(Boolean);
+
+app.use(cors({
+  origin: (origin, cb) => {
+    if (!origin) return cb(null, true);
+    if (origins.includes(origin)) return cb(null, true);
+    return cb(new Error("CORS blocked: " + origin), false);
+  },
+  credentials: true
+}));
 app.use(express.json());
 app.use(cookieParser());
 
