@@ -21,6 +21,8 @@ import {
 } from "./auth.js";
 import { seedAdmin } from "./seed-admin.js";
 
+const app = express();
+
 const origins = (process.env.CORS_ORIGINS ?? "http://localhost:3000")
   .split(",")
   .map(s => s.trim())
@@ -30,7 +32,7 @@ app.use(cors({
   origin: (origin, cb) => {
     if (!origin) return cb(null, true);
     if (origins.includes(origin)) return cb(null, true);
-    return cb(new Error("CORS blocked: " + origin), false);
+    return cb(null, false);
   },
   credentials: true
 }));
