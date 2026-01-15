@@ -537,7 +537,7 @@ export async function runLoop(params: {
                       symbol,
                       side: "sell" as const,
                       type: "market" as const,
-                      qty: safeOrder.qty,
+                      qty: Math.min(safeOrder.qty, freeBase),
                       clientOrderId: `vol${Date.now()}t`
                     }
                   : {
@@ -545,9 +545,23 @@ export async function runLoop(params: {
                       side: "buy" as const,
                       type: "market" as const,
                       qty: safeOrder.qty,
-                      quoteQty: notional,
+                      quoteQty: Math.min(notional, freeUsdt),
                       clientOrderId: `vol${Date.now()}t`
                     };
+                if (taker.side === "sell") {
+                  const sellNotional = taker.qty * safeOrder.price;
+                  if (!Number.isFinite(taker.qty) || taker.qty <= 0 || sellNotional < vol.minTradeUsdt) {
+                    log.info({ sellNotional }, "volume skipped: insufficient base for taker");
+                    return;
+                  }
+                } else {
+                  const buyNotional = taker.quoteQty ?? 0;
+                  if (!Number.isFinite(buyNotional) || buyNotional < vol.minTradeUsdt) {
+                    log.info({ buyNotional }, "volume skipped: insufficient USDT for taker");
+                    return;
+                  }
+                  taker.qty = buyNotional / mid.mid;
+                }
                 try {
                   const placedTaker = await exchange.placeOrder(taker);
                   if (placedTaker?.id && taker.clientOrderId) {
