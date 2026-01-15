@@ -285,7 +285,7 @@ export async function runLoop(params: {
       }
 
       // Volume order TTL cleanup (cancel stale vol-* orders)
-      const VOL_TTL_MS = 90_000; // 90 seconds
+      const VOL_TTL_MS = vol.mode === "ACTIVE" ? 15_000 : 90_000; // shorter in ACTIVE
       const nowTs = Date.now();
 
       for (const o of openOther) {
@@ -439,11 +439,14 @@ export async function runLoop(params: {
 
       // Volume bot (PASSIVE-first: post-only limit near mid; MIXED may use rare market)
       if (botRow.volEnabled) {
+        const activeVol = vol.mode === "ACTIVE";
         if (maxOpen > 0 && projectedOpen >= maxOpen) {
           log.info(
             { openOrders: open.length, projectedOpen, maxOpen },
             "volume skipped: open order cap reached"
           );
+        } else if (activeVol && openVol.length > 0) {
+          log.info({ openVol: openVol.length }, "volume skipped: active order pending");
         } else {
           const volOrder = volSched.maybeCreateTrade(symbol, mid.mid, volState);
           if (volOrder) {
@@ -514,6 +517,32 @@ export async function runLoop(params: {
               }
               lastVolTradeAt = Date.now();
               log.info({ volOrder: safeOrder }, "volume trade submitted");
+
+              if (activeVol && safeOrder.type === "limit" && safeOrder.price) {
+                const taker = {
+                  symbol,
+                  side: safeOrder.side === "buy" ? "sell" : "buy",
+                  type: "limit" as const,
+                  price: safeOrder.price,
+                  qty: safeOrder.qty,
+                  postOnly: false,
+                  clientOrderId: `vol${Date.now()}t`
+                };
+                try {
+                  const placedTaker = await exchange.placeOrder(taker);
+                  if (placedTaker?.id && taker.clientOrderId) {
+                    await upsertOrderMap({
+                      botId,
+                      symbol,
+                      orderId: placedTaker.id,
+                      clientOrderId: taker.clientOrderId
+                    });
+                  }
+                  log.info({ volOrder: taker }, "volume trade submitted (taker)");
+                } catch (e) {
+                  log.warn({ err: String(e), volOrder: taker }, "volume trade failed (taker)");
+                }
+              }
             } catch (e) {
               log.warn({ err: String(e), volOrder: safeOrder }, "volume trade failed");
             }
