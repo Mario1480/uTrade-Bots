@@ -54,8 +54,6 @@ services:
     env_file:
       - .env
     environment:
-      NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL}
-      API_URL: ${API_URL}
       BITMART_BASE_URL: ${BITMART_BASE_URL:-https://api-cloud.bitmart.com}
 
     ports:
