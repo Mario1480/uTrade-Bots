@@ -86,5 +86,6 @@ export interface MidPrice {
   mid: number;
   bid?: number;
   ask?: number;
+  last?: number;
   ts: number;
 }
