@@ -470,6 +470,22 @@ export async function runLoop(params: {
                 safeOrder.qty = qty;
               }
             }
+            if (safeOrder.type === "limit" && safeOrder.postOnly && botRow.mmEnabled) {
+              const ref = Number.isFinite(mid.last) && (mid.last as number) > 0 ? (mid.last as number) : mid.mid;
+              const halfMin = Math.max(0, mm.spreadPct / 2);
+              if (halfMin > 0 && safeOrder.price && safeOrder.qty) {
+                const notional = safeOrder.price * safeOrder.qty;
+                const pct = halfMin * (0.15 + Math.random() * 0.7);
+                const price = safeOrder.side === "buy"
+                  ? ref * (1 - pct)
+                  : ref * (1 + pct);
+                if (Number.isFinite(price) && price > 0 && Number.isFinite(notional)) {
+                  safeOrder.price = price;
+                  safeOrder.qty = notional / price;
+                }
+              }
+            }
+
             try {
               const placed = await exchange.placeOrder(safeOrder);
               if (placed?.id && safeOrder.clientOrderId) {
