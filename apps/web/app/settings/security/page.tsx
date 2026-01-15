@@ -1,6 +1,65 @@
+"use client";
+
 import Link from "next/link";
+import { useEffect, useState } from "react";
+import { ApiError, apiGet, apiPut } from "../../../lib/api";
+
+type SecuritySettings = {
+  autoLogoutEnabled: boolean;
+  autoLogoutMinutes: number;
+};
 
 export default function SecurityPage() {
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [msg, setMsg] = useState<string | null>(null);
+  const [enabled, setEnabled] = useState(true);
+  const [minutes, setMinutes] = useState(60);
+
+  function errMsg(e: any): string {
+    if (e instanceof ApiError) {
+      return `${e.message} (HTTP ${e.status})`;
+    }
+    return e?.message ? String(e.message) : String(e);
+  }
+
+  async function loadSettings() {
+    setLoading(true);
+    setMsg(null);
+    try {
+      const data = await apiGet<SecuritySettings>("/settings/security");
+      setEnabled(Boolean(data.autoLogoutEnabled));
+      setMinutes(Number(data.autoLogoutMinutes) || 60);
+    } catch (e) {
+      setMsg(errMsg(e));
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function saveSettings() {
+    setSaving(true);
+    setMsg(null);
+    const safeMinutes = Math.max(1, Math.min(1440, Math.floor(minutes)));
+    try {
+      const data = await apiPut<SecuritySettings>("/settings/security", {
+        autoLogoutEnabled: enabled,
+        autoLogoutMinutes: safeMinutes
+      });
+      setEnabled(Boolean(data.autoLogoutEnabled));
+      setMinutes(Number(data.autoLogoutMinutes) || safeMinutes);
+      setMsg("Saved.");
+    } catch (e) {
+      setMsg(errMsg(e));
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  useEffect(() => {
+    loadSettings();
+  }, []);
+
   return (
     <div style={{ maxWidth: 980 }}>
       <div style={{ marginBottom: 10, display: "flex", gap: 8, flexWrap: "wrap" }}>
@@ -13,7 +72,44 @@ export default function SecurityPage() {
       </div>
       <h2 style={{ marginTop: 0 }}>Security</h2>
       <div className="card" style={{ padding: 12, fontSize: 13 }}>
-        Placeholder: 2FA, API key rotation, and sessions.
+        <div style={{ fontWeight: 700, marginBottom: 6 }}>Session idle timeout</div>
+        <div style={{ color: "var(--muted)", marginBottom: 10 }}>
+          Automatically log out after inactivity.
+        </div>
+        <div style={{ display: "grid", gap: 10, marginBottom: 10, maxWidth: 320 }}>
+          <label style={{ display: "flex", gap: 8, alignItems: "center" }}>
+            <input
+              type="checkbox"
+              checked={enabled}
+              onChange={(e) => setEnabled(e.target.checked)}
+              disabled={loading || saving}
+            />
+            <span>Enable auto-logout</span>
+          </label>
+          <label style={{ display: "grid", gap: 6 }}>
+            <span style={{ fontSize: 12, color: "var(--muted)" }}>Idle minutes</span>
+            <input
+              className="input"
+              type="number"
+              min={1}
+              max={1440}
+              value={Number.isFinite(minutes) ? minutes : 60}
+              onChange={(e) => setMinutes(Number(e.target.value))}
+              disabled={!enabled || loading || saving}
+            />
+          </label>
+        </div>
+        <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+          <button className="btn btnPrimary" onClick={saveSettings} disabled={loading || saving}>
+            {saving ? "Saving..." : "Save settings"}
+          </button>
+          <button className="btn" onClick={loadSettings} disabled={loading || saving}>
+            {loading ? "Loading..." : "Reload"}
+          </button>
+        </div>
+        {msg ? (
+          <div style={{ marginTop: 10, color: "var(--muted)" }}>{msg}</div>
+        ) : null}
       </div>
     </div>
   );
