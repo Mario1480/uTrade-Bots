@@ -50,6 +50,8 @@ export async function runLoop(params: {
   const minRepricePct = Number(process.env.MM_REPRICE_PCT || "0.01");
   const invAlpha = Number(process.env.MM_INV_ALPHA || "0.1");
   const volCooldownMs = Number(process.env.MM_VOL_COOLDOWN_MS || "15000");
+  const volActiveTtlMs = Number(process.env.VOL_ACTIVE_TTL_MS || "8000");
+  const volMmSafetyMult = Number(process.env.VOL_MM_SAFETY_MULT || "1.5");
   const orderMgr = new OrderManager({ priceEpsPct, qtyEpsPct });
   let lastRepriceAt = 0;
   let lastRepriceMid = 0;
@@ -286,7 +288,7 @@ export async function runLoop(params: {
       }
 
       // Volume order TTL cleanup (cancel stale vol-* orders)
-      const VOL_TTL_MS = vol.mode === "ACTIVE" ? 15_000 : 90_000; // shorter in ACTIVE
+      const VOL_TTL_MS = vol.mode === "ACTIVE" ? volActiveTtlMs : 90_000; // shorter in ACTIVE
       const nowTs = Date.now();
 
       for (const o of openOther) {
@@ -485,8 +487,8 @@ export async function runLoop(params: {
               safeOrder.side = nextSide;
               log.info({ side: nextSide, streak }, "volume active side selection");
 
-              const basePct = Math.max(0.0005, mm.spreadPct / 2);
-              const pct = basePct * (0.2 + Math.random() * 0.4);
+              const basePct = Math.max(0.0005, mm.spreadPct / 2) * volMmSafetyMult;
+              const pct = basePct * (0.3 + Math.random() * 0.5);
               let price = nextSide === "buy" ? ref * (1 - pct) : ref * (1 + pct);
               if (Number.isFinite(price)) {
                 if (nextSide === "buy" && mid.ask) price = Math.min(price, mid.ask * 0.999);
