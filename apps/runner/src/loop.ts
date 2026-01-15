@@ -48,10 +48,12 @@ export async function runLoop(params: {
   const minRepriceMs = Number(process.env.MM_REPRICE_MS || "10000");
   const minRepricePct = Number(process.env.MM_REPRICE_PCT || "0.01");
   const invAlpha = Number(process.env.MM_INV_ALPHA || "0.1");
+  const volCooldownMs = Number(process.env.MM_VOL_COOLDOWN_MS || "15000");
   const orderMgr = new OrderManager({ priceEpsPct, qtyEpsPct });
   let lastRepriceAt = 0;
   let lastRepriceMid = 0;
   let smoothedInvRatio: number | null = null;
+  let lastVolTradeAt = 0;
 
   const volState = { dayKey: "init", tradedNotional: 0, lastActionMs: 0, dailyAlertSent: false };
   const { base } = splitSymbol(symbol);
@@ -397,8 +399,11 @@ export async function runLoop(params: {
       // MM sync (only manage mm-* orders so we don't cancel volume orders)
       const allowReprice =
         openMm.length === 0 ||
-        t0 - lastRepriceAt >= minRepriceMs ||
-        (lastRepriceMid > 0 && Math.abs(mid.mid - lastRepriceMid) / lastRepriceMid >= minRepricePct);
+        (t0 - lastRepriceAt >= minRepriceMs &&
+          t0 - lastVolTradeAt >= volCooldownMs) ||
+        (lastRepriceMid > 0 &&
+          Math.abs(mid.mid - lastRepriceMid) / lastRepriceMid >= minRepricePct &&
+          t0 - lastVolTradeAt >= volCooldownMs);
 
       const { cancel, place } = allowReprice ? orderMgr.diff(desiredFiltered, openMm) : { cancel: [], place: [] };
       const maxOpen = risk.maxOpenOrders ?? 0;
@@ -423,7 +428,7 @@ export async function runLoop(params: {
       } else if (cancel.length > 0) {
         log.debug({ cancel: cancel.length, place: place.length }, "skip place: cancel pending");
       } else if (!allowReprice) {
-        log.debug({ minRepriceMs, minRepricePct }, "skip place: reprice cooldown");
+        log.debug({ minRepriceMs, minRepricePct, volCooldownMs }, "skip place: reprice cooldown");
       }
       if (allowReprice && (cancel.length > 0 || place.length > 0)) {
         lastRepriceAt = t0;
@@ -474,6 +479,7 @@ export async function runLoop(params: {
                   clientOrderId: safeOrder.clientOrderId
                 });
               }
+              lastVolTradeAt = Date.now();
               log.info({ volOrder: safeOrder }, "volume trade submitted");
             } catch (e) {
               log.warn({ err: String(e), volOrder: safeOrder }, "volume trade failed");
