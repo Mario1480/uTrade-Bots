@@ -154,11 +154,12 @@ export function ConfigForm({
         />
         <SelectField
           label="Mode"
-          hint="Passive = post-only near mid. Mixed = mostly passive with occasional market orders."
+          hint="Passive = post-only near mid. Mixed = mostly passive with occasional market orders. Active = pace to daily target with market orders."
           value={vol.mode}
           options={[
             { label: "Passive", value: "PASSIVE" },
-            { label: "Mixed", value: "MIXED" }
+            { label: "Mixed", value: "MIXED" },
+            { label: "Active", value: "ACTIVE" }
           ]}
           onChange={(v) => onVolChange({ ...vol, mode: v })}
         />

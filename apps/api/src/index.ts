@@ -66,7 +66,7 @@ const VolConfig = z.object({
   maxTradeUsdt: z.number(),
   activeFrom: z.string(),
   activeTo: z.string(),
-  mode: z.enum(["PASSIVE", "MIXED"])
+  mode: z.enum(["PASSIVE", "MIXED", "ACTIVE"])
 });
 
 const RiskConfig = z.object({

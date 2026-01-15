@@ -4,4 +4,4 @@ export type Side = "buy" | "sell";
 export type OrderType = "limit" | "market";
 
 export type Distribution = "LINEAR" | "VALLEY" | "RANDOM";
-export type VolumeMode = "PASSIVE" | "MIXED";
+export type VolumeMode = "PASSIVE" | "MIXED" | "ACTIVE";
