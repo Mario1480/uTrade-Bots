@@ -54,8 +54,8 @@ services:
     env_file:
       - .env
     environment:
-      NEXT_PUBLIC_API_URL: http://localhost:8080
-      API_URL: http://api:8080
+      NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL}
+      API_URL: ${API_URL}
       BITMART_BASE_URL: ${BITMART_BASE_URL:-https://api-cloud.bitmart.com}
 
     ports:
