@@ -455,6 +455,14 @@ export async function runLoop(params: {
               const bid = mid.bid ?? mid.mid;
               const ask = mid.ask ?? mid.mid;
               const notional = safeOrder.quoteQty ?? safeOrder.qty * mid.mid;
+              const canSellBase = freeBase * bid >= vol.minTradeUsdt;
+              const canBuyUsdt = freeUsdt >= vol.minTradeUsdt;
+              if (!canSellBase && !canBuyUsdt) {
+                log.info({ freeUsdt, freeBase }, "volume skipped: insufficient balances");
+                return;
+              }
+              if (!canSellBase) safeOrder.side = "sell";
+              if (!canBuyUsdt) safeOrder.side = "buy";
               const price = safeOrder.side === "buy" ? bid : ask;
               if (Number.isFinite(price) && price > 0 && Number.isFinite(notional)) {
                 safeOrder.type = "limit";
