@@ -6,6 +6,8 @@ export interface VolumeState {
   tradedNotional: number;  // USDT
   lastActionMs: number;
   pendingClientOrderId?: string;
+  lastSide?: "buy" | "sell";
+  sideStreak?: number;
   dailyAlertSent?: boolean;
 }
 
