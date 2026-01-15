@@ -99,6 +99,10 @@ const PasswordChange = z.object({
   currentPassword: z.string().min(6),
   newPassword: z.string().min(6)
 });
+const SecuritySettings = z.object({
+  autoLogoutEnabled: z.boolean(),
+  autoLogoutMinutes: z.number().int().min(1).max(1440)
+});
 
 async function createBotAlert(params: {
   botId: string;
@@ -557,6 +561,18 @@ app.get("/settings/alerts", requireAuth, async (_req, res) => {
   res.json(cfg ?? { telegramBotToken: null, telegramChatId: null });
 });
 
+app.get("/settings/security", requireAuth, async (_req, res) => {
+  const user = getUserFromLocals(res);
+  const dbUser = await prisma.user.findUnique({
+    where: { id: user.id },
+    select: { autoLogoutEnabled: true, autoLogoutMinutes: true }
+  });
+  res.json({
+    autoLogoutEnabled: dbUser?.autoLogoutEnabled ?? true,
+    autoLogoutMinutes: dbUser?.autoLogoutMinutes ?? 60
+  });
+});
+
 app.delete("/settings/cex/:exchange", requireAuth, requireReauth, async (req, res) => {
   const exchange = req.params.exchange;
   await prisma.cexConfig.delete({ where: { exchange } });
@@ -757,6 +773,22 @@ app.put("/settings/alerts", requireAuth, async (req, res) => {
     }
   });
   res.json(cfg);
+});
+
+app.put("/settings/security", requireAuth, async (req, res) => {
+  const data = SecuritySettings.parse(req.body);
+  const user = getUserFromLocals(res);
+  const updated = await prisma.user.update({
+    where: { id: user.id },
+    data: {
+      autoLogoutEnabled: data.autoLogoutEnabled,
+      autoLogoutMinutes: data.autoLogoutMinutes
+    }
+  });
+  res.json({
+    autoLogoutEnabled: updated.autoLogoutEnabled,
+    autoLogoutMinutes: updated.autoLogoutMinutes
+  });
 });
 
 app.post("/settings/cex/verify", requireAuth, requireReauth, async (req, res) => {
