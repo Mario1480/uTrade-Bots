@@ -678,7 +678,10 @@ export async function runLoop(params: {
         errStr.includes("ECONNRESET") ||
         errStr.includes("ENOTFOUND") ||
         errStr.includes("ETIMEDOUT") ||
-        errStr.includes("ECONNREFUSED");
+        errStr.includes("ECONNREFUSED") ||
+        errStr.includes("non-JSON response") ||
+        errStr.includes("Bad Gateway") ||
+        errStr.includes("Service Unavailable");
 
       if (isTransient) {
         log.warn({ err: errStr }, "transient loop error");
