@@ -585,14 +585,17 @@ export async function runLoop(params: {
 
               const lastSide = volState.lastSide;
               let streak = volState.sideStreak ?? 0;
-              if (lastSide && nextSide === lastSide) {
+              if (canBuyUsdt && canSellBase && lastSide) {
+                nextSide = lastSide === "buy" ? "sell" : "buy";
+                streak = 1;
+              } else if (lastSide && nextSide === lastSide) {
                 if (streak >= 5) {
                   nextSide = lastSide === "buy" ? "sell" : "buy";
-                } else if (Math.random() < 0.4) {
-                  nextSide = lastSide === "buy" ? "sell" : "buy";
                 }
+                streak = nextSide === lastSide ? streak + 1 : 1;
+              } else {
+                streak = 1;
               }
-              streak = nextSide === lastSide ? streak + 1 : 1;
               volState.lastSide = nextSide;
               volState.sideStreak = streak;
               safeOrder.side = nextSide;
