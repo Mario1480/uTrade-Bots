@@ -22,6 +22,7 @@ model Bot {
   mmConfig   MarketMakingConfig?
   volConfig  VolumeConfig?
   riskConfig RiskConfig?
+  notificationConfig BotNotificationConfig?
   runtime    BotRuntime?
   alerts     BotAlert[]
 }
@@ -64,6 +65,14 @@ model RiskConfig {
   maxDeviationPct Float
   maxOpenOrders   Int
   maxDailyLoss    Float
+}
+
+model BotNotificationConfig {
+  id               String @id @default(uuid())
+  botId            String @unique
+  bot              Bot    @relation(fields: [botId], references: [id])
+  fundsWarnEnabled Boolean @default(true)
+  fundsWarnPct     Float   @default(0.1)
 }
 
 model BotRuntime {

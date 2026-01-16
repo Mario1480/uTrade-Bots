@@ -6,6 +6,7 @@ import { useEffect, useMemo, useState } from "react";
 import { ApiError, apiGet, apiPost, apiPut } from "../../../../lib/api";
 import { ConfigForm } from "../config-form";
 import { LiveView } from "../live-view";
+import { NotificationsForm } from "../notifications-form";
 
 export default function BotPage() {
   const params = useParams();
@@ -19,6 +20,7 @@ export default function BotPage() {
   const [mm, setMm] = useState<any>(null);
   const [vol, setVol] = useState<any>(null);
   const [risk, setRisk] = useState<any>(null);
+  const [notify, setNotify] = useState<any>(null);
   const [preview, setPreview] = useState<{
     mid: number;
     bids: any[];
@@ -38,7 +40,7 @@ export default function BotPage() {
   } | null>(null);
 
   const [toast, setToast] = useState<{ type: "error" | "success"; msg: string } | null>(null);
-  const [baseline, setBaseline] = useState<{ mm: any; vol: any; risk: any } | null>(null);
+  const [baseline, setBaseline] = useState<{ mm: any; vol: any; risk: any; notify: any } | null>(null);
 
   function showToast(type: "error" | "success", msg: string) {
     setToast({ type, msg });
@@ -57,7 +59,13 @@ export default function BotPage() {
       setMm(b.mmConfig);
       setVol(b.volConfig);
       setRisk(b.riskConfig);
-      setBaseline({ mm: b.mmConfig, vol: b.volConfig, risk: b.riskConfig });
+      setNotify(b.notificationConfig ?? { fundsWarnEnabled: true, fundsWarnPct: 0.1 });
+      setBaseline({
+        mm: b.mmConfig,
+        vol: b.volConfig,
+        risk: b.riskConfig,
+        notify: b.notificationConfig ?? { fundsWarnEnabled: true, fundsWarnPct: 0.1 }
+      });
     } catch (e) {
       showToast("error", errMsg(e));
     }
@@ -80,14 +88,14 @@ export default function BotPage() {
     return () => clearInterval(t);
   }, [id]);
 
-  const ready = useMemo(() => !!(mm && vol && risk && baseline), [mm, vol, risk, baseline]);
+  const ready = useMemo(() => !!(mm && vol && risk && notify && baseline), [mm, vol, risk, notify, baseline]);
   const dirty = useMemo(() => {
-    if (!baseline || !mm || !vol || !risk) return false;
+    if (!baseline || !mm || !vol || !risk || !notify) return false;
     // simple deep compare via stable JSON stringify
-    const a = JSON.stringify({ mm, vol, risk });
+    const a = JSON.stringify({ mm, vol, risk, notify });
     const b = JSON.stringify(baseline);
     return a !== b;
-  }, [baseline, mm, vol, risk]);
+  }, [baseline, mm, vol, risk, notify]);
 
   const canSave = ready && dirty && saving !== "saving...";
 
@@ -96,8 +104,8 @@ export default function BotPage() {
     try {
       setSaving("saving...");
       setFieldErrors(null);
-      await apiPut(`/bots/${id}/config`, { mm, vol, risk });
-      setBaseline({ mm, vol, risk });
+      await apiPut(`/bots/${id}/config`, { mm, vol, risk, notify });
+      setBaseline({ mm, vol, risk, notify });
       setSaving("saved");
       showToast("success", "Config saved");
       setTimeout(() => setSaving(""), 1200);
@@ -232,7 +240,7 @@ export default function BotPage() {
     return () => clearTimeout(t);
   }, [id, mm, previewMidOverride, includeJitter, previewSeed, rt?.mid, rt?.freeUsdt, rt?.freeBase]);
 
-  if (!bot || !mm || !vol || !risk) return <div>Loading…</div>;
+  if (!bot || !mm || !vol || !risk || !notify) return <div>Loading…</div>;
 
   return (
     <div>
@@ -451,6 +459,8 @@ export default function BotPage() {
           errors={fieldErrors}
         />
       </div>
+
+      <NotificationsForm notify={notify} onChange={setNotify} />
     </div>
   );
 }
@@ -518,6 +528,7 @@ function PreviewTable({ title, rows, accent }: { title: string; rows: any[]; acc
     </div>
   );
 }
+
 
 function formatNum(v: any, maxDecimals = 8) {
   if (v === null || v === undefined || Number.isNaN(Number(v))) return "—";

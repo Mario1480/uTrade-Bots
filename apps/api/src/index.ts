@@ -76,6 +76,11 @@ const RiskConfig = z.object({
   maxDailyLoss: z.number()
 });
 
+const NotificationConfig = z.object({
+  fundsWarnEnabled: z.boolean(),
+  fundsWarnPct: z.number().min(0).max(1)
+});
+
 const CexConfig = z.object({
   exchange: z.string(),
   apiKey: z.string(),
@@ -289,7 +294,7 @@ app.get("/bots/:id", requireAuth, async (req, res) => {
   const workspaceId = getWorkspaceId(res);
   const bot = await prisma.bot.findFirst({
     where: { id: req.params.id, workspaceId },
-    include: { mmConfig: true, volConfig: true, riskConfig: true, runtime: true } as any
+    include: { mmConfig: true, volConfig: true, riskConfig: true, notificationConfig: true, runtime: true } as any
   });
   if (!bot) return res.status(404).json({ error: "not_found" });
   res.json(bot);
@@ -315,6 +320,7 @@ app.delete("/bots/:id", requireAuth, async (req, res) => {
     prisma.marketMakingConfig.deleteMany({ where: { botId } }),
     prisma.volumeConfig.deleteMany({ where: { botId } }),
     prisma.riskConfig.deleteMany({ where: { botId } }),
+    prisma.botNotificationConfig.deleteMany({ where: { botId } }),
     prisma.bot.delete({ where: { id: botId } })
   ]);
 
@@ -627,6 +633,12 @@ app.post("/bots", requireAuth, async (req, res) => {
           maxOpenOrders: 30,
           maxDailyLoss: 200
         }
+      },
+      notificationConfig: {
+        create: {
+          fundsWarnEnabled: true,
+          fundsWarnPct: 0.1
+        }
       }
     }
   });
@@ -654,7 +666,8 @@ app.put("/bots/:id/config", requireAuth, async (req, res) => {
   const payload = z.object({
     mm: MMConfig,
     vol: VolConfig,
-    risk: RiskConfig
+    risk: RiskConfig,
+    notify: NotificationConfig
   }).parse(req.body);
 
   const errors: Record<string, string> = {};
@@ -694,6 +707,12 @@ app.put("/bots/:id/config", requireAuth, async (req, res) => {
   await prisma.riskConfig.update({
     where: { botId },
     data: payload.risk
+  });
+
+  await prisma.botNotificationConfig.upsert({
+    where: { botId },
+    update: payload.notify,
+    create: { botId, ...payload.notify }
   });
 
   res.json({ ok: true });

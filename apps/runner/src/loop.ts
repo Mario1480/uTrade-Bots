@@ -1,5 +1,5 @@
 import type { Exchange } from "@mm/exchange";
-import type { MarketMakingConfig, RiskConfig, VolumeConfig, Balance } from "@mm/core";
+import type { MarketMakingConfig, RiskConfig, VolumeConfig, NotificationConfig, Balance } from "@mm/core";
 import { splitSymbol } from "@mm/exchange";
 import { SlavePriceSource } from "@mm/pricing";
 import { buildMmQuotes, VolumeScheduler } from "@mm/strategy";
@@ -30,6 +30,7 @@ export async function runLoop(params: {
   mm: MarketMakingConfig;
   vol: VolumeConfig;
   risk: RiskConfig;
+  notificationConfig: NotificationConfig;
   tickMs: number;
   sm: BotStateMachine;
 }): Promise<void> {
@@ -39,6 +40,7 @@ export async function runLoop(params: {
   let mm = params.mm;
   let vol = params.vol;
   let risk = params.risk;
+  let notificationConfig = params.notificationConfig;
   let botName = params.botId;
 
   const priceSource = new SlavePriceSource(exchange);
@@ -60,6 +62,7 @@ export async function runLoop(params: {
   let smoothedInvRatio: number | null = null;
   let lastVolTradeAt = 0;
   let fundsAlertSent = false;
+  let fundsWarnSent = false;
 
   const volState = { dayKey: "init", tradedNotional: 0, lastActionMs: 0, dailyAlertSent: false } as VolState;
   const { base } = splitSymbol(symbol);
@@ -104,6 +107,7 @@ export async function runLoop(params: {
         if (b.status === "RUNNING") {
           sm.set("RUNNING", "");
           fundsAlertSent = false;
+          fundsWarnSent = false;
           await writeRuntime({
             botId,
             status: "RUNNING",
@@ -149,6 +153,7 @@ export async function runLoop(params: {
         if (b.status === "RUNNING") {
           sm.set("RUNNING", "");
           fundsAlertSent = false;
+          fundsWarnSent = false;
           await writeRuntime({
             botId,
             status: "RUNNING",
@@ -185,6 +190,7 @@ export async function runLoop(params: {
       mm = loaded.mm;
       vol = loaded.vol;
       risk = loaded.risk;
+      notificationConfig = loaded.notificationConfig;
       volSched = new VolumeScheduler(vol);
       riskEngine = new RiskEngine(risk);
     }
@@ -366,6 +372,39 @@ export async function runLoop(params: {
         freeUsdt >= vol.minTradeUsdt ||
         freeBase * mid.mid >= vol.minTradeUsdt
       );
+      const warnPct = Math.max(0, notificationConfig.fundsWarnPct ?? 0);
+      const warnMult = 1 + warnPct;
+      const mmWarn = notificationConfig.fundsWarnEnabled && botRow.mmEnabled && (
+        freeUsdt < mm.budgetQuoteUsdt * warnMult ||
+        freeBase < mm.budgetBaseToken * warnMult
+      );
+      const volWarn = notificationConfig.fundsWarnEnabled && botRow.volEnabled && (
+        freeUsdt < vol.minTradeUsdt * warnMult &&
+        freeBase * mid.mid < vol.minTradeUsdt * warnMult
+      );
+
+      if ((mmWarn || volWarn) && !fundsWarnSent && mmFundsOk && volFundsOk) {
+        const warns: string[] = [];
+        if (mmWarn) {
+          warns.push(`MM reserve low (freeUsdt=${freeUsdt}, freeBase=${freeBase})`);
+        }
+        if (volWarn) {
+          warns.push(`Volume reserve low (freeUsdt=${freeUsdt}, freeBase=${freeBase})`);
+        }
+        const warnMsg = `Funds nearing threshold: ${warns.join("; ")}`;
+        fundsWarnSent = true;
+        await writeAlert({
+          botId,
+          level: "warn",
+          title: "Funds low (10% reserve)",
+          message: `symbol=${symbol} ${warnMsg}`
+        });
+        await alert(
+          "warn",
+          `[FUNDS] ${botName} (${symbol})`,
+          warnMsg
+        );
+      }
 
       if (!mmFundsOk || !volFundsOk) {
         const reasons: string[] = [];

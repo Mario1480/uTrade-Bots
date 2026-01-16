@@ -21,7 +21,7 @@ async function main() {
   const requestedBotId = optionalEnv("RUNNER_BOT_ID");
   const tickMs = Number(process.env.RUNNER_TICK_MS || "800");
 
-  const { bot, mm, vol, risk } = requestedBotId
+  const { bot, mm, vol, risk, notificationConfig } = requestedBotId
     ? await loadBotAndConfigs(requestedBotId)
     : await loadLatestBotAndConfigs();
   const symbol = bot.symbol;
@@ -53,7 +53,7 @@ async function main() {
     { botId: bot.id, name: bot.name, symbol, tickMs },
     requestedBotId ? "starting runner (explicit bot id)" : "starting runner (latest bot)"
   );
-  await runLoop({ botId: bot.id, symbol, exchange, mm, vol, risk, tickMs, sm });
+  await runLoop({ botId: bot.id, symbol, exchange, mm, vol, risk, notificationConfig, tickMs, sm });
 }
 
 main().catch((e) => {

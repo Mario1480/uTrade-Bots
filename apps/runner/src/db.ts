@@ -1,10 +1,10 @@
 import { prisma } from "@mm/db";
-import type { MarketMakingConfig, RiskConfig, VolumeConfig } from "@mm/core";
+import type { MarketMakingConfig, RiskConfig, VolumeConfig, NotificationConfig } from "@mm/core";
 
 export async function loadBotAndConfigs(botId: string) {
   const bot = await prisma.bot.findUnique({
     where: { id: botId },
-    include: { mmConfig: true, volConfig: true, riskConfig: true }
+    include: { mmConfig: true, volConfig: true, riskConfig: true, notificationConfig: true }
   });
 
   if (!bot) throw new Error(`Bot not found in DB: ${botId}`);
@@ -44,13 +44,29 @@ export async function loadBotAndConfigs(botId: string) {
     maxDailyLoss: bot.riskConfig.maxDailyLoss
   };
 
-  return { bot, mm, vol, risk };
+  let notificationConfig: NotificationConfig;
+  if (bot.notificationConfig) {
+    notificationConfig = {
+      fundsWarnEnabled: bot.notificationConfig.fundsWarnEnabled,
+      fundsWarnPct: bot.notificationConfig.fundsWarnPct
+    };
+  } else {
+    const created = await prisma.botNotificationConfig.create({
+      data: { botId }
+    });
+    notificationConfig = {
+      fundsWarnEnabled: created.fundsWarnEnabled,
+      fundsWarnPct: created.fundsWarnPct
+    };
+  }
+
+  return { bot, mm, vol, risk, notificationConfig };
 }
 
 export async function loadLatestBotAndConfigs() {
   const bot = await prisma.bot.findFirst({
     orderBy: { createdAt: "desc" },
-    include: { mmConfig: true, volConfig: true, riskConfig: true }
+    include: { mmConfig: true, volConfig: true, riskConfig: true, notificationConfig: true }
   });
 
   if (!bot) throw new Error("No bots found in DB");
@@ -89,7 +105,23 @@ export async function loadLatestBotAndConfigs() {
     maxDailyLoss: bot.riskConfig.maxDailyLoss
   };
 
-  return { bot, mm, vol, risk };
+  let notificationConfig: NotificationConfig;
+  if (bot.notificationConfig) {
+    notificationConfig = {
+      fundsWarnEnabled: bot.notificationConfig.fundsWarnEnabled,
+      fundsWarnPct: bot.notificationConfig.fundsWarnPct
+    };
+  } else {
+    const created = await prisma.botNotificationConfig.create({
+      data: { botId: bot.id }
+    });
+    notificationConfig = {
+      fundsWarnEnabled: created.fundsWarnEnabled,
+      fundsWarnPct: created.fundsWarnPct
+    };
+  }
+
+  return { bot, mm, vol, risk, notificationConfig };
 }
 
 export async function loadCexConfig(exchange: string) {

@@ -33,6 +33,11 @@ export interface RiskConfig {
   maxDailyLoss: Money;
 }
 
+export interface NotificationConfig {
+  fundsWarnEnabled: boolean;
+  fundsWarnPct: number;
+}
+
 export interface Quote {
   symbol: string;
   side: Side;
