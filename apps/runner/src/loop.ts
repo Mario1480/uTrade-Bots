@@ -52,6 +52,8 @@ export async function runLoop(params: {
   const volCooldownMs = Number(process.env.MM_VOL_COOLDOWN_MS || "15000");
   const volActiveTtlMs = Number(process.env.VOL_ACTIVE_TTL_MS || "8000");
   const volMmSafetyMult = Number(process.env.VOL_MM_SAFETY_MULT || "1.5");
+  const volLastBandPct = Number(process.env.VOL_LAST_BAND_PCT || "0.0004");
+  const volInsideSpreadPct = Number(process.env.VOL_INSIDE_SPREAD_PCT || "0.00015");
   const orderMgr = new OrderManager({ priceEpsPct, qtyEpsPct });
   let lastRepriceAt = 0;
   let lastRepriceMid = 0;
@@ -472,8 +474,8 @@ export async function runLoop(params: {
 
               if (!skipVolume) {
               let nextSide = safeOrder.side;
-              if (!canSellBase) nextSide = "sell";
-              if (!canBuyUsdt) nextSide = "buy";
+              if (!canSellBase) nextSide = "buy";
+              if (!canBuyUsdt) nextSide = "sell";
 
               const lastSide = volState.lastSide;
               let streak = volState.sideStreak ?? 0;
@@ -490,12 +492,15 @@ export async function runLoop(params: {
               safeOrder.side = nextSide;
               log.info({ side: nextSide, streak }, "volume active side selection");
 
-              const basePct = Math.max(0.0005, mm.spreadPct / 2) * volMmSafetyMult;
-              const pct = basePct * (0.3 + Math.random() * 0.5);
-              let price = nextSide === "buy" ? ref * (1 - pct) : ref * (1 + pct);
-              if (Number.isFinite(price)) {
-                if (nextSide === "buy" && mid.ask) price = Math.min(price, mid.ask * 0.999);
-                if (nextSide === "sell" && mid.bid) price = Math.max(price, mid.bid * 1.001);
+              const bandPct = Math.max(0.0001, volLastBandPct) * (0.5 + Math.random() * 0.5);
+              let price = nextSide === "buy" ? ref * (1 - bandPct) : ref * (1 + bandPct);
+              if (Number.isFinite(bid) && Number.isFinite(ask) && ask > bid) {
+                const inside = Math.max(0.00005, volInsideSpreadPct) * volMmSafetyMult;
+                const floor = bid * (1 + inside);
+                const ceil = ask * (1 - inside);
+                if (floor < ceil) {
+                  price = Math.min(Math.max(price, floor), ceil);
+                }
               }
 
               if (Number.isFinite(price) && price > 0 && Number.isFinite(notional)) {
@@ -508,7 +513,7 @@ export async function runLoop(params: {
               }
             } else if (safeOrder.type === "market" && botRow.mmEnabled) {
               const ref = Number.isFinite(mid.last) && (mid.last as number) > 0 ? (mid.last as number) : mid.mid;
-              const halfMin = Math.max(0, mm.spreadPct / 2);
+              const halfMin = Math.max(0, volLastBandPct);
               const notional = (safeOrder.quoteQty ?? safeOrder.qty * mid.mid);
               const pct = halfMin > 0 ? halfMin * (0.15 + Math.random() * 0.7) : 0;
               const price = safeOrder.side === "buy"
@@ -546,7 +551,7 @@ export async function runLoop(params: {
             }
             if (!skipVolume && safeOrder.type === "limit" && safeOrder.postOnly && botRow.mmEnabled) {
               const ref = Number.isFinite(mid.last) && (mid.last as number) > 0 ? (mid.last as number) : mid.mid;
-              const halfMin = Math.max(0, mm.spreadPct / 2);
+              const halfMin = Math.max(0, volLastBandPct);
               if (halfMin > 0 && safeOrder.price && safeOrder.qty) {
                 const notional = safeOrder.price * safeOrder.qty;
                 const pct = halfMin * (0.15 + Math.random() * 0.7);
