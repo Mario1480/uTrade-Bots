@@ -626,6 +626,13 @@ export async function runLoop(params: {
               }
 
               if (Number.isFinite(price) && price > 0 && Number.isFinite(notional)) {
+                if ((nextSide === "buy" && price >= ref) || (nextSide === "sell" && price <= ref)) {
+                  log.info({ ref, price, side: nextSide }, "volume skipped: no room inside spread");
+                  skipVolume = true;
+                }
+              }
+
+              if (!skipVolume && Number.isFinite(price) && price > 0 && Number.isFinite(notional)) {
                 safeOrder.type = "limit";
                 safeOrder.postOnly = true;
                 safeOrder.price = price;
