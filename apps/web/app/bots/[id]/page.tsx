@@ -125,8 +125,14 @@ export default function BotOverviewPage() {
   }, [id]);
 
   async function submitManual() {
-    if (!me?.allowManualTrading) {
-      showToast("error", "Manual trading disabled.");
+    const canLimit = Boolean(me?.permissions?.["trading.manual_limit"] || me?.isSuperadmin);
+    const canMarket = Boolean(me?.permissions?.["trading.manual_market"] || me?.isSuperadmin);
+    if (manualType === "LIMIT" && !canLimit) {
+      showToast("error", "Manual limit trading disabled.");
+      return;
+    }
+    if (manualType === "MARKET" && !canMarket) {
+      showToast("error", "Manual market trading disabled.");
       return;
     }
     setManualBusy(true);
@@ -225,6 +231,9 @@ export default function BotOverviewPage() {
     if (!orders) return [];
     return [...orders.mm, ...orders.vol, ...orders.other];
   }, [orders]);
+
+  const canManualLimit = Boolean(me?.permissions?.["trading.manual_limit"] || me?.isSuperadmin);
+  const canManualMarket = Boolean(me?.permissions?.["trading.manual_market"] || me?.isSuperadmin);
 
   const baseSymbol = useMemo(() => {
     const raw = bot?.symbol ? String(bot.symbol) : "";
@@ -419,7 +428,7 @@ export default function BotOverviewPage() {
       <div className="overviewGrid" style={{ marginTop: 16 }}>
         <section className="card" style={{ padding: 12 }}>
           <h3 style={{ marginTop: 0 }}>Manual Trades</h3>
-          {!me?.allowManualTrading ? (
+          {!((canManualLimit || canManualMarket)) ? (
             <div style={{ fontSize: 12, color: "var(--muted)" }}>
               Manual trading disabled by admin.
             </div>
@@ -429,12 +438,14 @@ export default function BotOverviewPage() {
                 <button
                   className={`btn ${manualType === "LIMIT" ? "btnPrimary" : ""}`}
                   onClick={() => setManualType("LIMIT")}
+                  disabled={!canManualLimit}
                 >
                   Limit
                 </button>
                 <button
                   className={`btn ${manualType === "MARKET" ? "btnPrimary" : ""}`}
                   onClick={() => setManualType("MARKET")}
+                  disabled={!canManualMarket}
                 >
                   Market
                 </button>

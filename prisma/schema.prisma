@@ -209,6 +209,7 @@ model User {
   reauths            ReauthSession[]
   workspaces         WorkspaceMember[]
   manualTrades       ManualTradeLog[]
+  auditEvents        AuditEvent[]
 }
 
 model Session {
@@ -241,18 +242,60 @@ model Workspace {
   members   WorkspaceMember[]
   bots      Bot[]
   manualTrades ManualTradeLog[]
+  roles     Role[]
+  auditEvents AuditEvent[]
 }
 
 model WorkspaceMember {
   id          String @id @default(cuid())
   workspaceId String
   userId      String
-  role        String @default("owner")
+  roleId      String
+  status      String @default("ACTIVE")
   createdAt   DateTime @default(now())
 
   workspace Workspace @relation(fields: [workspaceId], references: [id])
   user      User      @relation(fields: [userId], references: [id])
+  role      Role      @relation(fields: [roleId], references: [id])
 
   @@unique([workspaceId, userId])
   @@index([userId])
+  @@index([workspaceId, roleId])
+}
+
+model Role {
+  id          String   @id @default(cuid())
+  workspaceId String
+  name        String
+  isSystem    Boolean  @default(false)
+  permissions Json    @default("{}")
+  createdAt   DateTime @default(now())
+
+  workspace Workspace @relation(fields: [workspaceId], references: [id])
+  members   WorkspaceMember[]
+
+  @@unique([workspaceId, name])
+}
+
+model AuditEvent {
+  id          String   @id @default(cuid())
+  workspaceId String
+  actorUserId String
+  action      String
+  entityType  String
+  entityId    String?
+  meta        Json?
+  ip          String?
+  createdAt   DateTime @default(now())
+
+  workspace Workspace @relation(fields: [workspaceId], references: [id])
+  actor     User      @relation(fields: [actorUserId], references: [id])
+
+  @@index([workspaceId, createdAt])
+}
+
+model GlobalSetting {
+  key       String   @id
+  value     Json?
+  updatedAt DateTime @updatedAt
 }

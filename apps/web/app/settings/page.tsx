@@ -34,6 +34,18 @@ export default function SettingsPage() {
           <div style={{ fontWeight: 700, marginBottom: 6 }}>Users</div>
           <div style={{ fontSize: 12, color: "var(--muted)" }}>Password and access</div>
         </Link>
+        <Link className="card" href="/settings/roles" style={{ padding: 12 }}>
+          <div style={{ fontWeight: 700, marginBottom: 6 }}>Roles</div>
+          <div style={{ fontSize: 12, color: "var(--muted)" }}>Permissions and policies</div>
+        </Link>
+        <Link className="card" href="/settings/audit" style={{ padding: 12 }}>
+          <div style={{ fontWeight: 700, marginBottom: 6 }}>Audit</div>
+          <div style={{ fontSize: 12, color: "var(--muted)" }}>Activity log</div>
+        </Link>
+        <Link className="card" href="/settings/global-defaults" style={{ padding: 12 }}>
+          <div style={{ fontWeight: 700, marginBottom: 6 }}>Global Defaults</div>
+          <div style={{ fontSize: 12, color: "var(--muted)" }}>Superadmin settings</div>
+        </Link>
         <Link className="card" href="/settings/setup" style={{ padding: 12 }}>
           <div style={{ fontWeight: 700, marginBottom: 6 }}>Bot Setup</div>
           <div style={{ fontSize: 12, color: "var(--muted)" }}>Bot list and setup</div>

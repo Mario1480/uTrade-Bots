@@ -1,5 +1,6 @@
 import bcrypt from "bcryptjs";
 import { prisma } from "@mm/db";
+import { ensureDefaultRoles } from "./rbac.js";
 
 export async function seedAdmin() {
   const enabled = (process.env.ADMIN_CREATE ?? "true").toLowerCase() !== "false";
@@ -23,8 +24,9 @@ export async function seedAdmin() {
   const workspace = await prisma.workspace.create({
     data: { name: workspaceName }
   });
+  const { adminRoleId } = await ensureDefaultRoles(workspace.id);
   await prisma.workspaceMember.create({
-    data: { workspaceId: workspace.id, userId: user.id, role: "owner" }
+    data: { workspaceId: workspace.id, userId: user.id, roleId: adminRoleId }
   });
 
   await prisma.bot.updateMany({

@@ -2,6 +2,7 @@ import crypto from "node:crypto";
 import type { Request, Response, NextFunction } from "express";
 import bcrypt from "bcryptjs";
 import { prisma } from "@mm/db";
+import { ensureDefaultRoles } from "./rbac.js";
 
 const SESSION_TTL_DAYS = Number(process.env.SESSION_TTL_DAYS ?? "30");
 const REAUTH_TTL_MIN = Number(process.env.REAUTH_TTL_MIN ?? "10");
@@ -10,6 +11,10 @@ const REAUTH_COOKIE = "mm_reauth";
 
 function hashToken(token: string): string {
   return crypto.createHash("sha256").update(token).digest("hex");
+}
+
+export function isSuperadmin(user?: { email?: string | null }) {
+  return (user?.email ?? "").toLowerCase() === "admin@uliquid.vip";
 }
 
 function cookieOptions(maxAgeMs: number) {
@@ -87,11 +92,13 @@ async function ensureWorkspaceForUser(userId: string) {
 
   const workspace = await prisma.workspace.create({
     data: {
-      name: "Default",
-      members: {
-        create: { userId, role: "owner" }
-      }
+      name: "Default"
     }
+  });
+
+  const { adminRoleId } = await ensureDefaultRoles(workspace.id);
+  await prisma.workspaceMember.create({
+    data: { userId, workspaceId: workspace.id, roleId: adminRoleId }
   });
 
   await prisma.bot.updateMany({
@@ -133,9 +140,34 @@ export async function requireAuth(req: Request, res: Response, next: NextFunctio
     });
   }
 
-  const workspace = await ensureWorkspaceForUser(session.userId);
+  const requestedWorkspaceId = req.header("x-workspace-id") ?? null;
+  let workspaceId = requestedWorkspaceId ?? null;
+  if (workspaceId) {
+    const w = await prisma.workspace.findUnique({ where: { id: workspaceId } });
+    if (!w && !isSuperadmin(session.user)) {
+      return res.status(403).json({ error: "forbidden" });
+    }
+  } else {
+    const workspace = await ensureWorkspaceForUser(session.userId);
+    workspaceId = workspace.id;
+  }
+
+  let member = null as any;
+  if (workspaceId) {
+    member = await prisma.workspaceMember.findFirst({
+      where: { workspaceId, userId: session.userId },
+      include: { role: true }
+    });
+  }
+
+  if (!isSuperadmin(session.user) && !member) {
+    return res.status(403).json({ error: "forbidden" });
+  }
+
   res.locals.user = session.user;
-  res.locals.workspaceId = workspace.id;
+  res.locals.workspaceId = workspaceId;
+  res.locals.member = member;
+  res.locals.role = member?.role ?? null;
   next();
 }
 
@@ -165,4 +197,12 @@ export function getUserFromLocals(res: Response) {
 
 export function getWorkspaceId(res: Response) {
   return res.locals.workspaceId as string;
+}
+
+export function getRoleFromLocals(res: Response) {
+  return res.locals.role as { id: string; name: string; permissions: any } | null;
+}
+
+export function getMemberFromLocals(res: Response) {
+  return res.locals.member as any;
 }

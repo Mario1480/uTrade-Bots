@@ -13,13 +13,16 @@ import {
   createSession,
   destroySession,
   getUserFromLocals,
+  getRoleFromLocals,
   getWorkspaceId,
   hashPassword,
+  isSuperadmin,
   requireAuth,
   requireReauth,
   verifyPassword
 } from "./auth.js";
 import { seedAdmin } from "./seed-admin.js";
+import { ensureDefaultRoles } from "./rbac.js";
 
 const app = express();
 
@@ -151,16 +154,71 @@ function parseNumber(v: unknown): number {
   return NaN;
 }
 
-async function isOwner(userId: string, workspaceId: string): Promise<boolean> {
-  const member = await prisma.workspaceMember.findFirst({
-    where: { userId, workspaceId }
-  });
-  return member?.role === "owner";
+function roleAllows(res: express.Response, key: string): boolean {
+  const role = getRoleFromLocals(res);
+  const perms = role?.permissions ?? {};
+  return Boolean(perms?.[key]);
 }
 
-function manualTradingAllowed(res: express.Response): boolean {
-  const user = res.locals.user as any;
-  return Boolean(user?.allowManualTrading);
+function requirePermission(key: string) {
+  return (req: express.Request, res: express.Response, next: express.NextFunction) => {
+    const user = getUserFromLocals(res);
+    if (isSuperadmin(user)) return next();
+    if (roleAllows(res, key)) return next();
+    return res.status(403).json({ error: "forbidden" });
+  };
+}
+
+function requireAnyPermission(keys: string[]) {
+  return (req: express.Request, res: express.Response, next: express.NextFunction) => {
+    const user = getUserFromLocals(res);
+    if (isSuperadmin(user)) return next();
+    const allowed = keys.some((k) => roleAllows(res, k));
+    if (allowed) return next();
+    return res.status(403).json({ error: "forbidden" });
+  };
+}
+
+function requireWorkspaceAccess() {
+  return async (req: express.Request, res: express.Response, next: express.NextFunction) => {
+    const user = getUserFromLocals(res);
+    const workspaceId = req.params.id;
+    if (!workspaceId) return res.status(400).json({ error: "workspace_missing" });
+
+    res.locals.workspaceId = workspaceId;
+    if (isSuperadmin(user)) return next();
+
+    const member = await prisma.workspaceMember.findFirst({
+      where: { workspaceId, userId: user.id },
+      include: { role: true }
+    });
+    if (!member) return res.status(403).json({ error: "forbidden" });
+    res.locals.member = member;
+    res.locals.role = member.role;
+    next();
+  };
+}
+
+async function writeAudit(params: {
+  workspaceId: string;
+  actorUserId: string;
+  action: string;
+  entityType: string;
+  entityId?: string | null;
+  meta?: any;
+  ip?: string | null;
+}) {
+  await prisma.auditEvent.create({
+    data: {
+      workspaceId: params.workspaceId,
+      actorUserId: params.actorUserId,
+      action: params.action,
+      entityType: params.entityType,
+      entityId: params.entityId ?? null,
+      meta: params.meta ?? undefined,
+      ip: params.ip ?? undefined
+    }
+  });
 }
 
 async function sendTelegramAlert(text: string) {
@@ -221,16 +279,14 @@ app.post("/auth/register", async (req, res) => {
 
   const passwordHash = await hashPassword(data.password);
   const user = await prisma.user.create({
-    data: {
-      email: data.email,
-      passwordHash,
-      workspaces: {
-        create: {
-          role: "owner",
-          workspace: { create: { name: "Default" } }
-        }
-      }
-    }
+    data: { email: data.email, passwordHash }
+  });
+  const workspace = await prisma.workspace.create({
+    data: { name: "Default" }
+  });
+  const { adminRoleId } = await ensureDefaultRoles(workspace.id);
+  await prisma.workspaceMember.create({
+    data: { userId: user.id, workspaceId: workspace.id, roleId: adminRoleId }
   });
 
   await createSession(res, user.id);
@@ -258,15 +314,28 @@ app.post("/auth/logout", requireAuth, async (req, res) => {
 app.get("/auth/me", requireAuth, async (_req, res) => {
   const user = getUserFromLocals(res) as any;
   const workspaceId = getWorkspaceId(res);
-  const member = await prisma.workspaceMember.findFirst({
-    where: { workspaceId, userId: user.id }
-  });
+  const role = getRoleFromLocals(res);
   res.json({
     id: user.id,
     email: user.email,
     workspaceId,
-    role: member?.role ?? "member",
-    allowManualTrading: Boolean(user.allowManualTrading)
+    role: role?.name ?? "member",
+    permissions: role?.permissions ?? {},
+    isSuperadmin: isSuperadmin(user)
+  });
+});
+
+app.get("/me", requireAuth, async (_req, res) => {
+  const user = getUserFromLocals(res) as any;
+  const workspaceId = getWorkspaceId(res);
+  const role = getRoleFromLocals(res);
+  res.json({
+    id: user.id,
+    email: user.email,
+    workspaceId,
+    role: role?.name ?? "member",
+    permissions: role?.permissions ?? {},
+    isSuperadmin: isSuperadmin(user)
   });
 });
 
@@ -301,42 +370,242 @@ app.post("/auth/change-password", requireAuth, async (req, res) => {
   res.json({ ok: true });
 });
 
-app.get("/settings/users", requireAuth, async (_req, res) => {
-  const workspaceId = getWorkspaceId(res);
+app.get("/workspaces/:id/members", requireAuth, requireWorkspaceAccess(), requirePermission("users.manage_members"), async (req, res) => {
+  const workspaceId = req.params.id;
+  await ensureDefaultRoles(workspaceId);
   const members = await prisma.workspaceMember.findMany({
     where: { workspaceId },
-    include: { user: true }
+    include: { user: true, role: true }
   });
-  const mapped = members.map((m) => ({
-    id: m.user.id,
-    email: m.user.email,
-    role: m.role,
-    allowManualTrading: Boolean((m.user as any).allowManualTrading)
-  }));
-  res.json(mapped);
+  res.json(
+    members.map((m) => ({
+      id: m.id,
+      userId: m.userId,
+      email: m.user.email,
+      roleId: m.roleId,
+      roleName: m.role?.name ?? "",
+      status: m.status
+    }))
+  );
 });
 
-app.put("/settings/users/:userId/permissions", requireAuth, async (req, res) => {
-  const workspaceId = getWorkspaceId(res);
-  const user = getUserFromLocals(res);
-  if (!(await isOwner(user.id, workspaceId))) {
-    return res.status(403).json({ error: "forbidden" });
+app.post("/workspaces/:id/members/invite", requireAuth, requireWorkspaceAccess(), requirePermission("users.manage_members"), async (req, res) => {
+  const workspaceId = req.params.id;
+  const actor = getUserFromLocals(res);
+  const payload = z.object({ email: z.string().email(), roleId: z.string() }).parse(req.body);
+
+  const role = await prisma.role.findFirst({ where: { id: payload.roleId, workspaceId } });
+  if (!role) return res.status(400).json({ error: "invalid_role" });
+
+  let user = await prisma.user.findUnique({ where: { email: payload.email } });
+  if (!user) {
+    const tempHash = await hashPassword(crypto.randomBytes(16).toString("hex"));
+    user = await prisma.user.create({
+      data: { email: payload.email, passwordHash: tempHash }
+    });
   }
 
-  const payload = z.object({ allowManualTrading: z.boolean() }).parse(req.body);
-  const targetId = req.params.userId;
+  const exists = await prisma.workspaceMember.findFirst({
+    where: { workspaceId, userId: user.id }
+  });
+  if (exists) return res.status(400).json({ error: "member_exists" });
+
+  const member = await prisma.workspaceMember.create({
+    data: {
+      workspaceId,
+      userId: user.id,
+      roleId: payload.roleId,
+      status: "INVITED"
+    }
+  });
+
+  await writeAudit({
+    workspaceId,
+    actorUserId: actor.id,
+    action: "members.invite",
+    entityType: "WorkspaceMember",
+    entityId: member.id,
+    meta: { email: payload.email, roleId: payload.roleId }
+  });
+
+  res.json({ ok: true, memberId: member.id });
+});
+
+app.put("/workspaces/:id/members/:memberId", requireAuth, requireWorkspaceAccess(), requirePermission("users.manage_members"), async (req, res) => {
+  const workspaceId = req.params.id;
+  const actor = getUserFromLocals(res);
+  const payload = z.object({ roleId: z.string().optional(), status: z.string().optional() }).parse(req.body);
+
   const member = await prisma.workspaceMember.findFirst({
-    where: { workspaceId, userId: targetId }
+    where: { id: req.params.memberId, workspaceId }
   });
   if (!member) return res.status(404).json({ error: "not_found" });
 
-  const updated = await prisma.user.update({
-    where: { id: targetId },
-    data: { allowManualTrading: payload.allowManualTrading }
+  if (payload.roleId) {
+    const role = await prisma.role.findFirst({ where: { id: payload.roleId, workspaceId } });
+    if (!role) return res.status(400).json({ error: "invalid_role" });
+  }
+
+  const updated = await prisma.workspaceMember.update({
+    where: { id: member.id },
+    data: {
+      roleId: payload.roleId ?? member.roleId,
+      status: payload.status ?? member.status
+    }
   });
 
-  res.json({ id: updated.id, allowManualTrading: updated.allowManualTrading });
+  await writeAudit({
+    workspaceId,
+    actorUserId: actor.id,
+    action: "members.update",
+    entityType: "WorkspaceMember",
+    entityId: updated.id,
+    meta: payload
+  });
+
+  res.json({ ok: true });
 });
+
+app.delete("/workspaces/:id/members/:memberId", requireAuth, requireWorkspaceAccess(), requirePermission("users.manage_members"), async (req, res) => {
+  const workspaceId = req.params.id;
+  const actor = getUserFromLocals(res);
+  const member = await prisma.workspaceMember.findFirst({
+    where: { id: req.params.memberId, workspaceId }
+  });
+  if (!member) return res.status(404).json({ error: "not_found" });
+
+  await prisma.workspaceMember.delete({ where: { id: member.id } });
+  await writeAudit({
+    workspaceId,
+    actorUserId: actor.id,
+    action: "members.delete",
+    entityType: "WorkspaceMember",
+    entityId: member.id
+  });
+  res.json({ ok: true });
+});
+
+app.get("/workspaces/:id/roles", requireAuth, requireWorkspaceAccess(), requireAnyPermission(["users.manage_roles", "users.manage_members"]), async (req, res) => {
+  const workspaceId = req.params.id;
+  await ensureDefaultRoles(workspaceId);
+  const roles = await prisma.role.findMany({ where: { workspaceId }, orderBy: { createdAt: "asc" } });
+  res.json(roles);
+});
+
+app.post("/workspaces/:id/roles", requireAuth, requireWorkspaceAccess(), requirePermission("users.manage_roles"), async (req, res) => {
+  const workspaceId = req.params.id;
+  const actor = getUserFromLocals(res);
+  const payload = z.object({
+    name: z.string().min(2),
+    permissions: z.record(z.boolean()).optional()
+  }).parse(req.body);
+
+  const role = await prisma.role.create({
+    data: {
+      workspaceId,
+      name: payload.name,
+      permissions: payload.permissions ?? {}
+    }
+  });
+
+  await writeAudit({
+    workspaceId,
+    actorUserId: actor.id,
+    action: "roles.create",
+    entityType: "Role",
+    entityId: role.id
+  });
+
+  res.json(role);
+});
+
+app.put("/workspaces/:id/roles/:roleId", requireAuth, requireWorkspaceAccess(), requirePermission("users.manage_roles"), async (req, res) => {
+  const workspaceId = req.params.id;
+  const actor = getUserFromLocals(res);
+  const payload = z.object({
+    name: z.string().min(2).optional(),
+    permissions: z.record(z.boolean()).optional()
+  }).parse(req.body);
+
+  const role = await prisma.role.findFirst({ where: { id: req.params.roleId, workspaceId } });
+  if (!role) return res.status(404).json({ error: "not_found" });
+  if (role.isSystem && payload.name && payload.name !== role.name) {
+    return res.status(400).json({ error: "system_role_rename_forbidden" });
+  }
+
+  const updated = await prisma.role.update({
+    where: { id: role.id },
+    data: {
+      name: payload.name ?? role.name,
+      permissions: payload.permissions ?? role.permissions
+    }
+  });
+
+  await writeAudit({
+    workspaceId,
+    actorUserId: actor.id,
+    action: "roles.update",
+    entityType: "Role",
+    entityId: updated.id
+  });
+
+  res.json(updated);
+});
+
+app.delete("/workspaces/:id/roles/:roleId", requireAuth, requireWorkspaceAccess(), requirePermission("users.manage_roles"), async (req, res) => {
+  const workspaceId = req.params.id;
+  const actor = getUserFromLocals(res);
+  const role = await prisma.role.findFirst({ where: { id: req.params.roleId, workspaceId } });
+  if (!role) return res.status(404).json({ error: "not_found" });
+  if (role.isSystem && !isSuperadmin(actor)) {
+    return res.status(400).json({ error: "system_role_delete_forbidden" });
+  }
+
+  const assigned = await prisma.workspaceMember.count({ where: { workspaceId, roleId: role.id } });
+  if (assigned > 0) return res.status(400).json({ error: "role_in_use" });
+
+  await prisma.role.delete({ where: { id: role.id } });
+  await writeAudit({
+    workspaceId,
+    actorUserId: actor.id,
+    action: "roles.delete",
+    entityType: "Role",
+    entityId: role.id
+  });
+
+  res.json({ ok: true });
+});
+
+app.get("/workspaces/:id/audit", requireAuth, requireWorkspaceAccess(), requirePermission("audit.view"), async (req, res) => {
+  const workspaceId = req.params.id;
+  const limit = Math.min(Number(req.query.limit || "50"), 200);
+  const items = await prisma.auditEvent.findMany({
+    where: { workspaceId },
+    orderBy: { createdAt: "desc" },
+    take: limit
+  });
+  res.json(items);
+});
+
+app.get("/global-settings", requireAuth, async (_req, res) => {
+  const user = getUserFromLocals(res);
+  if (!isSuperadmin(user)) return res.status(403).json({ error: "forbidden" });
+  const settings = await prisma.globalSetting.findMany({ orderBy: { key: "asc" } });
+  res.json(settings);
+});
+
+app.put("/global-settings/:key", requireAuth, async (req, res) => {
+  const user = getUserFromLocals(res);
+  if (!isSuperadmin(user)) return res.status(403).json({ error: "forbidden" });
+  const payload = z.object({ value: z.any() }).parse(req.body);
+  const setting = await prisma.globalSetting.upsert({
+    where: { key: req.params.key },
+    update: { value: payload.value },
+    create: { key: req.params.key, value: payload.value }
+  });
+  res.json(setting);
+});
+
 
 app.get("/auth/reauth/status", requireAuth, async (req, res) => {
   const token = req.cookies?.mm_reauth;
@@ -365,7 +634,7 @@ app.post("/alerts/test", requireAuth, async (_req, res) => {
   res.json({ ok: true });
 });
 
-app.get("/bots", requireAuth, async (_req, res) => {
+app.get("/bots", requireAuth, requirePermission("bots.view"), async (_req, res) => {
   const workspaceId = getWorkspaceId(res);
   const bots = await prisma.bot.findMany({
     where: { workspaceId },
@@ -374,7 +643,7 @@ app.get("/bots", requireAuth, async (_req, res) => {
   res.json(bots);
 });
 
-app.get("/bots/:id", requireAuth, async (req, res) => {
+app.get("/bots/:id", requireAuth, requirePermission("bots.view"), async (req, res) => {
   const workspaceId = getWorkspaceId(res);
   const bot = await prisma.bot.findFirst({
     where: { id: req.params.id, workspaceId },
@@ -384,7 +653,7 @@ app.get("/bots/:id", requireAuth, async (req, res) => {
   res.json(bot);
 });
 
-app.get("/bots/:id/runtime", requireAuth, async (req, res) => {
+app.get("/bots/:id/runtime", requireAuth, requirePermission("bots.view"), async (req, res) => {
   const workspaceId = getWorkspaceId(res);
   const bot = await prisma.bot.findFirst({ where: { id: req.params.id, workspaceId } });
   if (!bot) return res.status(404).json({ error: "not_found" });
@@ -392,8 +661,9 @@ app.get("/bots/:id/runtime", requireAuth, async (req, res) => {
   res.json(rt ?? null);
 });
 
-app.delete("/bots/:id", requireAuth, async (req, res) => {
+app.delete("/bots/:id", requireAuth, requirePermission("bots.delete"), async (req, res) => {
   const workspaceId = getWorkspaceId(res);
+  const user = getUserFromLocals(res);
   const botId = req.params.id;
   const bot = await prisma.bot.findFirst({ where: { id: botId, workspaceId } });
   if (!bot) return res.status(404).json({ error: "not_found" });
@@ -409,10 +679,19 @@ app.delete("/bots/:id", requireAuth, async (req, res) => {
     prisma.bot.delete({ where: { id: botId } })
   ]);
 
+  await writeAudit({
+    workspaceId,
+    actorUserId: user.id,
+    action: "bots.delete",
+    entityType: "Bot",
+    entityId: botId,
+    meta: { name: bot.name, symbol: bot.symbol }
+  });
+
   res.json({ ok: true });
 });
 
-app.get("/bots/:id/open-orders", requireAuth, async (req, res) => {
+app.get("/bots/:id/open-orders", requireAuth, requirePermission("bots.view"), async (req, res) => {
   const workspaceId = getWorkspaceId(res);
   const bot = await prisma.bot.findFirst({ where: { id: req.params.id, workspaceId } });
   if (!bot) return res.status(404).json({ error: "not_found" });
@@ -454,13 +733,9 @@ app.get("/bots/:id/open-orders", requireAuth, async (req, res) => {
   });
 });
 
-app.post("/bots/:id/manual/limit", requireAuth, async (req, res) => {
+app.post("/bots/:id/manual/limit", requireAuth, requirePermission("trading.manual_limit"), async (req, res) => {
   const workspaceId = getWorkspaceId(res);
   const user = getUserFromLocals(res);
-  if (!manualTradingAllowed(res)) {
-    return res.status(403).json({ error: "manual_trading_disabled" });
-  }
-
   const bot = await prisma.bot.findFirst({ where: { id: req.params.id, workspaceId } });
   if (!bot) return res.status(404).json({ error: "not_found" });
   if (bot.exchange.toLowerCase() !== "bitmart") {
@@ -517,6 +792,15 @@ app.post("/bots/:id/manual/limit", requireAuth, async (req, res) => {
       }
     });
 
+    await writeAudit({
+      workspaceId,
+      actorUserId: user.id,
+      action: "manual.limit.submit",
+      entityType: "Bot",
+      entityId: bot.id,
+      meta: { side, price, qty, clientOrderId }
+    });
+
     res.json({ exchangeOrderId: order.id, clientOrderId, status: order.status });
   } catch (e: any) {
     const errMsg = e?.message ? String(e.message) : String(e);
@@ -542,13 +826,9 @@ app.post("/bots/:id/manual/limit", requireAuth, async (req, res) => {
   }
 });
 
-app.post("/bots/:id/manual/market", requireAuth, async (req, res) => {
+app.post("/bots/:id/manual/market", requireAuth, requirePermission("trading.manual_market"), async (req, res) => {
   const workspaceId = getWorkspaceId(res);
   const user = getUserFromLocals(res);
-  if (!manualTradingAllowed(res)) {
-    return res.status(403).json({ error: "manual_trading_disabled" });
-  }
-
   const bot = await prisma.bot.findFirst({ where: { id: req.params.id, workspaceId } });
   if (!bot) return res.status(404).json({ error: "not_found" });
   if (bot.exchange.toLowerCase() !== "bitmart") {
@@ -602,6 +882,15 @@ app.post("/bots/:id/manual/market", requireAuth, async (req, res) => {
       }
     });
 
+    await writeAudit({
+      workspaceId,
+      actorUserId: user.id,
+      action: "manual.market.submit",
+      entityType: "Bot",
+      entityId: bot.id,
+      meta: { side, qty: side === "sell" ? qty : undefined, notional: side === "buy" ? notional : undefined, clientOrderId }
+    });
+
     res.json({ exchangeOrderId: order.id, clientOrderId, status: order.status });
   } catch (e: any) {
     const errMsg = e?.message ? String(e.message) : String(e);
@@ -624,12 +913,8 @@ app.post("/bots/:id/manual/market", requireAuth, async (req, res) => {
   }
 });
 
-app.post("/bots/:id/manual/cancel", requireAuth, async (req, res) => {
+app.post("/bots/:id/manual/cancel", requireAuth, requirePermission("trading.manual_limit"), async (req, res) => {
   const workspaceId = getWorkspaceId(res);
-  if (!manualTradingAllowed(res)) {
-    return res.status(403).json({ error: "manual_trading_disabled" });
-  }
-
   const bot = await prisma.bot.findFirst({ where: { id: req.params.id, workspaceId } });
   if (!bot) return res.status(404).json({ error: "not_found" });
   if (bot.exchange.toLowerCase() !== "bitmart") {
@@ -645,10 +930,19 @@ app.post("/bots/:id/manual/cancel", requireAuth, async (req, res) => {
   const baseUrl = process.env.BITMART_BASE_URL || "https://api-cloud.bitmart.com";
   const rest = new BitmartRestClient(baseUrl, cex.apiKey, cex.apiSecret, cex.apiMemo ?? "");
   await rest.cancelOrder(bot.symbol, data.orderId);
+  const user = getUserFromLocals(res);
+  await writeAudit({
+    workspaceId,
+    actorUserId: user.id,
+    action: "manual.cancel",
+    entityType: "Bot",
+    entityId: bot.id,
+    meta: { orderId: data.orderId }
+  });
   res.json({ ok: true });
 });
 
-app.get("/bots/:id/alerts", requireAuth, async (req, res) => {
+app.get("/bots/:id/alerts", requireAuth, requirePermission("bots.view"), async (req, res) => {
   const workspaceId = getWorkspaceId(res);
   const bot = await prisma.bot.findFirst({ where: { id: req.params.id, workspaceId } });
   if (!bot) return res.status(404).json({ error: "not_found" });
@@ -661,7 +955,7 @@ app.get("/bots/:id/alerts", requireAuth, async (req, res) => {
   res.json(items);
 });
 
-app.delete("/bots/:id/alerts", requireAuth, async (req, res) => {
+app.delete("/bots/:id/alerts", requireAuth, requirePermission("bots.edit_config"), async (req, res) => {
   const workspaceId = getWorkspaceId(res);
   const bot = await prisma.bot.findFirst({ where: { id: req.params.id, workspaceId } });
   if (!bot) return res.status(404).json({ error: "not_found" });
@@ -670,7 +964,7 @@ app.delete("/bots/:id/alerts", requireAuth, async (req, res) => {
   res.json({ ok: true, deleted: r.count });
 });
 
-app.get("/bots/:id/exchange-keys", requireAuth, requireReauth, async (req, res) => {
+app.get("/bots/:id/exchange-keys", requireAuth, requirePermission("exchange_keys.view_present"), async (req, res) => {
   const workspaceId = getWorkspaceId(res);
   const bot = await prisma.bot.findFirst({ where: { id: req.params.id, workspaceId } });
   if (!bot) return res.status(404).json({ error: "not_found" });
@@ -679,7 +973,7 @@ app.get("/bots/:id/exchange-keys", requireAuth, requireReauth, async (req, res) 
   res.json(cfg ?? null);
 });
 
-app.put("/bots/:id/exchange-keys", requireAuth, requireReauth, async (req, res) => {
+app.put("/bots/:id/exchange-keys", requireAuth, requirePermission("exchange_keys.edit"), requireReauth, async (req, res) => {
   const workspaceId = getWorkspaceId(res);
   const bot = await prisma.bot.findFirst({ where: { id: req.params.id, workspaceId } });
   if (!bot) return res.status(404).json({ error: "not_found" });
@@ -703,10 +997,19 @@ app.put("/bots/:id/exchange-keys", requireAuth, requireReauth, async (req, res) 
       apiMemo: data.apiMemo
     }
   });
+  const user = getUserFromLocals(res);
+  await writeAudit({
+    workspaceId,
+    actorUserId: user.id,
+    action: "exchange_keys.update",
+    entityType: "CexConfig",
+    entityId: cfg.id,
+    meta: { exchange: data.exchange }
+  });
   res.json(cfg);
 });
 
-app.post("/bots/:id/preview/mm", requireAuth, async (req, res) => {
+app.post("/bots/:id/preview/mm", requireAuth, requirePermission("bots.edit_config"), async (req, res) => {
   const workspaceId = getWorkspaceId(res);
   const bot = await prisma.bot.findFirst({ where: { id: req.params.id, workspaceId } });
   if (!bot) return res.status(404).json({ error: "not_found" });
@@ -823,13 +1126,13 @@ app.get("/exchanges/:exchange/symbols", requireAuth, async (req, res) => {
   res.json(usdtOnly.length > 0 ? usdtOnly : unique);
 });
 
-app.get("/settings/cex/:exchange", requireAuth, requireReauth, async (req, res) => {
+app.get("/settings/cex/:exchange", requireAuth, requirePermission("exchange_keys.view_present"), requireReauth, async (req, res) => {
   const exchange = req.params.exchange;
   const cfg = await prisma.cexConfig.findUnique({ where: { exchange } });
   res.json(cfg ?? null);
 });
 
-app.get("/settings/cex", requireAuth, async (_req, res) => {
+app.get("/settings/cex", requireAuth, requirePermission("exchange_keys.view_present"), async (_req, res) => {
   const items = await prisma.cexConfig.findMany({ orderBy: { updatedAt: "desc" } });
   const masked = items.map((cfg) => ({
     exchange: cfg.exchange,
@@ -858,14 +1161,15 @@ app.get("/settings/security", requireAuth, async (_req, res) => {
   });
 });
 
-app.delete("/settings/cex/:exchange", requireAuth, requireReauth, async (req, res) => {
+app.delete("/settings/cex/:exchange", requireAuth, requirePermission("exchange_keys.edit"), requireReauth, async (req, res) => {
   const exchange = req.params.exchange;
   await prisma.cexConfig.delete({ where: { exchange } });
   res.json({ ok: true });
 });
 
-app.post("/bots", requireAuth, async (req, res) => {
+app.post("/bots", requireAuth, requirePermission("bots.create"), async (req, res) => {
   const workspaceId = getWorkspaceId(res);
+  const user = getUserFromLocals(res);
   const data = BotCreate.parse(req.body);
   const id = crypto.randomUUID();
 
@@ -936,11 +1240,21 @@ app.post("/bots", requireAuth, async (req, res) => {
     }
   });
 
+  await writeAudit({
+    workspaceId,
+    actorUserId: user.id,
+    action: "bots.create",
+    entityType: "Bot",
+    entityId: bot.id,
+    meta: { name: bot.name, symbol: bot.symbol }
+  });
+
   res.json(bot);
 });
 
-app.put("/bots/:id/config", requireAuth, async (req, res) => {
+app.put("/bots/:id/config", requireAuth, requirePermission("bots.edit_config"), async (req, res) => {
   const workspaceId = getWorkspaceId(res);
+  const user = getUserFromLocals(res);
   const botId = req.params.id;
 
   const payload = z.object({
@@ -949,6 +1263,10 @@ app.put("/bots/:id/config", requireAuth, async (req, res) => {
     risk: RiskConfig,
     notify: NotificationConfig
   }).parse(req.body);
+
+  if (!isSuperadmin(user) && !roleAllows(res, "risk.edit")) {
+    return res.status(403).json({ error: "forbidden" });
+  }
 
   const errors: Record<string, string> = {};
   const minQuoteUsdt = 100;
@@ -995,50 +1313,90 @@ app.put("/bots/:id/config", requireAuth, async (req, res) => {
     create: { botId, ...payload.notify }
   });
 
+  await writeAudit({
+    workspaceId,
+    actorUserId: user.id,
+    action: "bots.update_config",
+    entityType: "Bot",
+    entityId: botId
+  });
+
   res.json({ ok: true });
 });
 
-app.post("/bots/:id/mm/start", requireAuth, async (req, res) => {
+app.post("/bots/:id/mm/start", requireAuth, requirePermission("bots.start_pause_stop"), async (req, res) => {
   const workspaceId = getWorkspaceId(res);
+  const user = getUserFromLocals(res);
   const botId = req.params.id;
   const bot = await prisma.bot.findFirst({ where: { id: botId, workspaceId } });
   if (!bot) return res.status(404).json({ error: "bot_not_found" });
   await prisma.bot.update({ where: { id: botId }, data: { mmEnabled: true } });
+  await writeAudit({
+    workspaceId,
+    actorUserId: user.id,
+    action: "bots.mm.start",
+    entityType: "Bot",
+    entityId: botId
+  });
   await sendTelegramWithFallback(`✅ MM started\n${bot.name} (${bot.symbol})`);
   res.json({ ok: true });
 });
 
-app.post("/bots/:id/mm/stop", requireAuth, async (req, res) => {
+app.post("/bots/:id/mm/stop", requireAuth, requirePermission("bots.start_pause_stop"), async (req, res) => {
   const workspaceId = getWorkspaceId(res);
+  const user = getUserFromLocals(res);
   const botId = req.params.id;
   const bot = await prisma.bot.findFirst({ where: { id: botId, workspaceId } });
   if (!bot) return res.status(404).json({ error: "bot_not_found" });
   await prisma.bot.update({ where: { id: botId }, data: { mmEnabled: false } });
+  await writeAudit({
+    workspaceId,
+    actorUserId: user.id,
+    action: "bots.mm.stop",
+    entityType: "Bot",
+    entityId: botId
+  });
   await sendTelegramWithFallback(`🛑 MM stopped\n${bot.name} (${bot.symbol})`);
   res.json({ ok: true });
 });
 
-app.post("/bots/:id/vol/start", requireAuth, async (req, res) => {
+app.post("/bots/:id/vol/start", requireAuth, requirePermission("bots.start_pause_stop"), async (req, res) => {
   const workspaceId = getWorkspaceId(res);
+  const user = getUserFromLocals(res);
   const botId = req.params.id;
   const bot = await prisma.bot.findFirst({ where: { id: botId, workspaceId } });
   if (!bot) return res.status(404).json({ error: "bot_not_found" });
   await prisma.bot.update({ where: { id: botId }, data: { volEnabled: true } });
+  await writeAudit({
+    workspaceId,
+    actorUserId: user.id,
+    action: "bots.vol.start",
+    entityType: "Bot",
+    entityId: botId
+  });
   await sendTelegramWithFallback(`✅ Volume bot started\n${bot.name} (${bot.symbol})`);
   res.json({ ok: true });
 });
 
-app.post("/bots/:id/vol/stop", requireAuth, async (req, res) => {
+app.post("/bots/:id/vol/stop", requireAuth, requirePermission("bots.start_pause_stop"), async (req, res) => {
   const workspaceId = getWorkspaceId(res);
+  const user = getUserFromLocals(res);
   const botId = req.params.id;
   const bot = await prisma.bot.findFirst({ where: { id: botId, workspaceId } });
   if (!bot) return res.status(404).json({ error: "bot_not_found" });
   await prisma.bot.update({ where: { id: botId }, data: { volEnabled: false } });
+  await writeAudit({
+    workspaceId,
+    actorUserId: user.id,
+    action: "bots.vol.stop",
+    entityType: "Bot",
+    entityId: botId
+  });
   await sendTelegramWithFallback(`🛑 Volume bot stopped\n${bot.name} (${bot.symbol})`);
   res.json({ ok: true });
 });
 
-app.put("/settings/cex", requireAuth, requireReauth, async (req, res) => {
+app.put("/settings/cex", requireAuth, requirePermission("exchange_keys.edit"), requireReauth, async (req, res) => {
   const data = CexConfig.parse(req.body);
   const cfg = await prisma.cexConfig.upsert({
     where: { exchange: data.exchange },
@@ -1090,7 +1448,7 @@ app.put("/settings/security", requireAuth, async (req, res) => {
   });
 });
 
-app.post("/settings/cex/verify", requireAuth, requireReauth, async (req, res) => {
+app.post("/settings/cex/verify", requireAuth, requirePermission("exchange_keys.edit"), requireReauth, async (req, res) => {
   const data = CexConfig.parse(req.body);
 
   // Minimal auth-protected call: balances requires signed headers.
@@ -1124,8 +1482,9 @@ app.post("/settings/cex/verify", requireAuth, requireReauth, async (req, res) =>
   res.json({ ok: true });
 });
 
-app.post("/bots/:id/start", requireAuth, async (req, res) => {
+app.post("/bots/:id/start", requireAuth, requirePermission("bots.start_pause_stop"), async (req, res) => {
   const workspaceId = getWorkspaceId(res);
+  const user = getUserFromLocals(res);
   const id = req.params.id;
 
   const bot = await prisma.bot.findFirst({ where: { id, workspaceId } });
@@ -1158,11 +1517,20 @@ app.post("/bots/:id/start", requireAuth, async (req, res) => {
 
   await sendTelegramWithFallback(`✅ Bot started\n${bot.name} (${bot.symbol})`);
 
+  await writeAudit({
+    workspaceId,
+    actorUserId: user.id,
+    action: "runner.start",
+    entityType: "Bot",
+    entityId: id
+  });
+
   res.json({ ok: true });
 });
 
-app.post("/bots/:id/pause", requireAuth, async (req, res) => {
+app.post("/bots/:id/pause", requireAuth, requirePermission("bots.start_pause_stop"), async (req, res) => {
   const workspaceId = getWorkspaceId(res);
+  const user = getUserFromLocals(res);
   const id = req.params.id;
 
   const bot = await prisma.bot.findFirst({ where: { id, workspaceId } });
@@ -1193,11 +1561,20 @@ app.post("/bots/:id/pause", requireAuth, async (req, res) => {
     message: "Pause command received"
   });
 
+  await writeAudit({
+    workspaceId,
+    actorUserId: user.id,
+    action: "runner.pause",
+    entityType: "Bot",
+    entityId: id
+  });
+
   res.json({ ok: true });
 });
 
-app.post("/bots/:id/stop", requireAuth, async (req, res) => {
+app.post("/bots/:id/stop", requireAuth, requirePermission("bots.start_pause_stop"), async (req, res) => {
   const workspaceId = getWorkspaceId(res);
+  const user = getUserFromLocals(res);
   const id = req.params.id;
 
   const bot = await prisma.bot.findFirst({ where: { id, workspaceId } });
@@ -1229,6 +1606,14 @@ app.post("/bots/:id/stop", requireAuth, async (req, res) => {
   });
 
   await sendTelegramWithFallback(`🛑 Bot stopped\n${bot.name} (${bot.symbol})`);
+
+  await writeAudit({
+    workspaceId,
+    actorUserId: user.id,
+    action: "runner.stop",
+    entityType: "Bot",
+    entityId: id
+  });
 
   res.json({ ok: true });
 });
