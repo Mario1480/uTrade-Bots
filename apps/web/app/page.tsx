@@ -112,10 +112,10 @@ export default function Page() {
               </div>
               <div style={{ marginTop: 12, display: "flex", gap: 8, flexWrap: "wrap" }}>
                 <Link href={`/bots/${b.id}`} className="btn">
-                  Open bot →
+                  Bot Overview
                 </Link>
                 <Link href={`/bots/${b.id}/settings`} className="btn">
-                  Settings
+                  Bot Settings
                 </Link>
               </div>
             </div>
