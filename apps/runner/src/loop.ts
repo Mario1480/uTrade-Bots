@@ -675,7 +675,7 @@ export async function runLoop(params: {
                 safeOrder.qty = qty;
               }
             }
-            if (!skipVolume && safeOrder.type === "limit" && safeOrder.postOnly && botRow.mmEnabled) {
+            if (!skipVolume && safeOrder.type === "limit" && safeOrder.postOnly && botRow.mmEnabled && !activeLikeVol) {
               const ref = Number.isFinite(mid.last) && (mid.last as number) > 0 ? (mid.last as number) : mid.mid;
               const halfMin = Math.max(0, volLastBandPct);
               if (halfMin > 0 && safeOrder.price && safeOrder.qty) {
