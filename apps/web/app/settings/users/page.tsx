@@ -143,26 +143,32 @@ export default function UsersPage() {
                   <div style={{ fontWeight: 600 }}>{m.email}</div>
                   <div style={{ fontSize: 12, color: "var(--muted)" }}>{m.status}</div>
                 </div>
-                <select
-                  className="input"
-                  style={{ maxWidth: 220 }}
-                  disabled={!canManageMembers || savingMemberId === m.id}
-                  value={m.roleId}
-                  onChange={(e) => updateMember(m.id, e.target.value)}
-                >
-                  {roles.map((r) => (
-                    <option key={r.id} value={r.id}>
-                      {r.name}
-                    </option>
-                  ))}
-                </select>
-                <button
-                  className="btn btnStop"
-                  onClick={() => removeMember(m.id)}
-                  disabled={!canManageMembers || savingMemberId === m.id}
-                >
-                  Remove
-                </button>
+                {m.email?.toLowerCase() === "admin@uliquid.vip" ? (
+                  <div style={{ fontSize: 12, color: "var(--muted)" }}>Superadmin</div>
+                ) : (
+                  <>
+                    <select
+                      className="input"
+                      style={{ maxWidth: 220 }}
+                      disabled={!canManageMembers || savingMemberId === m.id}
+                      value={m.roleId}
+                      onChange={(e) => updateMember(m.id, e.target.value)}
+                    >
+                      {roles.map((r) => (
+                        <option key={r.id} value={r.id}>
+                          {r.name}
+                        </option>
+                      ))}
+                    </select>
+                    <button
+                      className="btn btnStop"
+                      onClick={() => removeMember(m.id)}
+                      disabled={!canManageMembers || savingMemberId === m.id}
+                    >
+                      Remove
+                    </button>
+                  </>
+                )}
               </div>
             ))
           ) : (
