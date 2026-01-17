@@ -42,7 +42,7 @@ services:
       sh -lc "
         npm install &&
         npm run db:generate &&
-        npx prisma db push &&
+        npx prisma migrate deploy &&
         npm run dev:api
       "
 
