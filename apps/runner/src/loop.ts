@@ -593,7 +593,8 @@ export async function runLoop(params: {
                 streak = 1;
               }
               const desiredAggressiveSide = nextSide;
-              const makerSide = allowTaker ? (desiredAggressiveSide === "buy" ? "sell" : "buy") : desiredAggressiveSide;
+              // Variant 2: place maker on the desired side, taker crosses it.
+              const makerSide = desiredAggressiveSide;
               volState.lastSide = desiredAggressiveSide;
               volState.sideStreak = streak;
               safeOrder.side = makerSide;
@@ -716,12 +717,13 @@ export async function runLoop(params: {
               if (allowTaker && safeOrder.type === "limit" && safeOrder.price) {
                 let skipTaker = false;
                 const notional = safeOrder.price * safeOrder.qty;
-                const desiredAggressiveSide = volState.lastSide ?? (safeOrder.side === "buy" ? "sell" : "buy");
+                const desiredAggressiveSide = volState.lastSide ?? safeOrder.side;
+                const takerSide = desiredAggressiveSide === "buy" ? "sell" : "buy";
                 const ref = Number.isFinite(mid.last) && (mid.last as number) > 0 ? (mid.last as number) : mid.mid;
                 const bumpBase = Math.max(volLastMinBumpAbs, ref * volLastMinBumpPct);
                 const buyBump = bumpBase * Math.max(5, volBuyTicks);
                 const insidePct = Math.max(0.00005, volInsideSpreadPct);
-                const takerPrice = desiredAggressiveSide === "buy"
+                const takerPrice = takerSide === "buy"
                   ? (mid.ask ? Math.max(ref + buyBump, mid.ask * (1 + insidePct)) : ref + buyBump)
                   : (mid.bid ? Math.min(ref - bumpBase, mid.bid * (1 - insidePct)) : Math.max(ref - bumpBase, 0));
 
@@ -729,7 +731,7 @@ export async function runLoop(params: {
                   skipTaker = true;
                 }
 
-                const taker = desiredAggressiveSide === "buy"
+                const taker = takerSide === "buy"
                   ? {
                       symbol,
                       side: "buy" as const,
