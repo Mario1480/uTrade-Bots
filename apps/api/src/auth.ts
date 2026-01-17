@@ -19,10 +19,15 @@ export function isSuperadmin(user?: { email?: string | null }) {
 
 function cookieOptions(maxAgeMs: number) {
   const domain = process.env.COOKIE_DOMAIN;
+  const secureEnv = process.env.COOKIE_SECURE;
+  const secure =
+    secureEnv != null
+      ? secureEnv === "true" || secureEnv === "1"
+      : process.env.NODE_ENV === "production";
   return {
     httpOnly: true,
     sameSite: "lax" as const,
-    secure: process.env.NODE_ENV === "production",
+    secure,
     maxAge: maxAgeMs,
     path: "/",
     ...(domain ? { domain } : {})
