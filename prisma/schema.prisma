@@ -25,6 +25,7 @@ model Bot {
   notificationConfig BotNotificationConfig?
   runtime    BotRuntime?
   alerts     BotAlert[]
+  manualTrades ManualTradeLog[]
 }
 
 model MarketMakingConfig {
@@ -133,6 +134,33 @@ model BotAlert {
   @@index([botId, createdAt])
 }
 
+model ManualTradeLog {
+  id              String   @id @default(cuid())
+  workspaceId     String
+  userId          String
+  botId           String
+  symbol          String
+  type            String
+  side            String
+  qty             Float?
+  price           Float?
+  notional        Float?
+  postOnly        Boolean?
+  timeInForce     String?
+  clientOrderId   String?
+  exchangeOrderId String?
+  status          String
+  error           String?
+  createdAt       DateTime @default(now())
+
+  workspace Workspace @relation(fields: [workspaceId], references: [id])
+  user      User      @relation(fields: [userId], references: [id])
+  bot       Bot       @relation(fields: [botId], references: [id])
+
+  @@index([botId, createdAt])
+  @@index([userId, createdAt])
+}
+
 model BotFillCursor {
   id                  String   @id @default(cuid())
   botId               String
@@ -175,10 +203,12 @@ model User {
   passwordHash       String
   autoLogoutEnabled  Boolean  @default(true)
   autoLogoutMinutes  Int      @default(60)
+  allowManualTrading Boolean  @default(false)
   createdAt          DateTime @default(now())
   sessions           Session[]
   reauths            ReauthSession[]
   workspaces         WorkspaceMember[]
+  manualTrades       ManualTradeLog[]
 }
 
 model Session {
@@ -210,6 +240,7 @@ model Workspace {
   createdAt DateTime @default(now())
   members   WorkspaceMember[]
   bots      Bot[]
+  manualTrades ManualTradeLog[]
 }
 
 model WorkspaceMember {

@@ -110,6 +110,25 @@ const SecuritySettings = z.object({
   autoLogoutMinutes: z.number().int().min(1).max(1440)
 });
 
+const ManualLimitOrder = z.object({
+  side: z.enum(["BUY", "SELL", "buy", "sell"]),
+  price: z.union([z.number(), z.string()]),
+  quantity: z.union([z.number(), z.string()]),
+  postOnly: z.boolean().optional(),
+  timeInForce: z.enum(["GTC", "IOC"]).optional(),
+  clientTag: z.string().optional()
+});
+
+const ManualMarketOrder = z.object({
+  side: z.enum(["BUY", "SELL", "buy", "sell"]),
+  quoteNotionalUsdt: z.union([z.number(), z.string()]).optional(),
+  quantity: z.union([z.number(), z.string()]).optional()
+});
+
+const ManualCancelOrder = z.object({
+  orderId: z.string().min(1)
+});
+
 async function createBotAlert(params: {
   botId: string;
   level: "info" | "warn" | "error";
@@ -124,6 +143,24 @@ async function createBotAlert(params: {
       message: params.message ?? null
     }
   });
+}
+
+function parseNumber(v: unknown): number {
+  if (typeof v === "number") return v;
+  if (typeof v === "string") return Number(v);
+  return NaN;
+}
+
+async function isOwner(userId: string, workspaceId: string): Promise<boolean> {
+  const member = await prisma.workspaceMember.findFirst({
+    where: { userId, workspaceId }
+  });
+  return member?.role === "owner";
+}
+
+function manualTradingAllowed(res: express.Response): boolean {
+  const user = res.locals.user as any;
+  return Boolean(user?.allowManualTrading);
 }
 
 async function sendTelegramAlert(text: string) {
@@ -219,9 +256,18 @@ app.post("/auth/logout", requireAuth, async (req, res) => {
 });
 
 app.get("/auth/me", requireAuth, async (_req, res) => {
-  const user = getUserFromLocals(res);
+  const user = getUserFromLocals(res) as any;
   const workspaceId = getWorkspaceId(res);
-  res.json({ id: user.id, email: user.email, workspaceId });
+  const member = await prisma.workspaceMember.findFirst({
+    where: { workspaceId, userId: user.id }
+  });
+  res.json({
+    id: user.id,
+    email: user.email,
+    workspaceId,
+    role: member?.role ?? "member",
+    allowManualTrading: Boolean(user.allowManualTrading)
+  });
 });
 
 app.post("/auth/reauth", requireAuth, async (req, res) => {
@@ -253,6 +299,43 @@ app.post("/auth/change-password", requireAuth, async (req, res) => {
   });
 
   res.json({ ok: true });
+});
+
+app.get("/settings/users", requireAuth, async (_req, res) => {
+  const workspaceId = getWorkspaceId(res);
+  const members = await prisma.workspaceMember.findMany({
+    where: { workspaceId },
+    include: { user: true }
+  });
+  const mapped = members.map((m) => ({
+    id: m.user.id,
+    email: m.user.email,
+    role: m.role,
+    allowManualTrading: Boolean((m.user as any).allowManualTrading)
+  }));
+  res.json(mapped);
+});
+
+app.put("/settings/users/:userId/permissions", requireAuth, async (req, res) => {
+  const workspaceId = getWorkspaceId(res);
+  const user = getUserFromLocals(res);
+  if (!(await isOwner(user.id, workspaceId))) {
+    return res.status(403).json({ error: "forbidden" });
+  }
+
+  const payload = z.object({ allowManualTrading: z.boolean() }).parse(req.body);
+  const targetId = req.params.userId;
+  const member = await prisma.workspaceMember.findFirst({
+    where: { workspaceId, userId: targetId }
+  });
+  if (!member) return res.status(404).json({ error: "not_found" });
+
+  const updated = await prisma.user.update({
+    where: { id: targetId },
+    data: { allowManualTrading: payload.allowManualTrading }
+  });
+
+  res.json({ id: updated.id, allowManualTrading: updated.allowManualTrading });
 });
 
 app.get("/auth/reauth/status", requireAuth, async (req, res) => {
@@ -322,6 +405,7 @@ app.delete("/bots/:id", requireAuth, async (req, res) => {
     prisma.volumeConfig.deleteMany({ where: { botId } }),
     prisma.riskConfig.deleteMany({ where: { botId } }),
     prisma.botNotificationConfig.deleteMany({ where: { botId } }),
+    prisma.manualTradeLog.deleteMany({ where: { botId } }),
     prisma.bot.delete({ where: { id: botId } })
   ]);
 
@@ -368,6 +452,200 @@ app.get("/bots/:id/open-orders", requireAuth, async (req, res) => {
     vol: normalized.filter((o) => isVol(o.clientOrderId)),
     other: normalized.filter((o) => !isMm(o.clientOrderId) && !isVol(o.clientOrderId))
   });
+});
+
+app.post("/bots/:id/manual/limit", requireAuth, async (req, res) => {
+  const workspaceId = getWorkspaceId(res);
+  const user = getUserFromLocals(res);
+  if (!manualTradingAllowed(res)) {
+    return res.status(403).json({ error: "manual_trading_disabled" });
+  }
+
+  const bot = await prisma.bot.findFirst({ where: { id: req.params.id, workspaceId } });
+  if (!bot) return res.status(404).json({ error: "not_found" });
+  if (bot.exchange.toLowerCase() !== "bitmart") {
+    return res.status(400).json({ error: "unsupported_exchange" });
+  }
+
+  const data = ManualLimitOrder.parse(req.body);
+  const side = data.side.toLowerCase() as "buy" | "sell";
+  const price = parseNumber(data.price);
+  const qty = parseNumber(data.quantity);
+  const postOnly = data.postOnly ?? true;
+
+  if (!Number.isFinite(price) || price <= 0 || !Number.isFinite(qty) || qty <= 0) {
+    return res.status(400).json({ error: "invalid_order" });
+  }
+
+  const cex = await prisma.cexConfig.findUnique({ where: { exchange: bot.exchange } });
+  if (!cex?.apiKey || !cex?.apiSecret) {
+    return res.status(400).json({ error: "cex_config_missing" });
+  }
+
+  const tag = data.clientTag ? `_${data.clientTag.replace(/[^a-zA-Z0-9_-]/g, "").slice(0, 12)}` : "";
+  const clientOrderId = `man_${bot.id}_${Date.now().toString(36)}${tag}`;
+  const baseUrl = process.env.BITMART_BASE_URL || "https://api-cloud.bitmart.com";
+  const rest = new BitmartRestClient(baseUrl, cex.apiKey, cex.apiSecret, cex.apiMemo ?? "");
+
+  try {
+    const order = await rest.placeOrder({
+      symbol: bot.symbol,
+      side,
+      type: "limit",
+      price,
+      qty,
+      postOnly,
+      clientOrderId
+    });
+
+    await prisma.manualTradeLog.create({
+      data: {
+        workspaceId,
+        userId: user.id,
+        botId: bot.id,
+        symbol: bot.symbol,
+        type: "LIMIT",
+        side: side.toUpperCase(),
+        qty,
+        price,
+        notional: price * qty,
+        postOnly,
+        timeInForce: data.timeInForce ?? "GTC",
+        clientOrderId,
+        exchangeOrderId: order.id,
+        status: "SUBMITTED"
+      }
+    });
+
+    res.json({ exchangeOrderId: order.id, clientOrderId, status: order.status });
+  } catch (e: any) {
+    const errMsg = e?.message ? String(e.message) : String(e);
+    await prisma.manualTradeLog.create({
+      data: {
+        workspaceId,
+        userId: user.id,
+        botId: bot.id,
+        symbol: bot.symbol,
+        type: "LIMIT",
+        side: side.toUpperCase(),
+        qty,
+        price,
+        notional: price * qty,
+        postOnly,
+        timeInForce: data.timeInForce ?? "GTC",
+        clientOrderId,
+        status: "REJECTED",
+        error: errMsg
+      }
+    }).catch(() => {});
+    res.status(400).json({ error: errMsg });
+  }
+});
+
+app.post("/bots/:id/manual/market", requireAuth, async (req, res) => {
+  const workspaceId = getWorkspaceId(res);
+  const user = getUserFromLocals(res);
+  if (!manualTradingAllowed(res)) {
+    return res.status(403).json({ error: "manual_trading_disabled" });
+  }
+
+  const bot = await prisma.bot.findFirst({ where: { id: req.params.id, workspaceId } });
+  if (!bot) return res.status(404).json({ error: "not_found" });
+  if (bot.exchange.toLowerCase() !== "bitmart") {
+    return res.status(400).json({ error: "unsupported_exchange" });
+  }
+
+  const data = ManualMarketOrder.parse(req.body);
+  const side = data.side.toLowerCase() as "buy" | "sell";
+  const qty = parseNumber(data.quantity);
+  const notional = parseNumber(data.quoteNotionalUsdt);
+
+  if (side === "buy" && (!Number.isFinite(notional) || notional <= 0)) {
+    return res.status(400).json({ error: "invalid_buy_notional" });
+  }
+  if (side === "sell" && (!Number.isFinite(qty) || qty <= 0)) {
+    return res.status(400).json({ error: "invalid_sell_quantity" });
+  }
+
+  const cex = await prisma.cexConfig.findUnique({ where: { exchange: bot.exchange } });
+  if (!cex?.apiKey || !cex?.apiSecret) {
+    return res.status(400).json({ error: "cex_config_missing" });
+  }
+
+  const clientOrderId = `man_${bot.id}_${Date.now().toString(36)}`;
+  const baseUrl = process.env.BITMART_BASE_URL || "https://api-cloud.bitmart.com";
+  const rest = new BitmartRestClient(baseUrl, cex.apiKey, cex.apiSecret, cex.apiMemo ?? "");
+
+  try {
+    const order = await rest.placeOrder({
+      symbol: bot.symbol,
+      side,
+      type: "market",
+      qty: side === "sell" ? qty : 0,
+      quoteQty: side === "buy" ? notional : undefined,
+      clientOrderId
+    });
+
+    await prisma.manualTradeLog.create({
+      data: {
+        workspaceId,
+        userId: user.id,
+        botId: bot.id,
+        symbol: bot.symbol,
+        type: "MARKET",
+        side: side.toUpperCase(),
+        qty: side === "sell" ? qty : undefined,
+        notional: side === "buy" ? notional : undefined,
+        clientOrderId,
+        exchangeOrderId: order.id,
+        status: "SUBMITTED"
+      }
+    });
+
+    res.json({ exchangeOrderId: order.id, clientOrderId, status: order.status });
+  } catch (e: any) {
+    const errMsg = e?.message ? String(e.message) : String(e);
+    await prisma.manualTradeLog.create({
+      data: {
+        workspaceId,
+        userId: user.id,
+        botId: bot.id,
+        symbol: bot.symbol,
+        type: "MARKET",
+        side: side.toUpperCase(),
+        qty: side === "sell" ? qty : undefined,
+        notional: side === "buy" ? notional : undefined,
+        clientOrderId,
+        status: "REJECTED",
+        error: errMsg
+      }
+    }).catch(() => {});
+    res.status(400).json({ error: errMsg });
+  }
+});
+
+app.post("/bots/:id/manual/cancel", requireAuth, async (req, res) => {
+  const workspaceId = getWorkspaceId(res);
+  if (!manualTradingAllowed(res)) {
+    return res.status(403).json({ error: "manual_trading_disabled" });
+  }
+
+  const bot = await prisma.bot.findFirst({ where: { id: req.params.id, workspaceId } });
+  if (!bot) return res.status(404).json({ error: "not_found" });
+  if (bot.exchange.toLowerCase() !== "bitmart") {
+    return res.status(400).json({ error: "unsupported_exchange" });
+  }
+
+  const data = ManualCancelOrder.parse(req.body);
+  const cex = await prisma.cexConfig.findUnique({ where: { exchange: bot.exchange } });
+  if (!cex?.apiKey || !cex?.apiSecret) {
+    return res.status(400).json({ error: "cex_config_missing" });
+  }
+
+  const baseUrl = process.env.BITMART_BASE_URL || "https://api-cloud.bitmart.com";
+  const rest = new BitmartRestClient(baseUrl, cex.apiKey, cex.apiSecret, cex.apiMemo ?? "");
+  await rest.cancelOrder(bot.symbol, data.orderId);
+  res.json({ ok: true });
 });
 
 app.get("/bots/:id/alerts", requireAuth, async (req, res) => {

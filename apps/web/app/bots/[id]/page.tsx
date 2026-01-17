@@ -28,10 +28,19 @@ export default function BotOverviewPage() {
   const id = params.id as string;
 
   const [bot, setBot] = useState<any>(null);
+  const [me, setMe] = useState<any>(null);
   const [rt, setRt] = useState<any>(null);
   const [orders, setOrders] = useState<{ mm: Order[]; vol: Order[]; other: Order[] } | null>(null);
   const [alerts, setAlerts] = useState<AlertItem[]>([]);
   const [toast, setToast] = useState<{ type: "error" | "success"; msg: string } | null>(null);
+  const [manualType, setManualType] = useState<"LIMIT" | "MARKET">("LIMIT");
+  const [manualSide, setManualSide] = useState<"buy" | "sell">("buy");
+  const [manualQty, setManualQty] = useState("");
+  const [manualPrice, setManualPrice] = useState("");
+  const [manualSpend, setManualSpend] = useState("");
+  const [manualPostOnly, setManualPostOnly] = useState(true);
+  const [manualConfirm, setManualConfirm] = useState(false);
+  const [manualBusy, setManualBusy] = useState(false);
 
   function showToast(type: "error" | "success", msg: string) {
     setToast({ type, msg });
@@ -49,6 +58,15 @@ export default function BotOverviewPage() {
       setBot(b);
     } catch (e) {
       showToast("error", errMsg(e));
+    }
+  }
+
+  async function loadMe() {
+    try {
+      const meRes = await apiGet<any>("/auth/me");
+      setMe(meRes);
+    } catch {
+      // ignore
     }
   }
 
@@ -92,6 +110,7 @@ export default function BotOverviewPage() {
   useEffect(() => {
     if (!id) return;
     loadBot();
+    loadMe();
     loadRuntime();
     loadOrders();
     loadAlerts();
@@ -104,6 +123,63 @@ export default function BotOverviewPage() {
       clearInterval(t3);
     };
   }, [id]);
+
+  async function submitManual() {
+    if (!me?.allowManualTrading) {
+      showToast("error", "Manual trading disabled.");
+      return;
+    }
+    setManualBusy(true);
+    try {
+      if (manualType === "LIMIT") {
+        const price = Number(manualPrice);
+        const qty = Number(manualQty);
+        if (!Number.isFinite(price) || price <= 0 || !Number.isFinite(qty) || qty <= 0) {
+          showToast("error", "Enter a valid price and quantity.");
+          return;
+        }
+        await apiPost(`/bots/${id}/manual/limit`, {
+          side: manualSide,
+          price,
+          quantity: qty,
+          postOnly: manualPostOnly,
+          timeInForce: "GTC"
+        });
+        showToast("success", "Limit order submitted");
+      } else {
+        if (!manualConfirm) {
+          showToast("error", "Confirm market order first.");
+          return;
+        }
+        if (manualSide === "buy") {
+          const spend = Number(manualSpend);
+          if (!Number.isFinite(spend) || spend <= 0) {
+            showToast("error", "Enter a valid spend amount.");
+            return;
+          }
+          await apiPost(`/bots/${id}/manual/market`, {
+            side: manualSide,
+            quoteNotionalUsdt: spend
+          });
+        } else {
+          const qty = Number(manualQty);
+          if (!Number.isFinite(qty) || qty <= 0) {
+            showToast("error", "Enter a valid quantity.");
+            return;
+          }
+          await apiPost(`/bots/${id}/manual/market`, {
+            side: manualSide,
+            quantity: qty
+          });
+        }
+        showToast("success", "Market order submitted");
+      }
+    } catch (e) {
+      showToast("error", errMsg(e));
+    } finally {
+      setManualBusy(false);
+    }
+  }
 
   async function startMm() {
     try {
@@ -334,6 +410,115 @@ export default function BotOverviewPage() {
                   {a.message ? <div style={{ fontSize: 12, color: "var(--muted)" }}>{a.message}</div> : null}
                 </div>
               ))}
+            </div>
+          )}
+        </section>
+
+        <section className="card" style={{ padding: 12 }}>
+          <h3 style={{ marginTop: 0 }}>Manual Trades</h3>
+          {!me?.allowManualTrading ? (
+            <div style={{ fontSize: 12, color: "var(--muted)" }}>
+              Manual trading disabled by admin.
+            </div>
+          ) : (
+            <div style={{ display: "grid", gap: 10 }}>
+              <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+                <button
+                  className={`btn ${manualType === "LIMIT" ? "btnPrimary" : ""}`}
+                  onClick={() => setManualType("LIMIT")}
+                >
+                  Limit
+                </button>
+                <button
+                  className={`btn ${manualType === "MARKET" ? "btnPrimary" : ""}`}
+                  onClick={() => setManualType("MARKET")}
+                >
+                  Market
+                </button>
+                <button
+                  className={`btn ${manualSide === "buy" ? "btnStart" : ""}`}
+                  onClick={() => setManualSide("buy")}
+                >
+                  Buy
+                </button>
+                <button
+                  className={`btn ${manualSide === "sell" ? "btnStop" : ""}`}
+                  onClick={() => setManualSide("sell")}
+                >
+                  Sell
+                </button>
+              </div>
+
+              {manualType === "LIMIT" ? (
+                <div style={{ display: "grid", gap: 8 }}>
+                  <label style={{ fontSize: 13 }}>
+                    Price
+                    <input
+                      className="input"
+                      value={manualPrice}
+                      onChange={(e) => setManualPrice(e.target.value)}
+                      placeholder="0.0000"
+                    />
+                  </label>
+                  <label style={{ fontSize: 13 }}>
+                    Quantity
+                    <input
+                      className="input"
+                      value={manualQty}
+                      onChange={(e) => setManualQty(e.target.value)}
+                      placeholder="0"
+                    />
+                  </label>
+                  <label style={{ fontSize: 13, display: "flex", alignItems: "center", gap: 8 }}>
+                    <input
+                      type="checkbox"
+                      checked={manualPostOnly}
+                      onChange={(e) => setManualPostOnly(e.target.checked)}
+                    />
+                    Post-only
+                  </label>
+                </div>
+              ) : (
+                <div style={{ display: "grid", gap: 8 }}>
+                  {manualSide === "buy" ? (
+                    <label style={{ fontSize: 13 }}>
+                      Spend (USDT)
+                      <input
+                        className="input"
+                        value={manualSpend}
+                        onChange={(e) => setManualSpend(e.target.value)}
+                        placeholder="0"
+                      />
+                    </label>
+                  ) : (
+                    <label style={{ fontSize: 13 }}>
+                      Quantity
+                      <input
+                        className="input"
+                        value={manualQty}
+                        onChange={(e) => setManualQty(e.target.value)}
+                        placeholder="0"
+                      />
+                    </label>
+                  )}
+                  <label style={{ fontSize: 12, color: "var(--muted)", display: "flex", gap: 8 }}>
+                    <input
+                      type="checkbox"
+                      checked={manualConfirm}
+                      onChange={(e) => setManualConfirm(e.target.checked)}
+                    />
+                    I understand market orders can cause slippage.
+                  </label>
+                </div>
+              )}
+
+              <button
+                className="btn btnPrimary"
+                onClick={submitManual}
+                disabled={manualBusy}
+              >
+                {manualBusy ? "Submitting..." : "Submit manual order"}
+              </button>
             </div>
           )}
         </section>
