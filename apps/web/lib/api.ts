@@ -24,14 +24,23 @@ export class ApiError extends Error {
   }
 }
 
+function getCookie(name: string): string | null {
+  if (typeof document === "undefined") return null;
+  const match = document.cookie.match(new RegExp(`(^|; )${name}=([^;]*)`));
+  return match ? decodeURIComponent(match[2]) : null;
+}
+
 async function request<T>(
   method: "GET" | "POST" | "PUT" | "DELETE",
   path: string,
   body?: any
 ): Promise<T> {
+  const headers: Record<string, string> = { "Content-Type": "application/json" };
+  const csrf = getCookie("mm_csrf");
+  if (csrf) headers["x-csrf-token"] = csrf;
   const res = await fetch(`${API}${path}`, {
     method,
-    headers: { "Content-Type": "application/json" },
+    headers,
     body: body ? JSON.stringify(body) : undefined,
     credentials: "include",
     cache: "no-store"

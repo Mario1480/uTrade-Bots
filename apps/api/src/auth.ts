@@ -8,6 +8,7 @@ const SESSION_TTL_DAYS = Number(process.env.SESSION_TTL_DAYS ?? "30");
 const REAUTH_TTL_MIN = Number(process.env.REAUTH_TTL_MIN ?? "10");
 const SESSION_COOKIE = "mm_session";
 const REAUTH_COOKIE = "mm_reauth";
+const CSRF_COOKIE = "mm_csrf";
 
 function hashToken(token: string): string {
   return crypto.createHash("sha256").update(token).digest("hex");
@@ -17,7 +18,7 @@ export function isSuperadmin(user?: { email?: string | null }) {
   return (user?.email ?? "").toLowerCase() === "admin@uliquid.vip";
 }
 
-function cookieOptions(maxAgeMs: number) {
+function cookieOptions(maxAgeMs: number, httpOnly = true) {
   const domain = process.env.COOKIE_DOMAIN;
   const secureEnv = process.env.COOKIE_SECURE;
   const secure =
@@ -25,13 +26,20 @@ function cookieOptions(maxAgeMs: number) {
       ? secureEnv === "true" || secureEnv === "1"
       : process.env.NODE_ENV === "production";
   return {
-    httpOnly: true,
+    httpOnly,
     sameSite: "lax" as const,
     secure,
     maxAge: maxAgeMs,
     path: "/",
     ...(domain ? { domain } : {})
   };
+}
+
+function setCsrfCookie(res: Response) {
+  const token = crypto.randomBytes(16).toString("hex");
+  const maxAgeMs = SESSION_TTL_DAYS * 24 * 60 * 60 * 1000;
+  res.cookie(CSRF_COOKIE, token, cookieOptions(maxAgeMs, false));
+  return token;
 }
 
 export async function hashPassword(password: string): Promise<string> {
@@ -56,6 +64,7 @@ export async function createSession(res: Response, userId: string) {
   });
 
   res.cookie(SESSION_COOKIE, token, cookieOptions(SESSION_TTL_DAYS * 24 * 60 * 60 * 1000));
+  setCsrfCookie(res);
   return { expiresAt };
 }
 
@@ -69,6 +78,7 @@ export async function destroySession(res: Response, token?: string | null) {
   const opts = domain ? { path: "/", domain } : { path: "/" };
   res.clearCookie(SESSION_COOKIE, opts);
   res.clearCookie(REAUTH_COOKIE, opts);
+  res.clearCookie(CSRF_COOKIE, opts);
 }
 
 export async function createReauth(res: Response, userId: string) {
@@ -126,6 +136,10 @@ export async function requireAuth(req: Request, res: Response, next: NextFunctio
   if (!session || session.expiresAt.getTime() < Date.now()) {
     await destroySession(res, token);
     return res.status(401).json({ error: "unauthorized" });
+  }
+
+  if (!req.cookies?.[CSRF_COOKIE]) {
+    setCsrfCookie(res);
   }
 
   const now = Date.now();

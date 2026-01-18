@@ -2,6 +2,7 @@ import "dotenv/config";
 import crypto from "node:crypto";
 import express from "express";
 import cors from "cors";
+import rateLimit from "express-rate-limit";
 import cookieParser from "cookie-parser";
 import { prisma } from "@mm/db";
 import { BitmartRestClient } from "@mm/exchange";
@@ -42,6 +43,40 @@ app.use(cors({
 }));
 app.use(express.json());
 app.use(cookieParser());
+
+const loginIpLimiter = rateLimit({
+  windowMs: 60_000,
+  max: 5,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: "rate_limited" }
+});
+
+const loginUserLimiter = rateLimit({
+  windowMs: 60_000,
+  max: 5,
+  standardHeaders: true,
+  legacyHeaders: false,
+  keyGenerator: (req) => {
+    const email = String((req.body as any)?.email ?? "").toLowerCase();
+    return email ? `email:${email}` : `ip:${req.ip}`;
+  },
+  message: { error: "rate_limited" }
+});
+
+app.use((req, res, next) => {
+  if (req.method === "GET" || req.method === "HEAD" || req.method === "OPTIONS") {
+    return next();
+  }
+  const session = req.cookies?.mm_session;
+  if (!session) return next();
+  const csrfCookie = req.cookies?.mm_csrf;
+  const csrfHeader = req.header("x-csrf-token");
+  if (!csrfCookie || !csrfHeader || csrfCookie !== csrfHeader) {
+    return res.status(403).json({ error: "csrf" });
+  }
+  return next();
+});
 
 const BotCreate = z.object({
   name: z.string(),
@@ -296,7 +331,7 @@ app.post("/auth/register", async (req, res) => {
   res.json({ ok: true });
 });
 
-app.post("/auth/login", async (req, res) => {
+app.post("/auth/login", loginIpLimiter, loginUserLimiter, async (req, res) => {
   const data = AuthPayload.parse(req.body);
   const user = await prisma.user.findUnique({ where: { email: data.email } });
   if (!user) return res.status(401).json({ error: "invalid_credentials" });
