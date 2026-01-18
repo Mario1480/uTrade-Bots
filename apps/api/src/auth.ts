@@ -9,6 +9,7 @@ const REAUTH_TTL_MIN = Number(process.env.REAUTH_TTL_MIN ?? "10");
 const SESSION_COOKIE = "mm_session";
 const REAUTH_COOKIE = "mm_reauth";
 const CSRF_COOKIE = "mm_csrf";
+const CSRF_COOKIE = "mm_csrf";
 
 function hashToken(token: string): string {
   return crypto.createHash("sha256").update(token).digest("hex");
@@ -36,10 +37,14 @@ function cookieOptions(maxAgeMs: number, httpOnly = true) {
 }
 
 function setCsrfCookie(res: Response) {
-  const token = crypto.randomBytes(16).toString("hex");
+  const token = crypto.randomBytes(32).toString("base64url");
   const maxAgeMs = SESSION_TTL_DAYS * 24 * 60 * 60 * 1000;
   res.cookie(CSRF_COOKIE, token, cookieOptions(maxAgeMs, false));
   return token;
+}
+
+export function refreshCsrfCookie(res: Response) {
+  return setCsrfCookie(res);
 }
 
 export async function hashPassword(password: string): Promise<string> {

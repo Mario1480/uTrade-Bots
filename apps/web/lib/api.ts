@@ -31,13 +31,15 @@ function getCookie(name: string): string | null {
 }
 
 async function request<T>(
-  method: "GET" | "POST" | "PUT" | "DELETE",
+  method: "GET" | "POST" | "PUT" | "DELETE" | "PATCH",
   path: string,
   body?: any
 ): Promise<T> {
   const headers: Record<string, string> = { "Content-Type": "application/json" };
-  const csrf = getCookie("mm_csrf");
-  if (csrf) headers["x-csrf-token"] = csrf;
+  if (!["GET", "HEAD", "OPTIONS"].includes(method)) {
+    const csrf = getCookie("mm_csrf");
+    if (csrf) headers["x-csrf-token"] = csrf;
+  }
   const res = await fetch(`${API}${path}`, {
     method,
     headers,

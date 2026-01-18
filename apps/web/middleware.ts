@@ -37,7 +37,10 @@ export function middleware(req: NextRequest) {
 async function validateSession(req: NextRequest, apiBase: string) {
   try {
     const res = await fetch(`${apiBase}/auth/me`, {
-      headers: { cookie: req.headers.get("cookie") ?? "" },
+      headers: {
+        cookie: req.headers.get("cookie") ?? "",
+        origin: req.nextUrl.origin
+      },
       cache: "no-store"
     });
     if (res.ok) return NextResponse.next();

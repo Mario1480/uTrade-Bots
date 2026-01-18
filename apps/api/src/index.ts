@@ -24,6 +24,7 @@ import {
 } from "./auth.js";
 import { seedAdmin } from "./seed-admin.js";
 import { ensureDefaultRoles } from "./rbac.js";
+import { refreshCsrfCookie } from "./auth.js";
 import { sendInviteEmail } from "./email.js";
 
 const app = express();
@@ -33,16 +34,32 @@ const origins = (process.env.CORS_ORIGINS ?? "http://localhost:3000")
   .map(s => s.trim())
   .filter(Boolean);
 
+function isAllowedOrigin(origin?: string | null) {
+  if (!origin) return false;
+  return origins.includes(origin);
+}
+
 app.use(cors({
   origin: (origin, cb) => {
-    if (!origin) return cb(null, true);
-    if (origins.includes(origin)) return cb(null, true);
+    if (!origin) return cb(null, false);
+    if (isAllowedOrigin(origin)) return cb(null, true);
     return cb(null, false);
   },
   credentials: true
 }));
 app.use(express.json());
 app.use(cookieParser());
+
+app.use((req, res, next) => {
+  const origin = req.header("origin");
+  if (!origin) {
+    if (req.path === "/health" && ["GET", "HEAD", "OPTIONS"].includes(req.method)) {
+      return next();
+    }
+    return res.status(403).json({ error: "origin_required" });
+  }
+  return next();
+});
 
 const loginIpLimiter = rateLimit({
   windowMs: 60_000,
@@ -68,8 +85,13 @@ app.use((req, res, next) => {
   if (req.method === "GET" || req.method === "HEAD" || req.method === "OPTIONS") {
     return next();
   }
-  const session = req.cookies?.mm_session;
-  if (!session) return next();
+  if (req.path === "/auth/login" || req.path === "/auth/register") {
+    return next();
+  }
+  const origin = req.header("origin");
+  if (!origin || !isAllowedOrigin(origin)) {
+    return res.status(403).json({ error: "origin_forbidden" });
+  }
   const csrfCookie = req.cookies?.mm_csrf;
   const csrfHeader = req.header("x-csrf-token");
   if (!csrfCookie || !csrfHeader || csrfCookie !== csrfHeader) {
@@ -351,6 +373,11 @@ app.post("/auth/login", loginIpLimiter, loginUserLimiter, async (req, res) => {
 
   await createSession(res, user.id);
   res.json({ ok: true });
+});
+
+app.get("/auth/csrf", requireAuth, async (_req, res) => {
+  refreshCsrfCookie(res);
+  res.status(204).end();
 });
 
 app.post("/auth/logout", requireAuth, async (req, res) => {
