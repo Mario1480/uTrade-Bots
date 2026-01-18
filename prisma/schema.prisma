@@ -209,6 +209,7 @@ model User {
   createdAt          DateTime @default(now())
   sessions           Session[]
   reauths            ReauthSession[]
+  reauthOtps         ReauthOtp[]
   workspaces         WorkspaceMember[]
   manualTrades       ManualTradeLog[]
   auditEvents        AuditEvent[]
@@ -230,6 +231,18 @@ model ReauthSession {
   id        String   @id @default(cuid())
   userId    String
   tokenHash String   @unique
+  createdAt DateTime @default(now())
+  expiresAt DateTime
+  user      User     @relation(fields: [userId], references: [id])
+
+  @@index([userId, expiresAt])
+}
+
+model ReauthOtp {
+  id        String   @id @default(cuid())
+  userId    String
+  purpose   String
+  codeHash  String
   createdAt DateTime @default(now())
   expiresAt DateTime
   user      User     @relation(fields: [userId], references: [id])

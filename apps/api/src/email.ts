@@ -55,3 +55,39 @@ export async function sendInviteEmail(params: {
     return { ok: false, error: e?.message ? String(e.message) : String(e) };
   }
 }
+
+export async function sendReauthOtpEmail(params: {
+  to: string;
+  code: string;
+  expiresAt: Date;
+}) {
+  const cfg = getSmtpConfig();
+  if (!cfg) return { ok: false, error: "smtp_not_configured" };
+
+  const transporter = nodemailer.createTransport({
+    host: cfg.host,
+    port: cfg.port,
+    secure: cfg.secure,
+    auth: { user: cfg.user, pass: cfg.pass }
+  });
+
+  const expiresLocal = params.expiresAt.toLocaleString();
+  const text = [
+    "Your re-authentication code:",
+    params.code,
+    "",
+    `Expires at: ${expiresLocal}`
+  ].join("\n");
+
+  try {
+    await transporter.sendMail({
+      from: cfg.from,
+      to: params.to,
+      subject: "uLiquid re-authentication code",
+      text
+    });
+    return { ok: true };
+  } catch (e: any) {
+    return { ok: false, error: e?.message ? String(e.message) : String(e) };
+  }
+}

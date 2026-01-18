@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { useEffect, useState } from "react";
+import ReauthDialog from "../../components/ReauthDialog";
 import { ApiError, apiGet, apiPost, apiPut, apiDel } from "../../../lib/api";
 
 export default function UsersPage() {
@@ -19,10 +20,38 @@ export default function UsersPage() {
   const [confirmPassword, setConfirmPassword] = useState("");
   const [pwdStatus, setPwdStatus] = useState("");
   const [pwdError, setPwdError] = useState("");
+  const [reauthOpen, setReauthOpen] = useState(false);
+  const [pendingAction, setPendingAction] = useState<(() => Promise<void>) | null>(null);
 
   function errMsg(e: any): string {
     if (e instanceof ApiError) return `${e.message} (HTTP ${e.status})`;
     return e?.message ? String(e.message) : String(e);
+  }
+
+  function isReauthError(e: any) {
+    return e instanceof ApiError && e.status === 401 && e.payload?.error === "REAUTH_REQUIRED";
+  }
+
+  function requireReauth(next: () => Promise<void>) {
+    setPendingAction(() => next);
+    setReauthOpen(true);
+  }
+
+  function handleReauthError(e: any, retry: () => Promise<void>) {
+    if (isReauthError(e)) {
+      setError("Re-auth required to manage members.");
+      requireReauth(retry);
+      return true;
+    }
+    return false;
+  }
+
+  async function handleReauthVerified() {
+    if (pendingAction) {
+      const action = pendingAction;
+      setPendingAction(null);
+      await action();
+    }
   }
 
   async function loadMembers() {
@@ -37,7 +66,9 @@ export default function UsersPage() {
       setRoles(rolesRes);
       if (!inviteRoleId && rolesRes.length) setInviteRoleId(rolesRes[0].id);
     } catch (e) {
-      setError(errMsg(e));
+      if (!handleReauthError(e, loadMembers)) {
+        setError(errMsg(e));
+      }
     }
   }
 
@@ -64,7 +95,9 @@ export default function UsersPage() {
       setTimeout(() => setStatus(""), 1200);
     } catch (e) {
       setStatus("");
-      setError(errMsg(e));
+      if (!handleReauthError(e, invite)) {
+        setError(errMsg(e));
+      }
     }
   }
 
@@ -75,7 +108,9 @@ export default function UsersPage() {
       await apiPut(`/workspaces/${me.workspaceId}/members/${memberId}`, { roleId });
       await loadMembers();
     } catch (e) {
-      setError(errMsg(e));
+      if (!handleReauthError(e, () => updateMember(memberId, roleId))) {
+        setError(errMsg(e));
+      }
     } finally {
       setSavingMemberId(null);
     }
@@ -89,7 +124,9 @@ export default function UsersPage() {
       await apiDel(`/workspaces/${me.workspaceId}/members/${memberId}`);
       await loadMembers();
     } catch (e) {
-      setError(errMsg(e));
+      if (!handleReauthError(e, () => removeMember(memberId))) {
+        setError(errMsg(e));
+      }
     } finally {
       setSavingMemberId(null);
     }
@@ -216,6 +253,15 @@ export default function UsersPage() {
       <div style={{ fontSize: 12, color: "var(--muted)" }}>
         Role editing is available in Settings → Roles.
       </div>
+
+      <ReauthDialog
+        open={reauthOpen}
+        onClose={() => {
+          setReauthOpen(false);
+          setPendingAction(null);
+        }}
+        onVerified={handleReauthVerified}
+      />
       <div className="card" style={{ padding: 12, marginTop: 14 }}>
         <div style={{ fontWeight: 700, marginBottom: 6 }}>Change password</div>
         <div style={{ fontSize: 12, color: "var(--muted)", marginBottom: 10 }}>

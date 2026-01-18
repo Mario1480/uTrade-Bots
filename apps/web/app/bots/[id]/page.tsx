@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useParams } from "next/navigation";
 import { useEffect, useMemo, useState } from "react";
 import type { CSSProperties } from "react";
+import ReauthDialog from "../../components/ReauthDialog";
 import { ApiError, apiDel, apiGet, apiPost } from "../../../lib/api";
 
 type Order = {
@@ -41,6 +42,8 @@ export default function BotOverviewPage() {
   const [manualPostOnly, setManualPostOnly] = useState(true);
   const [manualConfirm, setManualConfirm] = useState(false);
   const [manualBusy, setManualBusy] = useState(false);
+  const [reauthOpen, setReauthOpen] = useState(false);
+  const [pendingAction, setPendingAction] = useState<(() => Promise<void>) | null>(null);
 
   function showToast(type: "error" | "success", msg: string) {
     setToast({ type, msg });
@@ -50,6 +53,23 @@ export default function BotOverviewPage() {
   function errMsg(e: any): string {
     if (e instanceof ApiError) return `${e.message} (HTTP ${e.status})`;
     return e?.message ? String(e.message) : String(e);
+  }
+
+  function isReauthError(e: any) {
+    return e instanceof ApiError && e.status === 401 && e.payload?.error === "REAUTH_REQUIRED";
+  }
+
+  function requireReauth(next: () => Promise<void>) {
+    setPendingAction(() => next);
+    setReauthOpen(true);
+  }
+
+  async function handleReauthVerified() {
+    if (pendingAction) {
+      const action = pendingAction;
+      setPendingAction(null);
+      await action();
+    }
   }
 
   async function loadBot() {
@@ -181,6 +201,11 @@ export default function BotOverviewPage() {
         showToast("success", "Market order submitted");
       }
     } catch (e) {
+      if (isReauthError(e)) {
+        showToast("error", "Re-auth required for manual trades.");
+        requireReauth(submitManual);
+        return;
+      }
       showToast("error", errMsg(e));
     } finally {
       setManualBusy(false);
@@ -282,6 +307,15 @@ export default function BotOverviewPage() {
           {toast.msg}
         </div>
       ) : null}
+
+      <ReauthDialog
+        open={reauthOpen}
+        onClose={() => {
+          setReauthOpen(false);
+          setPendingAction(null);
+        }}
+        onVerified={handleReauthVerified}
+      />
 
       <div className="adminHeader" style={{ marginBottom: 12 }}>
         <div>

@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { useEffect, useState } from "react";
+import ReauthDialog from "../../components/ReauthDialog";
 import { ApiError, apiDelete, apiGet, apiPost, apiPut } from "../../../lib/api";
 
 type CexConfig = {
@@ -20,8 +21,8 @@ export default function ExchangeAccountsPage() {
   const [exchange, setExchange] = useState(DEFAULT_EXCHANGE);
   const [onlyConfigured, setOnlyConfigured] = useState(false);
   const [unlocked, setUnlocked] = useState(false);
-  const [unlockPwd, setUnlockPwd] = useState("");
-  const [unlocking, setUnlocking] = useState(false);
+  const [reauthOpen, setReauthOpen] = useState(false);
+  const [pendingAction, setPendingAction] = useState<(() => Promise<void>) | null>(null);
   const [form, setForm] = useState<CexConfig>({
     exchange: DEFAULT_EXCHANGE,
     apiKey: "",
@@ -36,10 +37,20 @@ export default function ExchangeAccountsPage() {
     return e?.message ? String(e.message) : String(e);
   }
 
-  function handleReauthError(e: any) {
-    if (e instanceof ApiError && e.status === 403 && e.payload?.error === "reauth_required") {
+  function isReauthError(e: any) {
+    return e instanceof ApiError && e.status === 401 && e.payload?.error === "REAUTH_REQUIRED";
+  }
+
+  function requireReauth(next: () => Promise<void>) {
+    setPendingAction(() => next);
+    setReauthOpen(true);
+  }
+
+  function handleReauthError(e: any, retry: () => Promise<void>) {
+    if (isReauthError(e)) {
       setUnlocked(false);
-      setError("Session expired. Unlock again to edit keys.");
+      setError("Re-auth required to manage keys.");
+      requireReauth(retry);
       return true;
     }
     return false;
@@ -81,28 +92,39 @@ export default function ExchangeAccountsPage() {
         setStatus("");
       } catch (e) {
         setStatus("");
-        setError(errMsg(e));
+        if (isReauthError(e)) {
+          setUnlocked(false);
+          requireReauth(async () => {
+            await loadList();
+            const reauth = await apiGet<{ ok: boolean }>("/auth/reauth/status");
+            if (reauth?.ok) {
+              setUnlocked(true);
+              await loadSelected(exchange);
+            }
+          });
+        } else {
+          setError(errMsg(e));
+        }
       }
     }
     load();
   }, [exchange]);
 
   async function unlock() {
-    setUnlocking(true);
-    setStatus("unlocking...");
-    setError("");
-    try {
-      await apiPost("/auth/reauth", { password: unlockPwd });
+    requireReauth(async () => {
       setUnlocked(true);
-      setUnlockPwd("");
       await loadSelected(exchange);
       setStatus("unlocked");
       setTimeout(() => setStatus(""), 1200);
-    } catch (e) {
-      setStatus("");
-      setError(errMsg(e));
-    } finally {
-      setUnlocking(false);
+    });
+  }
+
+  async function handleReauthVerified() {
+    setUnlocked(true);
+    if (pendingAction) {
+      const action = pendingAction;
+      setPendingAction(null);
+      await action();
     }
   }
 
@@ -124,7 +146,7 @@ export default function ExchangeAccountsPage() {
       setStatus("saved");
       setTimeout(() => setStatus(""), 1200);
     } catch (e) {
-      if (!handleReauthError(e)) {
+      if (!handleReauthError(e, save)) {
         setStatus("");
         setError(errMsg(e));
       }
@@ -148,7 +170,7 @@ export default function ExchangeAccountsPage() {
       setStatus("verified");
       setTimeout(() => setStatus(""), 1200);
     } catch (e) {
-      if (!handleReauthError(e)) {
+      if (!handleReauthError(e, verify)) {
         setStatus("");
         setError(errMsg(e));
       }
@@ -170,7 +192,7 @@ export default function ExchangeAccountsPage() {
       }
       setStatus("");
     } catch (e) {
-      if (!handleReauthError(e)) {
+      if (!handleReauthError(e, () => remove(exchangeId))) {
         setStatus("");
         setError(errMsg(e));
       }
@@ -267,22 +289,12 @@ export default function ExchangeAccountsPage() {
         <div>
           {!unlocked && (
             <Section title="Unlock to edit">
-              <Field label="Password">
-                <input
-                  type="password"
-                  value={unlockPwd}
-                  onChange={(e) => setUnlockPwd(e.target.value)}
-                  className="input"
-                  placeholder="Confirm password"
-                />
-              </Field>
+              <div style={{ fontSize: 13, opacity: 0.85, marginBottom: 10 }}>
+                Re-authentication is required to view or edit exchange keys.
+              </div>
               <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
-                <button
-                  onClick={unlock}
-                  className="btn btnPrimary"
-                  disabled={!unlockPwd || unlocking}
-                >
-                  Unlock
+                <button onClick={unlock} className="btn btnPrimary">
+                  Send OTP & Unlock
                 </button>
                 <span style={{ fontSize: 12, opacity: 0.7 }}>
                   Unlock lasts 10 minutes.
@@ -342,6 +354,15 @@ export default function ExchangeAccountsPage() {
           </Section>
         </div>
       </div>
+
+      <ReauthDialog
+        open={reauthOpen}
+        onClose={() => {
+          setReauthOpen(false);
+          setPendingAction(null);
+        }}
+        onVerified={handleReauthVerified}
+      />
 
       {error ? (
         <div style={{ marginTop: 12, padding: "8px 10px", border: "1px solid #f5b5b5", borderRadius: 8, background: "#fff5f5" }}>

@@ -195,20 +195,23 @@ export async function requireAuth(req: Request, res: Response, next: NextFunctio
 }
 
 export async function requireReauth(req: Request, res: Response, next: NextFunction) {
+  if (isSuperadmin(res.locals.user)) return next();
   const token = req.cookies?.[REAUTH_COOKIE];
-  if (!token) return res.status(403).json({ error: "reauth_required" });
+  if (!token) return res.status(401).json({ error: "REAUTH_REQUIRED" });
 
   const session = await prisma.reauthSession.findUnique({
     where: { tokenHash: hashToken(token) }
   });
 
   if (!session || session.expiresAt.getTime() < Date.now()) {
-    res.clearCookie(REAUTH_COOKIE, { path: "/" });
-    return res.status(403).json({ error: "reauth_required" });
+    const domain = process.env.COOKIE_DOMAIN;
+    const opts = domain ? { path: "/", domain } : { path: "/" };
+    res.clearCookie(REAUTH_COOKIE, opts);
+    return res.status(401).json({ error: "REAUTH_REQUIRED" });
   }
 
   if (res.locals.user?.id && session.userId !== res.locals.user.id) {
-    return res.status(403).json({ error: "reauth_required" });
+    return res.status(401).json({ error: "REAUTH_REQUIRED" });
   }
 
   next();

@@ -25,7 +25,7 @@ import {
 import { seedAdmin } from "./seed-admin.js";
 import { ensureDefaultRoles } from "./rbac.js";
 import { refreshCsrfCookie } from "./auth.js";
-import { sendInviteEmail } from "./email.js";
+import { sendInviteEmail, sendReauthOtpEmail } from "./email.js";
 
 const app = express();
 
@@ -33,10 +33,21 @@ const origins = (process.env.CORS_ORIGINS ?? "http://localhost:3000")
   .split(",")
   .map(s => s.trim())
   .filter(Boolean);
+const REAUTH_OTP_TTL_MIN = Number(process.env.REAUTH_OTP_TTL_MIN ?? "10");
 
 function isAllowedOrigin(origin?: string | null) {
   if (!origin) return false;
   return origins.includes(origin);
+}
+
+function hashOtp(code: string) {
+  return crypto.createHash("sha256").update(code).digest("hex");
+}
+
+async function getReauthOtpEnabled(): Promise<boolean> {
+  const row = await prisma.globalSetting.findUnique({ where: { key: "security.reauth_otp_enabled" } });
+  if (row?.value === undefined || row?.value === null) return true;
+  return Boolean(row.value);
 }
 
 app.use(cors({
@@ -78,6 +89,14 @@ const loginUserLimiter = rateLimit({
     const email = String((req.body as any)?.email ?? "").toLowerCase();
     return email ? `email:${email}` : `ip:${req.ip}`;
   },
+  message: { error: "rate_limited" }
+});
+
+const reauthOtpLimiter = rateLimit({
+  windowMs: 10 * 60_000,
+  max: 5,
+  standardHeaders: true,
+  legacyHeaders: false,
   message: { error: "rate_limited" }
 });
 
@@ -180,7 +199,8 @@ const PasswordChange = z.object({
 });
 const SecuritySettings = z.object({
   autoLogoutEnabled: z.boolean(),
-  autoLogoutMinutes: z.number().int().min(1).max(1440)
+  autoLogoutMinutes: z.number().int().min(1).max(1440),
+  reauthOtpEnabled: z.boolean().optional()
 });
 
 const ManualLimitOrder = z.object({
@@ -380,6 +400,74 @@ app.get("/auth/csrf", requireAuth, async (_req, res) => {
   res.status(204).end();
 });
 
+app.post("/auth/reauth/request-otp", requireAuth, reauthOtpLimiter, async (_req, res) => {
+  const user = getUserFromLocals(res);
+  const otpEnabled = await getReauthOtpEnabled();
+  if (!otpEnabled) return res.status(400).json({ error: "otp_disabled" });
+  const code = String(Math.floor(100000 + Math.random() * 900000));
+  const expiresAt = new Date(Date.now() + REAUTH_OTP_TTL_MIN * 60 * 1000);
+
+  await prisma.reauthOtp.deleteMany({
+    where: { userId: user.id, purpose: "REAUTH" }
+  });
+
+  await prisma.reauthOtp.create({
+    data: {
+      userId: user.id,
+      purpose: "REAUTH",
+      codeHash: hashOtp(code),
+      expiresAt
+    }
+  });
+
+  const emailResult = await sendReauthOtpEmail({
+    to: user.email,
+    code,
+    expiresAt
+  });
+
+  if (!emailResult.ok) {
+    await prisma.reauthOtp.deleteMany({
+      where: { userId: user.id, purpose: "REAUTH" }
+    });
+    return res.status(400).json({ error: "email_failed", details: emailResult.error ?? null });
+  }
+
+  res.json({ ok: true, expiresAt });
+});
+
+app.post("/auth/reauth/verify-otp", requireAuth, reauthOtpLimiter, async (req, res) => {
+  const user = getUserFromLocals(res);
+  const otpEnabled = await getReauthOtpEnabled();
+  if (!otpEnabled) return res.status(400).json({ error: "otp_disabled" });
+  const payload = z.object({ code: z.string() }).parse(req.body);
+  const code = payload.code.trim();
+  if (!/^\d{6}$/.test(code)) {
+    return res.status(400).json({ error: "invalid_otp" });
+  }
+
+  const otp = await prisma.reauthOtp.findFirst({
+    where: {
+      userId: user.id,
+      purpose: "REAUTH",
+      expiresAt: { gt: new Date() }
+    },
+    orderBy: { createdAt: "desc" }
+  });
+
+  if (!otp) return res.status(401).json({ error: "otp_expired" });
+  if (otp.codeHash !== hashOtp(code)) {
+    return res.status(401).json({ error: "invalid_otp" });
+  }
+
+  await prisma.reauthOtp.deleteMany({
+    where: { userId: user.id, purpose: "REAUTH" }
+  });
+
+  const session = await createReauth(res, user.id);
+  res.json({ ok: true, expiresAt: session.expiresAt });
+});
+
 app.post("/auth/logout", requireAuth, async (req, res) => {
   const token = req.cookies?.mm_session ?? null;
   await destroySession(res, token);
@@ -464,7 +552,7 @@ app.get("/workspaces/:id/members", requireAuth, requireWorkspaceAccess(), requir
   );
 });
 
-app.post("/workspaces/:id/members/invite", requireAuth, requireWorkspaceAccess(), requirePermission("users.manage_members"), async (req, res) => {
+app.post("/workspaces/:id/members/invite", requireAuth, requireWorkspaceAccess(), requirePermission("users.manage_members"), requireReauth, async (req, res) => {
   const workspaceId = req.params.id;
   const actor = getUserFromLocals(res);
   const payload = z.object({
@@ -529,7 +617,7 @@ app.post("/workspaces/:id/members/invite", requireAuth, requireWorkspaceAccess()
   res.json({ ok: true, memberId: member.id, emailSent: emailResult.ok, emailError: emailResult.error ?? null });
 });
 
-app.put("/workspaces/:id/members/:memberId", requireAuth, requireWorkspaceAccess(), requirePermission("users.manage_members"), async (req, res) => {
+app.put("/workspaces/:id/members/:memberId", requireAuth, requireWorkspaceAccess(), requirePermission("users.manage_members"), requireReauth, async (req, res) => {
   const workspaceId = req.params.id;
   const actor = getUserFromLocals(res);
   const payload = z.object({ roleId: z.string().optional(), status: z.string().optional() }).parse(req.body);
@@ -564,7 +652,7 @@ app.put("/workspaces/:id/members/:memberId", requireAuth, requireWorkspaceAccess
   res.json({ ok: true });
 });
 
-app.delete("/workspaces/:id/members/:memberId", requireAuth, requireWorkspaceAccess(), requirePermission("users.manage_members"), async (req, res) => {
+app.delete("/workspaces/:id/members/:memberId", requireAuth, requireWorkspaceAccess(), requirePermission("users.manage_members"), requireReauth, async (req, res) => {
   const workspaceId = req.params.id;
   const actor = getUserFromLocals(res);
   const member = await prisma.workspaceMember.findFirst({
@@ -590,7 +678,7 @@ app.get("/workspaces/:id/roles", requireAuth, requireWorkspaceAccess(), requireA
   res.json(roles);
 });
 
-app.post("/workspaces/:id/roles", requireAuth, requireWorkspaceAccess(), requirePermission("users.manage_roles"), async (req, res) => {
+app.post("/workspaces/:id/roles", requireAuth, requireWorkspaceAccess(), requirePermission("users.manage_roles"), requireReauth, async (req, res) => {
   const workspaceId = req.params.id;
   const actor = getUserFromLocals(res);
   const payload = z.object({
@@ -617,7 +705,7 @@ app.post("/workspaces/:id/roles", requireAuth, requireWorkspaceAccess(), require
   res.json(role);
 });
 
-app.put("/workspaces/:id/roles/:roleId", requireAuth, requireWorkspaceAccess(), requirePermission("users.manage_roles"), async (req, res) => {
+app.put("/workspaces/:id/roles/:roleId", requireAuth, requireWorkspaceAccess(), requirePermission("users.manage_roles"), requireReauth, async (req, res) => {
   const workspaceId = req.params.id;
   const actor = getUserFromLocals(res);
   const payload = z.object({
@@ -650,7 +738,7 @@ app.put("/workspaces/:id/roles/:roleId", requireAuth, requireWorkspaceAccess(), 
   res.json(updated);
 });
 
-app.delete("/workspaces/:id/roles/:roleId", requireAuth, requireWorkspaceAccess(), requirePermission("users.manage_roles"), async (req, res) => {
+app.delete("/workspaces/:id/roles/:roleId", requireAuth, requireWorkspaceAccess(), requirePermission("users.manage_roles"), requireReauth, async (req, res) => {
   const workspaceId = req.params.id;
   const actor = getUserFromLocals(res);
   const role = await prisma.role.findFirst({ where: { id: req.params.roleId, workspaceId } });
@@ -836,7 +924,7 @@ app.get("/bots/:id/open-orders", requireAuth, requirePermission("bots.view"), as
   });
 });
 
-app.post("/bots/:id/manual/limit", requireAuth, requirePermission("trading.manual_limit"), async (req, res) => {
+app.post("/bots/:id/manual/limit", requireAuth, requirePermission("trading.manual_limit"), requireReauth, async (req, res) => {
   const workspaceId = getWorkspaceId(res);
   const user = getUserFromLocals(res);
   const bot = await prisma.bot.findFirst({ where: { id: req.params.id, workspaceId } });
@@ -929,7 +1017,7 @@ app.post("/bots/:id/manual/limit", requireAuth, requirePermission("trading.manua
   }
 });
 
-app.post("/bots/:id/manual/market", requireAuth, requirePermission("trading.manual_market"), async (req, res) => {
+app.post("/bots/:id/manual/market", requireAuth, requirePermission("trading.manual_market"), requireReauth, async (req, res) => {
   const workspaceId = getWorkspaceId(res);
   const user = getUserFromLocals(res);
   const bot = await prisma.bot.findFirst({ where: { id: req.params.id, workspaceId } });
@@ -1016,7 +1104,7 @@ app.post("/bots/:id/manual/market", requireAuth, requirePermission("trading.manu
   }
 });
 
-app.post("/bots/:id/manual/cancel", requireAuth, requirePermission("trading.manual_limit"), async (req, res) => {
+app.post("/bots/:id/manual/cancel", requireAuth, requirePermission("trading.manual_limit"), requireReauth, async (req, res) => {
   const workspaceId = getWorkspaceId(res);
   const bot = await prisma.bot.findFirst({ where: { id: req.params.id, workspaceId } });
   if (!bot) return res.status(404).json({ error: "not_found" });
@@ -1067,7 +1155,7 @@ app.delete("/bots/:id/alerts", requireAuth, requirePermission("bots.edit_config"
   res.json({ ok: true, deleted: r.count });
 });
 
-app.get("/bots/:id/exchange-keys", requireAuth, requirePermission("exchange_keys.view_present"), async (req, res) => {
+app.get("/bots/:id/exchange-keys", requireAuth, requirePermission("exchange_keys.view_present"), requireReauth, async (req, res) => {
   const workspaceId = getWorkspaceId(res);
   const bot = await prisma.bot.findFirst({ where: { id: req.params.id, workspaceId } });
   if (!bot) return res.status(404).json({ error: "not_found" });
@@ -1235,7 +1323,7 @@ app.get("/settings/cex/:exchange", requireAuth, requirePermission("exchange_keys
   res.json(cfg ? maskCex(cfg) : null);
 });
 
-app.get("/settings/cex", requireAuth, requirePermission("exchange_keys.view_present"), async (_req, res) => {
+app.get("/settings/cex", requireAuth, requirePermission("exchange_keys.view_present"), requireReauth, async (_req, res) => {
   const items = await prisma.cexConfig.findMany({ orderBy: { updatedAt: "desc" } });
   const masked = items.map((cfg) => ({
     exchange: cfg.exchange,
@@ -1258,9 +1346,12 @@ app.get("/settings/security", requireAuth, async (_req, res) => {
     where: { id: user.id },
     select: { autoLogoutEnabled: true, autoLogoutMinutes: true }
   });
+  const otpEnabled = await getReauthOtpEnabled();
   res.json({
     autoLogoutEnabled: dbUser?.autoLogoutEnabled ?? true,
-    autoLogoutMinutes: dbUser?.autoLogoutMinutes ?? 60
+    autoLogoutMinutes: dbUser?.autoLogoutMinutes ?? 60,
+    reauthOtpEnabled: otpEnabled,
+    isSuperadmin: isSuperadmin(user)
   });
 });
 
@@ -1545,6 +1636,20 @@ app.put("/settings/alerts", requireAuth, async (req, res) => {
 app.put("/settings/security", requireAuth, async (req, res) => {
   const data = SecuritySettings.parse(req.body);
   const user = getUserFromLocals(res);
+  if (data.reauthOtpEnabled !== undefined && !isSuperadmin(user)) {
+    return res.status(403).json({ error: "forbidden" });
+  }
+
+  let otpEnabled = await getReauthOtpEnabled();
+  if (data.reauthOtpEnabled !== undefined) {
+    otpEnabled = Boolean(data.reauthOtpEnabled);
+    await prisma.globalSetting.upsert({
+      where: { key: "security.reauth_otp_enabled" },
+      update: { value: otpEnabled },
+      create: { key: "security.reauth_otp_enabled", value: otpEnabled }
+    });
+  }
+
   const updated = await prisma.user.update({
     where: { id: user.id },
     data: {
@@ -1554,7 +1659,9 @@ app.put("/settings/security", requireAuth, async (req, res) => {
   });
   res.json({
     autoLogoutEnabled: updated.autoLogoutEnabled,
-    autoLogoutMinutes: updated.autoLogoutMinutes
+    autoLogoutMinutes: updated.autoLogoutMinutes,
+    reauthOtpEnabled: otpEnabled,
+    isSuperadmin: isSuperadmin(user)
   });
 });
 

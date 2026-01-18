@@ -7,6 +7,8 @@ import { ApiError, apiGet, apiPut } from "../../../lib/api";
 type SecuritySettings = {
   autoLogoutEnabled: boolean;
   autoLogoutMinutes: number;
+  reauthOtpEnabled?: boolean;
+  isSuperadmin?: boolean;
 };
 
 export default function SecurityPage() {
@@ -15,6 +17,8 @@ export default function SecurityPage() {
   const [msg, setMsg] = useState<string | null>(null);
   const [enabled, setEnabled] = useState(true);
   const [minutes, setMinutes] = useState(60);
+  const [otpEnabled, setOtpEnabled] = useState(true);
+  const [isSuperadmin, setIsSuperadmin] = useState(false);
 
   function errMsg(e: any): string {
     if (e instanceof ApiError) {
@@ -30,6 +34,8 @@ export default function SecurityPage() {
       const data = await apiGet<SecuritySettings>("/settings/security");
       setEnabled(Boolean(data.autoLogoutEnabled));
       setMinutes(Number(data.autoLogoutMinutes) || 60);
+      setOtpEnabled(data.reauthOtpEnabled !== false);
+      setIsSuperadmin(Boolean(data.isSuperadmin));
     } catch (e) {
       setMsg(errMsg(e));
     } finally {
@@ -42,12 +48,18 @@ export default function SecurityPage() {
     setMsg(null);
     const safeMinutes = Math.max(1, Math.min(1440, Math.floor(minutes)));
     try {
-      const data = await apiPut<SecuritySettings>("/settings/security", {
+      const payload: SecuritySettings = {
         autoLogoutEnabled: enabled,
         autoLogoutMinutes: safeMinutes
-      });
+      };
+      if (isSuperadmin) {
+        payload.reauthOtpEnabled = otpEnabled;
+      }
+      const data = await apiPut<SecuritySettings>("/settings/security", payload);
       setEnabled(Boolean(data.autoLogoutEnabled));
       setMinutes(Number(data.autoLogoutMinutes) || safeMinutes);
+      setOtpEnabled(data.reauthOtpEnabled !== false);
+      setIsSuperadmin(Boolean(data.isSuperadmin));
       setMsg("Saved.");
     } catch (e) {
       setMsg(errMsg(e));
@@ -98,6 +110,17 @@ export default function SecurityPage() {
               disabled={!enabled || loading || saving}
             />
           </label>
+          {isSuperadmin ? (
+            <label style={{ display: "flex", gap: 8, alignItems: "center" }}>
+              <input
+                type="checkbox"
+                checked={otpEnabled}
+                onChange={(e) => setOtpEnabled(e.target.checked)}
+                disabled={loading || saving}
+              />
+              <span>Require OTP re-auth for sensitive actions</span>
+            </label>
+          ) : null}
         </div>
         <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
           <button className="btn btnPrimary" onClick={saveSettings} disabled={loading || saving}>

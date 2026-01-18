@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { useEffect, useState } from "react";
+import ReauthDialog from "../../components/ReauthDialog";
 import { ApiError, apiGet, apiPost, apiPut, apiDel } from "../../../lib/api";
 
 const PERMISSIONS = [
@@ -28,10 +29,38 @@ export default function RolesPage() {
   const [error, setError] = useState("");
   const [status, setStatus] = useState("");
   const [newRoleName, setNewRoleName] = useState("");
+  const [reauthOpen, setReauthOpen] = useState(false);
+  const [pendingAction, setPendingAction] = useState<(() => Promise<void>) | null>(null);
 
   function errMsg(e: any): string {
     if (e instanceof ApiError) return `${e.message} (HTTP ${e.status})`;
     return e?.message ? String(e.message) : String(e);
+  }
+
+  function isReauthError(e: any) {
+    return e instanceof ApiError && e.status === 401 && e.payload?.error === "REAUTH_REQUIRED";
+  }
+
+  function requireReauth(next: () => Promise<void>) {
+    setPendingAction(() => next);
+    setReauthOpen(true);
+  }
+
+  function handleReauthError(e: any, retry: () => Promise<void>) {
+    if (isReauthError(e)) {
+      setError("Re-auth required to manage roles.");
+      requireReauth(retry);
+      return true;
+    }
+    return false;
+  }
+
+  async function handleReauthVerified() {
+    if (pendingAction) {
+      const action = pendingAction;
+      setPendingAction(null);
+      await action();
+    }
   }
 
   async function load() {
@@ -59,7 +88,9 @@ export default function RolesPage() {
       await apiPut(`/workspaces/${me.workspaceId}/roles/${roleId}`, { permissions: nextPerms });
       setRoles((prev) => prev.map((r) => (r.id === roleId ? { ...r, permissions: nextPerms } : r)));
     } catch (e) {
-      setError(errMsg(e));
+      if (!handleReauthError(e, () => togglePerm(roleId, key, next))) {
+        setError(errMsg(e));
+      }
     }
   }
 
@@ -69,7 +100,9 @@ export default function RolesPage() {
       await apiPut(`/workspaces/${me.workspaceId}/roles/${roleId}`, { name });
       setRoles((prev) => prev.map((r) => (r.id === roleId ? { ...r, name } : r)));
     } catch (e) {
-      setError(errMsg(e));
+      if (!handleReauthError(e, () => renameRole(roleId, name))) {
+        setError(errMsg(e));
+      }
     }
   }
 
@@ -85,7 +118,9 @@ export default function RolesPage() {
       setTimeout(() => setStatus(""), 1200);
     } catch (e) {
       setStatus("");
-      setError(errMsg(e));
+      if (!handleReauthError(e, createRole)) {
+        setError(errMsg(e));
+      }
     }
   }
 
@@ -96,7 +131,9 @@ export default function RolesPage() {
       await apiDel(`/workspaces/${me.workspaceId}/roles/${roleId}`);
       setRoles((prev) => prev.filter((r) => r.id !== roleId));
     } catch (e) {
-      setError(errMsg(e));
+      if (!handleReauthError(e, () => deleteRole(roleId))) {
+        setError(errMsg(e));
+      }
     }
   }
 
@@ -164,6 +201,15 @@ export default function RolesPage() {
           {status ? <div style={{ fontSize: 12, opacity: 0.7, marginTop: 6 }}>{status}</div> : null}
         </div>
       ) : null}
+
+      <ReauthDialog
+        open={reauthOpen}
+        onClose={() => {
+          setReauthOpen(false);
+          setPendingAction(null);
+        }}
+        onVerified={handleReauthVerified}
+      />
 
       {error ? <div style={{ fontSize: 12, color: "#ff6b6b", marginTop: 10 }}>{error}</div> : null}
     </div>
