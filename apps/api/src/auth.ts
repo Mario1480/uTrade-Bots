@@ -9,7 +9,6 @@ const REAUTH_TTL_MIN = Number(process.env.REAUTH_TTL_MIN ?? "10");
 const SESSION_COOKIE = "mm_session";
 const REAUTH_COOKIE = "mm_reauth";
 const CSRF_COOKIE = "mm_csrf";
-const CSRF_COOKIE = "mm_csrf";
 
 function hashToken(token: string): string {
   return crypto.createHash("sha256").update(token).digest("hex");
