@@ -59,6 +59,7 @@ export async function runLoop(params: {
   const volLastMinBumpAbs = Number(process.env.VOL_LAST_MIN_BUMP_ABS || "0.00000001");
   const volLastMinBumpPct = Number(process.env.VOL_LAST_MIN_BUMP_PCT || "0");
   const volBuyTicks = Number(process.env.VOL_BUY_TICKS || "2");
+  const volSellTicks = Number(process.env.VOL_SELL_TICKS || "2");
   const orderMgr = new OrderManager({ priceEpsPct, qtyEpsPct });
   let lastRepriceAt = 0;
   let lastRepriceMid = 0;
@@ -605,9 +606,10 @@ export async function runLoop(params: {
 
               // Price anchor for maker side relative to last (tune here)
               const bumpBase = Math.max(volLastMinBumpAbs, ref * volLastMinBumpPct);
-              const buyBump = bumpBase * Math.max(0, volBuyTicks);
+              const buyBump = bumpBase * Math.max(0, vol.buyBumpTicks ?? volBuyTicks);
+              const sellBump = bumpBase * Math.max(0, vol.sellBumpTicks ?? volSellTicks);
               // Sell maker = last, Buy maker = last + buyBump (tune here)
-              let price = makerSide === "buy" ? ref + buyBump : ref;
+              let price = makerSide === "buy" ? ref + buyBump : Math.max(ref - sellBump, 0);
               if (Number.isFinite(bid) && Number.isFinite(ask) && ask > bid) {
                 const inside = Math.max(0.00005, volInsideSpreadPct) * volMmSafetyMult;
                 const floor = bid * (1 + inside);
@@ -625,11 +627,11 @@ export async function runLoop(params: {
                     skipVolume = true;
                   }
                 } else {
-                  if (price < ref) price = ref;
+                  if (price >= ref - sellBump) price = Math.max(ref - sellBump, 0);
                 }
               }
               log.info(
-                { ref, price, buyBump, bid, ask, makerSide },
+                { ref, price, buyBump, sellBump, bid, ask, makerSide },
                 "volume active pricing"
               );
 
@@ -726,11 +728,12 @@ export async function runLoop(params: {
                 const takerSide = desiredAggressiveSide === "buy" ? "sell" : "buy";
                 const ref = Number.isFinite(mid.last) && (mid.last as number) > 0 ? (mid.last as number) : mid.mid;
                 const bumpBase = Math.max(volLastMinBumpAbs, ref * volLastMinBumpPct);
-                const buyBump = bumpBase * Math.max(0, volBuyTicks);
+                const buyBump = bumpBase * Math.max(0, vol.buyBumpTicks ?? volBuyTicks);
+                const sellBump = bumpBase * Math.max(0, vol.sellBumpTicks ?? volSellTicks);
                 const insidePct = Math.max(0.00005, volInsideSpreadPct);
                 const takerPrice = takerSide === "buy"
                   ? (mid.ask ? Math.max(ref + buyBump, mid.ask * (1 + insidePct)) : ref + buyBump)
-                  : (mid.bid ? Math.min(ref - bumpBase, mid.bid * (1 - insidePct)) : Math.max(ref - bumpBase, 0));
+                  : (mid.bid ? Math.min(ref - sellBump, mid.bid * (1 - insidePct)) : Math.max(ref - sellBump, 0));
 
                 if (!Number.isFinite(takerPrice) || takerPrice <= 0) {
                   skipTaker = true;

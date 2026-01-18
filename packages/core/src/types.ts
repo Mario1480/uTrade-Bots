@@ -25,6 +25,8 @@ export interface VolumeConfig {
   activeTo: string;   // "HH:mm"
   mode: VolumeMode;
   buyPct: number;
+  buyBumpTicks: number;
+  sellBumpTicks: number;
 }
 
 export interface RiskConfig {

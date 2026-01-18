@@ -9,6 +9,7 @@ type ConfigFormProps = {
   onRiskChange: (next: any) => void;
   baseSymbol?: string;
   midPrice?: number | null;
+  isSuperadmin?: boolean;
   errors?: {
     budgetQuoteUsdt?: string;
     budgetBaseToken?: string;
@@ -24,6 +25,7 @@ export function ConfigForm({
   onRiskChange,
   baseSymbol,
   midPrice,
+  isSuperadmin,
   errors
 }: ConfigFormProps) {
   const baseLabel = baseSymbol ? `Max Budget (${baseSymbol})` : "Max Budget (Token)";
@@ -158,6 +160,22 @@ export function ConfigForm({
           value={toPercent(vol.buyPct ?? 0.5)}
           onChange={(v) => onVolChange({ ...vol, buyPct: fromPercent(v, vol.buyPct ?? 0.5) })}
         />
+        {isSuperadmin ? (
+          <>
+            <Field
+              label="Buy bump (ticks)"
+              hint="Buy limit offset above last (0 = no bump)"
+              value={vol.buyBumpTicks ?? 0}
+              onChange={(v) => onVolChange({ ...vol, buyBumpTicks: toNumber(v, vol.buyBumpTicks ?? 0) })}
+            />
+            <Field
+              label="Sell bump (ticks)"
+              hint="Sell limit offset below last (0 = no bump)"
+              value={vol.sellBumpTicks ?? 0}
+              onChange={(v) => onVolChange({ ...vol, sellBumpTicks: toNumber(v, vol.sellBumpTicks ?? 0) })}
+            />
+          </>
+        ) : null}
         <SelectField
           label="Mode"
           hint="Passive = post-only near mid. Mixed = mostly passive with occasional market orders. Active = pace to daily target with market orders."

@@ -71,7 +71,9 @@ const VolConfig = z.object({
   activeFrom: z.string(),
   activeTo: z.string(),
   mode: z.enum(["PASSIVE", "MIXED", "ACTIVE"]),
-  buyPct: z.number().min(0).max(1)
+  buyPct: z.number().min(0).max(1),
+  buyBumpTicks: z.number().optional(),
+  sellBumpTicks: z.number().optional()
 });
 
 const RiskConfig = z.object({
@@ -669,11 +671,16 @@ app.get("/bots", requireAuth, requirePermission("bots.view"), async (_req, res) 
 
 app.get("/bots/:id", requireAuth, requirePermission("bots.view"), async (req, res) => {
   const workspaceId = getWorkspaceId(res);
+  const user = getUserFromLocals(res);
   const bot = await prisma.bot.findFirst({
     where: { id: req.params.id, workspaceId },
     include: { mmConfig: true, volConfig: true, riskConfig: true, notificationConfig: true, runtime: true } as any
   });
   if (!bot) return res.status(404).json({ error: "not_found" });
+  if (!isSuperadmin(user) && bot.volConfig) {
+    bot.volConfig.buyBumpTicks = undefined as any;
+    bot.volConfig.sellBumpTicks = undefined as any;
+  }
   res.json(bot);
 });
 
@@ -1231,7 +1238,9 @@ app.post("/bots", requireAuth, requirePermission("bots.create"), async (req, res
           activeFrom: "00:00",
           activeTo: "23:59",
           mode: "MIXED",
-          buyPct: 0.5
+          buyPct: 0.5,
+          buyBumpTicks: 0,
+          sellBumpTicks: 0
         }
       },
       riskConfig: {
@@ -1314,6 +1323,11 @@ app.put("/bots/:id/config", requireAuth, requirePermission("bots.edit_config"), 
 
   if (Object.keys(errors).length > 0) {
     return res.status(400).json({ error: "min_budget", details: { errors } });
+  }
+
+  if (!isSuperadmin(user)) {
+    delete (payload.vol as any).buyBumpTicks;
+    delete (payload.vol as any).sellBumpTicks;
   }
 
   await prisma.marketMakingConfig.update({

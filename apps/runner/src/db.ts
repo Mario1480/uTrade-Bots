@@ -35,7 +35,9 @@ export async function loadBotAndConfigs(botId: string) {
     activeFrom: "00:00",
     activeTo: "23:59",
     mode: bot.volConfig.mode as any,
-    buyPct: bot.volConfig.buyPct ?? 0.5
+    buyPct: bot.volConfig.buyPct ?? 0.5,
+    buyBumpTicks: bot.volConfig.buyBumpTicks ?? 0,
+    sellBumpTicks: bot.volConfig.sellBumpTicks ?? 0
   };
 
   const risk: RiskConfig = {
@@ -97,7 +99,9 @@ export async function loadLatestBotAndConfigs() {
     activeFrom: "00:00",
     activeTo: "23:59",
     mode: bot.volConfig.mode as any,
-    buyPct: bot.volConfig.buyPct ?? 0.5
+    buyPct: bot.volConfig.buyPct ?? 0.5,
+    buyBumpTicks: bot.volConfig.buyBumpTicks ?? 0,
+    sellBumpTicks: bot.volConfig.sellBumpTicks ?? 0
   };
 
   const risk: RiskConfig = {

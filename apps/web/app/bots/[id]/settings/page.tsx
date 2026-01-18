@@ -14,6 +14,7 @@ export default function BotPage() {
 
   const [bot, setBot] = useState<any>(null);
   const [rt, setRt] = useState<any>(null);
+  const [me, setMe] = useState<any>(null);
   const [saving, setSaving] = useState("");
   const [toggling, setToggling] = useState("");
 
@@ -54,12 +55,16 @@ export default function BotPage() {
 
   async function loadAll() {
     try {
-      const b = await apiGet<any>(`/bots/${id}`);
+      const [b, meRes] = await Promise.all([
+        apiGet<any>(`/bots/${id}`),
+        apiGet<any>("/auth/me")
+      ]);
       setBot(b);
       setMm(b.mmConfig);
       setVol(b.volConfig);
       setRisk(b.riskConfig);
       setNotify(b.notificationConfig ?? { fundsWarnEnabled: true, fundsWarnPct: 0.1 });
+      setMe(meRes);
       setBaseline({
         mm: b.mmConfig,
         vol: b.volConfig,
@@ -456,6 +461,7 @@ export default function BotPage() {
           onRiskChange={setRisk}
           baseSymbol={bot?.symbol?.split("_")[0]}
           midPrice={rt?.mid ?? null}
+          isSuperadmin={Boolean(me?.isSuperadmin)}
           errors={fieldErrors}
         />
       </div>

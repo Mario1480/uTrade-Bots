@@ -57,6 +57,8 @@ model VolumeConfig {
   activeTo          String
   mode              String
   buyPct            Float  @default(0.5)
+  buyBumpTicks      Float  @default(0)
+  sellBumpTicks     Float  @default(0)
 }
 
 model RiskConfig {
