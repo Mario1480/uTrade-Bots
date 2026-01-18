@@ -628,6 +628,10 @@ export async function runLoop(params: {
                   if (price < ref) price = ref;
                 }
               }
+              log.info(
+                { ref, price, buyBump, bid, ask, makerSide },
+                "volume active pricing"
+              );
 
               if (!skipVolume && Number.isFinite(price) && price > 0 && Number.isFinite(notional)) {
                 safeOrder.type = "limit";
