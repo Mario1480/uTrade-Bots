@@ -130,6 +130,16 @@ const CexConfig = z.object({
   apiMemo: z.string().optional()
 });
 
+function maskCex(cfg: any) {
+  if (!cfg) return cfg;
+  return {
+    ...cfg,
+    apiKey: cfg.apiKey ? `${cfg.apiKey.slice(0, 4)}...${cfg.apiKey.slice(-4)}` : "",
+    apiSecret: cfg.apiSecret ? "********" : "",
+    apiMemo: cfg.apiMemo ?? null
+  };
+}
+
 const AlertConfig = z.object({
   telegramBotToken: z.string().optional(),
   telegramChatId: z.string().optional()
@@ -1036,7 +1046,7 @@ app.get("/bots/:id/exchange-keys", requireAuth, requirePermission("exchange_keys
   if (!bot) return res.status(404).json({ error: "not_found" });
 
   const cfg = await prisma.cexConfig.findUnique({ where: { exchange: bot.exchange } });
-  res.json(cfg ?? null);
+  res.json(cfg ? maskCex(cfg) : null);
 });
 
 app.put("/bots/:id/exchange-keys", requireAuth, requirePermission("exchange_keys.edit"), requireReauth, async (req, res) => {
@@ -1072,7 +1082,7 @@ app.put("/bots/:id/exchange-keys", requireAuth, requirePermission("exchange_keys
     entityId: cfg.id,
     meta: { exchange: data.exchange }
   });
-  res.json(cfg);
+  res.json(maskCex(cfg));
 });
 
 app.post("/bots/:id/preview/mm", requireAuth, requirePermission("bots.edit_config"), async (req, res) => {
@@ -1195,7 +1205,7 @@ app.get("/exchanges/:exchange/symbols", requireAuth, async (req, res) => {
 app.get("/settings/cex/:exchange", requireAuth, requirePermission("exchange_keys.view_present"), requireReauth, async (req, res) => {
   const exchange = req.params.exchange;
   const cfg = await prisma.cexConfig.findUnique({ where: { exchange } });
-  res.json(cfg ?? null);
+  res.json(cfg ? maskCex(cfg) : null);
 });
 
 app.get("/settings/cex", requireAuth, requirePermission("exchange_keys.view_present"), async (_req, res) => {
