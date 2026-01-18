@@ -702,13 +702,14 @@ export async function runLoop(params: {
                   clientOrderId: safeOrder.clientOrderId
                 });
               }
-              if (activeLikeVol && !allowTaker) {
-                if (safeOrder.side === "buy") {
+              if (activeLikeVol) {
+                const statsSide = volState.lastSide ?? safeOrder.side;
+                if (statsSide === "buy") {
                   volState.buyCount = (volState.buyCount ?? 0) + 1;
                 } else {
                   volState.sellCount = (volState.sellCount ?? 0) + 1;
                 }
-                volSideWindow.push(safeOrder.side);
+                volSideWindow.push(statsSide);
                 if (volSideWindow.length > volSideWindowMax) volSideWindow.shift();
               }
               lastVolTradeAt = Date.now();
@@ -721,7 +722,7 @@ export async function runLoop(params: {
                 const takerSide = desiredAggressiveSide === "buy" ? "sell" : "buy";
                 const ref = Number.isFinite(mid.last) && (mid.last as number) > 0 ? (mid.last as number) : mid.mid;
                 const bumpBase = Math.max(volLastMinBumpAbs, ref * volLastMinBumpPct);
-                const buyBump = bumpBase * Math.max(5, volBuyTicks);
+                const buyBump = bumpBase * Math.max(0, volBuyTicks);
                 const insidePct = Math.max(0.00005, volInsideSpreadPct);
                 const takerPrice = takerSide === "buy"
                   ? (mid.ask ? Math.max(ref + buyBump, mid.ask * (1 + insidePct)) : ref + buyBump)
@@ -774,15 +775,6 @@ export async function runLoop(params: {
                         orderId: placedTaker.id,
                         clientOrderId: taker.clientOrderId
                       });
-                    }
-                    if (activeLikeVol) {
-                      if (taker.side === "buy") {
-                        volState.buyCount = (volState.buyCount ?? 0) + 1;
-                      } else {
-                        volState.sellCount = (volState.sellCount ?? 0) + 1;
-                      }
-                      volSideWindow.push(taker.side);
-                      if (volSideWindow.length > volSideWindowMax) volSideWindow.shift();
                     }
                     log.info({ volOrder: taker }, "volume trade submitted (taker)");
                   } catch (e) {
