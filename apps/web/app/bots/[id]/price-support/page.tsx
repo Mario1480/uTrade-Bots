@@ -55,6 +55,7 @@ export default function PriceSupportPage() {
   }, [id]);
 
   const featureEnabled = Boolean(me?.features?.priceSupport);
+  const canManage = Boolean(me?.permissions?.["trading.price_support"] || me?.isSuperadmin);
   const remaining = useMemo(() => {
     if (!config) return 0;
     return Math.max(0, (config.budgetUsdt || 0) - (config.spentUsdt || 0));
@@ -108,6 +109,26 @@ export default function PriceSupportPage() {
           <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
             <Link href={`/bots/${id}`} className="btn">Back to overview</Link>
             <Link href={`/bots/${id}/settings`} className="btn">Bot Settings</Link>
+          </div>
+        </div>
+      </div>
+    );
+  }
+  if (!canManage) {
+    return (
+      <div>
+        <h2 style={{ margin: 0, textAlign: "center" }}>Price Support</h2>
+        <div style={{ marginBottom: 10, marginTop: 10, display: "flex", gap: 8, flexWrap: "wrap" }}>
+          <Link href={`/bots/${id}`} className="btn">
+            ← Back to overview
+          </Link>
+          <Link href={`/bots/${id}/settings`} className="btn">
+            Bot Settings
+          </Link>
+        </div>
+        <div className="card" style={{ padding: 12 }}>
+          <div style={{ fontSize: 13, color: "var(--muted)" }}>
+            Price Support is disabled for your role.
           </div>
         </div>
       </div>
