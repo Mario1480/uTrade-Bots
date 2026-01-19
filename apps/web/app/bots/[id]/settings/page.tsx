@@ -648,7 +648,7 @@ export default function BotPage() {
       </div>
 
       {canViewPresets ? (
-        <div className="card" style={{ padding: 12, marginBottom: 16 }}>
+        <AccordionSection title="Presets">
           <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, flexWrap: "wrap" }}>
             <h3 style={{ marginTop: 0 }}>Presets</h3>
             <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
@@ -822,11 +822,13 @@ export default function BotPage() {
           {presetsError ? (
             <div style={{ fontSize: 12, color: "#ff6b6b", marginTop: 10 }}>{presetsError}</div>
           ) : null}
-        </div>
+        </AccordionSection>
       ) : (
-        <div className="card" style={{ padding: 12, marginBottom: 16, fontSize: 12, color: "var(--muted)" }}>
+        <AccordionSection title="Presets">
+          <div style={{ fontSize: 12, color: "var(--muted)" }}>
           Presets are disabled for your role.
-        </div>
+          </div>
+        </AccordionSection>
       )}
 
       <div>
@@ -926,4 +928,13 @@ function formatDate(value: string) {
   const d = new Date(value);
   if (Number.isNaN(d.getTime())) return "—";
   return d.toLocaleString();
+}
+
+function AccordionSection(props: { title: string; children: React.ReactNode; defaultOpen?: boolean }) {
+  return (
+    <details className="card" style={{ padding: 12, marginBottom: 16 }} open={props.defaultOpen}>
+      <summary style={{ cursor: "pointer", fontWeight: 700, marginBottom: 10 }}>{props.title}</summary>
+      <div>{props.children}</div>
+    </details>
+  );
 }
