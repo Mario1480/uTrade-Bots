@@ -44,6 +44,12 @@ export default function BotOverviewPage() {
   const [manualBusy, setManualBusy] = useState(false);
   const [reauthOpen, setReauthOpen] = useState(false);
   const [pendingAction, setPendingAction] = useState<(() => Promise<void>) | null>(null);
+  const priceFollowLabel = bot?.priceFollowEnabled
+    ? `${bot.priceSourceExchange || bot.exchange} · ${bot.priceSourceSymbol || bot.symbol}`
+    : null;
+  const feedUpdatedAt = rt?.updatedAt ? new Date(rt.updatedAt as string) : null;
+  const feedAgeSec = feedUpdatedAt ? Math.max(0, (Date.now() - feedUpdatedAt.getTime()) / 1000) : null;
+  const feedStale = Boolean(bot?.priceFollowEnabled && rt?.reason === "MASTER_FEED_STALE");
 
   function showToast(type: "error" | "success", msg: string) {
     setToast({ type, msg });
@@ -262,7 +268,7 @@ export default function BotOverviewPage() {
 
   const baseSymbol = useMemo(() => {
     const raw = bot?.symbol ? String(bot.symbol) : "";
-    return raw.split("_")[0] || "Base";
+    return raw.split(/[/_-]/)[0] || "Base";
   }, [bot]);
 
   const asks = useMemo(() => {
@@ -342,6 +348,16 @@ export default function BotOverviewPage() {
                 {psStatus !== "OFF" && psRemaining !== null ? (
                   <span style={{ color: "var(--muted)" }}> — {psRemaining.toFixed(4)} USDT left</span>
                 ) : null}
+              </>
+            ) : null}
+            {priceFollowLabel ? (
+              <>
+                {" "}
+                · Price Follow: <b>{priceFollowLabel}</b>
+                <span style={{ marginLeft: 8, fontSize: 11, color: feedStale ? "#fca5a5" : "var(--muted)" }}>
+                  {feedStale ? "STALE" : "OK"}
+                  {feedAgeSec !== null ? ` · ${Math.round(feedAgeSec)}s` : ""}
+                </span>
               </>
             ) : null}
           </div>

@@ -2,6 +2,7 @@ import crypto from "node:crypto";
 import type { Balance, MidPrice, Order, Quote, MyTrade } from "@mm/core";
 import { nowMs } from "@mm/core";
 import { normalizeSymbol } from "./bitmart.mapper.js";
+import { normalizeSymbol as normalizeCanonical } from "@mm/core";
 import { checkMins, normalizePrice, normalizeQty, type SymbolMeta } from "./bitmart.meta.js";
 
 /**
@@ -269,6 +270,7 @@ export class BitmartRestClient {
 
   async placeOrder(q: Quote): Promise<Order> {
     const symbol = normalizeSymbol(q.symbol);
+    const canonical = normalizeCanonical(q.symbol);
     const meta = await this.getSymbolMeta(symbol);
     if (q.type !== "limit" && q.type !== "market") {
       throw new Error("Unsupported order type");
@@ -334,7 +336,7 @@ export class BitmartRestClient {
     const orderId = String(json.data?.order_id ?? json.data?.orderId ?? "");
     return {
       id: orderId,
-      symbol,
+      symbol: canonical,
       side: q.side,
       price: q.price ?? 0,
       qty: q.qty,
@@ -359,6 +361,7 @@ export class BitmartRestClient {
 
   async getOpenOrders(symbol: string): Promise<Order[]> {
     const s = normalizeSymbol(symbol);
+    const canonical = normalizeCanonical(symbol);
     // v4 open orders: POST /spot/v4/query/open-orders (SIGNED)
     const now = nowMs();
     const json: any = await this.request(
@@ -379,7 +382,7 @@ export class BitmartRestClient {
     const list: any[] = json.data?.orders ?? json.data ?? [];
     return list.map((x) => ({
       id: String(x.orderId ?? x.order_id ?? x.id),
-      symbol: s,
+      symbol: canonical,
       side: (String(x.side).toLowerCase() === "buy" ? "buy" : "sell"),
       price: Number(x.price),
       qty: Number(x.size ?? x.qty ?? x.amount ?? 0),

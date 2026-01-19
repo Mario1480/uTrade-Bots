@@ -5,9 +5,9 @@ import cors from "cors";
 import rateLimit from "express-rate-limit";
 import cookieParser from "cookie-parser";
 import { prisma } from "@mm/db";
-import { BitmartRestClient } from "@mm/exchange";
+import { BitmartRestClient, fromExchangeSymbol } from "@mm/exchange";
 import { buildMmQuotes } from "@mm/strategy";
-import { clamp } from "@mm/core";
+import { clamp, normalizeSymbol } from "@mm/core";
 import { z } from "zod";
 import {
   createReauth,
@@ -172,6 +172,13 @@ const PriceSupportConfig = z.object({
   maxOrderUsdt: z.number(),
   cooldownMs: z.number().int(),
   mode: z.enum(["PASSIVE", "MIXED"])
+});
+
+const PriceFollowConfig = z.object({
+  enabled: z.boolean(),
+  priceSourceExchange: z.string().optional().nullable(),
+  priceSourceSymbol: z.string().optional().nullable(),
+  priceSourceType: z.enum(["TICKER", "ORDERBOOK_MID"]).optional()
 });
 
 const PresetPayload = z.object({
@@ -1034,7 +1041,7 @@ app.post("/bots/:id/presets/:presetId/apply", requireAuth, requirePermission("pr
   if (mid && mid > 0) {
     const minBaseToken = minQuoteUsdt / mid;
     if (parsed.mm.budgetBaseToken < minBaseToken) {
-      const base = bot?.symbol?.split("_")[0] || "Token";
+      const base = bot?.symbol?.split("/")[0] || "Token";
       errors.budgetBaseToken = `Minimum ~${minBaseToken.toFixed(6)} ${base}`;
     }
   }
@@ -1688,33 +1695,23 @@ app.get("/exchanges/:exchange/symbols", requireAuth, async (req, res) => {
 
   const mapped = symbols
     .map((s: any) => {
-      if (typeof s === "string") {
-        const parts = s.split(/[_/-]/);
-        const base = parts[0];
-        const quote = parts[1];
-        return { symbol: s, base, quote };
-      }
-
       const rawSymbol =
-        s?.symbol ||
-        s?.symbol_id ||
-        s?.symbolId ||
-        s?.trade_symbol ||
-        s?.trading_pair;
+        typeof s === "string"
+          ? s
+          : s?.symbol ||
+            s?.symbol_id ||
+            s?.symbolId ||
+            s?.trade_symbol ||
+            s?.trading_pair;
       const symbol = rawSymbol ? String(rawSymbol) : "";
-      let base = s?.base_currency || s?.baseCurrency || s?.base || s?.baseToken;
-      let quote = s?.quote_currency || s?.quoteCurrency || s?.quote || s?.quoteToken;
-
-      if ((!base || !quote) && symbol) {
-        const parts = symbol.split(/[_/-]/);
-        if (parts.length >= 2) {
-          base = base || parts[0];
-          quote = quote || parts[1];
-        }
-      }
-
       if (!symbol) return null;
-      return { symbol, base: base ? String(base) : undefined, quote: quote ? String(quote) : undefined };
+      try {
+        const canonical = fromExchangeSymbol(exchange, symbol);
+        const parts = canonical.split("/");
+        return { symbol: canonical, base: parts[0], quote: parts[1] };
+      } catch {
+        return null;
+      }
     })
     .filter(Boolean);
 
@@ -1725,6 +1722,28 @@ app.get("/exchanges/:exchange/symbols", requireAuth, async (req, res) => {
   const unique = Array.from(new Map(mapped.map((s: any) => [s.symbol, s])).values());
   const usdtOnly = unique.filter((s: any) => String(s.quote || "").toUpperCase() === "USDT");
   res.json(usdtOnly.length > 0 ? usdtOnly : unique);
+});
+
+app.get("/price-feed/:exchange/:symbol", requireAuth, requirePermission("bots.view"), async (req, res) => {
+  const exchange = req.params.exchange.toLowerCase();
+  const symbol = req.params.symbol;
+  if (exchange !== "bitmart") {
+    return res.status(400).json({ error: "unsupported_exchange" });
+  }
+  const baseUrl = process.env.BITMART_BASE_URL;
+  if (!baseUrl) {
+    return res.status(500).json({ error: "missing_bitmart_base_url" });
+  }
+  const rest = new BitmartRestClient(baseUrl, "", "", "");
+  const mid = await rest.getTicker(symbol);
+  res.json({
+    exchange,
+    symbol,
+    mid: mid.mid,
+    bid: mid.bid ?? null,
+    ask: mid.ask ?? null,
+    ts: mid.ts
+  });
 });
 
 app.get("/settings/cex/:exchange", requireAuth, requirePermission("exchange_keys.view_present"), requireReauth, async (req, res) => {
@@ -1776,13 +1795,19 @@ app.post("/bots", requireAuth, requirePermission("bots.create"), async (req, res
   const user = getUserFromLocals(res);
   const data = BotCreate.parse(req.body);
   const id = crypto.randomUUID();
+  let canonicalSymbol: string;
+  try {
+    canonicalSymbol = normalizeSymbol(data.symbol);
+  } catch (e) {
+    return res.status(400).json({ error: "symbol_invalid", details: String(e) });
+  }
 
   const bot = await prisma.bot.create({
     data: {
       id,
       workspaceId,
       name: data.name,
-      symbol: data.symbol,
+      symbol: canonicalSymbol,
       exchange: data.exchange,
       status: "STOPPED",
       mmEnabled: true,
@@ -1883,7 +1908,8 @@ app.put("/bots/:id/config", requireAuth, requirePermission("bots.edit_config"), 
     vol: VolConfig,
     risk: RiskConfig,
     notify: NotificationConfig,
-    priceSupport: PriceSupportConfig.optional()
+    priceSupport: PriceSupportConfig.optional(),
+    priceFollow: PriceFollowConfig.optional()
   }).parse(req.body);
 
   if (!isSuperadmin(user) && !roleAllows(res, "risk.edit")) {
@@ -1905,7 +1931,7 @@ app.put("/bots/:id/config", requireAuth, requirePermission("bots.edit_config"), 
   if (mid && mid > 0) {
     const minBaseToken = minQuoteUsdt / mid;
     if (payload.mm.budgetBaseToken < minBaseToken) {
-      const base = bot?.symbol?.split("_")[0] || "Token";
+      const base = bot?.symbol?.split(/[/_-]/)[0] || "Token";
       errors.budgetBaseToken = `Minimum ~${minBaseToken.toFixed(6)} ${base}`;
     }
   }
@@ -1928,6 +1954,12 @@ app.put("/bots/:id/config", requireAuth, requirePermission("bots.edit_config"), 
     }
     if (payload.priceSupport.cooldownMs < 0) {
       errors.cooldownMs = "Cooldown must be >= 0";
+    }
+  }
+
+  if (payload.priceFollow?.enabled) {
+    if (!payload.priceFollow.priceSourceExchange || payload.priceFollow.priceSourceExchange.trim().length === 0) {
+      errors.priceSourceExchange = "Master exchange required";
     }
   }
 
@@ -1989,6 +2021,26 @@ app.put("/bots/:id/config", requireAuth, requirePermission("bots.edit_config"), 
         data: updateData
       });
     }
+  }
+
+  if (payload.priceFollow) {
+    const sourceExchange = payload.priceFollow.priceSourceExchange?.trim() || bot.exchange;
+    const sourceSymbolRaw = payload.priceFollow.priceSourceSymbol?.trim() || bot.symbol;
+    let sourceSymbol: string;
+    try {
+      sourceSymbol = normalizeSymbol(sourceSymbolRaw);
+    } catch (e) {
+      return res.status(400).json({ error: "symbol_invalid", details: String(e) });
+    }
+    await prisma.bot.update({
+      where: { id: botId },
+      data: {
+        priceFollowEnabled: payload.priceFollow.enabled,
+        priceSourceExchange: sourceExchange,
+        priceSourceSymbol: sourceSymbol,
+        priceSourceType: payload.priceFollow.priceSourceType ?? bot.priceSourceType ?? "TICKER"
+      }
+    });
   }
 
   await writeAudit({

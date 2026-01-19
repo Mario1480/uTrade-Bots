@@ -1,4 +1,4 @@
-import type { Distribution, Side, OrderType, VolumeMode, PriceSupportMode } from "./enums.js";
+import type { Distribution, Side, OrderType, VolumeMode, PriceSupportMode, PriceSourceType } from "./enums.js";
 
 export type Money = number;
 
@@ -53,6 +53,13 @@ export interface PriceSupportConfig {
   lastActionAt: number;
   stoppedReason?: string | null;
   notifiedBudgetExhaustedAt: number;
+}
+
+export interface PriceFollowConfig {
+  enabled: boolean;
+  priceSourceExchange?: string | null;
+  priceSourceSymbol?: string | null;
+  priceSourceType: PriceSourceType;
 }
 
 export interface Quote {

@@ -23,6 +23,7 @@ export default function BotPage() {
   const [risk, setRisk] = useState<any>(null);
   const [notify, setNotify] = useState<any>(null);
   const [priceSupport, setPriceSupport] = useState<any>(null);
+  const [priceFollow, setPriceFollow] = useState<any>(null);
   const [preview, setPreview] = useState<{
     mid: number;
     bids: any[];
@@ -42,7 +43,7 @@ export default function BotPage() {
   } | null>(null);
 
   const [toast, setToast] = useState<{ type: "error" | "success"; msg: string } | null>(null);
-  const [baseline, setBaseline] = useState<{ mm: any; vol: any; risk: any; notify: any } | null>(null);
+  const [baseline, setBaseline] = useState<{ mm: any; vol: any; risk: any; notify: any; priceFollow: any } | null>(null);
   const [presets, setPresets] = useState<any[]>([]);
   const [presetName, setPresetName] = useState("");
   const [presetDescription, setPresetDescription] = useState("");
@@ -78,12 +79,20 @@ export default function BotPage() {
       setRisk(b.riskConfig);
       setNotify(b.notificationConfig ?? { fundsWarnEnabled: true, fundsWarnPct: 0.1 });
       setPriceSupport(b.priceSupportConfig ?? null);
+      const follow = {
+        enabled: Boolean(b.priceFollowEnabled),
+        priceSourceExchange: b.priceSourceExchange ?? b.exchange ?? "",
+        priceSourceSymbol: b.priceSourceSymbol ?? b.symbol ?? "",
+        priceSourceType: b.priceSourceType ?? "TICKER"
+      };
+      setPriceFollow(follow);
       setMe(meRes);
       setBaseline({
         mm: b.mmConfig,
         vol: b.volConfig,
         risk: b.riskConfig,
-        notify: b.notificationConfig ?? { fundsWarnEnabled: true, fundsWarnPct: 0.1 }
+        notify: b.notificationConfig ?? { fundsWarnEnabled: true, fundsWarnPct: 0.1 },
+        priceFollow: follow
       });
       await loadPresets(meRes, b, presetFilterMatch);
     } catch (e) {
@@ -108,14 +117,17 @@ export default function BotPage() {
     return () => clearInterval(t);
   }, [id]);
 
-  const ready = useMemo(() => !!(mm && vol && risk && notify && baseline), [mm, vol, risk, notify, baseline]);
+  const ready = useMemo(
+    () => !!(mm && vol && risk && notify && priceFollow && baseline),
+    [mm, vol, risk, notify, priceFollow, baseline]
+  );
   const dirty = useMemo(() => {
-    if (!baseline || !mm || !vol || !risk || !notify) return false;
+    if (!baseline || !mm || !vol || !risk || !notify || !priceFollow) return false;
     // simple deep compare via stable JSON stringify
-    const a = JSON.stringify({ mm, vol, risk, notify });
+    const a = JSON.stringify({ mm, vol, risk, notify, priceFollow });
     const b = JSON.stringify(baseline);
     return a !== b;
-  }, [baseline, mm, vol, risk, notify]);
+  }, [baseline, mm, vol, risk, notify, priceFollow]);
   const dirtyMm = useMemo(() => {
     if (!baseline || !mm) return false;
     return JSON.stringify(mm) !== JSON.stringify(baseline.mm);
@@ -128,23 +140,36 @@ export default function BotPage() {
     if (!baseline || !risk) return false;
     return JSON.stringify(risk) !== JSON.stringify(baseline.risk);
   }, [baseline, risk]);
+  const dirtyPriceFollow = useMemo(() => {
+    if (!baseline || !priceFollow) return false;
+    return JSON.stringify(priceFollow) !== JSON.stringify(baseline.priceFollow);
+  }, [baseline, priceFollow]);
 
   const canSave = ready && dirty && saving !== "saving...";
   const mmSaveLabel = saving === "saving..." ? "Saving..." : dirtyMm ? "Save Config" : "Saved";
   const volSaveLabel = saving === "saving..." ? "Saving..." : dirtyVol ? "Save Config" : "Saved";
   const riskSaveLabel = saving === "saving..." ? "Saving..." : dirtyRisk ? "Save Config" : "Saved";
+  const priceFollowSaveLabel = saving === "saving..." ? "Saving..." : dirtyPriceFollow ? "Save Config" : "Saved";
   const canViewPresets = Boolean(me?.permissions?.["presets.view"] || me?.isSuperadmin);
   const canCreatePresets = Boolean(me?.permissions?.["presets.create"] || me?.isSuperadmin);
   const canApplyPresets = Boolean(me?.permissions?.["presets.apply"] || me?.isSuperadmin);
   const canDeletePresets = Boolean(me?.permissions?.["presets.delete"] || me?.isSuperadmin);
+  const canEditConfig = Boolean(me?.permissions?.["bots.edit_config"] || me?.isSuperadmin);
+  const canSavePriceFollow = ready && dirtyPriceFollow && saving !== "saving...";
+  const exchangeOptions = useMemo(() => {
+    const list = [bot?.exchange, priceFollow?.priceSourceExchange, "bitmart"]
+      .filter(Boolean)
+      .map((v) => String(v));
+    return Array.from(new Set(list));
+  }, [bot?.exchange, priceFollow?.priceSourceExchange]);
 
   async function save() {
     if (!canSave) return;
     try {
       setSaving("saving...");
       setFieldErrors(null);
-      await apiPut(`/bots/${id}/config`, { mm, vol, risk, notify });
-      setBaseline({ mm, vol, risk, notify });
+      await apiPut(`/bots/${id}/config`, { mm, vol, risk, notify, priceFollow });
+      setBaseline({ mm, vol, risk, notify, priceFollow });
       setSaving("saved");
       showToast("success", "Config saved");
       setTimeout(() => setSaving(""), 1200);
@@ -598,7 +623,7 @@ export default function BotPage() {
       </div>
 
       <div style={{ marginBottom: 16 }}>
-        <LiveView runtime={rt} baseSymbol={bot?.symbol?.split("_")[0]} isSuperadmin={Boolean(me?.isSuperadmin)} />
+        <LiveView runtime={rt} baseSymbol={bot?.symbol?.split(/[/_-]/)[0]} isSuperadmin={Boolean(me?.isSuperadmin)} />
       </div>
 
       <div className="card" style={{ padding: 12, marginBottom: 16 }}>
@@ -842,6 +867,78 @@ export default function BotPage() {
         </AccordionSection>
       )}
 
+      {priceFollow ? (
+        <AccordionSection title="Price Follow">
+          <div style={{ fontSize: 12, color: "var(--muted)", marginBottom: 10 }}>
+            Use a master price feed for pricing while executing orders on the bot exchange.
+          </div>
+          <label style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 12 }}>
+            <input
+              type="checkbox"
+              checked={Boolean(priceFollow.enabled)}
+              onChange={(e) => setPriceFollow({ ...priceFollow, enabled: e.target.checked })}
+              disabled={!canEditConfig}
+            />
+            Enable Price Follow
+          </label>
+          <div className="gridTwoCol">
+            <label style={{ display: "grid", gap: 6 }}>
+              <span style={{ fontSize: 12, color: "var(--muted)" }}>Master exchange</span>
+              <select
+                className="input"
+                value={priceFollow.priceSourceExchange ?? ""}
+                onChange={(e) => setPriceFollow({ ...priceFollow, priceSourceExchange: e.target.value })}
+                disabled={!canEditConfig}
+              >
+                {exchangeOptions.map((ex) => (
+                  <option key={ex} value={ex}>
+                    {ex}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label style={{ display: "grid", gap: 6 }}>
+              <span style={{ fontSize: 12, color: "var(--muted)" }}>Master symbol</span>
+              <input
+                className="input"
+                value={priceFollow.priceSourceSymbol ?? ""}
+                onChange={(e) => setPriceFollow({ ...priceFollow, priceSourceSymbol: e.target.value })}
+                disabled={!canEditConfig}
+              />
+            </label>
+          </div>
+          <div className="gridTwoCol" style={{ marginTop: 10 }}>
+            <label style={{ display: "grid", gap: 6 }}>
+              <span style={{ fontSize: 12, color: "var(--muted)" }}>Price source type</span>
+              <select
+                className="input"
+                value={priceFollow.priceSourceType ?? "TICKER"}
+                onChange={(e) => setPriceFollow({ ...priceFollow, priceSourceType: e.target.value })}
+                disabled={!canEditConfig}
+              >
+                <option value="TICKER">Ticker mid</option>
+                <option value="ORDERBOOK_MID">Orderbook mid</option>
+              </select>
+            </label>
+            <div />
+          </div>
+          {priceFollow.enabled && !priceFollow.priceSourceExchange ? (
+            <div style={{ fontSize: 12, color: "#ff6b6b", marginTop: 8 }}>
+              Master exchange is required when Price Follow is enabled.
+            </div>
+          ) : null}
+          <div style={{ marginTop: 12 }}>
+            <button
+              className={`btn btnPrimary ${!canSavePriceFollow ? "btnDisabled" : ""}`}
+              onClick={save}
+              disabled={!canSavePriceFollow}
+            >
+              {priceFollowSaveLabel}
+            </button>
+          </div>
+        </AccordionSection>
+      ) : null}
+
       <div>
         <ConfigForm
           mm={mm}
@@ -853,7 +950,7 @@ export default function BotPage() {
           }}
           onVolChange={setVol}
           onRiskChange={setRisk}
-          baseSymbol={bot?.symbol?.split("_")[0]}
+          baseSymbol={bot?.symbol?.split(/[/_-]/)[0]}
           midPrice={rt?.mid ?? null}
           isSuperadmin={Boolean(me?.isSuperadmin)}
           errors={fieldErrors}

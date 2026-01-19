@@ -1,14 +1,15 @@
-import type { Exchange } from "@mm/exchange";
+import type { Exchange, ExchangePublic } from "@mm/exchange";
 import type {
   MarketMakingConfig,
   RiskConfig,
   VolumeConfig,
   NotificationConfig,
   PriceSupportConfig,
-  Balance
+  Balance,
+  MidPrice
 } from "@mm/core";
-import { splitSymbol } from "@mm/exchange";
-import { SlavePriceSource } from "@mm/pricing";
+import { splitSymbol } from "@mm/core";
+import { BitmartRestClient } from "@mm/exchange";
 import { buildMmQuotes, VolumeScheduler } from "@mm/strategy";
 import type { VolumeState as VolState } from "@mm/strategy";
 import { RiskEngine } from "@mm/risk";
@@ -63,7 +64,39 @@ export async function runLoop(params: {
   let priceSupportConfig = params.priceSupportConfig;
   let botName = params.botId;
 
-  const priceSource = new SlavePriceSource(exchange);
+  const marketDataClients = new Map<string, ExchangePublic>();
+  const priceFeedCache = new Map<string, { mid: MidPrice; ts: number }>();
+  const priceFeedTtlMs = Number(process.env.PRICE_FEED_TTL_MS || "1000");
+  const masterStaleMs = Number(process.env.PRICE_FOLLOW_STALE_MS || "10000");
+
+  function getMarketDataClient(exchangeKey: string): ExchangePublic {
+    const key = exchangeKey.toLowerCase();
+    const cached = marketDataClients.get(key);
+    if (cached) return cached;
+    if (key !== "bitmart") {
+      throw new Error(`Unsupported exchange: ${exchangeKey}`);
+    }
+    const baseUrl = process.env.BITMART_BASE_URL;
+    if (!baseUrl) {
+      throw new Error("Missing env: BITMART_BASE_URL");
+    }
+    const rest = new BitmartRestClient(baseUrl, "", "", "");
+    const client: ExchangePublic = {
+      getMidPrice: (s) => rest.getTicker(s)
+    };
+    marketDataClients.set(key, client);
+    return client;
+  }
+
+  async function getMarketPrice(exchangeKey: string, symbolKey: string) {
+    const key = `${exchangeKey.toLowerCase()}:${symbolKey}`;
+    const cached = priceFeedCache.get(key);
+    const now = Date.now();
+    if (cached && now - cached.ts < priceFeedTtlMs) return cached.mid;
+    const mid = await getMarketDataClient(exchangeKey).getMidPrice(symbolKey);
+    priceFeedCache.set(key, { mid, ts: now });
+    return mid;
+  }
   let volSched = new VolumeScheduler(vol);
   let riskEngine = new RiskEngine(risk);
   const priceEpsPct = Number(process.env.MM_PRICE_EPS_PCT || "0.005");
@@ -230,7 +263,55 @@ export async function runLoop(params: {
     }
 
     try {
-      const mid = await priceSource.getMid(symbol);
+      const priceFollowEnabled = Boolean(botRow.priceFollowEnabled);
+      const masterExchange = (botRow.priceSourceExchange || botRow.exchange).toLowerCase();
+      const masterSymbol = botRow.priceSourceSymbol || symbol;
+      const masterType = botRow.priceSourceType || "TICKER";
+
+      if (priceFollowEnabled && !botRow.priceSourceExchange) {
+        await writeRuntime({
+          botId,
+          status: "ERROR",
+          reason: "Price follow missing master exchange",
+          openOrders: 0,
+          openOrdersMm: 0,
+          openOrdersVol: 0,
+          lastVolClientOrderId: null
+        });
+        await sleep(tickMs);
+        continue;
+      }
+
+      if (priceFollowEnabled && masterType !== "TICKER") {
+        log.warn({ masterType }, "price follow type not supported, using TICKER");
+      }
+
+      const masterMid = priceFollowEnabled
+        ? await getMarketPrice(masterExchange, masterSymbol)
+        : await exchange.getMidPrice(symbol);
+      const execMid = priceFollowEnabled ? await exchange.getMidPrice(symbol) : masterMid;
+      const deviationPct =
+        priceFollowEnabled && execMid.mid > 0
+          ? Math.abs(masterMid.mid - execMid.mid) / execMid.mid
+          : undefined;
+      const mid = priceFollowEnabled ? masterMid : execMid;
+
+      if (priceFollowEnabled && Date.now() - mid.ts > masterStaleMs) {
+        await writeRuntime({
+          botId,
+          status: "ERROR",
+          reason: "MASTER_FEED_STALE",
+          mid: Number.isFinite(mid.mid) ? mid.mid : null,
+          bid: Number.isFinite(mid.bid) ? mid.bid : null,
+          ask: Number.isFinite(mid.ask) ? mid.ask : null,
+          openOrders: 0,
+          openOrdersMm: 0,
+          openOrdersVol: 0,
+          lastVolClientOrderId: null
+        });
+        await sleep(tickMs);
+        continue;
+      }
       const balances = await exchange.getBalances();
       const open = await exchange.getOpenOrders(symbol);
       const midValid =
@@ -240,6 +321,13 @@ export async function runLoop(params: {
         (mid.bid as number) > 0 &&
         Number.isFinite(mid.ask) &&
         (mid.ask as number) > 0;
+      const execMidValid =
+        Number.isFinite(execMid.mid) &&
+        execMid.mid > 0 &&
+        Number.isFinite(execMid.bid) &&
+        (execMid.bid as number) > 0 &&
+        Number.isFinite(execMid.ask) &&
+        (execMid.ask as number) > 0;
       if (debug) {
         log.info(
           {
@@ -334,6 +422,28 @@ export async function runLoop(params: {
         await sleep(sleepMs);
         continue;
       }
+      if (priceFollowEnabled && !execMidValid) {
+        log.warn({ execMid }, "execution market data invalid (bid/ask/mid)");
+        await writeRuntime({
+          botId,
+          status: "ERROR",
+          reason: "Execution market data unavailable",
+          mid: Number.isFinite(mid.mid) ? mid.mid : null,
+          bid: Number.isFinite(mid.bid) ? mid.bid : null,
+          ask: Number.isFinite(mid.ask) ? mid.ask : null,
+          openOrders: open.length,
+          openOrdersMm: openMm.length,
+          openOrdersVol: openVol.length,
+          lastVolClientOrderId,
+          freeUsdt: findFree(balances, "USDT"),
+          freeBase: findFree(balances, base),
+          tradedNotionalToday: volState.tradedNotional
+        });
+        const elapsed = Date.now() - t0;
+        const sleepMs = Math.max(0, tickMs - elapsed);
+        await sleep(sleepMs);
+        continue;
+      }
 
       // Volume order TTL cleanup (cancel stale vol-* orders)
       const VOL_TTL_MS = (vol.mode === "ACTIVE" || vol.mode === "MIXED")
@@ -391,6 +501,7 @@ export async function runLoop(params: {
       const decision = riskEngine.evaluate({
         balances,
         mid,
+        deviationPct,
         openOrdersCount: open.length
       });
 

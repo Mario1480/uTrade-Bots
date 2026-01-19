@@ -15,6 +15,10 @@ model Bot {
   status    String
   mmEnabled Boolean  @default(true)
   volEnabled Boolean @default(true)
+  priceFollowEnabled Boolean @default(false)
+  priceSourceExchange String?
+  priceSourceSymbol String?
+  priceSourceType String @default("TICKER")
   createdAt DateTime @default(now())
   workspaceId String?
   workspace   Workspace? @relation(fields: [workspaceId], references: [id])

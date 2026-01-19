@@ -1,11 +1,13 @@
+import { normalizeSymbol as normalizeCanonical, splitSymbol as splitCanonical } from "@mm/core";
+
 // Bitmart uses symbols like BTC_USDT (underscore).
 export function normalizeSymbol(symbol: string): string {
-  // accept USHARK/USDT or USHARK_USDT
-  return symbol.includes("/") ? symbol.replace("/", "_") : symbol;
+  const canonical = normalizeCanonical(symbol);
+  const { base, quote } = splitCanonical(canonical);
+  return `${base}_${quote}`;
 }
 
-// naive asset split for spot pairs BASE_QUOTE
 export function splitSymbol(symbolUnderscore: string): { base: string; quote: string } {
-  const [base, quote] = symbolUnderscore.split("_");
-  return { base, quote };
+  const canonical = normalizeCanonical(symbolUnderscore);
+  return splitCanonical(canonical);
 }
