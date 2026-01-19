@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { useParams } from "next/navigation";
 import { useEffect, useMemo, useState } from "react";
-import { ApiError, apiGet, apiPost, apiPut } from "../../../lib/api";
+import { ApiError, apiGet, apiPost, apiPut } from "../../../../lib/api";
 
 type PriceSupportConfig = {
   enabled: boolean;
