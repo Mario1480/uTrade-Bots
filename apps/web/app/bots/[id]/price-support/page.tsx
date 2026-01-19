@@ -122,19 +122,22 @@ export default function PriceSupportPage() {
 
   return (
     <div>
-      <div className="dashboardHeader">
-        <div>
-          <h2 style={{ margin: 0 }}>Price Support</h2>
-          <div style={{ fontSize: 13, color: "var(--muted)" }}>Floor defense controls and budget.</div>
-        </div>
-        <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-          <Link href={`/bots/${id}`} className="btn">Back to overview</Link>
-          <Link href={`/bots/${id}/settings`} className="btn">Bot Settings</Link>
-        </div>
+      <h2 style={{ margin: 0, textAlign: "center" }}>Price Support</h2>
+      <div style={{ marginBottom: 10, marginTop: 10, display: "flex", gap: 8, flexWrap: "wrap" }}>
+        <Link href={`/bots/${id}`} className="btn">
+          ← Back to overview
+        </Link>
+        <Link href={`/bots/${id}/settings`} className="btn">
+          Bot Settings
+        </Link>
       </div>
 
-      <div className="card" style={{ padding: 16, maxWidth: 720 }}>
-        <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+      <details className="card" style={{ padding: 12, marginBottom: 16 }} open>
+        <summary style={{ cursor: "pointer", fontWeight: 700, marginBottom: 10 }}>
+          Floor defense controls and budget
+        </summary>
+
+        <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap", marginBottom: 10 }}>
           <span className={`badge ${status === "ON" ? "badgeOk" : status === "STOPPED" ? "badgeWarn" : ""}`}>
             {status}
           </span>
@@ -143,64 +146,57 @@ export default function PriceSupportPage() {
           ) : null}
         </div>
 
-        <div className="formRow" style={{ marginTop: 14 }}>
-          <label className="switch">
-            <input
-              type="checkbox"
-              checked={config.enabled}
-              onChange={(e) => setConfig({ ...config, enabled: e.target.checked })}
-            />
-            <span className="slider" />
-          </label>
+        <label className="fieldRow">
           <span style={{ fontSize: 13 }}>Enable Price Support</span>
+          <input
+            type="checkbox"
+            checked={config.enabled}
+            onChange={(e) => setConfig({ ...config, enabled: e.target.checked })}
+          />
+        </label>
+
+        <div className="gridTwoCol" style={{ marginTop: 8 }}>
+          <Field
+            label="Floor price (USDT)"
+            hint="Support buys start below this price"
+            value={config.floorPrice ?? ""}
+            onChange={(v) => setConfig({ ...config, floorPrice: v ? Number(v) : null })}
+          />
+          <Field
+            label="Budget (USDT)"
+            hint="Total budget for support buys"
+            value={config.budgetUsdt}
+            onChange={(v) => setConfig({ ...config, budgetUsdt: Number(v) })}
+          />
+          <Field
+            label="Max order (USDT)"
+            hint="Cap per support order"
+            value={config.maxOrderUsdt}
+            onChange={(v) => setConfig({ ...config, maxOrderUsdt: Number(v) })}
+          />
+          <Field
+            label="Cooldown (ms)"
+            hint="Minimum delay between support actions"
+            value={config.cooldownMs}
+            onChange={(v) => setConfig({ ...config, cooldownMs: Number(v) })}
+          />
+          <SelectField
+            label="Mode"
+            hint="PASSIVE = post-only, MIXED = more aggressive"
+            value={config.mode}
+            options={[
+              { label: "Passive", value: "PASSIVE" },
+              { label: "Mixed", value: "MIXED" }
+            ]}
+            onChange={(v) => setConfig({ ...config, mode: v as "PASSIVE" | "MIXED" })}
+          />
         </div>
 
-        <div className="formGrid" style={{ marginTop: 14 }}>
-          <div className="formField">
-            <label>Floor price (USDT)</label>
-            <input
-              value={config.floorPrice ?? ""}
-              onChange={(e) => setConfig({ ...config, floorPrice: e.target.value ? Number(e.target.value) : null })}
-            />
-          </div>
-          <div className="formField">
-            <label>Budget (USDT)</label>
-            <input
-              value={config.budgetUsdt}
-              onChange={(e) => setConfig({ ...config, budgetUsdt: Number(e.target.value) })}
-            />
-          </div>
-          <div className="formField">
-            <label>Max order (USDT)</label>
-            <input
-              value={config.maxOrderUsdt}
-              onChange={(e) => setConfig({ ...config, maxOrderUsdt: Number(e.target.value) })}
-            />
-          </div>
-          <div className="formField">
-            <label>Cooldown (ms)</label>
-            <input
-              value={config.cooldownMs}
-              onChange={(e) => setConfig({ ...config, cooldownMs: Number(e.target.value) })}
-            />
-          </div>
-          <div className="formField">
-            <label>Mode</label>
-            <select
-              value={config.mode}
-              onChange={(e) => setConfig({ ...config, mode: e.target.value as "PASSIVE" | "MIXED" })}
-            >
-              <option value="PASSIVE">PASSIVE</option>
-              <option value="MIXED">MIXED</option>
-            </select>
-          </div>
-        </div>
-
-        <div style={{ marginTop: 14, fontSize: 13, color: "var(--muted)" }}>
+        <div style={{ marginTop: 12, fontSize: 12, color: "var(--muted)" }}>
           Spent: {config.spentUsdt.toFixed(4)} USDT · Remaining: {remaining.toFixed(4)} USDT
         </div>
 
-        <div style={{ marginTop: 16, display: "flex", gap: 8, flexWrap: "wrap" }}>
+        <div style={{ marginTop: 12, display: "flex", gap: 8, flexWrap: "wrap" }}>
           <button className="btn btnPrimary" onClick={save} disabled={saving}>
             {saving ? "Saving..." : "Save"}
           </button>
@@ -210,11 +206,57 @@ export default function PriceSupportPage() {
             </button>
           ) : null}
         </div>
-      </div>
+      </details>
 
       {toast ? (
         <div className={`toast ${toast.type === "error" ? "toastError" : "toastSuccess"}`}>{toast.msg}</div>
       ) : null}
     </div>
+  );
+}
+
+function Field(props: {
+  label: string;
+  hint?: string;
+  value: any;
+  onChange: (v: string) => void;
+}) {
+  return (
+    <label className="fieldRow">
+      <span style={{ fontSize: 13 }}>
+        {props.label}
+        {props.hint ? <span style={{ display: "block", fontSize: 11, opacity: 0.7 }}>{props.hint}</span> : null}
+      </span>
+      <input
+        className="input"
+        inputMode="decimal"
+        value={props.value}
+        onChange={(e) => props.onChange(e.target.value)}
+      />
+    </label>
+  );
+}
+
+function SelectField(props: {
+  label: string;
+  hint?: string;
+  value: string;
+  options: { label: string; value: string }[];
+  onChange: (v: string) => void;
+}) {
+  return (
+    <label className="fieldRow">
+      <span style={{ fontSize: 13 }}>
+        {props.label}
+        {props.hint ? <span style={{ display: "block", fontSize: 11, opacity: 0.7 }}>{props.hint}</span> : null}
+      </span>
+      <select className="input" value={props.value} onChange={(e) => props.onChange(e.target.value)}>
+        {props.options.map((opt) => (
+          <option key={opt.value} value={opt.value}>
+            {opt.label}
+          </option>
+        ))}
+      </select>
+    </label>
   );
 }
