@@ -7,6 +7,7 @@ import { ApiError, apiDel, apiGet, apiPost, apiPut } from "../../../../lib/api";
 import { ConfigForm } from "../config-form";
 import { LiveView } from "../live-view";
 import { NotificationsForm } from "../notifications-form";
+import { useSystemSettings } from "../../../components/SystemBanner";
 
 export default function BotPage() {
   const params = useParams();
@@ -56,6 +57,8 @@ export default function BotPage() {
   const [importOverwrite, setImportOverwrite] = useState(false);
   const [importBusy, setImportBusy] = useState(false);
   const [importError, setImportError] = useState("");
+  const systemSettings = useSystemSettings();
+  const isReadOnly = systemSettings.readOnlyMode;
 
   function showToast(type: "error" | "success", msg: string) {
     setToast({ type, msg });
@@ -145,17 +148,17 @@ export default function BotPage() {
     return JSON.stringify(priceFollow) !== JSON.stringify(baseline.priceFollow);
   }, [baseline, priceFollow]);
 
-  const canSave = ready && dirty && saving !== "saving...";
+  const canSave = ready && dirty && saving !== "saving..." && !isReadOnly;
   const mmSaveLabel = saving === "saving..." ? "Saving..." : dirtyMm ? "Save Config" : "Saved";
   const volSaveLabel = saving === "saving..." ? "Saving..." : dirtyVol ? "Save Config" : "Saved";
   const riskSaveLabel = saving === "saving..." ? "Saving..." : dirtyRisk ? "Save Config" : "Saved";
   const priceFollowSaveLabel = saving === "saving..." ? "Saving..." : dirtyPriceFollow ? "Save Config" : "Saved";
   const canViewPresets = Boolean(me?.permissions?.["presets.view"] || me?.isSuperadmin);
-  const canCreatePresets = Boolean(me?.permissions?.["presets.create"] || me?.isSuperadmin);
-  const canApplyPresets = Boolean(me?.permissions?.["presets.apply"] || me?.isSuperadmin);
-  const canDeletePresets = Boolean(me?.permissions?.["presets.delete"] || me?.isSuperadmin);
-  const canEditConfig = Boolean(me?.permissions?.["bots.edit_config"] || me?.isSuperadmin);
-  const canSavePriceFollow = ready && dirtyPriceFollow && saving !== "saving...";
+  const canCreatePresets = Boolean(me?.permissions?.["presets.create"] || me?.isSuperadmin) && !isReadOnly;
+  const canApplyPresets = Boolean(me?.permissions?.["presets.apply"] || me?.isSuperadmin) && !isReadOnly;
+  const canDeletePresets = Boolean(me?.permissions?.["presets.delete"] || me?.isSuperadmin) && !isReadOnly;
+  const canEditConfig = Boolean(me?.permissions?.["bots.edit_config"] || me?.isSuperadmin) && !isReadOnly;
+  const canSavePriceFollow = ready && dirtyPriceFollow && saving !== "saving..." && !isReadOnly;
   const exchangeOptions = useMemo(() => {
     const list = [bot?.exchange, priceFollow?.priceSourceExchange, "bitmart"]
       .filter(Boolean)
@@ -551,22 +554,22 @@ export default function BotPage() {
           <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginTop: "auto" }}>
             <button
               onClick={start}
-              disabled={saving === "saving..."}
-              className={`btn btnStart ${saving === "saving..." ? "btnDisabled" : ""}`}
+              disabled={saving === "saving..." || isReadOnly}
+              className={`btn btnStart ${saving === "saving..." || isReadOnly ? "btnDisabled" : ""}`}
             >
               Start
             </button>
             <button
               onClick={pause}
-              disabled={saving === "saving..."}
-              className={`btn btnPause ${saving === "saving..." ? "btnDisabled" : ""}`}
+              disabled={saving === "saving..." || isReadOnly}
+              className={`btn btnPause ${saving === "saving..." || isReadOnly ? "btnDisabled" : ""}`}
             >
               Pause
             </button>
             <button
               onClick={stop}
-              disabled={saving === "saving..."}
-              className={`btn btnStop ${saving === "saving..." ? "btnDisabled" : ""}`}
+              disabled={saving === "saving..." || isReadOnly}
+              className={`btn btnStop ${saving === "saving..." || isReadOnly ? "btnDisabled" : ""}`}
             >
               Stop
             </button>
@@ -581,16 +584,16 @@ export default function BotPage() {
               <div style={{ display: "flex", gap: 8, flexWrap: "wrap", justifyContent: "flex-end" }}>
                 <button
                   onClick={startMm}
-                  disabled={toggling === "mm" || bot.mmEnabled === true}
-                  className={`btn btnStart ${toggling === "mm" || bot.mmEnabled ? "btnDisabled" : ""}`}
+                  disabled={toggling === "mm" || bot.mmEnabled === true || isReadOnly}
+                  className={`btn btnStart ${toggling === "mm" || bot.mmEnabled || isReadOnly ? "btnDisabled" : ""}`}
                   title="Start market making only (volume stays as is)"
                 >
                   Start MM
                 </button>
                 <button
                   onClick={stopMm}
-                  disabled={toggling === "mm" || bot.mmEnabled === false}
-                  className={`btn btnStop ${toggling === "mm" || !bot.mmEnabled ? "btnDisabled" : ""}`}
+                  disabled={toggling === "mm" || bot.mmEnabled === false || isReadOnly}
+                  className={`btn btnStop ${toggling === "mm" || !bot.mmEnabled || isReadOnly ? "btnDisabled" : ""}`}
                   title="Stop market making only (volume stays as is)"
                 >
                   Stop MM
@@ -602,16 +605,16 @@ export default function BotPage() {
               <div style={{ display: "flex", gap: 8, flexWrap: "wrap", justifyContent: "flex-end" }}>
                 <button
                   onClick={startVol}
-                  disabled={toggling === "vol" || bot.volEnabled === true}
-                  className={`btn btnStart ${toggling === "vol" || bot.volEnabled ? "btnDisabled" : ""}`}
+                  disabled={toggling === "vol" || bot.volEnabled === true || isReadOnly}
+                  className={`btn btnStart ${toggling === "vol" || bot.volEnabled || isReadOnly ? "btnDisabled" : ""}`}
                   title="Start volume bot only (MM stays as is)"
                 >
                   Start Volume
                 </button>
                 <button
                   onClick={stopVol}
-                  disabled={toggling === "vol" || bot.volEnabled === false}
-                  className={`btn btnStop ${toggling === "vol" || !bot.volEnabled ? "btnDisabled" : ""}`}
+                  disabled={toggling === "vol" || bot.volEnabled === false || isReadOnly}
+                  className={`btn btnStop ${toggling === "vol" || !bot.volEnabled || isReadOnly ? "btnDisabled" : ""}`}
                   title="Stop volume bot only (MM stays as is)"
                 >
                   Stop Volume
@@ -955,9 +958,9 @@ export default function BotPage() {
           isSuperadmin={Boolean(me?.isSuperadmin)}
           errors={fieldErrors}
           onSave={save}
-          canSaveMm={ready && dirtyMm && saving !== "saving..."}
-          canSaveVol={ready && dirtyVol && saving !== "saving..."}
-          canSaveRisk={ready && dirtyRisk && saving !== "saving..."}
+          canSaveMm={ready && dirtyMm && saving !== "saving..." && canEditConfig}
+          canSaveVol={ready && dirtyVol && saving !== "saving..." && canEditConfig}
+          canSaveRisk={ready && dirtyRisk && saving !== "saving..." && canEditConfig}
           saveLabelMm={mmSaveLabel}
           saveLabelVol={volSaveLabel}
           saveLabelRisk={riskSaveLabel}

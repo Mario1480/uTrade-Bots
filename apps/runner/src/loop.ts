@@ -19,6 +19,7 @@ import { inventoryRatio } from "./inventory.js";
 import { log } from "./logger.js";
 import {
   loadBotAndConfigs,
+  loadSystemSettings,
   updateBotFlags,
   updatePriceSupportConfig,
   writeAlert,
@@ -63,6 +64,7 @@ export async function runLoop(params: {
   let notificationConfig = params.notificationConfig;
   let priceSupportConfig = params.priceSupportConfig;
   let botName = params.botId;
+  let systemSettings = { tradingEnabled: true, readOnlyMode: false };
 
   const marketDataClients = new Map<string, ExchangePublic>();
   const priceFeedCache = new Map<string, { mid: MidPrice; ts: number }>();
@@ -258,8 +260,24 @@ export async function runLoop(params: {
       risk = loaded.risk;
       notificationConfig = loaded.notificationConfig;
       priceSupportConfig = loaded.priceSupportConfig;
+      systemSettings = await loadSystemSettings();
       volSched = new VolumeScheduler(vol);
       riskEngine = new RiskEngine(risk);
+    }
+
+    if (!systemSettings.tradingEnabled) {
+      sm.set("PAUSED", "KILL_SWITCH");
+      await writeRuntime({
+        botId,
+        status: "PAUSED",
+        reason: sm.getReason(),
+        openOrders: null,
+        openOrdersMm: null,
+        openOrdersVol: null,
+        lastVolClientOrderId: null
+      });
+      await sleep(tickMs);
+      continue;
     }
 
     try {

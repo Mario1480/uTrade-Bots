@@ -1,4 +1,5 @@
 import AppHeader from "./components/AppHeader";
+import SystemBanner from "./components/SystemBanner";
 import "./globals.css";
 
 export const metadata = { title: "Market Maker UI" };
@@ -8,6 +9,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
     <html lang="de">
       <body>
         <AppHeader />
+        <SystemBanner />
         <main className="container appMain">{children}</main>
         <footer className="appFooter">
           <div className="container appFooterInner">

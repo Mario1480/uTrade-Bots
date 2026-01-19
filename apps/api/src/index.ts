@@ -254,6 +254,14 @@ const ManualCancelOrder = z.object({
   orderId: z.string().min(1)
 });
 
+const SystemSettingsPayload = z.object({
+  tradingEnabled: z.boolean().optional(),
+  readOnlyMode: z.boolean().optional()
+});
+
+const SYSTEM_SETTINGS_KEY = "system";
+const DEFAULT_SYSTEM_SETTINGS = { tradingEnabled: true, readOnlyMode: false };
+
 async function createBotAlert(params: {
   botId: string;
   level: "info" | "warn" | "error";
@@ -297,6 +305,15 @@ async function getWorkspaceFeatures(workspaceId: string): Promise<Record<string,
     select: { features: true }
   });
   return (ws?.features as Record<string, any>) ?? {};
+}
+
+async function getSystemSettings() {
+  const row = await prisma.globalSetting.findUnique({ where: { key: SYSTEM_SETTINGS_KEY } });
+  const raw = (row?.value as Record<string, any>) ?? {};
+  return {
+    tradingEnabled: raw.tradingEnabled ?? DEFAULT_SYSTEM_SETTINGS.tradingEnabled,
+    readOnlyMode: raw.readOnlyMode ?? DEFAULT_SYSTEM_SETTINGS.readOnlyMode
+  };
 }
 
 function requirePermission(key: string) {
@@ -1767,6 +1784,24 @@ app.get("/settings/cex", requireAuth, requirePermission("exchange_keys.view_pres
 app.get("/settings/alerts", requireAuth, async (_req, res) => {
   const cfg = await prisma.alertConfig.findUnique({ where: { key: "default" } });
   res.json(cfg ?? { telegramBotToken: null, telegramChatId: null });
+});
+
+app.get("/system/settings", requireAuth, async (_req, res) => {
+  res.json(await getSystemSettings());
+});
+
+app.put("/system/settings", requireAuth, async (req, res) => {
+  const user = getUserFromLocals(res);
+  if (!isSuperadmin(user)) return res.status(403).json({ error: "forbidden" });
+  const data = SystemSettingsPayload.parse(req.body);
+  const current = await getSystemSettings();
+  const next = { ...current, ...data };
+  await prisma.globalSetting.upsert({
+    where: { key: SYSTEM_SETTINGS_KEY },
+    create: { key: SYSTEM_SETTINGS_KEY, value: next },
+    update: { value: next }
+  });
+  res.json(next);
 });
 
 app.get("/settings/security", requireAuth, async (_req, res) => {

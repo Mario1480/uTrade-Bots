@@ -315,6 +315,15 @@ export async function writeAlert(params: {
   });
 }
 
+export async function loadSystemSettings() {
+  const row = await prisma.globalSetting.findUnique({ where: { key: "system" } });
+  const raw = (row?.value as Record<string, any>) ?? {};
+  return {
+    tradingEnabled: raw.tradingEnabled ?? true,
+    readOnlyMode: raw.readOnlyMode ?? false
+  };
+}
+
 export async function updateBotFlags(params: {
   botId: string;
   status?: string;

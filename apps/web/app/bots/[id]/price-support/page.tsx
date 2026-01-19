@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useParams } from "next/navigation";
 import { useEffect, useMemo, useState } from "react";
 import { ApiError, apiGet, apiPost, apiPut } from "../../../../lib/api";
+import { useSystemSettings } from "../../../components/SystemBanner";
 
 type PriceSupportConfig = {
   enabled: boolean;
@@ -26,6 +27,8 @@ export default function PriceSupportPage() {
   const [config, setConfig] = useState<PriceSupportConfig | null>(null);
   const [saving, setSaving] = useState(false);
   const [toast, setToast] = useState<{ type: "error" | "success"; msg: string } | null>(null);
+  const systemSettings = useSystemSettings();
+  const isReadOnly = systemSettings.readOnlyMode;
 
   function showToast(type: "error" | "success", msg: string) {
     setToast({ type, msg });
@@ -218,11 +221,19 @@ export default function PriceSupportPage() {
         </div>
 
         <div style={{ marginTop: 12, display: "flex", gap: 8, flexWrap: "wrap" }}>
-          <button className="btn btnPrimary" onClick={save} disabled={saving}>
+          <button
+            className={`btn btnPrimary ${saving || isReadOnly ? "btnDisabled" : ""}`}
+            onClick={save}
+            disabled={saving || isReadOnly}
+          >
             {saving ? "Saving..." : "Save"}
           </button>
           {config.enabled && !config.active ? (
-            <button className="btn" onClick={restartSupport}>
+            <button
+              className={`btn ${isReadOnly ? "btnDisabled" : ""}`}
+              onClick={restartSupport}
+              disabled={isReadOnly}
+            >
               Restart Price Support
             </button>
           ) : null}

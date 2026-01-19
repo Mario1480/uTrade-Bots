@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useEffect, useState } from "react";
 import ReauthDialog from "../../components/ReauthDialog";
+import { useSystemSettings } from "../../components/SystemBanner";
 import { ApiError, apiDelete, apiGet, apiPost, apiPut } from "../../../lib/api";
 
 type CexConfig = {
@@ -23,6 +24,8 @@ export default function ExchangeAccountsPage() {
   const [unlocked, setUnlocked] = useState(false);
   const [reauthOpen, setReauthOpen] = useState(false);
   const [pendingAction, setPendingAction] = useState<(() => Promise<void>) | null>(null);
+  const systemSettings = useSystemSettings();
+  const isReadOnly = systemSettings.readOnlyMode;
   const [form, setForm] = useState<CexConfig>({
     exchange: DEFAULT_EXCHANGE,
     apiKey: "",
@@ -231,7 +234,7 @@ export default function ExchangeAccountsPage() {
         <div>
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10 }}>
             <h3 style={{ margin: 0 }}>Accounts</h3>
-            <button className="btn btnPrimary" onClick={addNew}>
+            <button className={`btn btnPrimary ${isReadOnly ? "btnDisabled" : ""}`} onClick={addNew} disabled={isReadOnly}>
               Add CEX
             </button>
           </div>
@@ -276,8 +279,20 @@ export default function ExchangeAccountsPage() {
                       </div>
                     </div>
                     <div style={{ display: "flex", gap: 8 }}>
-                      <button className="btn" onClick={() => selectCard(cfg)}>Edit</button>
-                      <button className="btn btnStop" onClick={() => remove(cfg.exchange)}>Delete</button>
+                      <button
+                        className={`btn ${isReadOnly ? "btnDisabled" : ""}`}
+                        onClick={() => selectCard(cfg)}
+                        disabled={isReadOnly}
+                      >
+                        Edit
+                      </button>
+                      <button
+                        className={`btn btnStop ${isReadOnly ? "btnDisabled" : ""}`}
+                        onClick={() => remove(cfg.exchange)}
+                        disabled={isReadOnly}
+                      >
+                        Delete
+                      </button>
                     </div>
                   </div>
                 </div>
@@ -293,7 +308,11 @@ export default function ExchangeAccountsPage() {
                 Re-authentication is required to view or edit exchange keys.
               </div>
               <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
-                <button onClick={unlock} className="btn btnPrimary">
+                <button
+                  onClick={unlock}
+                  className={`btn btnPrimary ${isReadOnly ? "btnDisabled" : ""}`}
+                  disabled={isReadOnly}
+                >
                   Send OTP & Unlock
                 </button>
                 <span style={{ fontSize: 12, opacity: 0.7 }}>
@@ -321,7 +340,7 @@ export default function ExchangeAccountsPage() {
                 value={form.apiKey}
                 onChange={(e) => setForm({ ...form, apiKey: e.target.value })}
                 className="input"
-                disabled={!unlocked}
+                disabled={!unlocked || isReadOnly}
               />
             </Field>
             <Field label="apiSecret">
@@ -330,7 +349,7 @@ export default function ExchangeAccountsPage() {
                 value={form.apiSecret}
                 onChange={(e) => setForm({ ...form, apiSecret: e.target.value })}
                 className="input"
-                disabled={!unlocked}
+                disabled={!unlocked || isReadOnly}
               />
             </Field>
             <Field label="apiMemo">
@@ -339,14 +358,14 @@ export default function ExchangeAccountsPage() {
                 onChange={(e) => setForm({ ...form, apiMemo: e.target.value })}
                 className="input"
                 placeholder="optional (Bitmart memo)"
-                disabled={!unlocked}
+                disabled={!unlocked || isReadOnly}
               />
             </Field>
             <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
-              <button onClick={save} className="btn btnPrimary">
+              <button onClick={save} className={`btn btnPrimary ${isReadOnly ? "btnDisabled" : ""}`} disabled={isReadOnly}>
                 Save
               </button>
-              <button onClick={verify} className="btn">
+              <button onClick={verify} className={`btn ${isReadOnly ? "btnDisabled" : ""}`} disabled={isReadOnly}>
                 Verify credentials
               </button>
               <span style={{ fontSize: 12, opacity: 0.7 }}>{status}</span>

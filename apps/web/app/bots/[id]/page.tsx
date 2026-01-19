@@ -5,6 +5,7 @@ import { useParams } from "next/navigation";
 import { useEffect, useMemo, useState } from "react";
 import type { CSSProperties } from "react";
 import ReauthDialog from "../../components/ReauthDialog";
+import { useSystemSettings } from "../../components/SystemBanner";
 import { ApiError, apiDel, apiGet, apiPost } from "../../../lib/api";
 
 type Order = {
@@ -44,6 +45,8 @@ export default function BotOverviewPage() {
   const [manualBusy, setManualBusy] = useState(false);
   const [reauthOpen, setReauthOpen] = useState(false);
   const [pendingAction, setPendingAction] = useState<(() => Promise<void>) | null>(null);
+  const systemSettings = useSystemSettings();
+  const isReadOnly = systemSettings.readOnlyMode;
   const priceFollowLabel = bot?.priceFollowEnabled
     ? `${bot.priceSourceExchange || bot.exchange} · ${bot.priceSourceSymbol || bot.symbol}`
     : null;
@@ -371,16 +374,16 @@ export default function BotOverviewPage() {
               <span style={{ fontSize: 12 }}>Market Making</span>
               <div style={{ display: "flex", gap: 6 }}>
                 <button
-                  className={`btn btnStart ${bot.mmEnabled ? "btnDisabled" : ""}`}
+                  className={`btn btnStart ${bot.mmEnabled || isReadOnly ? "btnDisabled" : ""}`}
                   onClick={startMm}
-                  disabled={bot.mmEnabled}
+                  disabled={bot.mmEnabled || isReadOnly}
                 >
                   Start
                 </button>
                 <button
-                  className={`btn btnStop ${!bot.mmEnabled ? "btnDisabled" : ""}`}
+                  className={`btn btnStop ${!bot.mmEnabled || isReadOnly ? "btnDisabled" : ""}`}
                   onClick={stopMm}
-                  disabled={!bot.mmEnabled}
+                  disabled={!bot.mmEnabled || isReadOnly}
                 >
                   Stop
                 </button>
@@ -390,16 +393,16 @@ export default function BotOverviewPage() {
               <span style={{ fontSize: 12 }}>Volume Bot</span>
               <div style={{ display: "flex", gap: 6 }}>
                 <button
-                  className={`btn btnStart ${bot.volEnabled ? "btnDisabled" : ""}`}
+                  className={`btn btnStart ${bot.volEnabled || isReadOnly ? "btnDisabled" : ""}`}
                   onClick={startVol}
-                  disabled={bot.volEnabled}
+                  disabled={bot.volEnabled || isReadOnly}
                 >
                   Start
                 </button>
                 <button
-                  className={`btn btnStop ${!bot.volEnabled ? "btnDisabled" : ""}`}
+                  className={`btn btnStop ${!bot.volEnabled || isReadOnly ? "btnDisabled" : ""}`}
                   onClick={stopVol}
-                  disabled={!bot.volEnabled}
+                  disabled={!bot.volEnabled || isReadOnly}
                 >
                   Stop
                 </button>
@@ -498,28 +501,30 @@ export default function BotOverviewPage() {
             <div style={{ display: "grid", gap: 10 }}>
               <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
                 <button
-                  className={`btn ${manualType === "LIMIT" ? "btnPrimary" : ""}`}
+                  className={`btn ${manualType === "LIMIT" ? "btnPrimary" : ""} ${isReadOnly ? "btnDisabled" : ""}`}
                   onClick={() => setManualType("LIMIT")}
-                  disabled={!canManualLimit}
+                  disabled={!canManualLimit || isReadOnly}
                 >
                   Limit
                 </button>
                 <button
-                  className={`btn ${manualType === "MARKET" ? "btnPrimary" : ""}`}
+                  className={`btn ${manualType === "MARKET" ? "btnPrimary" : ""} ${isReadOnly ? "btnDisabled" : ""}`}
                   onClick={() => setManualType("MARKET")}
-                  disabled={!canManualMarket}
+                  disabled={!canManualMarket || isReadOnly}
                 >
                   Market
                 </button>
                 <button
-                  className={`btn ${manualSide === "buy" ? "btnStart" : ""}`}
+                  className={`btn ${manualSide === "buy" ? "btnStart" : ""} ${isReadOnly ? "btnDisabled" : ""}`}
                   onClick={() => setManualSide("buy")}
+                  disabled={isReadOnly}
                 >
                   Buy
                 </button>
                 <button
-                  className={`btn ${manualSide === "sell" ? "btnStop" : ""}`}
+                  className={`btn ${manualSide === "sell" ? "btnStop" : ""} ${isReadOnly ? "btnDisabled" : ""}`}
                   onClick={() => setManualSide("sell")}
+                  disabled={isReadOnly}
                 >
                   Sell
                 </button>
@@ -593,9 +598,9 @@ export default function BotOverviewPage() {
               )}
 
               <button
-                className="btn btnPrimary"
+                className={`btn btnPrimary ${manualBusy || isReadOnly ? "btnDisabled" : ""}`}
                 onClick={submitManual}
-                disabled={manualBusy}
+                disabled={manualBusy || isReadOnly}
               >
                 {manualBusy ? "Submitting..." : "Submit manual order"}
               </button>
