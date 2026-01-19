@@ -42,7 +42,6 @@ export function ConfigForm({
     <>
       <AccordionSection
         title="Market Making"
-        defaultOpen
       >
         <div className="gridTwoCol">
           <div>
