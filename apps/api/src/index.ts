@@ -28,6 +28,7 @@ import { refreshCsrfCookie } from "./auth.js";
 import { sendInviteEmail, sendReauthOtpEmail } from "./email.js";
 
 const app = express();
+app.set("trust proxy", 1);
 
 const origins = (process.env.CORS_ORIGINS ?? "http://localhost:3000")
   .split(",")
@@ -251,6 +252,15 @@ function parseNumber(v: unknown): number {
   if (typeof v === "number") return v;
   if (typeof v === "string") return Number(v);
   return NaN;
+}
+
+function normalizePriceSupportConfig(raw: any) {
+  if (!raw) return raw;
+  return {
+    ...raw,
+    lastActionAt: raw.lastActionAt ? Number(raw.lastActionAt) : 0,
+    notifiedBudgetExhaustedAt: raw.notifiedBudgetExhaustedAt ? Number(raw.notifiedBudgetExhaustedAt) : 0
+  };
 }
 
 function roleAllows(res: express.Response, key: string): boolean {
@@ -851,7 +861,7 @@ app.get("/bots", requireAuth, requirePermission("bots.view"), async (_req, res) 
     orderBy: { createdAt: "desc" }
   });
   const mapped = bots.map((b) => {
-    const ps = priceSupportFeature ? b.priceSupportConfig : null;
+    const ps = priceSupportFeature ? normalizePriceSupportConfig(b.priceSupportConfig) : null;
     const remaining = ps ? Math.max(0, ps.budgetUsdt - ps.spentUsdt) : null;
     const status = !ps?.enabled ? "OFF" : ps.active ? "ON" : "STOPPED";
     return {
@@ -890,6 +900,8 @@ app.get("/bots/:id", requireAuth, requirePermission("bots.view"), async (req, re
   }
   if (!priceSupportFeature) {
     bot.priceSupportConfig = null as any;
+  } else if (bot.priceSupportConfig) {
+    bot.priceSupportConfig = normalizePriceSupportConfig(bot.priceSupportConfig) as any;
   }
   res.json(bot);
 });
