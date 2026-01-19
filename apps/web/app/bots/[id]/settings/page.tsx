@@ -587,7 +587,7 @@ export default function BotPage() {
       </div>
 
       <div style={{ marginBottom: 16 }}>
-        <LiveView runtime={rt} baseSymbol={bot?.symbol?.split("_")[0]} />
+        <LiveView runtime={rt} baseSymbol={bot?.symbol?.split("_")[0]} isSuperadmin={Boolean(me?.isSuperadmin)} />
       </div>
 
       <div className="card" style={{ padding: 12, marginBottom: 16 }}>
