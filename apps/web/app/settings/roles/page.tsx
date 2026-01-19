@@ -30,6 +30,13 @@ const PERMISSIONS = [
 export default function RolesPage() {
   const [me, setMe] = useState<any>(null);
   const [roles, setRoles] = useState<any[]>([]);
+  const [members, setMembers] = useState<any[]>([]);
+  const [inviteEmail, setInviteEmail] = useState("");
+  const [inviteRoleId, setInviteRoleId] = useState("");
+  const [inviteResetPassword, setInviteResetPassword] = useState(false);
+  const [memberStatus, setMemberStatus] = useState("");
+  const [memberError, setMemberError] = useState("");
+  const [savingMemberId, setSavingMemberId] = useState<string | null>(null);
   const [error, setError] = useState("");
   const [status, setStatus] = useState("");
   const [newRoleName, setNewRoleName] = useState("");
@@ -52,7 +59,7 @@ export default function RolesPage() {
 
   function handleReauthError(e: any, retry: () => Promise<void>) {
     if (isReauthError(e)) {
-      setError("Re-auth required to manage roles.");
+      setError("Re-auth required.");
       requireReauth(retry);
       return true;
     }
@@ -71,8 +78,13 @@ export default function RolesPage() {
     try {
       const meRes = await apiGet<any>("/auth/me");
       setMe(meRes);
-      const rolesRes = await apiGet<any[]>(`/workspaces/${meRes.workspaceId}/roles`);
+      const [membersRes, rolesRes] = await Promise.all([
+        apiGet<any[]>(`/workspaces/${meRes.workspaceId}/members`),
+        apiGet<any[]>(`/workspaces/${meRes.workspaceId}/roles`)
+      ]);
+      setMembers(membersRes);
       setRoles(rolesRes);
+      if (!inviteRoleId && rolesRes.length) setInviteRoleId(rolesRes[0].id);
     } catch (e) {
       setError(errMsg(e));
     }
@@ -83,6 +95,72 @@ export default function RolesPage() {
   }, []);
 
   const canManage = Boolean(me?.permissions?.["users.manage_roles"] || me?.isSuperadmin);
+  const canManageMembers = Boolean(me?.permissions?.["users.manage_members"] || me?.isSuperadmin);
+
+  function handleMemberReauthError(e: any, retry: () => Promise<void>) {
+    if (isReauthError(e)) {
+      setMemberError("Re-auth required to manage members.");
+      requireReauth(retry);
+      return true;
+    }
+    return false;
+  }
+
+  async function invite() {
+    if (!inviteEmail || !inviteRoleId || !me?.workspaceId) return;
+    setMemberStatus("inviting...");
+    setMemberError("");
+    try {
+      await apiPost(`/workspaces/${me.workspaceId}/members/invite`, {
+        email: inviteEmail,
+        roleId: inviteRoleId,
+        resetPassword: inviteResetPassword
+      });
+      setInviteEmail("");
+      setInviteResetPassword(false);
+      setMemberStatus("invited");
+      await load();
+      setTimeout(() => setMemberStatus(""), 1200);
+    } catch (e) {
+      setMemberStatus("");
+      if (!handleMemberReauthError(e, invite)) {
+        setMemberError(errMsg(e));
+      }
+    }
+  }
+
+  async function updateMember(memberId: string, roleId: string) {
+    if (!me?.workspaceId) return;
+    setSavingMemberId(memberId);
+    setMemberError("");
+    try {
+      await apiPut(`/workspaces/${me.workspaceId}/members/${memberId}`, { roleId });
+      await load();
+    } catch (e) {
+      if (!handleMemberReauthError(e, () => updateMember(memberId, roleId))) {
+        setMemberError(errMsg(e));
+      }
+    } finally {
+      setSavingMemberId(null);
+    }
+  }
+
+  async function removeMember(memberId: string) {
+    if (!me?.workspaceId) return;
+    if (!confirm("Remove member from workspace?")) return;
+    setSavingMemberId(memberId);
+    setMemberError("");
+    try {
+      await apiDel(`/workspaces/${me.workspaceId}/members/${memberId}`);
+      await load();
+    } catch (e) {
+      if (!handleMemberReauthError(e, () => removeMember(memberId))) {
+        setMemberError(errMsg(e));
+      }
+    } finally {
+      setSavingMemberId(null);
+    }
+  }
 
   async function togglePerm(roleId: string, key: string, next: boolean) {
     setError("");
@@ -147,7 +225,92 @@ export default function RolesPage() {
         <Link href="/settings" className="btn">← Back to settings</Link>
         <Link href="/" className="btn">← Back to dashboard</Link>
       </div>
-      <h2 style={{ marginTop: 0 }}>Roles</h2>
+      <h2 style={{ marginTop: 0 }}>Members & Roles</h2>
+      <div className="card" style={{ padding: 12, marginBottom: 14 }}>
+        <div style={{ fontWeight: 700, marginBottom: 6 }}>Workspace members</div>
+        <div style={{ fontSize: 12, color: "var(--muted)", marginBottom: 10 }}>
+          Invite users and assign roles for this workspace.
+        </div>
+        <div style={{ display: "grid", gap: 8 }}>
+          {members.length ? (
+            members.map((m) => (
+              <div key={m.id} style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+                <div style={{ minWidth: 220 }}>
+                  <div style={{ fontWeight: 600 }}>{m.email}</div>
+                  <div style={{ fontSize: 12, color: "var(--muted)" }}>{m.status}</div>
+                </div>
+                {m.email?.toLowerCase() === "admin@uliquid.vip" ? (
+                  <div style={{ fontSize: 12, color: "var(--muted)" }}>Superadmin</div>
+                ) : (
+                  <>
+                    <select
+                      className="input"
+                      style={{ maxWidth: 220 }}
+                      disabled={!canManageMembers || savingMemberId === m.id}
+                      value={m.roleId}
+                      onChange={(e) => updateMember(m.id, e.target.value)}
+                    >
+                      {roles.map((r) => (
+                        <option key={r.id} value={r.id}>
+                          {r.name}
+                        </option>
+                      ))}
+                    </select>
+                    <button
+                      className="btn btnStop"
+                      onClick={() => removeMember(m.id)}
+                      disabled={!canManageMembers || savingMemberId === m.id}
+                    >
+                      Remove
+                    </button>
+                  </>
+                )}
+              </div>
+            ))
+          ) : (
+            <div style={{ fontSize: 12, color: "var(--muted)" }}>No members yet.</div>
+          )}
+        </div>
+        {canManageMembers ? (
+          <div style={{ marginTop: 12, display: "grid", gap: 8 }}>
+            <div style={{ fontWeight: 600 }}>Invite member</div>
+            <input
+              className="input"
+              value={inviteEmail}
+              onChange={(e) => setInviteEmail(e.target.value)}
+              placeholder="email@domain.com"
+            />
+            <select
+              className="input"
+              value={inviteRoleId}
+              onChange={(e) => setInviteRoleId(e.target.value)}
+            >
+              {roles.map((r) => (
+                <option key={r.id} value={r.id}>
+                  {r.name}
+                </option>
+              ))}
+            </select>
+            <label style={{ display: "flex", gap: 8, alignItems: "center", fontSize: 12 }}>
+              <input
+                type="checkbox"
+                checked={inviteResetPassword}
+                onChange={(e) => setInviteResetPassword(e.target.checked)}
+              />
+              Reset password and include a temporary password in the email
+            </label>
+            <button className="btn btnPrimary" onClick={invite} disabled={!inviteEmail || !inviteRoleId}>
+              Invite
+            </button>
+          </div>
+        ) : (
+          <div style={{ fontSize: 12, color: "var(--muted)", marginTop: 8 }}>
+            You don’t have permission to manage members.
+          </div>
+        )}
+        {memberStatus ? <div style={{ fontSize: 12, opacity: 0.7, marginTop: 8 }}>{memberStatus}</div> : null}
+        {memberError ? <div style={{ fontSize: 12, color: "#ff6b6b", marginTop: 8 }}>{memberError}</div> : null}
+      </div>
       {!canManage ? (
         <div className="card" style={{ padding: 12, fontSize: 12, color: "var(--muted)" }}>
           You don’t have permission to manage roles.
