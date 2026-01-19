@@ -5,7 +5,7 @@ type NotificationsFormProps = {
 
 export function NotificationsForm({ notify, onChange }: NotificationsFormProps) {
   return (
-    <details className="card" style={{ padding: 12, marginBottom: 16 }} open>
+    <details className="card" style={{ padding: 12, marginBottom: 16 }}>
       <summary style={{ cursor: "pointer", fontWeight: 700, marginBottom: 10 }}>Notifications</summary>
       <div style={{ fontSize: 12, opacity: 0.8, marginBottom: 8 }}>
         Configure warning thresholds before the bot auto-pauses on low funds.
