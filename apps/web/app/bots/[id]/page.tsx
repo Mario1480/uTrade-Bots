@@ -515,6 +515,7 @@ export default function BotOverviewPage() {
                     Price
                     <input
                       className="input"
+                      style={{ maxWidth: 180 }}
                       value={manualPrice}
                       onChange={(e) => setManualPrice(e.target.value)}
                       placeholder="0.0000"
@@ -524,6 +525,7 @@ export default function BotOverviewPage() {
                     Quantity
                     <input
                       className="input"
+                      style={{ maxWidth: 180 }}
                       value={manualQty}
                       onChange={(e) => setManualQty(e.target.value)}
                       placeholder="0"
@@ -545,6 +547,7 @@ export default function BotOverviewPage() {
                       Spend (USDT)
                       <input
                         className="input"
+                        style={{ maxWidth: 180 }}
                         value={manualSpend}
                         onChange={(e) => setManualSpend(e.target.value)}
                         placeholder="0"
@@ -555,6 +558,7 @@ export default function BotOverviewPage() {
                       Quantity
                       <input
                         className="input"
+                        style={{ maxWidth: 180 }}
                         value={manualQty}
                         onChange={(e) => setManualQty(e.target.value)}
                         placeholder="0"
