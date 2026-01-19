@@ -12,6 +12,10 @@ export const PERMISSION_KEYS = [
   "exchange_keys.view_present",
   "exchange_keys.edit",
   "risk.edit",
+  "presets.view",
+  "presets.create",
+  "presets.apply",
+  "presets.delete",
   "users.manage_members",
   "users.manage_roles",
   "settings.security",
@@ -41,6 +45,9 @@ export const DEFAULT_ROLES = [
       "bots.edit_config",
       "bots.start_pause_stop",
       "exchange_keys.view_present",
+      "presets.view",
+      "presets.create",
+      "presets.apply",
       "risk.edit",
       "audit.view"
     ])
@@ -53,13 +60,16 @@ export const DEFAULT_ROLES = [
       "bots.edit_config",
       "bots.start_pause_stop",
       "exchange_keys.view_present",
+      "presets.view",
+      "presets.create",
+      "presets.apply",
       "audit.view"
     ])
   },
   {
     name: "Viewer",
     isSystem: true,
-    permissions: buildPermissions(["bots.view", "audit.view"])
+    permissions: buildPermissions(["bots.view", "presets.view", "audit.view"])
   }
 ];
 

@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { useParams } from "next/navigation";
 import { useEffect, useMemo, useState } from "react";
-import { ApiError, apiGet, apiPost, apiPut } from "../../../../lib/api";
+import { ApiError, apiDel, apiGet, apiPost, apiPut } from "../../../../lib/api";
 import { ConfigForm } from "../config-form";
 import { LiveView } from "../live-view";
 import { NotificationsForm } from "../notifications-form";
@@ -22,6 +22,7 @@ export default function BotPage() {
   const [vol, setVol] = useState<any>(null);
   const [risk, setRisk] = useState<any>(null);
   const [notify, setNotify] = useState<any>(null);
+  const [priceSupport, setPriceSupport] = useState<any>(null);
   const [preview, setPreview] = useState<{
     mid: number;
     bids: any[];
@@ -42,6 +43,13 @@ export default function BotPage() {
 
   const [toast, setToast] = useState<{ type: "error" | "success"; msg: string } | null>(null);
   const [baseline, setBaseline] = useState<{ mm: any; vol: any; risk: any; notify: any } | null>(null);
+  const [presets, setPresets] = useState<any[]>([]);
+  const [presetName, setPresetName] = useState("");
+  const [presetDescription, setPresetDescription] = useState("");
+  const [presetBindSymbol, setPresetBindSymbol] = useState(true);
+  const [presetFilterMatch, setPresetFilterMatch] = useState(true);
+  const [presetsLoading, setPresetsLoading] = useState(false);
+  const [presetsError, setPresetsError] = useState("");
 
   function showToast(type: "error" | "success", msg: string) {
     setToast({ type, msg });
@@ -64,6 +72,7 @@ export default function BotPage() {
       setVol(b.volConfig);
       setRisk(b.riskConfig);
       setNotify(b.notificationConfig ?? { fundsWarnEnabled: true, fundsWarnPct: 0.1 });
+      setPriceSupport(b.priceSupportConfig ?? null);
       setMe(meRes);
       setBaseline({
         mm: b.mmConfig,
@@ -71,6 +80,7 @@ export default function BotPage() {
         risk: b.riskConfig,
         notify: b.notificationConfig ?? { fundsWarnEnabled: true, fundsWarnPct: 0.1 }
       });
+      await loadPresets(meRes, b, presetFilterMatch);
     } catch (e) {
       showToast("error", errMsg(e));
     }
@@ -103,6 +113,10 @@ export default function BotPage() {
   }, [baseline, mm, vol, risk, notify]);
 
   const canSave = ready && dirty && saving !== "saving...";
+  const canViewPresets = Boolean(me?.permissions?.["presets.view"] || me?.isSuperadmin);
+  const canCreatePresets = Boolean(me?.permissions?.["presets.create"] || me?.isSuperadmin);
+  const canApplyPresets = Boolean(me?.permissions?.["presets.apply"] || me?.isSuperadmin);
+  const canDeletePresets = Boolean(me?.permissions?.["presets.delete"] || me?.isSuperadmin);
 
   async function save() {
     if (!canSave) return;
@@ -196,6 +210,97 @@ export default function BotPage() {
       showToast("error", errMsg(e));
     } finally {
       setToggling("");
+    }
+  }
+
+  function toPresetPriceSupport(ps: any) {
+    if (!ps) return undefined;
+    return {
+      enabled: Boolean(ps.enabled),
+      floorPrice: ps.floorPrice ?? null,
+      budgetUsdt: Number(ps.budgetUsdt ?? 0),
+      maxOrderUsdt: Number(ps.maxOrderUsdt ?? 0),
+      cooldownMs: Number(ps.cooldownMs ?? 0),
+      mode: ps.mode ?? "PASSIVE"
+    };
+  }
+
+  async function loadPresets(meRes?: any, botRes?: any, onlyMatch?: boolean) {
+    const meLocal = meRes ?? me;
+    const botLocal = botRes ?? bot;
+    if (!meLocal || !botLocal) return;
+    const allowed = Boolean(meLocal?.permissions?.["presets.view"] || meLocal?.isSuperadmin);
+    if (!allowed) return;
+
+    setPresetsLoading(true);
+    setPresetsError("");
+    try {
+      const params = new URLSearchParams();
+      const match = onlyMatch ?? presetFilterMatch;
+      if (match) {
+        params.set("exchange", botLocal.exchange);
+        params.set("symbol", botLocal.symbol);
+      }
+      const list = await apiGet<any[]>(`/presets${params.toString() ? `?${params.toString()}` : ""}`);
+      setPresets(list);
+    } catch (e) {
+      setPresetsError(errMsg(e));
+    } finally {
+      setPresetsLoading(false);
+    }
+  }
+
+  async function savePreset() {
+    if (!canCreatePresets || !presetName.trim()) return;
+    setPresetsError("");
+    try {
+      const payload: any = {
+        mm,
+        vol,
+        risk
+      };
+      const ps = toPresetPriceSupport(priceSupport);
+      if (ps) payload.priceSupport = ps;
+      const bind = presetBindSymbol;
+      await apiPost("/presets", {
+        name: presetName.trim(),
+        description: presetDescription.trim() || undefined,
+        exchange: bind ? bot.exchange : undefined,
+        symbol: bind ? bot.symbol : undefined,
+        payload
+      });
+      setPresetName("");
+      setPresetDescription("");
+      await loadPresets();
+      showToast("success", "Preset saved");
+    } catch (e) {
+      setPresetsError(errMsg(e));
+    }
+  }
+
+  async function applyPreset(presetId: string, name: string) {
+    if (!canApplyPresets) return;
+    if (!confirm(`Apply preset "${name}" to this bot? This will overwrite current configs.`)) return;
+    setPresetsError("");
+    try {
+      await apiPost(`/bots/${id}/presets/${presetId}/apply`, {});
+      await loadAll();
+      showToast("success", "Preset applied");
+    } catch (e) {
+      setPresetsError(errMsg(e));
+    }
+  }
+
+  async function deletePreset(presetId: string, name: string) {
+    if (!canDeletePresets) return;
+    if (!confirm(`Delete preset "${name}"?`)) return;
+    setPresetsError("");
+    try {
+      await apiDel(`/presets/${presetId}`);
+      await loadPresets();
+      showToast("success", "Preset deleted");
+    } catch (e) {
+      setPresetsError(errMsg(e));
     }
   }
 
@@ -454,6 +559,134 @@ export default function BotPage() {
         </div>
       </div>
 
+      {canViewPresets ? (
+        <div className="card" style={{ padding: 12, marginBottom: 16 }}>
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, flexWrap: "wrap" }}>
+            <h3 style={{ marginTop: 0 }}>Presets</h3>
+            <label style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 12 }}>
+              <input
+                type="checkbox"
+                checked={presetFilterMatch}
+                onChange={async (e) => {
+                  const next = e.target.checked;
+                  setPresetFilterMatch(next);
+                  await loadPresets(undefined, undefined, next);
+                }}
+              />
+              Only this symbol
+            </label>
+          </div>
+
+          <div
+            style={{
+              display: "grid",
+              gap: 12,
+              gridTemplateColumns: "repeat(auto-fit, minmax(240px, 1fr))"
+            }}
+          >
+            <div className="card" style={{ padding: 12 }}>
+              <div style={{ fontSize: 12, opacity: 0.8, marginBottom: 6 }}>Save current config</div>
+              <label style={{ display: "grid", gap: 6, marginBottom: 8 }}>
+                <span style={{ fontSize: 12, color: "var(--muted)" }}>Name</span>
+                <input
+                  className="input"
+                  placeholder="e.g. Tight Spread"
+                  value={presetName}
+                  onChange={(e) => setPresetName(e.target.value)}
+                  disabled={!canCreatePresets}
+                />
+              </label>
+              <label style={{ display: "grid", gap: 6, marginBottom: 8 }}>
+                <span style={{ fontSize: 12, color: "var(--muted)" }}>Description (optional)</span>
+                <input
+                  className="input"
+                  placeholder="Notes for this preset"
+                  value={presetDescription}
+                  onChange={(e) => setPresetDescription(e.target.value)}
+                  disabled={!canCreatePresets}
+                />
+              </label>
+              <label style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 12 }}>
+                <input
+                  type="checkbox"
+                  checked={presetBindSymbol}
+                  onChange={(e) => setPresetBindSymbol(e.target.checked)}
+                  disabled={!canCreatePresets}
+                />
+                Bind to this symbol
+              </label>
+              <button
+                className={`btn btnPrimary ${!canCreatePresets || !presetName.trim() ? "btnDisabled" : ""}`}
+                style={{ marginTop: 10 }}
+                onClick={savePreset}
+                disabled={!canCreatePresets || !presetName.trim()}
+              >
+                Save preset
+              </button>
+            </div>
+
+            <div className="card" style={{ padding: 12 }}>
+              <div style={{ fontSize: 12, opacity: 0.8, marginBottom: 6 }}>Saved presets</div>
+              {presetsLoading ? (
+                <div style={{ fontSize: 12, color: "var(--muted)" }}>Loading presets…</div>
+              ) : presets.length === 0 ? (
+                <div style={{ fontSize: 12, color: "var(--muted)" }}>No presets yet.</div>
+              ) : (
+                <div style={{ display: "grid", gap: 10 }}>
+                  {presets.map((preset) => (
+                    <div
+                      key={preset.id}
+                      style={{
+                        border: "1px solid rgba(255,255,255,.08)",
+                        borderRadius: 10,
+                        padding: 10,
+                        display: "grid",
+                        gap: 6
+                      }}
+                    >
+                      <div style={{ display: "flex", justifyContent: "space-between", gap: 8, flexWrap: "wrap" }}>
+                        <div style={{ fontWeight: 700 }}>{preset.name}</div>
+                        <div style={{ fontSize: 11, color: "var(--muted)" }}>
+                          {formatDate(preset.createdAt)}
+                        </div>
+                      </div>
+                      {preset.description ? (
+                        <div style={{ fontSize: 12, color: "var(--muted)" }}>{preset.description}</div>
+                      ) : null}
+                      <div style={{ fontSize: 11, color: "var(--muted)" }}>
+                        {preset.createdBy?.email ?? "unknown"} · {preset.exchange ?? "any"} · {preset.symbol ?? "any"}
+                      </div>
+                      <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                        <button
+                          className={`btn btnPrimary ${!canApplyPresets ? "btnDisabled" : ""}`}
+                          onClick={() => applyPreset(preset.id, preset.name)}
+                          disabled={!canApplyPresets}
+                        >
+                          Apply
+                        </button>
+                        {canDeletePresets ? (
+                          <button className="btn btnStop" onClick={() => deletePreset(preset.id, preset.name)}>
+                            Delete
+                          </button>
+                        ) : null}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          </div>
+
+          {presetsError ? (
+            <div style={{ fontSize: 12, color: "#ff6b6b", marginTop: 10 }}>{presetsError}</div>
+          ) : null}
+        </div>
+      ) : (
+        <div className="card" style={{ padding: 12, marginBottom: 16, fontSize: 12, color: "var(--muted)" }}>
+          Presets are disabled for your role.
+        </div>
+      )}
+
       <div>
         <ConfigForm
           mm={mm}
@@ -545,4 +778,10 @@ function PreviewTable({ title, rows, accent }: { title: string; rows: any[]; acc
 function formatNum(v: any, maxDecimals = 8) {
   if (v === null || v === undefined || Number.isNaN(Number(v))) return "—";
   return Number(v).toFixed(maxDecimals).replace(/\.?0+$/, "");
+}
+
+function formatDate(value: string) {
+  const d = new Date(value);
+  if (Number.isNaN(d.getTime())) return "—";
+  return d.toLocaleString();
 }

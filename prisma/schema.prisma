@@ -214,6 +214,7 @@ model User {
   reauthOtps         ReauthOtp[]
   workspaces         WorkspaceMember[]
   manualTrades       ManualTradeLog[]
+  configPresets      BotConfigPreset[]
   auditEvents        AuditEvent[]
 }
 
@@ -261,6 +262,7 @@ model Workspace {
   bots      Bot[]
   manualTrades ManualTradeLog[]
   roles     Role[]
+  configPresets BotConfigPreset[]
   auditEvents AuditEvent[]
 }
 
@@ -279,6 +281,26 @@ model BotPriceSupportConfig {
   lastActionAt BigInt @default(0)
   stoppedReason String?
   notifiedBudgetExhaustedAt BigInt @default(0)
+}
+
+model BotConfigPreset {
+  id              String   @id @default(cuid())
+  workspaceId     String
+  name            String
+  description     String?
+  scope           String   @default("WORKSPACE")
+  exchange        String?
+  symbol          String?
+  payload         Json
+  createdByUserId String
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  workspace Workspace @relation(fields: [workspaceId], references: [id])
+  createdBy User      @relation(fields: [createdByUserId], references: [id])
+
+  @@unique([workspaceId, name])
+  @@index([workspaceId, exchange, symbol])
 }
 
 model WorkspaceMember {
