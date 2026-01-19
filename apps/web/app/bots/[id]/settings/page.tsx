@@ -496,7 +496,7 @@ export default function BotPage() {
             <span className={`badge ${bot.volEnabled ? "badgeOk" : "badgeWarn"}`}>
               {bot.volEnabled ? "enabled" : "disabled"}
             </span>
-            <span style={{ opacity: 0.7 }}>independent toggles</span>
+            <span style={{ opacity: 0.7 }}></span>
           </div>
           <div>Runtime: <b>{rt?.status ?? "—"}</b>{rt?.reason ? ` — ${rt.reason}` : ""}</div>
         </div>
