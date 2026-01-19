@@ -424,7 +424,7 @@ export default function BotOverviewPage() {
             <Kv k="Traded notional today" v={rt?.tradedNotionalToday} />
             <Kv k="Updated at" v={formatUpdated(rt?.updatedAt)} />
           </div>
-          {rt ? (
+          {rt && me?.isSuperadmin ? (
             <details style={{ marginTop: 10 }}>
               <summary style={{ cursor: "pointer" }}>Raw runtime JSON</summary>
               <pre style={{ marginTop: 8, whiteSpace: "pre-wrap" }}>{JSON.stringify(rt, null, 2)}</pre>
