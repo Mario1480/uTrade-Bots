@@ -1,10 +1,16 @@
 import { prisma } from "@mm/db";
-import type { MarketMakingConfig, RiskConfig, VolumeConfig, NotificationConfig } from "@mm/core";
+import type { MarketMakingConfig, RiskConfig, VolumeConfig, NotificationConfig, PriceSupportConfig } from "@mm/core";
 
 export async function loadBotAndConfigs(botId: string) {
   const bot = await prisma.bot.findUnique({
     where: { id: botId },
-    include: { mmConfig: true, volConfig: true, riskConfig: true, notificationConfig: true }
+    include: {
+      mmConfig: true,
+      volConfig: true,
+      riskConfig: true,
+      notificationConfig: true,
+      priceSupportConfig: true
+    }
   });
 
   if (!bot) throw new Error(`Bot not found in DB: ${botId}`);
@@ -63,13 +69,66 @@ export async function loadBotAndConfigs(botId: string) {
     };
   }
 
-  return { bot, mm, vol, risk, notificationConfig };
+  let priceSupportConfig: PriceSupportConfig;
+  if (bot.priceSupportConfig) {
+    priceSupportConfig = {
+      enabled: bot.priceSupportConfig.enabled,
+      active: bot.priceSupportConfig.active,
+      floorPrice: bot.priceSupportConfig.floorPrice,
+      budgetUsdt: bot.priceSupportConfig.budgetUsdt,
+      spentUsdt: bot.priceSupportConfig.spentUsdt,
+      maxOrderUsdt: bot.priceSupportConfig.maxOrderUsdt,
+      cooldownMs: bot.priceSupportConfig.cooldownMs,
+      mode: bot.priceSupportConfig.mode as any,
+      lastActionAt: Number(bot.priceSupportConfig.lastActionAt ?? 0),
+      stoppedReason: bot.priceSupportConfig.stoppedReason,
+      notifiedBudgetExhaustedAt: Number(bot.priceSupportConfig.notifiedBudgetExhaustedAt ?? 0)
+    };
+  } else {
+    const created = await prisma.botPriceSupportConfig.create({
+      data: {
+        botId,
+        enabled: false,
+        active: true,
+        floorPrice: null,
+        budgetUsdt: 0,
+        spentUsdt: 0,
+        maxOrderUsdt: 50,
+        cooldownMs: 2000,
+        mode: "PASSIVE",
+        lastActionAt: BigInt(0),
+        stoppedReason: null,
+        notifiedBudgetExhaustedAt: BigInt(0)
+      }
+    });
+    priceSupportConfig = {
+      enabled: created.enabled,
+      active: created.active,
+      floorPrice: created.floorPrice,
+      budgetUsdt: created.budgetUsdt,
+      spentUsdt: created.spentUsdt,
+      maxOrderUsdt: created.maxOrderUsdt,
+      cooldownMs: created.cooldownMs,
+      mode: created.mode as any,
+      lastActionAt: Number(created.lastActionAt ?? 0),
+      stoppedReason: created.stoppedReason,
+      notifiedBudgetExhaustedAt: Number(created.notifiedBudgetExhaustedAt ?? 0)
+    };
+  }
+
+  return { bot, mm, vol, risk, notificationConfig, priceSupportConfig };
 }
 
 export async function loadLatestBotAndConfigs() {
   const bot = await prisma.bot.findFirst({
     orderBy: { createdAt: "desc" },
-    include: { mmConfig: true, volConfig: true, riskConfig: true, notificationConfig: true }
+    include: {
+      mmConfig: true,
+      volConfig: true,
+      riskConfig: true,
+      notificationConfig: true,
+      priceSupportConfig: true
+    }
   });
 
   if (!bot) throw new Error("No bots found in DB");
@@ -127,7 +186,54 @@ export async function loadLatestBotAndConfigs() {
     };
   }
 
-  return { bot, mm, vol, risk, notificationConfig };
+  let priceSupportConfig: PriceSupportConfig;
+  if (bot.priceSupportConfig) {
+    priceSupportConfig = {
+      enabled: bot.priceSupportConfig.enabled,
+      active: bot.priceSupportConfig.active,
+      floorPrice: bot.priceSupportConfig.floorPrice,
+      budgetUsdt: bot.priceSupportConfig.budgetUsdt,
+      spentUsdt: bot.priceSupportConfig.spentUsdt,
+      maxOrderUsdt: bot.priceSupportConfig.maxOrderUsdt,
+      cooldownMs: bot.priceSupportConfig.cooldownMs,
+      mode: bot.priceSupportConfig.mode as any,
+      lastActionAt: Number(bot.priceSupportConfig.lastActionAt ?? 0),
+      stoppedReason: bot.priceSupportConfig.stoppedReason,
+      notifiedBudgetExhaustedAt: Number(bot.priceSupportConfig.notifiedBudgetExhaustedAt ?? 0)
+    };
+  } else {
+    const created = await prisma.botPriceSupportConfig.create({
+      data: {
+        botId: bot.id,
+        enabled: false,
+        active: true,
+        floorPrice: null,
+        budgetUsdt: 0,
+        spentUsdt: 0,
+        maxOrderUsdt: 50,
+        cooldownMs: 2000,
+        mode: "PASSIVE",
+        lastActionAt: BigInt(0),
+        stoppedReason: null,
+        notifiedBudgetExhaustedAt: BigInt(0)
+      }
+    });
+    priceSupportConfig = {
+      enabled: created.enabled,
+      active: created.active,
+      floorPrice: created.floorPrice,
+      budgetUsdt: created.budgetUsdt,
+      spentUsdt: created.spentUsdt,
+      maxOrderUsdt: created.maxOrderUsdt,
+      cooldownMs: created.cooldownMs,
+      mode: created.mode as any,
+      lastActionAt: Number(created.lastActionAt ?? 0),
+      stoppedReason: created.stoppedReason,
+      notifiedBudgetExhaustedAt: Number(created.notifiedBudgetExhaustedAt ?? 0)
+    };
+  }
+
+  return { bot, mm, vol, risk, notificationConfig, priceSupportConfig };
 }
 
 export async function loadCexConfig(exchange: string) {
@@ -221,6 +327,22 @@ export async function updateBotFlags(params: {
   if (params.volEnabled !== undefined) data.volEnabled = params.volEnabled;
   if (Object.keys(data).length === 0) return;
   await prisma.bot.update({ where: { id: params.botId }, data });
+}
+
+export async function updatePriceSupportConfig(botId: string, data: Record<string, any>) {
+  return prisma.botPriceSupportConfig.update({
+    where: { botId },
+    data
+  });
+}
+
+export async function incrementPriceSupportSpent(botId: string, amount: number) {
+  return prisma.botPriceSupportConfig.update({
+    where: { botId },
+    data: {
+      spentUsdt: { increment: amount }
+    }
+  });
 }
 
 export async function upsertOrderMap(params: {

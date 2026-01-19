@@ -23,6 +23,7 @@ model Bot {
   volConfig  VolumeConfig?
   riskConfig RiskConfig?
   notificationConfig BotNotificationConfig?
+  priceSupportConfig BotPriceSupportConfig?
   runtime    BotRuntime?
   alerts     BotAlert[]
   manualTrades ManualTradeLog[]
@@ -254,12 +255,30 @@ model ReauthOtp {
 model Workspace {
   id        String @id @default(cuid())
   name      String
+  features  Json? @default("{}")
   createdAt DateTime @default(now())
   members   WorkspaceMember[]
   bots      Bot[]
   manualTrades ManualTradeLog[]
   roles     Role[]
   auditEvents AuditEvent[]
+}
+
+model BotPriceSupportConfig {
+  id        String  @id @default(uuid())
+  botId     String  @unique
+  bot       Bot     @relation(fields: [botId], references: [id])
+  enabled   Boolean @default(false)
+  active    Boolean @default(true)
+  floorPrice Float?
+  budgetUsdt Float  @default(0)
+  spentUsdt  Float  @default(0)
+  maxOrderUsdt Float @default(50)
+  cooldownMs Int    @default(2000)
+  mode       String @default("PASSIVE")
+  lastActionAt BigInt @default(0)
+  stoppedReason String?
+  notifiedBudgetExhaustedAt BigInt @default(0)
 }
 
 model WorkspaceMember {

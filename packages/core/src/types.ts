@@ -1,4 +1,4 @@
-import type { Distribution, Side, OrderType, VolumeMode } from "./enums.js";
+import type { Distribution, Side, OrderType, VolumeMode, PriceSupportMode } from "./enums.js";
 
 export type Money = number;
 
@@ -39,6 +39,20 @@ export interface RiskConfig {
 export interface NotificationConfig {
   fundsWarnEnabled: boolean;
   fundsWarnPct: number;
+}
+
+export interface PriceSupportConfig {
+  enabled: boolean;
+  active: boolean;
+  floorPrice: number | null;
+  budgetUsdt: Money;
+  spentUsdt: Money;
+  maxOrderUsdt: Money;
+  cooldownMs: number;
+  mode: PriceSupportMode;
+  lastActionAt: number;
+  stoppedReason?: string | null;
+  notifiedBudgetExhaustedAt: number;
 }
 
 export interface Quote {

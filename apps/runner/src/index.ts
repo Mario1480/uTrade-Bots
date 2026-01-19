@@ -29,7 +29,7 @@ async function main() {
 
   while (true) {
     try {
-      const { bot, mm, vol, risk, notificationConfig } = requestedBotId
+      const { bot, mm, vol, risk, notificationConfig, priceSupportConfig } = requestedBotId
         ? await loadBotAndConfigs(requestedBotId)
         : await loadLatestBotAndConfigs();
       const symbol = bot.symbol;
@@ -62,7 +62,7 @@ async function main() {
         requestedBotId ? "starting runner (explicit bot id)" : "starting runner (latest bot)"
       );
       backoffMs = 1000;
-      await runLoop({ botId: bot.id, symbol, exchange, mm, vol, risk, notificationConfig, tickMs, sm });
+      await runLoop({ botId: bot.id, symbol, exchange, mm, vol, risk, notificationConfig, priceSupportConfig, tickMs, sm });
       log.warn({ botId: bot.id }, "runner loop exited unexpectedly");
     } catch (e) {
       const errStr = String(e);

@@ -246,6 +246,7 @@ export default function BotPage() {
   }, [id, mm, previewMidOverride, includeJitter, previewSeed, rt?.mid, rt?.freeUsdt, rt?.freeBase]);
 
   if (!bot || !mm || !vol || !risk || !notify) return <div>Loading…</div>;
+  const showPriceSupport = Boolean(me?.features?.priceSupport);
 
   return (
     <div>
@@ -257,6 +258,11 @@ export default function BotPage() {
         <Link href={`/bots/${id}`} className="btn">
           Overview →
         </Link>
+        {showPriceSupport ? (
+          <Link href={`/bots/${id}/price-support`} className="btn">
+            Price Support →
+          </Link>
+        ) : null}
       </div>
       {toast ? (
         <div

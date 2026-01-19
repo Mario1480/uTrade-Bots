@@ -164,6 +164,15 @@ const NotificationConfig = z.object({
   fundsWarnPct: z.number().min(0).max(1)
 });
 
+const PriceSupportConfig = z.object({
+  enabled: z.boolean(),
+  floorPrice: z.number().nullable(),
+  budgetUsdt: z.number(),
+  maxOrderUsdt: z.number(),
+  cooldownMs: z.number().int(),
+  mode: z.enum(["PASSIVE", "MIXED"])
+});
+
 const CexConfig = z.object({
   exchange: z.string(),
   apiKey: z.string(),
@@ -248,6 +257,14 @@ function roleAllows(res: express.Response, key: string): boolean {
   const role = getRoleFromLocals(res);
   const perms = role?.permissions ?? {};
   return Boolean(perms?.[key]);
+}
+
+async function getWorkspaceFeatures(workspaceId: string): Promise<Record<string, any>> {
+  const ws = await prisma.workspace.findUnique({
+    where: { id: workspaceId },
+    select: { features: true }
+  });
+  return (ws?.features as Record<string, any>) ?? {};
 }
 
 function requirePermission(key: string) {
@@ -478,13 +495,15 @@ app.get("/auth/me", requireAuth, async (_req, res) => {
   const user = getUserFromLocals(res) as any;
   const workspaceId = getWorkspaceId(res);
   const role = getRoleFromLocals(res);
+  const features = await getWorkspaceFeatures(workspaceId);
   res.json({
     id: user.id,
     email: user.email,
     workspaceId,
     role: role?.name ?? "member",
     permissions: role?.permissions ?? {},
-    isSuperadmin: isSuperadmin(user)
+    isSuperadmin: isSuperadmin(user),
+    features
   });
 });
 
@@ -492,13 +511,15 @@ app.get("/me", requireAuth, async (_req, res) => {
   const user = getUserFromLocals(res) as any;
   const workspaceId = getWorkspaceId(res);
   const role = getRoleFromLocals(res);
+  const features = await getWorkspaceFeatures(workspaceId);
   res.json({
     id: user.id,
     email: user.email,
     workspaceId,
     role: role?.name ?? "member",
     permissions: role?.permissions ?? {},
-    isSuperadmin: isSuperadmin(user)
+    isSuperadmin: isSuperadmin(user),
+    features
   });
 });
 
@@ -822,24 +843,53 @@ app.post("/alerts/test", requireAuth, async (_req, res) => {
 
 app.get("/bots", requireAuth, requirePermission("bots.view"), async (_req, res) => {
   const workspaceId = getWorkspaceId(res);
+  const features = await getWorkspaceFeatures(workspaceId);
+  const priceSupportFeature = Boolean(features?.priceSupport);
   const bots = await prisma.bot.findMany({
     where: { workspaceId },
+    include: { priceSupportConfig: true },
     orderBy: { createdAt: "desc" }
   });
-  res.json(bots);
+  const mapped = bots.map((b) => {
+    const ps = priceSupportFeature ? b.priceSupportConfig : null;
+    const remaining = ps ? Math.max(0, ps.budgetUsdt - ps.spentUsdt) : null;
+    const status = !ps?.enabled ? "OFF" : ps.active ? "ON" : "STOPPED";
+    return {
+      ...b,
+      priceSupportConfig: ps,
+      priceSupportEnabled: Boolean(ps?.enabled),
+      priceSupportActive: Boolean(ps?.active),
+      priceSupportFloorPrice: ps?.floorPrice ?? null,
+      priceSupportRemainingUsdt: remaining,
+      priceSupportStatus: status
+    };
+  });
+  res.json(mapped);
 });
 
 app.get("/bots/:id", requireAuth, requirePermission("bots.view"), async (req, res) => {
   const workspaceId = getWorkspaceId(res);
   const user = getUserFromLocals(res);
+  const features = await getWorkspaceFeatures(workspaceId);
+  const priceSupportFeature = Boolean(features?.priceSupport);
   const bot = await prisma.bot.findFirst({
     where: { id: req.params.id, workspaceId },
-    include: { mmConfig: true, volConfig: true, riskConfig: true, notificationConfig: true, runtime: true } as any
+    include: {
+      mmConfig: true,
+      volConfig: true,
+      riskConfig: true,
+      notificationConfig: true,
+      priceSupportConfig: true,
+      runtime: true
+    } as any
   });
   if (!bot) return res.status(404).json({ error: "not_found" });
   if (!isSuperadmin(user) && bot.volConfig) {
     bot.volConfig.buyBumpTicks = undefined as any;
     bot.volConfig.sellBumpTicks = undefined as any;
+  }
+  if (!priceSupportFeature) {
+    bot.priceSupportConfig = null as any;
   }
   res.json(bot);
 });
@@ -866,6 +916,7 @@ app.delete("/bots/:id", requireAuth, requirePermission("bots.delete"), async (re
     prisma.volumeConfig.deleteMany({ where: { botId } }),
     prisma.riskConfig.deleteMany({ where: { botId } }),
     prisma.botNotificationConfig.deleteMany({ where: { botId } }),
+    prisma.botPriceSupportConfig.deleteMany({ where: { botId } }),
     prisma.manualTradeLog.deleteMany({ where: { botId } }),
     prisma.bot.delete({ where: { id: botId } })
   ]);
@@ -1419,6 +1470,21 @@ app.post("/bots", requireAuth, requirePermission("bots.create"), async (req, res
           fundsWarnEnabled: true,
           fundsWarnPct: 0.1
         }
+      },
+      priceSupportConfig: {
+        create: {
+          enabled: false,
+          active: true,
+          floorPrice: null,
+          budgetUsdt: 0,
+          spentUsdt: 0,
+          maxOrderUsdt: 50,
+          cooldownMs: 2000,
+          mode: "PASSIVE",
+          lastActionAt: BigInt(0),
+          stoppedReason: null,
+          notifiedBudgetExhaustedAt: BigInt(0)
+        }
       }
     }
   });
@@ -1457,7 +1523,8 @@ app.put("/bots/:id/config", requireAuth, requirePermission("bots.edit_config"), 
     mm: MMConfig,
     vol: VolConfig,
     risk: RiskConfig,
-    notify: NotificationConfig
+    notify: NotificationConfig,
+    priceSupport: PriceSupportConfig.optional()
   }).parse(req.body);
 
   if (!isSuperadmin(user) && !roleAllows(res, "risk.edit")) {
@@ -1481,6 +1548,27 @@ app.put("/bots/:id/config", requireAuth, requirePermission("bots.edit_config"), 
     if (payload.mm.budgetBaseToken < minBaseToken) {
       const base = bot?.symbol?.split("_")[0] || "Token";
       errors.budgetBaseToken = `Minimum ~${minBaseToken.toFixed(6)} ${base}`;
+    }
+  }
+
+  const features = await getWorkspaceFeatures(workspaceId);
+  const priceSupportFeature = Boolean(features?.priceSupport);
+  if (payload.priceSupport && !priceSupportFeature) {
+    return res.status(403).json({ error: "feature_disabled" });
+  }
+
+  if (payload.priceSupport?.enabled) {
+    if (!payload.priceSupport.floorPrice || payload.priceSupport.floorPrice <= 0) {
+      errors.floorPrice = "Floor price required";
+    }
+    if (payload.priceSupport.budgetUsdt <= 0) {
+      errors.budgetUsdt = "Budget must be > 0";
+    }
+    if (payload.priceSupport.maxOrderUsdt <= 0) {
+      errors.maxOrderUsdt = "Max order must be > 0";
+    }
+    if (payload.priceSupport.cooldownMs < 0) {
+      errors.cooldownMs = "Cooldown must be >= 0";
     }
   }
 
@@ -1514,10 +1602,86 @@ app.put("/bots/:id/config", requireAuth, requirePermission("bots.edit_config"), 
     create: { botId, ...payload.notify }
   });
 
+  if (payload.priceSupport) {
+    const existing = await prisma.botPriceSupportConfig.findUnique({ where: { botId } });
+    const updateData: any = {
+      enabled: payload.priceSupport.enabled,
+      floorPrice: payload.priceSupport.floorPrice,
+      budgetUsdt: payload.priceSupport.budgetUsdt,
+      maxOrderUsdt: payload.priceSupport.maxOrderUsdt,
+      cooldownMs: payload.priceSupport.cooldownMs,
+      mode: payload.priceSupport.mode
+    };
+    if (!existing) {
+      await prisma.botPriceSupportConfig.create({
+        data: {
+          botId,
+          active: true,
+          spentUsdt: 0,
+          lastActionAt: BigInt(0),
+          stoppedReason: null,
+          notifiedBudgetExhaustedAt: BigInt(0),
+          ...updateData
+        }
+      });
+    } else {
+      await prisma.botPriceSupportConfig.update({
+        where: { botId },
+        data: updateData
+      });
+    }
+  }
+
   await writeAudit({
     workspaceId,
     actorUserId: user.id,
     action: "bots.update_config",
+    entityType: "Bot",
+    entityId: botId
+  });
+
+  res.json({ ok: true });
+});
+
+app.post("/bots/:id/price-support/restart", requireAuth, requirePermission("trading.price_support"), async (req, res) => {
+  const workspaceId = getWorkspaceId(res);
+  const user = getUserFromLocals(res);
+  const botId = req.params.id;
+  const features = await getWorkspaceFeatures(workspaceId);
+  if (!features?.priceSupport) {
+    return res.status(403).json({ error: "feature_disabled" });
+  }
+
+  const bot = await prisma.bot.findFirst({ where: { id: botId, workspaceId } });
+  if (!bot) return res.status(404).json({ error: "not_found" });
+
+  await prisma.botPriceSupportConfig.upsert({
+    where: { botId },
+    create: {
+      botId,
+      enabled: false,
+      active: true,
+      floorPrice: null,
+      budgetUsdt: 0,
+      spentUsdt: 0,
+      maxOrderUsdt: 50,
+      cooldownMs: 2000,
+      mode: "PASSIVE",
+      lastActionAt: BigInt(0),
+      stoppedReason: null,
+      notifiedBudgetExhaustedAt: BigInt(0)
+    },
+    update: {
+      active: true,
+      stoppedReason: null,
+      notifiedBudgetExhaustedAt: BigInt(0)
+    }
+  });
+
+  await writeAudit({
+    workspaceId,
+    actorUserId: user.id,
+    action: "bots.price_support.restart",
     entityType: "Bot",
     entityId: botId
   });

@@ -1,5 +1,12 @@
 import type { Exchange } from "@mm/exchange";
-import type { MarketMakingConfig, RiskConfig, VolumeConfig, NotificationConfig, Balance } from "@mm/core";
+import type {
+  MarketMakingConfig,
+  RiskConfig,
+  VolumeConfig,
+  NotificationConfig,
+  PriceSupportConfig,
+  Balance
+} from "@mm/core";
 import { splitSymbol } from "@mm/exchange";
 import { SlavePriceSource } from "@mm/pricing";
 import { buildMmQuotes, VolumeScheduler } from "@mm/strategy";
@@ -9,7 +16,14 @@ import { BotStateMachine } from "./state-machine.js";
 import { OrderManager } from "./order-manager.js";
 import { inventoryRatio } from "./inventory.js";
 import { log } from "./logger.js";
-import { loadBotAndConfigs, updateBotFlags, writeAlert, writeRuntime, upsertOrderMap } from "./db.js";
+import {
+  loadBotAndConfigs,
+  updateBotFlags,
+  updatePriceSupportConfig,
+  writeAlert,
+  writeRuntime,
+  upsertOrderMap
+} from "./db.js";
 import { alert } from "./alerts.js";
 import { syncVolumeFills } from "./fills.js";
 
@@ -35,6 +49,7 @@ export async function runLoop(params: {
   vol: VolumeConfig;
   risk: RiskConfig;
   notificationConfig: NotificationConfig;
+  priceSupportConfig: PriceSupportConfig;
   tickMs: number;
   sm: BotStateMachine;
 }): Promise<void> {
@@ -45,6 +60,7 @@ export async function runLoop(params: {
   let vol = params.vol;
   let risk = params.risk;
   let notificationConfig = params.notificationConfig;
+  let priceSupportConfig = params.priceSupportConfig;
   let botName = params.botId;
 
   const priceSource = new SlavePriceSource(exchange);
@@ -208,6 +224,7 @@ export async function runLoop(params: {
       vol = loaded.vol;
       risk = loaded.risk;
       notificationConfig = loaded.notificationConfig;
+      priceSupportConfig = loaded.priceSupportConfig;
       volSched = new VolumeScheduler(vol);
       riskEngine = new RiskEngine(risk);
     }
@@ -271,6 +288,9 @@ export async function runLoop(params: {
         try {
           const fillRes = await syncVolumeFills({ botId, symbol, exchange });
           volState.tradedNotional = fillRes.tradedNotionalToday;
+          if (fillRes.priceSupportSpentDelta > 0) {
+            priceSupportConfig.spentUsdt += fillRes.priceSupportSpentDelta;
+          }
         } catch (e) {
           log.warn({ err: String(e) }, "fills sync failed");
         }
@@ -498,6 +518,86 @@ export async function runLoop(params: {
         const sleepMs = Math.max(0, tickMs - elapsed);
         await sleep(sleepMs);
         continue;
+      }
+
+      // Price Support (floor defense)
+      if (priceSupportConfig.enabled) {
+        const remainingUsdt = Math.max(0, priceSupportConfig.budgetUsdt - priceSupportConfig.spentUsdt);
+        if (remainingUsdt <= 0) {
+          if (priceSupportConfig.active) {
+            const nowMs = Date.now();
+            const shouldNotify = priceSupportConfig.notifiedBudgetExhaustedAt === 0;
+            priceSupportConfig.active = false;
+            priceSupportConfig.stoppedReason = "BUDGET_EXHAUSTED";
+            priceSupportConfig.notifiedBudgetExhaustedAt = shouldNotify ? nowMs : priceSupportConfig.notifiedBudgetExhaustedAt;
+            try {
+              await updatePriceSupportConfig(botId, {
+                active: false,
+                stoppedReason: "BUDGET_EXHAUSTED",
+                notifiedBudgetExhaustedAt: BigInt(priceSupportConfig.notifiedBudgetExhaustedAt || nowMs)
+              });
+            } catch {}
+
+            if (shouldNotify) {
+              await alert(
+                "warn",
+                `[PRICE SUPPORT] ${botName} (${symbol})`,
+                `stopped: budget exhausted\nfloor=${priceSupportConfig.floorPrice}\nbudget=${priceSupportConfig.budgetUsdt}\nspent=${priceSupportConfig.spentUsdt}`
+              );
+            }
+          }
+        } else if (priceSupportConfig.active && priceSupportConfig.floorPrice) {
+          const nowMs = Date.now();
+          if (mid.mid < priceSupportConfig.floorPrice) {
+            const since = nowMs - priceSupportConfig.lastActionAt;
+            if (since >= priceSupportConfig.cooldownMs) {
+              const bid = mid.bid ?? mid.mid;
+              const ask = mid.ask ?? mid.mid;
+              const floor = priceSupportConfig.floorPrice;
+              const offset = Math.max(volLastMinBumpAbs, bid * 0.00005);
+              let price = Math.min(floor, bid + offset);
+              if (Number.isFinite(ask) && ask > 0) {
+                price = Math.min(price, ask * (1 - 0.00005));
+              }
+              if (Number.isFinite(price) && price > 0) {
+                const notional = Math.min(priceSupportConfig.maxOrderUsdt, remainingUsdt, freeUsdt);
+                if (notional <= 0) {
+                  log.info({ remainingUsdt, freeUsdt }, "price support skipped: insufficient USDT");
+                } else {
+                  const qty = notional / price;
+                  const postOnly = priceSupportConfig.mode !== "MIXED";
+                  const order = {
+                    symbol,
+                    side: "buy" as const,
+                    type: "limit" as const,
+                    price,
+                    qty,
+                    postOnly,
+                    clientOrderId: `ps_${botId}_${nowMs}`
+                  };
+                  try {
+                    const placed = await exchange.placeOrder(order);
+                    if (placed?.id && order.clientOrderId) {
+                      await upsertOrderMap({
+                        botId,
+                        symbol,
+                        orderId: placed.id,
+                        clientOrderId: order.clientOrderId
+                      });
+                    }
+                    priceSupportConfig.lastActionAt = nowMs;
+                    await updatePriceSupportConfig(botId, {
+                      lastActionAt: BigInt(nowMs)
+                    });
+                    log.info({ order }, "price support order submitted");
+                  } catch (e) {
+                    log.warn({ err: String(e), order }, "price support order failed");
+                  }
+                }
+              }
+            }
+          }
+        }
       }
 
       // MM sync (only manage mm-* orders so we don't cancel volume orders)

@@ -1,6 +1,7 @@
 import type { MyTrade } from "@mm/core";
 import type { Exchange } from "@mm/exchange";
 import { prisma } from "@mm/db";
+import { incrementPriceSupportSpent } from "./db.js";
 
 export function dayKeyUtc(ts = Date.now()): string {
   return new Date(ts).toISOString().slice(0, 10);
@@ -10,7 +11,7 @@ export async function syncVolumeFills(params: {
   botId: string;
   symbol: string;
   exchange: Exchange;
-}): Promise<{ tradedNotionalToday: number }> {
+}): Promise<{ tradedNotionalToday: number; priceSupportSpentDelta: number }> {
   const { botId, symbol, exchange } = params;
   const dayKey = dayKeyUtc();
 
@@ -40,11 +41,12 @@ export async function syncVolumeFills(params: {
   const orderIdToClient = new Map(orderMaps.map((m) => [m.orderId, m.clientOrderId]));
 
   let addedNotional = 0;
+  let addedSupportNotional = 0;
   let maxTs = startTimeMs ?? 0;
 
   for (const t of dayTrades) {
     const cid = t.clientOrderId || (t.orderId ? orderIdToClient.get(t.orderId) : undefined);
-    if (!cid || !cid.startsWith("vol")) continue;
+    if (!cid || (!cid.startsWith("vol") && !cid.startsWith("ps_"))) continue;
 
     if (Number.isFinite(t.timestamp) && t.timestamp > maxTs) {
       maxTs = t.timestamp;
@@ -60,7 +62,11 @@ export async function syncVolumeFills(params: {
 
     const notional = Number(t.notional) || (t.price * t.qty);
     if (Number.isFinite(notional)) {
-      addedNotional += notional;
+      if (cid.startsWith("vol")) {
+        addedNotional += notional;
+      } else if (cid.startsWith("ps_")) {
+        addedSupportNotional += notional;
+      }
     }
 
   }
@@ -74,8 +80,22 @@ export async function syncVolumeFills(params: {
         lastTradeTimeMs: maxTs > 0 ? BigInt(maxTs) : cursor.lastTradeTimeMs
       }
     });
-    return { tradedNotionalToday: nextTotal };
+    if (addedSupportNotional > 0) {
+      try {
+        await incrementPriceSupportSpent(botId, addedSupportNotional);
+      } catch {
+        // best effort
+      }
+    }
+    return { tradedNotionalToday: nextTotal, priceSupportSpentDelta: addedSupportNotional };
   }
 
-  return { tradedNotionalToday: cursor.tradedNotionalToday };
+  if (addedSupportNotional > 0) {
+    try {
+      await incrementPriceSupportSpent(botId, addedSupportNotional);
+    } catch {
+      // best effort
+    }
+  }
+  return { tradedNotionalToday: cursor.tradedNotionalToday, priceSupportSpentDelta: addedSupportNotional };
 }

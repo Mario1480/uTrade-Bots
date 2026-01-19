@@ -278,6 +278,9 @@ export default function BotOverviewPage() {
   }, [openAll]);
 
   if (!bot) return <div>Loading…</div>;
+  const ps = bot.priceSupportConfig;
+  const psStatus = !ps?.enabled ? "OFF" : ps.active ? "ON" : "STOPPED";
+  const psRemaining = ps ? Math.max(0, (ps.budgetUsdt || 0) - (ps.spentUsdt || 0)) : null;
 
   return (
     <div>
@@ -330,6 +333,15 @@ export default function BotOverviewPage() {
                 {" "}
                 · Runtime: <b>{rt.status}</b>
                 {rt.reason ? <span style={{ color: "var(--muted)" }}> — {rt.reason}</span> : null}
+              </>
+            ) : null}
+            {ps ? (
+              <>
+                {" "}
+                · Price Support: <b>{psStatus}</b>
+                {psStatus !== "OFF" && psRemaining !== null ? (
+                  <span style={{ color: "var(--muted)" }}> — {psRemaining.toFixed(4)} USDT left</span>
+                ) : null}
               </>
             ) : null}
           </div>
