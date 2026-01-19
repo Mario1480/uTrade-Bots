@@ -145,6 +145,7 @@ export async function writeRuntime(params: {
   botId: string;
   status: string;
   reason?: string | null;
+  lastHealthyAt?: Date | null;
   mid?: number | null;
   bid?: number | null;
   ask?: number | null;
@@ -162,6 +163,7 @@ export async function writeRuntime(params: {
       botId: params.botId,
       status: params.status,
       reason: params.reason ?? null,
+      lastHealthyAt: params.lastHealthyAt ?? null,
       mid: params.mid ?? null,
       bid: params.bid ?? null,
       ask: params.ask ?? null,
@@ -176,6 +178,7 @@ export async function writeRuntime(params: {
     update: {
       status: params.status,
       reason: params.reason ?? null,
+      lastHealthyAt: params.lastHealthyAt ?? undefined,
       mid: params.mid ?? null,
       bid: params.bid ?? null,
       ask: params.ask ?? null,

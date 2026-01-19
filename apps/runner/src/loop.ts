@@ -23,6 +23,10 @@ function findFree(balances: Balance[], asset: string): number {
   return direct?.free ?? 0;
 }
 
+function sleep(ms: number): Promise<void> {
+  return new Promise((r) => setTimeout(r, ms));
+}
+
 export async function runLoop(params: {
   botId: string;
   symbol: string;
@@ -68,6 +72,8 @@ export async function runLoop(params: {
   let fundsAlertSent = false;
   let fundsWarnSent = false;
   let lowFundsSince: number | null = null;
+  let errorBackoffMs = 1000;
+  const maxBackoffMs = 30_000;
   const volSideWindow: ("buy" | "sell")[] = [];
   const volSideWindowMax = 20;
 
@@ -92,9 +98,11 @@ export async function runLoop(params: {
   });
 
   while (true) {
-    // Bot status from DB (start/stop/pause)
-    const botRow = (await loadBotAndConfigs(botId)).bot;
-    botName = botRow.name || botName;
+    let botRow: (Awaited<ReturnType<typeof loadBotAndConfigs>>)["bot"];
+    try {
+      // Bot status from DB (start/stop/pause)
+      botRow = (await loadBotAndConfigs(botId)).bot;
+      botName = botRow.name || botName;
     if (botRow.status === "STOPPED") {
       await exchange.cancelAll(symbol);
       sm.set("STOPPED", "Stopped from UI/API");
@@ -109,7 +117,7 @@ export async function runLoop(params: {
       });
       // Keep the runner alive and wait until it is started again.
       while (true) {
-        await new Promise((r) => setTimeout(r, 1500));
+        await sleep(1500);
         const b = (await loadBotAndConfigs(botId)).bot;
         if (b.status === "RUNNING") {
           sm.set("RUNNING", "");
@@ -155,7 +163,7 @@ export async function runLoop(params: {
       });
       // wait until RUNNING
       while (true) {
-        await new Promise((r) => setTimeout(r, 1500));
+        await sleep(1500);
         const b = (await loadBotAndConfigs(botId)).bot;
         if (b.status === "RUNNING") {
           sm.set("RUNNING", "");
@@ -183,13 +191,15 @@ export async function runLoop(params: {
             openOrdersVol: 0,
             lastVolClientOrderId: null
           });
-          return;
+          break;
         }
+      }
+      if (sm.getStatus() === "STOPPED") {
+        continue;
       }
     }
 
     const t0 = Date.now();
-
     // reload configs periodically (hot apply)
     if (t0 - lastReload > reloadEveryMs) {
       lastReload = t0;
@@ -300,8 +310,8 @@ export async function runLoop(params: {
           tradedNotionalToday: volState.tradedNotional
         });
         const elapsed = Date.now() - t0;
-        const sleep = Math.max(0, tickMs - elapsed);
-        await new Promise((r) => setTimeout(r, sleep));
+        const sleepMs = Math.max(0, tickMs - elapsed);
+        await sleep(sleepMs);
         continue;
       }
 
@@ -432,8 +442,8 @@ export async function runLoop(params: {
         });
 
         const elapsed = Date.now() - t0;
-        const sleep = Math.max(0, tickMs - elapsed);
-        await new Promise((r) => setTimeout(r, sleep));
+        const sleepMs = Math.max(0, tickMs - elapsed);
+        await sleep(sleepMs);
         continue;
       } else {
         lowFundsSince = null;
@@ -485,8 +495,8 @@ export async function runLoop(params: {
         }
 
         const elapsed = Date.now() - t0;
-        const sleep = Math.max(0, tickMs - elapsed);
-        await new Promise((r) => setTimeout(r, sleep));
+        const sleepMs = Math.max(0, tickMs - elapsed);
+        await sleep(sleepMs);
         continue;
       }
 
@@ -825,6 +835,7 @@ export async function runLoop(params: {
         botId,
         status: "RUNNING",
         reason: null,
+        lastHealthyAt: new Date(),
         mid: mid.mid,
         bid: mid.bid ?? null,
         ask: mid.ask ?? null,
@@ -836,10 +847,11 @@ export async function runLoop(params: {
         freeBase,
         tradedNotionalToday: volState.tradedNotional
       });
+      errorBackoffMs = 1000;
 
       const elapsed = Date.now() - t0;
-      const sleep = Math.max(0, tickMs - elapsed);
-      await new Promise((r) => setTimeout(r, sleep));
+      const sleepMs = Math.max(0, tickMs - elapsed);
+      await sleep(sleepMs);
     } catch (e) {
       const errStr = String(e);
       const isTransient =
@@ -856,18 +868,20 @@ export async function runLoop(params: {
 
       if (isTransient) {
         log.warn({ err: errStr }, "transient loop error");
-        await writeRuntime({
-          botId,
-          status: "RUNNING",
-          reason: `Network error: ${errStr}`,
-          openOrders: null,
-          openOrdersMm: null,
-          openOrdersVol: null,
-          lastVolClientOrderId: null
-        });
+        try {
+          await writeRuntime({
+            botId,
+            status: "RUNNING",
+            reason: `Network error: ${errStr}`,
+            openOrders: null,
+            openOrdersMm: null,
+            openOrdersVol: null,
+            lastVolClientOrderId: null
+          });
+        } catch {}
         const elapsed = Date.now() - t0;
-        const sleep = Math.max(0, tickMs - elapsed);
-        await new Promise((r) => setTimeout(r, sleep));
+        const sleepMs = Math.max(0, tickMs - elapsed);
+        await sleep(sleepMs);
         continue;
       }
 
@@ -876,15 +890,17 @@ export async function runLoop(params: {
         await exchange.cancelAll(symbol);
       } catch {}
       sm.set("ERROR", errStr);
-      await writeRuntime({
-        botId,
-        status: "ERROR",
-        reason: sm.getReason(),
-        openOrders: 0,
-        openOrdersMm: 0,
-        openOrdersVol: 0,
-        lastVolClientOrderId: null
-      });
+      try {
+        await writeRuntime({
+          botId,
+          status: "ERROR",
+          reason: sm.getReason(),
+          openOrders: 0,
+          openOrdersMm: 0,
+          openOrdersVol: 0,
+          lastVolClientOrderId: null
+        });
+      } catch {}
 
       await writeAlert({
         botId,
@@ -898,7 +914,29 @@ export async function runLoop(params: {
         `[ERROR] ${botName} (${symbol})`,
         `err=${errStr}`
       );
-      break;
+      const sleepMs = errorBackoffMs;
+      errorBackoffMs = Math.min(maxBackoffMs, errorBackoffMs * 2);
+      await sleep(sleepMs);
+      continue;
+    }
+    } catch (e) {
+      const errStr = String(e);
+      log.warn({ err: errStr }, "runner setup error");
+      try {
+        await writeRuntime({
+          botId,
+          status: "ERROR",
+          reason: errStr,
+          openOrders: null,
+          openOrdersMm: null,
+          openOrdersVol: null,
+          lastVolClientOrderId: null
+        });
+      } catch {}
+      const sleepMs = errorBackoffMs;
+      errorBackoffMs = Math.min(maxBackoffMs, errorBackoffMs * 2);
+      await sleep(sleepMs);
+      continue;
     }
   }
 

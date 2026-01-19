@@ -85,6 +85,7 @@ model BotRuntime {
   updatedAt DateTime @updatedAt
   status    String
   reason    String?
+  lastHealthyAt DateTime?
 
   mid        Float?
   bid        Float?
