@@ -26,17 +26,13 @@ export default function SettingsPage() {
           <div style={{ fontWeight: 700, marginBottom: 6 }}>Subscription</div>
           <div style={{ fontSize: 12, color: "var(--muted)" }}>Plan, usage, billing</div>
         </Link>
-        <Link className="card" href="/settings/security" style={{ padding: 12 }}>
-          <div style={{ fontWeight: 700, marginBottom: 6 }}>Security</div>
-          <div style={{ fontSize: 12, color: "var(--muted)" }}>Access control and keys</div>
-        </Link>
         <Link className="card" href="/settings/users" style={{ padding: 12 }}>
-          <div style={{ fontWeight: 700, marginBottom: 6 }}>Users</div>
-          <div style={{ fontSize: 12, color: "var(--muted)" }}>Password and access</div>
+          <div style={{ fontWeight: 700, marginBottom: 6 }}>My Account</div>
+          <div style={{ fontSize: 12, color: "var(--muted)" }}>Password and personal security</div>
         </Link>
         <Link className="card" href="/settings/roles" style={{ padding: 12 }}>
-          <div style={{ fontWeight: 700, marginBottom: 6 }}>Roles</div>
-          <div style={{ fontSize: 12, color: "var(--muted)" }}>Permissions and policies</div>
+          <div style={{ fontWeight: 700, marginBottom: 6 }}>Members & Roles</div>
+          <div style={{ fontSize: 12, color: "var(--muted)" }}>Workspace members and permissions</div>
         </Link>
         <Link className="card" href="/settings/audit" style={{ padding: 12 }}>
           <div style={{ fontWeight: 700, marginBottom: 6 }}>Audit</div>
