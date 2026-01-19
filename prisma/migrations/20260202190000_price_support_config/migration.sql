@@ -6,8 +6,8 @@ ALTER TABLE "Workspace" ALTER COLUMN "features" SET NOT NULL;
 
 -- Price support config per bot
 CREATE TABLE "BotPriceSupportConfig" (
-  "id" UUID NOT NULL,
-  "botId" UUID NOT NULL,
+  "id" TEXT NOT NULL,
+  "botId" TEXT NOT NULL,
   "enabled" BOOLEAN NOT NULL DEFAULT false,
   "active" BOOLEAN NOT NULL DEFAULT true,
   "floorPrice" DOUBLE PRECISION,
