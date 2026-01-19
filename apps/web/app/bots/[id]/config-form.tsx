@@ -10,6 +10,13 @@ type ConfigFormProps = {
   baseSymbol?: string;
   midPrice?: number | null;
   isSuperadmin?: boolean;
+  onSave?: () => void;
+  canSaveMm?: boolean;
+  canSaveVol?: boolean;
+  canSaveRisk?: boolean;
+  saveLabelMm?: string;
+  saveLabelVol?: string;
+  saveLabelRisk?: string;
   errors?: {
     budgetQuoteUsdt?: string;
     budgetBaseToken?: string;
@@ -26,6 +33,13 @@ export function ConfigForm({
   baseSymbol,
   midPrice,
   isSuperadmin,
+  onSave,
+  canSaveMm,
+  canSaveVol,
+  canSaveRisk,
+  saveLabelMm,
+  saveLabelVol,
+  saveLabelRisk,
   errors
 }: ConfigFormProps) {
   const baseLabel = baseSymbol ? `Max Budget (${baseSymbol})` : "Max Budget (Token)";
@@ -38,10 +52,23 @@ export function ConfigForm({
   const maxSpreadPctDisplay = toPercent(mm.maxSpreadPct);
   const jitterPctDisplay = toPercent(mm.jitterPct);
   const maxDeviationDisplay = toPercent(risk.maxDeviationPct);
+  function renderSave(enabled?: boolean, label?: string) {
+    if (!onSave) return null;
+    return (
+      <button
+        onClick={onSave}
+        disabled={!enabled}
+        className={`btn btnPrimary ${!enabled ? "btnDisabled" : ""}`}
+      >
+        {label || "Save"}
+      </button>
+    );
+  }
   return (
     <>
       <AccordionSection
         title="Market Making"
+        action={renderSave(canSaveMm, saveLabelMm)}
       >
         <div className="gridTwoCol">
           <div>
@@ -131,6 +158,7 @@ export function ConfigForm({
 
       <AccordionSection
         title="Volume Bot"
+        action={renderSave(canSaveVol, saveLabelVol)}
       >
         <div style={{ fontSize: 12, opacity: 0.8, marginBottom: 8 }}>
           Generates small trades over time to reach your daily notional. Runs 24/7.
@@ -190,6 +218,7 @@ export function ConfigForm({
 
       <AccordionSection
         title="Risk Control"
+        action={renderSave(canSaveRisk, saveLabelRisk)}
       >
         <Field label="Min Balance (USDT)" hint="Stop if balance drops below (0 disables)" value={risk.minUsdt} onChange={(v) => onRiskChange({ ...risk, minUsdt: toNumber(v, risk.minUsdt) })} />
         <Field
@@ -205,10 +234,15 @@ export function ConfigForm({
   );
 }
 
-function AccordionSection(props: { title: string; children: React.ReactNode; defaultOpen?: boolean }) {
+function AccordionSection(props: { title: string; children: React.ReactNode; defaultOpen?: boolean; action?: React.ReactNode }) {
   return (
     <details className="card" style={{ padding: 12, marginBottom: 12 }} open={props.defaultOpen}>
       <summary style={{ cursor: "pointer", fontWeight: 700, marginBottom: 10 }}>{props.title}</summary>
+      {props.action ? (
+        <div style={{ display: "flex", justifyContent: "flex-end", marginBottom: 10 }}>
+          {props.action}
+        </div>
+      ) : null}
       <div>{props.children}</div>
     </details>
   );
