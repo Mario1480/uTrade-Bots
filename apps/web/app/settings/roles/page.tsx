@@ -319,7 +319,10 @@ export default function RolesPage() {
 
       <div style={{ display: "grid", gap: 12 }}>
         {roles.map((role) => (
-          <div key={role.id} className="card" style={{ padding: 12 }}>
+          <details key={role.id} className="card" style={{ padding: 12 }}>
+            <summary style={{ cursor: "pointer", fontWeight: 700, marginBottom: 10 }}>
+              {role.name}
+            </summary>
             <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
               <input
                 className="input"
@@ -349,7 +352,7 @@ export default function RolesPage() {
                 </label>
               ))}
             </div>
-          </div>
+          </details>
         ))}
       </div>
 
