@@ -560,88 +560,102 @@ export async function runLoop(params: {
               }
 
               if (!skipVolume) {
-              let nextSide = safeOrder.side;
-              if (!canSellBase) nextSide = "buy";
-              if (!canBuyUsdt) nextSide = "sell";
-
-              const lastSide = volState.lastSide;
-              let streak = volState.sideStreak ?? 0;
-              const buyCount = volState.buyCount ?? 0;
-              const sellCount = volState.sellCount ?? 0;
-
-              if (canBuyUsdt && canSellBase) {
-                const winBuy = volSideWindow.filter((s) => s === "buy").length;
-                const winSell = volSideWindow.length - winBuy;
                 const buyTarget = Number.isFinite(vol.buyPct) ? Math.max(0, Math.min(1, vol.buyPct)) : 0.5;
-                const targetBuy = Math.round(volSideWindowMax * buyTarget);
-                const targetSell = volSideWindowMax - targetBuy;
+                let nextSide = Math.random() < buyTarget ? "buy" : "sell";
+                if (!canSellBase) nextSide = "buy";
+                if (!canBuyUsdt) nextSide = "sell";
 
-                if (volSideWindow.length >= volSideWindowMax) {
-                  if (winBuy > targetBuy + 2) nextSide = "sell";
-                  else if (winSell > targetSell + 2) nextSide = "buy";
-                  else nextSide = winBuy <= targetBuy ? "buy" : "sell";
-                } else {
-                  nextSide = buyCount / Math.max(1, buyCount + sellCount) < buyTarget ? "buy" : "sell";
+                const lastSide = volState.lastSide;
+                let streak = volState.sideStreak ?? 0;
+                if (canBuyUsdt && canSellBase) {
+                  const winBuy = volSideWindow.filter((s) => s === "buy").length;
+                  const winSell = volSideWindow.length - winBuy;
+                  if (volSideWindow.length >= volSideWindowMax) {
+                    if (winBuy / volSideWindowMax > buyTarget + 0.1) nextSide = "sell";
+                    else if (winSell / volSideWindowMax > (1 - buyTarget) + 0.1) nextSide = "buy";
+                  }
                 }
 
-                streak = nextSide === lastSide ? streak + 1 : 1;
-              } else if (lastSide && nextSide === lastSide) {
-                if (streak >= 5) {
+                if (lastSide && nextSide === lastSide && streak >= 5) {
                   nextSide = lastSide === "buy" ? "sell" : "buy";
                 }
                 streak = nextSide === lastSide ? streak + 1 : 1;
-              } else {
-                streak = 1;
-              }
-              const desiredAggressiveSide = nextSide;
-              // Variant 2: place maker on the desired side, taker crosses it.
-              const makerSide = desiredAggressiveSide;
-              volState.lastSide = desiredAggressiveSide;
-              volState.sideStreak = streak;
-              safeOrder.side = makerSide;
-              log.info(
-                { desiredAggressiveSide, makerSide, streak, buyPct: vol.buyPct },
-                "volume active side selection"
-              );
 
-              // Price anchor for maker side relative to last (tune here)
-              const bumpBase = Math.max(volLastMinBumpAbs, ref * volLastMinBumpPct);
-              const buyBump = bumpBase * Math.max(0, vol.buyBumpTicks ?? volBuyTicks);
-              const sellBump = bumpBase * Math.max(0, vol.sellBumpTicks ?? volSellTicks);
-              // Sell maker = last, Buy maker = last + buyBump (tune here)
-              let price = makerSide === "buy" ? ref + buyBump : Math.max(ref - sellBump, 0);
-              if (Number.isFinite(bid) && Number.isFinite(ask) && ask > bid) {
+                const desiredAggressiveSide = nextSide;
+                const makerSide = desiredAggressiveSide;
+                volState.lastSide = desiredAggressiveSide;
+                volState.sideStreak = streak;
+                safeOrder.side = makerSide;
+                log.info(
+                  { desiredAggressiveSide, makerSide, streak, buyPct: vol.buyPct },
+                  "volume active side selection"
+                );
+
+                const bumpBase = Math.max(volLastMinBumpAbs, ref * volLastMinBumpPct);
+                const buyBump = bumpBase * Math.max(0, vol.buyBumpTicks ?? volBuyTicks);
+                const sellBump = bumpBase * Math.max(0, vol.sellBumpTicks ?? volSellTicks);
                 const inside = Math.max(0.00005, volInsideSpreadPct) * volMmSafetyMult;
-                const floor = bid * (1 + inside);
-                const ceil = ask * (1 - inside);
-                if (floor < ceil) {
-                  price = Math.min(Math.max(price, floor), ceil);
-                }
-              }
 
-              if (Number.isFinite(price) && price > 0 && Number.isFinite(notional)) {
-                if (makerSide === "buy") {
-                  if (price <= ref + buyBump) price = ref + buyBump;
-                  if (mid.ask && price > mid.ask * (1 - Math.max(0.00005, volInsideSpreadPct))) {
-                    log.info({ ref, price, side: makerSide }, "volume skipped: no room inside spread");
-                    skipVolume = true;
-                  }
+                if (!Number.isFinite(bid) || !Number.isFinite(ask) || ask <= bid) {
+                  log.info({ bid, ask }, "volume skipped: invalid spread");
+                  skipVolume = true;
                 } else {
-                  if (price >= ref - sellBump) price = Math.max(ref - sellBump, 0);
-                }
-              }
-              log.info(
-                { ref, price, buyBump, sellBump, bid, ask, makerSide },
-                "volume active pricing"
-              );
+                  const floor = bid * (1 + inside);
+                  const ceil = ask * (1 - inside);
+                  if (floor >= ceil) {
+                    log.info({ floor, ceil }, "volume skipped: no room inside spread");
+                    skipVolume = true;
+                  } else {
+                    let price = 0;
+                    if (makerSide === "buy") {
+                      const target = ref + buyBump;
+                      if (target > ceil) {
+                        log.info({ ref, target, ceil }, "volume skipped: no room for buy inside spread");
+                        skipVolume = true;
+                      } else {
+                        price = Math.min(Math.max(target, floor), ceil);
+                      }
+                    } else {
+                      const target = Math.max(ref - sellBump, 0);
+                      if (target < floor) {
+                        log.info({ ref, target, floor }, "volume skipped: no room for sell inside spread");
+                        skipVolume = true;
+                      } else {
+                        price = Math.max(Math.min(target, ceil), floor);
+                      }
+                    }
 
-              if (!skipVolume && Number.isFinite(price) && price > 0 && Number.isFinite(notional)) {
-                safeOrder.type = "limit";
-                safeOrder.postOnly = true;
-                safeOrder.price = price;
-                safeOrder.qty = notional / price;
-                safeOrder.quoteQty = undefined;
-              }
+                    if (!skipVolume && Number.isFinite(price) && price > 0 && Number.isFinite(notional)) {
+                      const qty = notional / price;
+                      if (allowTaker) {
+                        const takerNeedsUsdt = makerSide === "sell" ? notional : 0;
+                        const takerNeedsBase = makerSide === "buy" ? qty : 0;
+                        if (
+                          (takerNeedsUsdt > 0 && freeUsdt < takerNeedsUsdt) ||
+                          (takerNeedsBase > 0 && freeBase < takerNeedsBase)
+                        ) {
+                          log.info(
+                            { takerNeedsUsdt, takerNeedsBase, freeUsdt, freeBase },
+                            "volume skipped: insufficient balance for taker"
+                          );
+                          skipVolume = true;
+                        }
+                      }
+
+                      if (!skipVolume) {
+                        safeOrder.type = "limit";
+                        safeOrder.postOnly = true;
+                        safeOrder.price = price;
+                        safeOrder.qty = qty;
+                        safeOrder.quoteQty = undefined;
+                        log.info(
+                          { ref, price, buyBump, sellBump, bid, ask, makerSide },
+                          "volume active pricing"
+                        );
+                      }
+                    }
+                  }
+                }
               }
             } else if (safeOrder.type === "market" && botRow.mmEnabled) {
               const ref = Number.isFinite(mid.last) && (mid.last as number) > 0 ? (mid.last as number) : mid.mid;
@@ -727,38 +741,27 @@ export async function runLoop(params: {
                 const desiredAggressiveSide = volState.lastSide ?? safeOrder.side;
                 const takerSide = desiredAggressiveSide === "buy" ? "sell" : "buy";
                 const ref = Number.isFinite(mid.last) && (mid.last as number) > 0 ? (mid.last as number) : mid.mid;
-                const bumpBase = Math.max(volLastMinBumpAbs, ref * volLastMinBumpPct);
-                const buyBump = bumpBase * Math.max(0, vol.buyBumpTicks ?? volBuyTicks);
-                const sellBump = bumpBase * Math.max(0, vol.sellBumpTicks ?? volSellTicks);
-                const insidePct = Math.max(0.00005, volInsideSpreadPct);
-                const takerPrice = takerSide === "buy"
-                  ? (mid.ask ? Math.max(ref + buyBump, mid.ask * (1 + insidePct)) : ref + buyBump)
-                  : (mid.bid ? Math.min(ref - sellBump, mid.bid * (1 - insidePct)) : Math.max(ref - sellBump, 0));
-
-                if (!Number.isFinite(takerPrice) || takerPrice <= 0) {
-                  skipTaker = true;
-                }
-
                 const taker = takerSide === "buy"
                   ? {
                       symbol,
                       side: "buy" as const,
-                      type: "limit" as const,
-                      price: takerPrice,
+                      type: (activeVol ? "market" : "limit") as const,
+                      price: activeVol ? undefined : ref,
                       qty: 0,
+                      quoteQty: activeVol ? Math.min(notional, freeUsdt) : undefined,
                       clientOrderId: `vol${Date.now()}t`
                     }
                   : {
                       symbol,
                       side: "sell" as const,
-                      type: "limit" as const,
-                      price: takerPrice,
+                      type: (activeVol ? "market" : "limit") as const,
+                      price: activeVol ? undefined : ref,
                       qty: Math.min(safeOrder.qty, freeBase),
                       clientOrderId: `vol${Date.now()}t`
                     };
 
                 if (taker.side === "sell") {
-                  const sellNotional = taker.qty * takerPrice;
+                  const sellNotional = taker.qty * (activeVol ? safeOrder.price : taker.price ?? safeOrder.price);
                   if (!Number.isFinite(taker.qty) || taker.qty <= 0 || sellNotional < vol.minTradeUsdt) {
                     log.info({ sellNotional }, "volume skipped: insufficient base for taker");
                     skipTaker = true;
@@ -769,7 +772,9 @@ export async function runLoop(params: {
                     log.info({ buyNotional }, "volume skipped: insufficient USDT for taker");
                     skipTaker = true;
                   }
-                  taker.qty = buyNotional / takerPrice;
+                  if (!activeVol && taker.price) {
+                    taker.qty = buyNotional / taker.price;
+                  }
                 }
 
                 if (!skipTaker) {
