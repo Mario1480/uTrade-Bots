@@ -50,6 +50,11 @@ export default function BotPage() {
   const [presetFilterMatch, setPresetFilterMatch] = useState(true);
   const [presetsLoading, setPresetsLoading] = useState(false);
   const [presetsError, setPresetsError] = useState("");
+  const [importPreview, setImportPreview] = useState<any | null>(null);
+  const [importName, setImportName] = useState("");
+  const [importOverwrite, setImportOverwrite] = useState(false);
+  const [importBusy, setImportBusy] = useState(false);
+  const [importError, setImportError] = useState("");
 
   function showToast(type: "error" | "success", msg: string) {
     setToast({ type, msg });
@@ -301,6 +306,89 @@ export default function BotPage() {
       showToast("success", "Preset deleted");
     } catch (e) {
       setPresetsError(errMsg(e));
+    }
+  }
+
+  function downloadJsonFile(name: string, payload: any) {
+    const blob = new Blob([JSON.stringify(payload, null, 2)], { type: "application/json" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `${name}.json`;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(url);
+  }
+
+  async function exportPreset(presetId: string, name: string) {
+    try {
+      const data = await apiGet<any>(`/presets/${presetId}/export`);
+      downloadJsonFile(name || "preset", data);
+    } catch (e) {
+      setPresetsError(errMsg(e));
+    }
+  }
+
+  async function exportCurrentConfig() {
+    try {
+      const data = await apiGet<any>(`/bots/${id}/config/export`);
+      downloadJsonFile(data?.name ?? bot?.name ?? "bot-config", data);
+    } catch (e) {
+      setPresetsError(errMsg(e));
+    }
+  }
+
+  function handleImportFile(file: File) {
+    if (!file) return;
+    setImportError("");
+    if (file.size > 200 * 1024) {
+      setImportError("File too large (max 200KB).");
+      return;
+    }
+    const reader = new FileReader();
+    reader.onload = () => {
+      try {
+        const parsed = JSON.parse(String(reader.result || ""));
+        if (!parsed || parsed.kind !== "BotConfigPreset" || parsed.version !== 1) {
+          setImportError("Invalid preset file.");
+          setImportPreview(null);
+          return;
+        }
+        setImportPreview(parsed);
+        setImportName(parsed.name ?? "");
+        setImportOverwrite(false);
+      } catch (e) {
+        setImportError("Invalid JSON file.");
+        setImportPreview(null);
+      }
+    };
+    reader.readAsText(file);
+  }
+
+  async function importPreset() {
+    if (!importPreview || !canCreatePresets) return;
+    setImportError("");
+    setImportBusy(true);
+    try {
+      await apiPost("/presets/import", {
+        file: importPreview,
+        overrideName: importName?.trim() || undefined,
+        overwrite: importOverwrite
+      });
+      setImportPreview(null);
+      setImportName("");
+      setImportOverwrite(false);
+      await loadPresets();
+      showToast("success", "Preset imported");
+    } catch (e) {
+      if (e instanceof ApiError && e.payload?.error === "PRESET_NAME_EXISTS") {
+        setImportError("Preset name already exists. Enable overwrite to replace it.");
+      } else {
+        setImportError(errMsg(e));
+      }
+    } finally {
+      setImportBusy(false);
     }
   }
 
@@ -563,18 +651,23 @@ export default function BotPage() {
         <div className="card" style={{ padding: 12, marginBottom: 16 }}>
           <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, flexWrap: "wrap" }}>
             <h3 style={{ marginTop: 0 }}>Presets</h3>
-            <label style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 12 }}>
-              <input
-                type="checkbox"
-                checked={presetFilterMatch}
-                onChange={async (e) => {
-                  const next = e.target.checked;
-                  setPresetFilterMatch(next);
-                  await loadPresets(undefined, undefined, next);
-                }}
-              />
-              Only this symbol
-            </label>
+            <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+              <label style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 12 }}>
+                <input
+                  type="checkbox"
+                  checked={presetFilterMatch}
+                  onChange={async (e) => {
+                    const next = e.target.checked;
+                    setPresetFilterMatch(next);
+                    await loadPresets(undefined, undefined, next);
+                  }}
+                />
+                Only this symbol
+              </label>
+              <button className="btn" onClick={exportCurrentConfig}>
+                Export current config
+              </button>
+            </div>
           </div>
 
           <div
@@ -664,6 +757,9 @@ export default function BotPage() {
                         >
                           Apply
                         </button>
+                        <button className="btn" onClick={() => exportPreset(preset.id, preset.name)}>
+                          Export JSON
+                        </button>
                         {canDeletePresets ? (
                           <button className="btn btnStop" onClick={() => deletePreset(preset.id, preset.name)}>
                             Delete
@@ -675,6 +771,52 @@ export default function BotPage() {
                 </div>
               )}
             </div>
+          </div>
+
+          <div className="card" style={{ padding: 12, marginTop: 12 }}>
+            <div style={{ fontSize: 12, opacity: 0.8, marginBottom: 6 }}>Import preset</div>
+            <input
+              className="input"
+              type="file"
+              accept=".json,application/json"
+              disabled={!canCreatePresets}
+              onChange={(e) => handleImportFile(e.target.files?.[0] as File)}
+            />
+            {importPreview ? (
+              <div style={{ marginTop: 10, display: "grid", gap: 8 }}>
+                <div style={{ fontSize: 12, color: "var(--muted)" }}>
+                  Detected: {importPreview.exchange ?? "any"} · {importPreview.symbol ?? "any"}
+                </div>
+                <label style={{ display: "grid", gap: 6 }}>
+                  <span style={{ fontSize: 12, color: "var(--muted)" }}>Preset name</span>
+                  <input
+                    className="input"
+                    value={importName}
+                    onChange={(e) => setImportName(e.target.value)}
+                    disabled={!canCreatePresets}
+                  />
+                </label>
+                <label style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 12 }}>
+                  <input
+                    type="checkbox"
+                    checked={importOverwrite}
+                    onChange={(e) => setImportOverwrite(e.target.checked)}
+                    disabled={!canDeletePresets}
+                  />
+                  Overwrite if name exists
+                </label>
+                <button
+                  className={`btn btnPrimary ${!canCreatePresets || importBusy ? "btnDisabled" : ""}`}
+                  onClick={importPreset}
+                  disabled={!canCreatePresets || importBusy}
+                >
+                  {importBusy ? "Importing..." : "Import preset"}
+                </button>
+              </div>
+            ) : null}
+            {importError ? (
+              <div style={{ fontSize: 12, color: "#ff6b6b", marginTop: 8 }}>{importError}</div>
+            ) : null}
           </div>
 
           {presetsError ? (

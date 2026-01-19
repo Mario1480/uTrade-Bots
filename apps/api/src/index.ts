@@ -837,6 +837,74 @@ app.get("/presets", requireAuth, requirePermission("presets.view"), async (req, 
   res.json(presets);
 });
 
+app.get("/presets/:id/export", requireAuth, requirePermission("presets.view"), async (req, res) => {
+  const workspaceId = getWorkspaceId(res);
+  const preset = await prisma.botConfigPreset.findFirst({
+    where: { id: req.params.id, workspaceId }
+  });
+  if (!preset) return res.status(404).json({ error: "not_found" });
+
+  const safeName = preset.name.replace(/[^a-z0-9._-]+/gi, "_").slice(0, 80) || "preset";
+  res.setHeader("Content-Type", "application/json");
+  res.setHeader("Content-Disposition", `attachment; filename="${safeName}.json"`);
+
+  const payload = PresetPayload.parse(preset.payload);
+  res.json({
+    version: 1,
+    kind: "BotConfigPreset",
+    name: preset.name,
+    description: preset.description ?? null,
+    exchange: preset.exchange ?? null,
+    symbol: preset.symbol ?? null,
+    createdAt: preset.createdAt.toISOString(),
+    payload
+  });
+});
+
+app.get("/bots/:id/config/export", requireAuth, requirePermission("bots.view"), async (req, res) => {
+  const workspaceId = getWorkspaceId(res);
+  const features = await getWorkspaceFeatures(workspaceId);
+  const priceSupportFeature = Boolean(features?.priceSupport);
+  const bot = await prisma.bot.findFirst({
+    where: { id: req.params.id, workspaceId },
+    include: {
+      mmConfig: true,
+      volConfig: true,
+      riskConfig: true,
+      priceSupportConfig: true
+    } as any
+  });
+  if (!bot || !bot.mmConfig || !bot.volConfig || !bot.riskConfig) {
+    return res.status(404).json({ error: "not_found" });
+  }
+
+  const stamp = new Date().toISOString().replace(/[:.]/g, "-");
+  const exportName = `${bot.name}-${stamp}`;
+  const safeName = exportName.replace(/[^a-z0-9._-]+/gi, "_").slice(0, 80) || "bot-config";
+
+  const payload: any = {
+    mm: bot.mmConfig,
+    vol: bot.volConfig,
+    risk: bot.riskConfig
+  };
+  if (priceSupportFeature && bot.priceSupportConfig) {
+    payload.priceSupport = normalizePriceSupportConfig(bot.priceSupportConfig);
+  }
+
+  res.setHeader("Content-Type", "application/json");
+  res.setHeader("Content-Disposition", `attachment; filename="${safeName}.json"`);
+  res.json({
+    version: 1,
+    kind: "BotConfigPreset",
+    name: exportName,
+    description: null,
+    exchange: bot.exchange,
+    symbol: bot.symbol,
+    createdAt: new Date().toISOString(),
+    payload
+  });
+});
+
 app.post("/presets", requireAuth, requirePermission("presets.create"), async (req, res) => {
   const workspaceId = getWorkspaceId(res);
   const actor = getUserFromLocals(res);
@@ -861,6 +929,72 @@ app.post("/presets", requireAuth, requirePermission("presets.create"), async (re
     entityType: "BotConfigPreset",
     entityId: preset.id,
     meta: { name: preset.name, exchange: preset.exchange, symbol: preset.symbol }
+  });
+
+  res.json(preset);
+});
+
+app.post("/presets/import", requireAuth, requirePermission("presets.create"), async (req, res) => {
+  const workspaceId = getWorkspaceId(res);
+  const actor = getUserFromLocals(res);
+  const body = req.body ?? {};
+  const raw = body.file ?? body;
+  const overwrite = Boolean(body.overwrite);
+  const overrideName = typeof body.overrideName === "string" ? body.overrideName.trim() : "";
+
+  if (!raw || raw.kind !== "BotConfigPreset") {
+    return res.status(400).json({ error: "invalid_format" });
+  }
+  if (raw.version !== 1) {
+    return res.status(400).json({ error: "unsupported_version" });
+  }
+
+  const name = overrideName || String(raw.name || "").trim();
+  if (!name || name.length < 2 || name.length > 60) {
+    return res.status(400).json({ error: "invalid_name" });
+  }
+
+  const payload = PresetPayload.parse(raw.payload ?? {});
+  const existing = await prisma.botConfigPreset.findFirst({
+    where: { workspaceId, name }
+  });
+
+  if (existing && !overwrite) {
+    return res.status(409).json({ error: "PRESET_NAME_EXISTS" });
+  }
+
+  if (existing && overwrite && !isSuperadmin(actor) && !roleAllows(res, "presets.delete")) {
+    return res.status(403).json({ error: "forbidden" });
+  }
+
+  const data = {
+    description: typeof raw.description === "string" ? raw.description : null,
+    exchange: typeof raw.exchange === "string" ? raw.exchange : null,
+    symbol: typeof raw.symbol === "string" ? raw.symbol : null,
+    payload
+  };
+
+  const preset = existing
+    ? await prisma.botConfigPreset.update({
+        where: { id: existing.id },
+        data
+      })
+    : await prisma.botConfigPreset.create({
+        data: {
+          workspaceId,
+          name,
+          ...data,
+          createdByUserId: actor.id
+        }
+      });
+
+  await writeAudit({
+    workspaceId,
+    actorUserId: actor.id,
+    action: existing ? "presets.overwrite" : "presets.import",
+    entityType: "BotConfigPreset",
+    entityId: preset.id,
+    meta: { name: preset.name, overwrite: Boolean(existing) }
   });
 
   res.json(preset);
