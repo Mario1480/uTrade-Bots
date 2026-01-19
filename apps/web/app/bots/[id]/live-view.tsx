@@ -3,9 +3,10 @@ import type { CSSProperties } from "react";
 type LiveViewProps = {
   runtime: any;
   baseSymbol?: string;
+  isSuperadmin?: boolean;
 };
 
-export function LiveView({ runtime, baseSymbol }: LiveViewProps) {
+export function LiveView({ runtime, baseSymbol, isSuperadmin }: LiveViewProps) {
   const baseLabel = baseSymbol ? `Free ${baseSymbol}` : "Free base";
   const staleness = getStaleness(runtime);
   const hint = buildHint(runtime, staleness);
@@ -51,10 +52,12 @@ export function LiveView({ runtime, baseSymbol }: LiveViewProps) {
             <Kv k="Updated at" v={formatUpdated(runtime.updatedAt)} />
           </div>
 
-          <details style={{ marginTop: 10 }}>
-            <summary style={{ cursor: "pointer" }}>Raw runtime JSON</summary>
-            <pre style={{ marginTop: 8, whiteSpace: "pre-wrap" }}>{JSON.stringify(runtime, null, 2)}</pre>
-          </details>
+          {isSuperadmin ? (
+            <details style={{ marginTop: 10 }}>
+              <summary style={{ cursor: "pointer" }}>Raw runtime JSON</summary>
+              <pre style={{ marginTop: 8, whiteSpace: "pre-wrap" }}>{JSON.stringify(runtime, null, 2)}</pre>
+            </details>
+          ) : null}
         </>
       )}
     </Section>
