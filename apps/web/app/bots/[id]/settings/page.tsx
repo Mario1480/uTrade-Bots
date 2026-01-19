@@ -116,8 +116,23 @@ export default function BotPage() {
     const b = JSON.stringify(baseline);
     return a !== b;
   }, [baseline, mm, vol, risk, notify]);
+  const dirtyMm = useMemo(() => {
+    if (!baseline || !mm) return false;
+    return JSON.stringify(mm) !== JSON.stringify(baseline.mm);
+  }, [baseline, mm]);
+  const dirtyVol = useMemo(() => {
+    if (!baseline || !vol) return false;
+    return JSON.stringify(vol) !== JSON.stringify(baseline.vol);
+  }, [baseline, vol]);
+  const dirtyRisk = useMemo(() => {
+    if (!baseline || !risk) return false;
+    return JSON.stringify(risk) !== JSON.stringify(baseline.risk);
+  }, [baseline, risk]);
 
   const canSave = ready && dirty && saving !== "saving...";
+  const mmSaveLabel = saving === "saving..." ? "Saving..." : dirtyMm ? "Save Config" : "Saved";
+  const volSaveLabel = saving === "saving..." ? "Saving..." : dirtyVol ? "Save Config" : "Saved";
+  const riskSaveLabel = saving === "saving..." ? "Saving..." : dirtyRisk ? "Save Config" : "Saved";
   const canViewPresets = Boolean(me?.permissions?.["presets.view"] || me?.isSuperadmin);
   const canCreatePresets = Boolean(me?.permissions?.["presets.create"] || me?.isSuperadmin);
   const canApplyPresets = Boolean(me?.permissions?.["presets.apply"] || me?.isSuperadmin);
@@ -502,13 +517,13 @@ export default function BotPage() {
         </div>
       </div>
 
-      <div className="gridTwoCol" style={{ margin: "12px 0" }}>
-        <div className="card" style={{ padding: 12 }}>
+      <div className="gridTwoCol" style={{ margin: "12px 0", alignItems: "stretch" }}>
+        <div className="card" style={{ padding: 12, height: "100%", display: "flex", flexDirection: "column" }}>
         <div style={{ fontSize: 12, opacity: 0.8, marginBottom: 2 }}>Runner controls</div>
         <div style={{ fontSize: 11, opacity: 0.6, marginBottom: 6 }}>
           Starts, pauses, or stops the main trading loop for this bot.
         </div>
-          <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+          <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginTop: "auto" }}>
             <button
               onClick={start}
               disabled={saving === "saving..."}
@@ -530,57 +545,53 @@ export default function BotPage() {
             >
               Stop
             </button>
-            <button
-              onClick={save}
-              disabled={!canSave}
-              className={`btn btnPrimary ${!canSave ? "btnDisabled" : ""}`}
-            >
-              {dirty ? "Save Config" : "Saved"}
-            </button>
-            <span style={{ alignSelf: "center", fontSize: 12 }}>{saving}</span>
           </div>
         </div>
 
-        <div className="card" style={{ padding: 12 }}>
+        <div className="card" style={{ padding: 12, height: "100%", display: "flex", flexDirection: "column" }}>
           <div style={{ fontSize: 12, opacity: 0.8, marginBottom: 6 }}>Strategy controls (MM and Volume run independently)</div>
-          <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-            <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
+          <div style={{ display: "flex", flexDirection: "column", gap: 10, marginTop: "auto" }}>
+            <div style={{ display: "flex", gap: 10, alignItems: "center", justifyContent: "space-between", flexWrap: "wrap" }}>
               <span style={{ fontSize: 12, opacity: 0.8 }}>Market Making</span>
-              <button
-                onClick={startMm}
-                disabled={toggling === "mm" || bot.mmEnabled === true}
-                className={`btn btnStart ${toggling === "mm" || bot.mmEnabled ? "btnDisabled" : ""}`}
-                title="Start market making only (volume stays as is)"
-              >
-                Start MM
-              </button>
-              <button
-                onClick={stopMm}
-                disabled={toggling === "mm" || bot.mmEnabled === false}
-                className={`btn btnStop ${toggling === "mm" || !bot.mmEnabled ? "btnDisabled" : ""}`}
-                title="Stop market making only (volume stays as is)"
-              >
-                Stop MM
-              </button>
+              <div style={{ display: "flex", gap: 8, flexWrap: "wrap", justifyContent: "flex-end" }}>
+                <button
+                  onClick={startMm}
+                  disabled={toggling === "mm" || bot.mmEnabled === true}
+                  className={`btn btnStart ${toggling === "mm" || bot.mmEnabled ? "btnDisabled" : ""}`}
+                  title="Start market making only (volume stays as is)"
+                >
+                  Start MM
+                </button>
+                <button
+                  onClick={stopMm}
+                  disabled={toggling === "mm" || bot.mmEnabled === false}
+                  className={`btn btnStop ${toggling === "mm" || !bot.mmEnabled ? "btnDisabled" : ""}`}
+                  title="Stop market making only (volume stays as is)"
+                >
+                  Stop MM
+                </button>
+              </div>
             </div>
-            <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
+            <div style={{ display: "flex", gap: 10, alignItems: "center", justifyContent: "space-between", flexWrap: "wrap" }}>
               <span style={{ fontSize: 12, opacity: 0.8 }}>Volume Bot</span>
-              <button
-                onClick={startVol}
-                disabled={toggling === "vol" || bot.volEnabled === true}
-                className={`btn btnStart ${toggling === "vol" || bot.volEnabled ? "btnDisabled" : ""}`}
-                title="Start volume bot only (MM stays as is)"
-              >
-                Start Volume
-              </button>
-              <button
-                onClick={stopVol}
-                disabled={toggling === "vol" || bot.volEnabled === false}
-                className={`btn btnStop ${toggling === "vol" || !bot.volEnabled ? "btnDisabled" : ""}`}
-                title="Stop volume bot only (MM stays as is)"
-              >
-                Stop Volume
-              </button>
+              <div style={{ display: "flex", gap: 8, flexWrap: "wrap", justifyContent: "flex-end" }}>
+                <button
+                  onClick={startVol}
+                  disabled={toggling === "vol" || bot.volEnabled === true}
+                  className={`btn btnStart ${toggling === "vol" || bot.volEnabled ? "btnDisabled" : ""}`}
+                  title="Start volume bot only (MM stays as is)"
+                >
+                  Start Volume
+                </button>
+                <button
+                  onClick={stopVol}
+                  disabled={toggling === "vol" || bot.volEnabled === false}
+                  className={`btn btnStop ${toggling === "vol" || !bot.volEnabled ? "btnDisabled" : ""}`}
+                  title="Stop volume bot only (MM stays as is)"
+                >
+                  Stop Volume
+                </button>
+              </div>
             </div>
           </div>
         </div>
@@ -846,6 +857,13 @@ export default function BotPage() {
           midPrice={rt?.mid ?? null}
           isSuperadmin={Boolean(me?.isSuperadmin)}
           errors={fieldErrors}
+          onSave={save}
+          canSaveMm={ready && dirtyMm && saving !== "saving..."}
+          canSaveVol={ready && dirtyVol && saving !== "saving..."}
+          canSaveRisk={ready && dirtyRisk && saving !== "saving..."}
+          saveLabelMm={mmSaveLabel}
+          saveLabelVol={volSaveLabel}
+          saveLabelRisk={riskSaveLabel}
         />
       </div>
 
