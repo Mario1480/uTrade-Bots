@@ -2,135 +2,72 @@
 
 import Link from "next/link";
 import { useEffect, useState } from "react";
-import ReauthDialog from "../../components/ReauthDialog";
-import { ApiError, apiGet, apiPost, apiPut, apiDel } from "../../../lib/api";
+import { ApiError, apiGet, apiPost, apiPut } from "../../../lib/api";
 
 export default function UsersPage() {
-  const [me, setMe] = useState<any>(null);
-  const [members, setMembers] = useState<any[]>([]);
-  const [roles, setRoles] = useState<any[]>([]);
-  const [inviteEmail, setInviteEmail] = useState("");
-  const [inviteRoleId, setInviteRoleId] = useState("");
-  const [inviteResetPassword, setInviteResetPassword] = useState(false);
-  const [status, setStatus] = useState("");
   const [error, setError] = useState("");
-  const [savingMemberId, setSavingMemberId] = useState<string | null>(null);
   const [currentPassword, setCurrentPassword] = useState("");
   const [newPassword, setNewPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
   const [pwdStatus, setPwdStatus] = useState("");
   const [pwdError, setPwdError] = useState("");
-  const [reauthOpen, setReauthOpen] = useState(false);
-  const [pendingAction, setPendingAction] = useState<(() => Promise<void>) | null>(null);
+  const [securityLoading, setSecurityLoading] = useState(true);
+  const [securitySaving, setSecuritySaving] = useState(false);
+  const [securityMsg, setSecurityMsg] = useState<string | null>(null);
+  const [autoLogoutEnabled, setAutoLogoutEnabled] = useState(true);
+  const [autoLogoutMinutes, setAutoLogoutMinutes] = useState(60);
+  const [otpEnabled, setOtpEnabled] = useState(true);
+  const [isSuperadmin, setIsSuperadmin] = useState(false);
 
   function errMsg(e: any): string {
     if (e instanceof ApiError) return `${e.message} (HTTP ${e.status})`;
     return e?.message ? String(e.message) : String(e);
   }
 
-  function isReauthError(e: any) {
-    return e instanceof ApiError && e.status === 401 && e.payload?.error === "REAUTH_REQUIRED";
-  }
-
-  function requireReauth(next: () => Promise<void>) {
-    setPendingAction(() => next);
-    setReauthOpen(true);
-  }
-
-  function handleReauthError(e: any, retry: () => Promise<void>) {
-    if (isReauthError(e)) {
-      setError("Re-auth required to manage members.");
-      requireReauth(retry);
-      return true;
-    }
-    return false;
-  }
-
-  async function handleReauthVerified() {
-    if (pendingAction) {
-      const action = pendingAction;
-      setPendingAction(null);
-      await action();
-    }
-  }
-
-  async function loadMembers() {
+  async function loadSecuritySettings() {
+    setSecurityLoading(true);
+    setSecurityMsg(null);
     try {
-      const meRes = await apiGet<any>("/auth/me");
-      setMe(meRes);
-      const [membersRes, rolesRes] = await Promise.all([
-        apiGet<any[]>(`/workspaces/${meRes.workspaceId}/members`),
-        apiGet<any[]>(`/workspaces/${meRes.workspaceId}/roles`)
-      ]);
-      setMembers(membersRes);
-      setRoles(rolesRes);
-      if (!inviteRoleId && rolesRes.length) setInviteRoleId(rolesRes[0].id);
+      const data = await apiGet<any>("/settings/security");
+      setAutoLogoutEnabled(Boolean(data.autoLogoutEnabled));
+      setAutoLogoutMinutes(Number(data.autoLogoutMinutes) || 60);
+      setOtpEnabled(data.reauthOtpEnabled !== false);
+      setIsSuperadmin(Boolean(data.isSuperadmin));
     } catch (e) {
-      if (!handleReauthError(e, loadMembers)) {
-        setError(errMsg(e));
+      setSecurityMsg(errMsg(e));
+    } finally {
+      setSecurityLoading(false);
+    }
+  }
+
+  async function saveSecuritySettings() {
+    setSecuritySaving(true);
+    setSecurityMsg(null);
+    const safeMinutes = Math.max(1, Math.min(1440, Math.floor(autoLogoutMinutes)));
+    try {
+      const payload: any = {
+        autoLogoutEnabled,
+        autoLogoutMinutes: safeMinutes
+      };
+      if (isSuperadmin) {
+        payload.reauthOtpEnabled = otpEnabled;
       }
+      const data = await apiPut<any>("/settings/security", payload);
+      setAutoLogoutEnabled(Boolean(data.autoLogoutEnabled));
+      setAutoLogoutMinutes(Number(data.autoLogoutMinutes) || safeMinutes);
+      setOtpEnabled(data.reauthOtpEnabled !== false);
+      setIsSuperadmin(Boolean(data.isSuperadmin));
+      setSecurityMsg("Saved.");
+    } catch (e) {
+      setSecurityMsg(errMsg(e));
+    } finally {
+      setSecuritySaving(false);
     }
   }
 
   useEffect(() => {
-    loadMembers();
+    loadSecuritySettings();
   }, []);
-
-  const canManageMembers = Boolean(me?.permissions?.["users.manage_members"] || me?.isSuperadmin);
-
-  async function invite() {
-    if (!inviteEmail || !inviteRoleId) return;
-    setStatus("inviting...");
-    setError("");
-    try {
-      await apiPost(`/workspaces/${me.workspaceId}/members/invite`, {
-        email: inviteEmail,
-        roleId: inviteRoleId,
-        resetPassword: inviteResetPassword
-      });
-      setInviteEmail("");
-      setInviteResetPassword(false);
-      setStatus("invited");
-      await loadMembers();
-      setTimeout(() => setStatus(""), 1200);
-    } catch (e) {
-      setStatus("");
-      if (!handleReauthError(e, invite)) {
-        setError(errMsg(e));
-      }
-    }
-  }
-
-  async function updateMember(memberId: string, roleId: string) {
-    setSavingMemberId(memberId);
-    setError("");
-    try {
-      await apiPut(`/workspaces/${me.workspaceId}/members/${memberId}`, { roleId });
-      await loadMembers();
-    } catch (e) {
-      if (!handleReauthError(e, () => updateMember(memberId, roleId))) {
-        setError(errMsg(e));
-      }
-    } finally {
-      setSavingMemberId(null);
-    }
-  }
-
-  async function removeMember(memberId: string) {
-    if (!confirm("Remove member from workspace?")) return;
-    setSavingMemberId(memberId);
-    setError("");
-    try {
-      await apiDel(`/workspaces/${me.workspaceId}/members/${memberId}`);
-      await loadMembers();
-    } catch (e) {
-      if (!handleReauthError(e, () => removeMember(memberId))) {
-        setError(errMsg(e));
-      }
-    } finally {
-      setSavingMemberId(null);
-    }
-  }
 
   async function savePassword() {
     setPwdStatus("saving...");
@@ -166,102 +103,7 @@ export default function UsersPage() {
           ← Back to dashboard
         </Link>
       </div>
-      <h2 style={{ marginTop: 0 }}>Users</h2>
-      <div className="card" style={{ padding: 12, marginBottom: 14 }}>
-        <div style={{ fontWeight: 700, marginBottom: 6 }}>Workspace members</div>
-        <div style={{ fontSize: 12, color: "var(--muted)", marginBottom: 10 }}>
-          Invite users and assign roles for this workspace.
-        </div>
-        <div style={{ display: "grid", gap: 8 }}>
-          {members.length ? (
-            members.map((m) => (
-              <div key={m.id} style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
-                <div style={{ minWidth: 220 }}>
-                  <div style={{ fontWeight: 600 }}>{m.email}</div>
-                  <div style={{ fontSize: 12, color: "var(--muted)" }}>{m.status}</div>
-                </div>
-                {m.email?.toLowerCase() === "admin@uliquid.vip" ? (
-                  <div style={{ fontSize: 12, color: "var(--muted)" }}>Superadmin</div>
-                ) : (
-                  <>
-                    <select
-                      className="input"
-                      style={{ maxWidth: 220 }}
-                      disabled={!canManageMembers || savingMemberId === m.id}
-                      value={m.roleId}
-                      onChange={(e) => updateMember(m.id, e.target.value)}
-                    >
-                      {roles.map((r) => (
-                        <option key={r.id} value={r.id}>
-                          {r.name}
-                        </option>
-                      ))}
-                    </select>
-                    <button
-                      className="btn btnStop"
-                      onClick={() => removeMember(m.id)}
-                      disabled={!canManageMembers || savingMemberId === m.id}
-                    >
-                      Remove
-                    </button>
-                  </>
-                )}
-              </div>
-            ))
-          ) : (
-            <div style={{ fontSize: 12, color: "var(--muted)" }}>No members yet.</div>
-          )}
-        </div>
-        {canManageMembers ? (
-          <div style={{ marginTop: 12, display: "grid", gap: 8 }}>
-            <div style={{ fontWeight: 600 }}>Invite member</div>
-            <input
-              className="input"
-              value={inviteEmail}
-              onChange={(e) => setInviteEmail(e.target.value)}
-              placeholder="email@domain.com"
-            />
-            <select
-              className="input"
-              value={inviteRoleId}
-              onChange={(e) => setInviteRoleId(e.target.value)}
-            >
-              {roles.map((r) => (
-                <option key={r.id} value={r.id}>
-                  {r.name}
-                </option>
-              ))}
-            </select>
-            <label style={{ display: "flex", gap: 8, alignItems: "center", fontSize: 12 }}>
-              <input
-                type="checkbox"
-                checked={inviteResetPassword}
-                onChange={(e) => setInviteResetPassword(e.target.checked)}
-              />
-              Reset password and include a temporary password in the email
-            </label>
-            <button className="btn btnPrimary" onClick={invite} disabled={!inviteEmail || !inviteRoleId}>
-              Invite
-            </button>
-          </div>
-        ) : (
-          <div style={{ fontSize: 12, color: "var(--muted)", marginTop: 8 }}>
-            You don’t have permission to manage members.
-          </div>
-        )}
-      </div>
-      <div style={{ fontSize: 12, color: "var(--muted)" }}>
-        Role editing is available in Settings → Roles.
-      </div>
-
-      <ReauthDialog
-        open={reauthOpen}
-        onClose={() => {
-          setReauthOpen(false);
-          setPendingAction(null);
-        }}
-        onVerified={handleReauthVerified}
-      />
+      <h2 style={{ marginTop: 0 }}>My Account</h2>
       <div className="card" style={{ padding: 12, marginTop: 14 }}>
         <div style={{ fontWeight: 700, marginBottom: 6 }}>Change password</div>
         <div style={{ fontSize: 12, color: "var(--muted)", marginBottom: 10 }}>
@@ -300,11 +142,61 @@ export default function UsersPage() {
               Update password
             </button>
             <span style={{ fontSize: 12, opacity: 0.7 }}>{pwdStatus}</span>
-          </div>
-          {pwdError ? <div style={{ fontSize: 12, color: "#ff6b6b" }}>{pwdError}</div> : null}
         </div>
+        {pwdError ? <div style={{ fontSize: 12, color: "#ff6b6b" }}>{pwdError}</div> : null}
       </div>
-      {status ? <div style={{ fontSize: 12, opacity: 0.7, marginTop: 8 }}>{status}</div> : null}
+      <div className="card" style={{ padding: 12, marginTop: 14 }}>
+        <div style={{ fontWeight: 700, marginBottom: 6 }}>Security</div>
+        <div style={{ fontSize: 12, color: "var(--muted)", marginBottom: 10 }}>
+          Session and re-authentication settings for your account.
+        </div>
+        <div style={{ display: "grid", gap: 10, marginBottom: 10, maxWidth: 320 }}>
+          <label style={{ display: "flex", gap: 8, alignItems: "center" }}>
+            <input
+              type="checkbox"
+              checked={autoLogoutEnabled}
+              onChange={(e) => setAutoLogoutEnabled(e.target.checked)}
+              disabled={securityLoading || securitySaving}
+            />
+            <span>Enable auto-logout</span>
+          </label>
+          <label style={{ display: "grid", gap: 6 }}>
+            <span style={{ fontSize: 12, color: "var(--muted)" }}>Idle minutes</span>
+            <input
+              className="input"
+              type="number"
+              min={1}
+              max={1440}
+              value={Number.isFinite(autoLogoutMinutes) ? autoLogoutMinutes : 60}
+              onChange={(e) => setAutoLogoutMinutes(Number(e.target.value))}
+              disabled={!autoLogoutEnabled || securityLoading || securitySaving}
+            />
+          </label>
+          {isSuperadmin ? (
+            <label style={{ display: "flex", gap: 8, alignItems: "center" }}>
+              <input
+                type="checkbox"
+                checked={otpEnabled}
+                onChange={(e) => setOtpEnabled(e.target.checked)}
+                disabled={securityLoading || securitySaving}
+              />
+              <span>Require OTP re-auth for sensitive actions</span>
+            </label>
+          ) : null}
+        </div>
+        <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+          <button className="btn btnPrimary" onClick={saveSecuritySettings} disabled={securityLoading || securitySaving}>
+            {securitySaving ? "Saving..." : "Save settings"}
+          </button>
+          <button className="btn" onClick={loadSecuritySettings} disabled={securityLoading || securitySaving}>
+            {securityLoading ? "Loading..." : "Reload"}
+          </button>
+        </div>
+        {securityMsg ? (
+          <div style={{ marginTop: 10, color: "var(--muted)" }}>{securityMsg}</div>
+        ) : null}
+      </div>
+      </div>
       {error ? <div style={{ fontSize: 12, color: "#ff6b6b", marginTop: 8 }}>{error}</div> : null}
     </div>
   );
