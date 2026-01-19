@@ -190,7 +190,7 @@ export function ConfigForm({
       </AccordionSection>
 
       <AccordionSection
-        title="Risk"
+        title="Risk Control"
       >
         <Field label="Min Balance (USDT)" hint="Stop if balance drops below (0 disables)" value={risk.minUsdt} onChange={(v) => onRiskChange({ ...risk, minUsdt: toNumber(v, risk.minUsdt) })} />
         <Field
