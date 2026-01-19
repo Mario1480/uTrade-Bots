@@ -1657,6 +1657,18 @@ app.put("/settings/security", requireAuth, async (req, res) => {
       autoLogoutMinutes: data.autoLogoutMinutes
     }
   });
+  await writeAudit({
+    workspaceId: getWorkspaceId(res),
+    actorUserId: user.id,
+    action: "settings.security.update",
+    entityType: "User",
+    entityId: user.id,
+    meta: {
+      autoLogoutEnabled: updated.autoLogoutEnabled,
+      autoLogoutMinutes: updated.autoLogoutMinutes,
+      reauthOtpEnabled: otpEnabled
+    }
+  });
   res.json({
     autoLogoutEnabled: updated.autoLogoutEnabled,
     autoLogoutMinutes: updated.autoLogoutMinutes,
