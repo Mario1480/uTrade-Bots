@@ -18,6 +18,7 @@ export default function AppHeader() {
         <nav className="appNav">
           <Link href="/" className="btn">Dashboard</Link>
           <Link href="/settings" className="btn btnPrimary">Settings</Link>
+          <Link href="/help" className="btn">Help</Link>
           <LogoutButton />
         </nav>
       </div>
