@@ -510,9 +510,9 @@ export default function BotOverviewPage() {
               </div>
 
               {manualType === "LIMIT" ? (
-                <div style={{ display: "grid", gap: 8 }}>
-                  <label style={{ fontSize: 13 }}>
-                    Price
+                <div style={{ display: "grid", gap: 12 }}>
+                  <label style={{ fontSize: 13, display: "grid", gap: 6 }}>
+                    <span>Price</span>
                     <input
                       className="input"
                       style={{ maxWidth: 180 }}
@@ -521,8 +521,8 @@ export default function BotOverviewPage() {
                       placeholder="0.0000"
                     />
                   </label>
-                  <label style={{ fontSize: 13 }}>
-                    Quantity
+                  <label style={{ fontSize: 13, display: "grid", gap: 6 }}>
+                    <span>Quantity</span>
                     <input
                       className="input"
                       style={{ maxWidth: 180 }}
@@ -541,10 +541,10 @@ export default function BotOverviewPage() {
                   </label>
                 </div>
               ) : (
-                <div style={{ display: "grid", gap: 8 }}>
+                <div style={{ display: "grid", gap: 12 }}>
                   {manualSide === "buy" ? (
-                    <label style={{ fontSize: 13 }}>
-                      Spend (USDT)
+                    <label style={{ fontSize: 13, display: "grid", gap: 6 }}>
+                      <span>Spend (USDT)</span>
                       <input
                         className="input"
                         style={{ maxWidth: 180 }}
@@ -554,8 +554,8 @@ export default function BotOverviewPage() {
                       />
                     </label>
                   ) : (
-                    <label style={{ fontSize: 13 }}>
-                      Quantity
+                    <label style={{ fontSize: 13, display: "grid", gap: 6 }}>
+                      <span>Quantity</span>
                       <input
                         className="input"
                         style={{ maxWidth: 180 }}
