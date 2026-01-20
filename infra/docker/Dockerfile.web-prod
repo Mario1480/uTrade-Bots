@@ -7,8 +7,7 @@ RUN npm ci
 
 FROM deps AS build
 COPY . .
-RUN npm install --include=dev --workspaces --no-audit --no-fund \
-  && npm -w apps/web run build
+RUN npm -w apps/web run build
 
 FROM node:20-alpine AS runner
 ENV NODE_ENV=production
