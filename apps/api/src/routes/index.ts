@@ -1,8 +1,8 @@
 import { IncomingMessage, ServerResponse } from "http";
-import { handleBots } from "./bots";
-import { handleOrders } from "./orders";
-import { handleBalances } from "./balances";
-import { handleHealth } from "./health";
+import { handleBots } from "./bots.js";
+import { handleOrders } from "./orders.js";
+import { handleBalances } from "./balances.js";
+import { handleHealth } from "./health.js";
 
 export function routeRequest(req: IncomingMessage, res: ServerResponse) {
   const url = req.url || "/";
