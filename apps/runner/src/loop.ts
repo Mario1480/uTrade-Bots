@@ -6,7 +6,8 @@ import type {
   NotificationConfig,
   PriceSupportConfig,
   Balance,
-  MidPrice
+  MidPrice,
+  Quote
 } from "@mm/core";
 import { splitSymbol } from "@mm/core";
 import { BitmartRestClient } from "@mm/exchange";
@@ -794,7 +795,7 @@ export async function runLoop(params: {
           const volOrder = volSched.maybeCreateTrade(symbol, mid.mid, volState);
           if (volOrder) {
             let skipVolume = false;
-            const safeOrder = { ...volOrder };
+            const safeOrder: Quote = { ...volOrder };
             const allowTaker = activeVol || (vol.mode === "MIXED" && Math.random() < 0.2);
             if (activeLikeVol) {
               const bid = mid.bid ?? mid.mid;
@@ -810,7 +811,7 @@ export async function runLoop(params: {
 
               if (!skipVolume) {
                 const buyTarget = Number.isFinite(vol.buyPct) ? Math.max(0, Math.min(1, vol.buyPct)) : 0.5;
-                let nextSide = Math.random() < buyTarget ? "buy" : "sell";
+                let nextSide: "buy" | "sell" = Math.random() < buyTarget ? "buy" : "sell";
                 if (!canSellBase) nextSide = "buy";
                 if (!canBuyUsdt) nextSide = "sell";
 
@@ -990,11 +991,11 @@ export async function runLoop(params: {
                 const desiredAggressiveSide = volState.lastSide ?? safeOrder.side;
                 const takerSide = desiredAggressiveSide === "buy" ? "sell" : "buy";
                 const ref = Number.isFinite(mid.last) && (mid.last as number) > 0 ? (mid.last as number) : mid.mid;
-                const taker = takerSide === "buy"
+                const taker: Quote = takerSide === "buy"
                   ? {
                       symbol,
-                      side: "buy" as const,
-                      type: (activeVol ? "market" : "limit") as const,
+                      side: "buy",
+                      type: activeVol ? "market" : "limit",
                       price: activeVol ? undefined : ref,
                       qty: 0,
                       quoteQty: activeVol ? Math.min(notional, freeUsdt) : undefined,
@@ -1002,8 +1003,8 @@ export async function runLoop(params: {
                     }
                   : {
                       symbol,
-                      side: "sell" as const,
-                      type: (activeVol ? "market" : "limit") as const,
+                      side: "sell",
+                      type: activeVol ? "market" : "limit",
                       price: activeVol ? undefined : ref,
                       qty: Math.min(safeOrder.qty, freeBase),
                       clientOrderId: `vol${Date.now()}t`
