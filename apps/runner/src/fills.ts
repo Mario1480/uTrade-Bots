@@ -26,7 +26,7 @@ export async function syncVolumeFills(params: {
   const dayTrades = trades.filter((t) => dayKeyUtc(t.timestamp) === dayKey);
 
   if (dayTrades.length === 0) {
-    return { tradedNotionalToday: cursor.tradedNotionalToday };
+    return { tradedNotionalToday: cursor.tradedNotionalToday, priceSupportSpentDelta: 0 };
   }
 
   const orderIds = Array.from(
