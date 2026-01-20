@@ -4,6 +4,7 @@ import express from "express";
 import cors from "cors";
 import rateLimit from "express-rate-limit";
 import cookieParser from "cookie-parser";
+import type { Prisma } from "@prisma/client";
 import { prisma } from "@mm/db";
 import { BitmartRestClient, fromExchangeSymbol } from "@mm/exchange";
 import { buildMmQuotes } from "@mm/strategy";
@@ -400,7 +401,7 @@ async function sendTelegramWithResult(token: string, chatId: string, text: strin
         disable_web_page_preview: true
       })
     });
-    const data = await resp.json().catch(() => ({}));
+    const data = (await resp.json().catch(() => ({}))) as Record<string, any>;
     if (!resp.ok || data?.ok === false) {
       const err = data?.description || data?.error || "telegram_error";
       return { ok: false, error: err, status: resp.status };
@@ -865,7 +866,7 @@ app.put("/workspaces/:id/roles/:roleId", requireAuth, requireWorkspaceAccess(), 
     where: { id: role.id },
     data: {
       name: payload.name ?? role.name,
-      permissions: payload.permissions ?? role.permissions
+      permissions: (payload.permissions ?? role.permissions) as Prisma.InputJsonValue
     }
   });
 
@@ -1006,6 +1007,7 @@ app.post("/presets", requireAuth, requirePermission("presets.create"), async (re
   const actor = getUserFromLocals(res);
   const payload = PresetCreatePayload.parse(req.body);
 
+  const presetPayload = payload.payload as Prisma.InputJsonValue;
   const preset = await prisma.botConfigPreset.create({
     data: {
       workspaceId,
@@ -1013,7 +1015,7 @@ app.post("/presets", requireAuth, requirePermission("presets.create"), async (re
       description: payload.description,
       exchange: payload.exchange,
       symbol: payload.symbol,
-      payload: payload.payload,
+      payload: presetPayload,
       createdByUserId: actor.id
     }
   });
@@ -1051,6 +1053,7 @@ app.post("/presets/import", requireAuth, requirePermission("presets.create"), as
   }
 
   const payload = PresetPayload.parse(raw.payload ?? {});
+  const payloadJson = payload as Prisma.InputJsonValue;
   const existing = await prisma.botConfigPreset.findFirst({
     where: { workspaceId, name }
   });
@@ -1067,7 +1070,7 @@ app.post("/presets/import", requireAuth, requirePermission("presets.create"), as
     description: typeof raw.description === "string" ? raw.description : null,
     exchange: typeof raw.exchange === "string" ? raw.exchange : null,
     symbol: typeof raw.symbol === "string" ? raw.symbol : null,
-    payload
+    payload: payloadJson
   };
 
   const preset = existing
@@ -1181,10 +1184,14 @@ app.post("/bots/:id/presets/:presetId/apply", requireAuth, requirePermission("pr
   });
 
   const notify = bot.notificationConfig ?? { fundsWarnEnabled: true, fundsWarnPct: 0.1 };
+  const notifyUpdate = {
+    fundsWarnEnabled: notify.fundsWarnEnabled,
+    fundsWarnPct: notify.fundsWarnPct
+  };
   await prisma.botNotificationConfig.upsert({
     where: { botId },
-    update: notify,
-    create: { botId, ...notify }
+    update: notifyUpdate,
+    create: { botId, ...notifyUpdate }
   });
 
   if (parsed.priceSupport) {
@@ -1338,8 +1345,9 @@ app.get("/bots/:id", requireAuth, requirePermission("bots.view"), async (req, re
   });
   if (!bot) return res.status(404).json({ error: "not_found" });
   if (!isSuperadmin(user) && bot.volConfig) {
-    bot.volConfig.buyBumpTicks = undefined as any;
-    bot.volConfig.sellBumpTicks = undefined as any;
+    const volConfig = bot.volConfig as any;
+    delete volConfig.buyBumpTicks;
+    delete volConfig.sellBumpTicks;
   }
   if (!priceSupportFeature) {
     bot.priceSupportConfig = null as any;
@@ -1748,12 +1756,20 @@ app.post("/bots/:id/preview/mm", requireAuth, requirePermission("bots.edit_confi
 
   const bids = quotes
     .filter((q) => q.side === "buy")
-    .map((q) => ({ price: q.price, qty: q.qty, notional: q.price * q.qty }))
+    .map((q) => {
+      const price = q.price ?? 0;
+      const qty = q.qty ?? 0;
+      return { price, qty, notional: price * qty };
+    })
     .sort((a, b) => a.price - b.price)
     .reverse();
   const asks = quotes
     .filter((q) => q.side === "sell")
-    .map((q) => ({ price: q.price, qty: q.qty, notional: q.price * q.qty }))
+    .map((q) => {
+      const price = q.price ?? 0;
+      const qty = q.qty ?? 0;
+      return { price, qty, notional: price * qty };
+    })
     .sort((a, b) => a.price - b.price);
 
   res.json({ mid, bids, asks, inventoryRatio, skewPct: skew * 100, skewedMid: (mid as number) * (1 + skew) });
@@ -1769,7 +1785,7 @@ app.get("/exchanges/:exchange/symbols", requireAuth, async (req, res) => {
   const url = new URL("/spot/v1/symbols", baseUrl);
 
   const resp = await fetch(url, { method: "GET" });
-  const json = await resp.json().catch(() => ({}));
+  const json = (await resp.json().catch(() => ({}))) as Record<string, any>;
 
   if (!resp.ok || (json?.code && json.code !== 1000)) {
     const msg = json?.msg || json?.message || "symbols fetch failed";
@@ -2383,7 +2399,7 @@ app.post("/settings/cex/verify", requireAuth, requirePermission("exchange_keys.e
     }
   });
 
-  const json = await resp.json().catch(() => ({}));
+  const json = (await resp.json().catch(() => ({}))) as Record<string, any>;
 
   if (!resp.ok || (json?.code && json.code !== 1000)) {
     const msg = json?.msg || json?.message || "verify failed";
