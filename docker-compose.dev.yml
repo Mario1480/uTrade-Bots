@@ -1,6 +1,11 @@
 services:
   postgres:
     image: postgres:16-alpine
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "5"
     environment:
       POSTGRES_USER: mm
       POSTGRES_PASSWORD: mm
@@ -19,6 +24,11 @@ services:
     build:
       context: .
       dockerfile: infra/docker/Dockerfile.node-dev
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "5"
     working_dir: /app
     env_file:
       - .env
@@ -50,6 +60,11 @@ services:
     build:
       context: .
       dockerfile: infra/docker/Dockerfile.node-dev
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "5"
     working_dir: /app
     env_file:
       - .env
@@ -75,6 +90,11 @@ services:
     build:
       context: .
       dockerfile: infra/docker/Dockerfile.node-dev
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "5"
     working_dir: /app
     env_file:
       - .env

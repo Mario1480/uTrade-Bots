@@ -2,6 +2,8 @@ import bcrypt from "bcryptjs";
 import { prisma } from "@mm/db";
 import { ensureDefaultRoles } from "./rbac.js";
 
+import { logger } from "./logger.js";
+
 export async function seedAdmin() {
   const enabled = (process.env.ADMIN_CREATE ?? "true").toLowerCase() !== "false";
   if (!enabled) return { seeded: false, reason: "disabled" };
@@ -10,7 +12,7 @@ export async function seedAdmin() {
   const password = process.env.ADMIN_PASSWORD;
   const workspaceName = process.env.ADMIN_WORKSPACE_NAME ?? "Main";
   if (!email || !password) {
-    console.warn("[seed] ADMIN_EMAIL/ADMIN_PASSWORD missing, skip admin seed.");
+    logger.warn("admin seed skipped: missing env", { scope: "seed" });
     return { seeded: false, reason: "missing_env" };
   }
 
@@ -34,6 +36,6 @@ export async function seedAdmin() {
     data: { workspaceId: workspace.id }
   });
 
-  console.log(`[seed] admin user created: ${email} (workspace ${workspaceName})`);
+  logger.info("admin user created", { scope: "seed", email, workspaceName });
   return { seeded: true };
 }

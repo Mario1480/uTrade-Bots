@@ -23,6 +23,7 @@ import {
   verifyPassword
 } from "./auth.js";
 import { seedAdmin } from "./seed-admin.js";
+import { logger } from "./logger.js";
 import { ensureDefaultRoles } from "./rbac.js";
 import { refreshCsrfCookie } from "./auth.js";
 import { sendInviteEmail, sendReauthOtpEmail } from "./email.js";
@@ -2502,9 +2503,9 @@ const port = Number(process.env.API_PORT || "8080");
 async function start() {
   const seed = await seedAdmin();
   if (!seed.seeded) {
-    console.log(`[seed] admin not created (${seed.reason})`);
+    logger.info("admin not created", { scope: "seed", reason: seed.reason });
   }
-  app.listen(port, () => console.log(`API listening on :${port}`));
+  app.listen(port, () => logger.info("API listening", { port }));
 }
 
 start().catch((err) => {
