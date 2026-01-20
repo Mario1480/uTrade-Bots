@@ -17,6 +17,8 @@ RUN npm ci --include=dev --workspaces --include-workspace-root \
 FROM deps AS build
 COPY . .
 RUN npx prisma generate \
+  && mkdir -p apps/api/node_modules/@types \
+  && cp -R node_modules/@types/node apps/api/node_modules/@types/ \
   && npm -w packages/core run build \
   && npm -w packages/db run build \
   && npm -w packages/exchange run build \
