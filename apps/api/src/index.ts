@@ -1,6 +1,7 @@
 import "dotenv/config";
 import crypto from "node:crypto";
 import express from "express";
+import type { NextFunction, Request, Response } from "express";
 import cors from "cors";
 import rateLimit from "express-rate-limit";
 import cookieParser from "cookie-parser";
@@ -297,7 +298,7 @@ function normalizePriceSupportConfig(raw: any) {
   };
 }
 
-function roleAllows(res: express.Response, key: string): boolean {
+function roleAllows(res: Response, key: string): boolean {
   const role = getRoleFromLocals(res);
   const perms = role?.permissions ?? {};
   return Boolean(perms?.[key]);
@@ -321,7 +322,7 @@ async function getSystemSettings() {
 }
 
 function requirePermission(key: string) {
-  return (req: express.Request, res: express.Response, next: express.NextFunction) => {
+  return (req: Request, res: Response, next: NextFunction) => {
     const user = getUserFromLocals(res);
     if (isSuperadmin(user)) return next();
     if (roleAllows(res, key)) return next();
@@ -330,7 +331,7 @@ function requirePermission(key: string) {
 }
 
 function requireAnyPermission(keys: string[]) {
-  return (req: express.Request, res: express.Response, next: express.NextFunction) => {
+  return (req: Request, res: Response, next: NextFunction) => {
     const user = getUserFromLocals(res);
     if (isSuperadmin(user)) return next();
     const allowed = keys.some((k) => roleAllows(res, k));
@@ -340,7 +341,7 @@ function requireAnyPermission(keys: string[]) {
 }
 
 function requireWorkspaceAccess() {
-  return async (req: express.Request, res: express.Response, next: express.NextFunction) => {
+  return async (req: Request, res: Response, next: NextFunction) => {
     const user = getUserFromLocals(res);
     const workspaceId = req.params.id;
     if (!workspaceId) return res.status(400).json({ error: "workspace_missing" });
@@ -1183,7 +1184,7 @@ app.post("/bots/:id/presets/:presetId/apply", requireAuth, requirePermission("pr
     data: parsed.risk
   });
 
-  const notify = bot.notificationConfig ?? { fundsWarnEnabled: true, fundsWarnPct: 0.1 };
+  const notify = (bot.notificationConfig as any) ?? { fundsWarnEnabled: true, fundsWarnPct: 0.1 };
   const notifyUpdate = {
     fundsWarnEnabled: notify.fundsWarnEnabled,
     fundsWarnPct: notify.fundsWarnPct
