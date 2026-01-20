@@ -25,6 +25,10 @@ export default function PriceSupportPage() {
   const [bot, setBot] = useState<any>(null);
   const [me, setMe] = useState<any>(null);
   const [config, setConfig] = useState<PriceSupportConfig | null>(null);
+  const [floorPriceInput, setFloorPriceInput] = useState("");
+  const [budgetInput, setBudgetInput] = useState("");
+  const [maxOrderInput, setMaxOrderInput] = useState("");
+  const [cooldownInput, setCooldownInput] = useState("");
   const [saving, setSaving] = useState(false);
   const [toast, setToast] = useState<{ type: "error" | "success"; msg: string } | null>(null);
   const systemSettings = useSystemSettings();
@@ -57,6 +61,14 @@ export default function PriceSupportPage() {
     loadAll();
   }, [id]);
 
+  useEffect(() => {
+    if (!config) return;
+    setFloorPriceInput(config.floorPrice === null ? "" : String(config.floorPrice));
+    setBudgetInput(String(config.budgetUsdt ?? ""));
+    setMaxOrderInput(String(config.maxOrderUsdt ?? ""));
+    setCooldownInput(String(config.cooldownMs ?? ""));
+  }, [config]);
+
   const featureEnabled = Boolean(me?.features?.priceSupport);
   const canManage = Boolean(me?.permissions?.["trading.price_support"] || me?.isSuperadmin);
   const remaining = useMemo(() => {
@@ -64,9 +76,40 @@ export default function PriceSupportPage() {
     return Math.max(0, (config.budgetUsdt || 0) - (config.spentUsdt || 0));
   }, [config]);
 
+  function normalizeDecimalInput(v: string): string {
+    return v.trim().replace(",", ".");
+  }
+
+  function parseNumber(v: string): number | null {
+    const n = Number(normalizeDecimalInput(v));
+    return Number.isFinite(n) ? n : null;
+  }
+
   async function save() {
     if (!config || !bot) return;
     try {
+      const floorParsed = floorPriceInput === "" ? null : parseNumber(floorPriceInput);
+      const budgetParsed = parseNumber(budgetInput);
+      const maxOrderParsed = parseNumber(maxOrderInput);
+      const cooldownParsed = parseNumber(cooldownInput);
+
+      if (floorPriceInput !== "" && floorParsed === null) {
+        showToast("error", "Invalid floor price");
+        return;
+      }
+      if (budgetParsed === null) {
+        showToast("error", "Invalid budget");
+        return;
+      }
+      if (maxOrderParsed === null) {
+        showToast("error", "Invalid max order");
+        return;
+      }
+      if (cooldownParsed === null) {
+        showToast("error", "Invalid cooldown");
+        return;
+      }
+
       setSaving(true);
       await apiPut(`/bots/${id}/config`, {
         mm: bot.mmConfig,
@@ -75,10 +118,10 @@ export default function PriceSupportPage() {
         notify: bot.notificationConfig ?? { fundsWarnEnabled: true, fundsWarnPct: 0.1 },
         priceSupport: {
           enabled: config.enabled,
-          floorPrice: config.floorPrice,
-          budgetUsdt: config.budgetUsdt,
-          maxOrderUsdt: config.maxOrderUsdt,
-          cooldownMs: config.cooldownMs,
+          floorPrice: floorParsed,
+          budgetUsdt: budgetParsed,
+          maxOrderUsdt: maxOrderParsed,
+          cooldownMs: Math.max(0, Math.round(cooldownParsed)),
           mode: config.mode
         }
       });
@@ -183,26 +226,26 @@ export default function PriceSupportPage() {
           <Field
             label="Floor price (USDT)"
             hint="Support buys start below this price"
-            value={config.floorPrice ?? ""}
-            onChange={(v) => setConfig({ ...config, floorPrice: v ? Number(v) : null })}
+            value={floorPriceInput}
+            onChange={setFloorPriceInput}
           />
           <Field
             label="Budget (USDT)"
             hint="Total budget for support buys"
-            value={config.budgetUsdt}
-            onChange={(v) => setConfig({ ...config, budgetUsdt: Number(v) })}
+            value={budgetInput}
+            onChange={setBudgetInput}
           />
           <Field
             label="Max order (USDT)"
             hint="Cap per support order"
-            value={config.maxOrderUsdt}
-            onChange={(v) => setConfig({ ...config, maxOrderUsdt: Number(v) })}
+            value={maxOrderInput}
+            onChange={setMaxOrderInput}
           />
           <Field
             label="Cooldown (ms)"
             hint="Minimum delay between support actions"
-            value={config.cooldownMs}
-            onChange={(v) => setConfig({ ...config, cooldownMs: Number(v) })}
+            value={cooldownInput}
+            onChange={setCooldownInput}
           />
           <SelectField
             label="Mode"
