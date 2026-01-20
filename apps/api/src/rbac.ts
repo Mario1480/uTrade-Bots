@@ -24,7 +24,7 @@ export const PERMISSION_KEYS = [
 
 export type PermissionKey = (typeof PERMISSION_KEYS)[number];
 
-export function buildPermissions(keys: PermissionKey[]) {
+export function buildPermissions(keys: readonly PermissionKey[]) {
   return keys.reduce<Record<string, boolean>>((acc, key) => {
     acc[key] = true;
     return acc;
@@ -35,7 +35,7 @@ export const DEFAULT_ROLES = [
   {
     name: "Admin",
     isSystem: true,
-    permissions: buildPermissions(PERMISSION_KEYS as PermissionKey[])
+    permissions: buildPermissions(PERMISSION_KEYS)
   },
   {
     name: "Operator 1",
