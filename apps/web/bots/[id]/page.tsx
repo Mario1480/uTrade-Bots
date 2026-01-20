@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { apiGet, apiPost, apiPut } from "../../../lib/api";
+import { apiGet, apiPost, apiPut } from "../../lib/api";
 
 export default function BotPage({ params }: { params: { id: string } }) {
   const id = params.id;

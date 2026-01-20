@@ -4,9 +4,14 @@ import Link from "next/link";
 import { useEffect, useState } from "react";
 import { ApiError, apiGet, apiPut } from "../../../lib/api";
 
+type GlobalSetting = {
+  key: string;
+  value: unknown;
+};
+
 export default function GlobalDefaultsPage() {
   const [me, setMe] = useState<any>(null);
-  const [settings, setSettings] = useState<any[]>([]);
+  const [settings, setSettings] = useState<GlobalSetting[]>([]);
   const [key, setKey] = useState("default");
   const [value, setValue] = useState("{}");
   const [status, setStatus] = useState("");
