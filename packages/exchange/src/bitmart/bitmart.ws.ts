@@ -22,7 +22,7 @@ export class BitmartPublicWs {
       this.isReady = true;
     });
 
-    this.ws.on("message", (raw: WebSocket.RawData) => {
+    this.ws.on("message", (raw: any) => {
       try {
         const msg = JSON.parse(raw.toString());
         // Bitmart WS messages vary by channel; we keep it permissive.
