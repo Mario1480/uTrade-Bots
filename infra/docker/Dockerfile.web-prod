@@ -10,7 +10,7 @@ COPY packages/exchange/package.json packages/exchange/package.json
 COPY packages/pricing/package.json packages/pricing/package.json
 COPY packages/risk/package.json packages/risk/package.json
 COPY packages/strategy/package.json packages/strategy/package.json
-RUN npm ci
+RUN npm ci --include=dev --workspaces --include-workspace-root
 
 FROM deps AS build
 COPY . .
