@@ -1,5 +1,5 @@
-import { createContext } from "./context";
-import { runLoop } from "./loop";
+import { createContext } from "./context.js";
+import { runLoop } from "./loop.js";
 
 export function createRunner() {
   const context = createContext();
