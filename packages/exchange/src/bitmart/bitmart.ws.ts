@@ -10,19 +10,19 @@ type DepthEvent = {
 };
 
 export class BitmartPublicWs {
-  private ws?: WebSocket;
+  private ws?: any;
   private isReady = false;
 
   constructor(private readonly wsUrl: string) {}
 
   connect(onDepth: (symbol: string, ev: DepthEvent) => void): void {
-    this.ws = new WebSocket(this.wsUrl);
+    const ws = (this.ws = new WebSocket(this.wsUrl) as any);
 
-    this.ws.on("open", () => {
+    ws.on("open", () => {
       this.isReady = true;
     });
 
-    this.ws.on("message", (raw: any) => {
+    ws.on("message", (raw: any) => {
       try {
         const msg = JSON.parse(raw.toString());
         // Bitmart WS messages vary by channel; we keep it permissive.
@@ -49,13 +49,13 @@ export class BitmartPublicWs {
       }
     });
 
-    this.ws.on("close", () => {
+    ws.on("close", () => {
       this.isReady = false;
       // simple reconnect
       setTimeout(() => this.connect(onDepth), 1500);
     });
 
-    this.ws.on("error", () => {
+    ws.on("error", () => {
       // handled by close -> reconnect
     });
   }
