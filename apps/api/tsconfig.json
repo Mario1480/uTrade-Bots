@@ -4,6 +4,7 @@
     "outDir": "dist",
     "rootDir": "src",
     "noImplicitAny": false,
+    "moduleSuffixes": [".js", ".ts"],
     "types": ["node"]
   },
   "include": ["src/**/*.ts", "src/**/*.d.ts"]
