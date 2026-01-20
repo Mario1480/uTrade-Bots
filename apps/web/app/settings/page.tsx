@@ -46,10 +46,6 @@ export default function SettingsPage() {
           <div style={{ fontWeight: 700, marginBottom: 6 }}>Bot Setup</div>
           <div style={{ fontSize: 12, color: "var(--muted)" }}>Bot list and setup</div>
         </Link>
-        <Link className="card" href="/settings/support" style={{ padding: 12 }}>
-          <div style={{ fontWeight: 700, marginBottom: 6 }}>Support & Help</div>
-          <div style={{ fontSize: 12, color: "var(--muted)" }}>Docs and contact</div>
-        </Link>
       </div>
     </div>
   );
