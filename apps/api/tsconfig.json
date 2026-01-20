@@ -5,7 +5,8 @@
     "rootDir": "src",
     "noImplicitAny": false,
     "moduleSuffixes": [".js", ".ts"],
-    "types": []
+    "types": ["node"],
+    "typeRoots": ["../../node_modules/@types"]
   },
   "include": ["src/**/*.ts", "src/**/*.d.ts"]
 }
