@@ -19,6 +19,8 @@ COPY . .
 RUN npx prisma generate \
   && mkdir -p apps/api/node_modules/@types \
   && cp -R node_modules/@types/node apps/api/node_modules/@types/ \
+  && cp node_modules/@types/node/index.d.ts node_modules/@types/node/index.js.d.ts \
+  && cp apps/api/node_modules/@types/node/index.d.ts apps/api/node_modules/@types/node/index.js.d.ts \
   && npm -w packages/core run build \
   && npm -w packages/db run build \
   && npm -w packages/exchange run build \
