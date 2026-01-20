@@ -10,7 +10,8 @@ RUN npm ci --include=dev \
 
 FROM deps AS build
 COPY . .
-RUN npx prisma generate \
+RUN npm install --include=dev --workspaces --no-audit --no-fund \
+  && npx prisma generate \
   && npm -w packages/core run build \
   && npm -w packages/db run build \
   && npm -w packages/exchange run build \
