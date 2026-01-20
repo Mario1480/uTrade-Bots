@@ -5,7 +5,8 @@ COPY apps/api/package.json apps/web/package.json apps/runner/package.json ./apps
 COPY packages/*/package.json ./packages/
 COPY prisma ./prisma
 RUN npm ci --include=dev \
-  && npm install -D @types/node
+  && npm install -D @types/node \
+  && npm install -W @prisma/client@6.19.1
 
 FROM deps AS build
 COPY . .
