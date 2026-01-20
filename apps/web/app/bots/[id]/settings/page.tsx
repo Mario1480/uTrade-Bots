@@ -870,6 +870,31 @@ export default function BotPage() {
         </AccordionSection>
       )}
 
+      <div>
+        <ConfigForm
+          mm={mm}
+          vol={vol}
+          risk={risk}
+          onMmChange={(next) => {
+            setMm(next);
+            if (fieldErrors) setFieldErrors(null);
+          }}
+          onVolChange={setVol}
+          onRiskChange={setRisk}
+          baseSymbol={bot?.symbol?.split(/[/_-]/)[0]}
+          midPrice={rt?.mid ?? null}
+          isSuperadmin={Boolean(me?.isSuperadmin)}
+          errors={fieldErrors}
+          onSave={save}
+          canSaveMm={ready && dirtyMm && saving !== "saving..." && canEditConfig}
+          canSaveVol={ready && dirtyVol && saving !== "saving..." && canEditConfig}
+          canSaveRisk={ready && dirtyRisk && saving !== "saving..." && canEditConfig}
+          saveLabelMm={mmSaveLabel}
+          saveLabelVol={volSaveLabel}
+          saveLabelRisk={riskSaveLabel}
+        />
+      </div>
+
       {priceFollow ? (
         <AccordionSection title="Price Follow">
           <div style={{ fontSize: 12, color: "var(--muted)", marginBottom: 10 }}>
@@ -941,31 +966,6 @@ export default function BotPage() {
           </div>
         </AccordionSection>
       ) : null}
-
-      <div>
-        <ConfigForm
-          mm={mm}
-          vol={vol}
-          risk={risk}
-          onMmChange={(next) => {
-            setMm(next);
-            if (fieldErrors) setFieldErrors(null);
-          }}
-          onVolChange={setVol}
-          onRiskChange={setRisk}
-          baseSymbol={bot?.symbol?.split(/[/_-]/)[0]}
-          midPrice={rt?.mid ?? null}
-          isSuperadmin={Boolean(me?.isSuperadmin)}
-          errors={fieldErrors}
-          onSave={save}
-          canSaveMm={ready && dirtyMm && saving !== "saving..." && canEditConfig}
-          canSaveVol={ready && dirtyVol && saving !== "saving..." && canEditConfig}
-          canSaveRisk={ready && dirtyRisk && saving !== "saving..." && canEditConfig}
-          saveLabelMm={mmSaveLabel}
-          saveLabelVol={volSaveLabel}
-          saveLabelRisk={riskSaveLabel}
-        />
-      </div>
 
       <NotificationsForm notify={notify} onChange={setNotify} />
     </div>
