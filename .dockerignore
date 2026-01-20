@@ -1,0 +1,9 @@
+node_modules
+**/node_modules
+apps/*/dist
+packages/*/dist
+apps/web/.next
+apps/web/out
+npm-debug.log
+yarn-error.log
+.DS_Store
