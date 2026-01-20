@@ -38,8 +38,8 @@ mkdir -p "${APP_DIR}"
 rm -rf "${APP_DIR}"
 git clone "${REPO_URL}" "${APP_DIR}"
 
-echo "==> Writing .env"
-cat > "${APP_DIR}/.env" <<EOF
+echo "==> Writing .env.prod"
+cat > "${APP_DIR}/.env.prod" <<EOF
 NODE_ENV=production
 
 DATABASE_URL=postgresql://mm:mm@postgres:5432/marketmaker
@@ -66,6 +66,9 @@ SMTP_FROM="uLiquid <no-reply@uliquid.vip>"
 SMTP_SECURE=true
 INVITE_BASE_URL=${INVITE_BASE_URL}
 EOF
+
+# Optional: keep .env in sync for troubleshooting/dev tooling
+cp "${APP_DIR}/.env.prod" "${APP_DIR}/.env"
 
 echo "==> Installing Caddy (optional HTTPS)"
 if [[ -n "${WEB_DOMAIN}" && -n "${API_DOMAIN}" ]]; then
