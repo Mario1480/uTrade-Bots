@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { apiGet } from "../lib/api";
+import { apiGet } from "../../lib/api";
 
 type SystemSettings = {
   tradingEnabled: boolean;
