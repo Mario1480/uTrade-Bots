@@ -588,7 +588,7 @@ export default function BotPage() {
                   className={`btn btnStart ${toggling === "mm" || bot.mmEnabled || isReadOnly ? "btnDisabled" : ""}`}
                   title="Start market making only (volume stays as is)"
                 >
-                  Start MM
+                  Start
                 </button>
                 <button
                   onClick={stopMm}
@@ -596,7 +596,7 @@ export default function BotPage() {
                   className={`btn btnStop ${toggling === "mm" || !bot.mmEnabled || isReadOnly ? "btnDisabled" : ""}`}
                   title="Stop market making only (volume stays as is)"
                 >
-                  Stop MM
+                  Stop
                 </button>
               </div>
             </div>
@@ -609,7 +609,7 @@ export default function BotPage() {
                   className={`btn btnStart ${toggling === "vol" || bot.volEnabled || isReadOnly ? "btnDisabled" : ""}`}
                   title="Start volume bot only (MM stays as is)"
                 >
-                  Start Volume
+                  Start
                 </button>
                 <button
                   onClick={stopVol}
@@ -617,7 +617,7 @@ export default function BotPage() {
                   className={`btn btnStop ${toggling === "vol" || !bot.volEnabled || isReadOnly ? "btnDisabled" : ""}`}
                   title="Stop volume bot only (MM stays as is)"
                 >
-                  Stop Volume
+                  Stop
                 </button>
               </div>
             </div>
