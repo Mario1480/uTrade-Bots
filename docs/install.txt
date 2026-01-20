@@ -115,14 +115,14 @@ sudo snap logs caddy.server -n 120
 
 ⸻
 
-5) Environment (.env) erstellen
+5) Environment (.env.prod) erstellen
 
 Im Projektroot:
 
 cd /opt/market-maker
-nano .env
+nano .env.prod
 
-Beispiel .env (Production/HTTPS):
+Beispiel .env.prod (Production/HTTPS):
 
 NODE_ENV=production
 
@@ -158,6 +158,9 @@ SMTP_PASS=CHANGE_ME
 SMTP_FROM="uLiquid <no-reply@uliquid.vip>"
 SMTP_SECURE=true
 INVITE_BASE_URL=https://test.uliquid.vip
+
+Optional: Falls Tools noch .env erwarten, kannst du .env.prod nach .env kopieren:
+cp .env.prod .env
 
 
 ⸻
