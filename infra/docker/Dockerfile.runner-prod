@@ -1,0 +1,21 @@
+FROM node:20-alpine AS deps
+WORKDIR /app
+COPY package.json package-lock.json ./
+COPY apps/api/package.json apps/web/package.json apps/runner/package.json ./apps/
+COPY packages/*/package.json ./packages/
+COPY prisma ./prisma
+RUN npm ci
+
+FROM deps AS build
+COPY . .
+RUN npm -ws run build && npx prisma generate
+
+FROM node:20-alpine AS runner
+ENV NODE_ENV=production
+WORKDIR /app
+COPY --from=build /app/node_modules /app/node_modules
+COPY --from=build /app/packages /app/packages
+COPY --from=build /app/apps/runner/dist /app/apps/runner/dist
+COPY --from=build /app/prisma /app/prisma
+COPY --from=build /app/package.json /app/package.json
+CMD ["node", "apps/runner/dist/index.js"]

@@ -1,0 +1,25 @@
+FROM node:20-alpine AS deps
+WORKDIR /app
+COPY package.json package-lock.json ./
+COPY apps/web/package.json ./apps/web/package.json
+COPY packages/*/package.json ./packages/
+RUN npm ci
+
+FROM deps AS build
+COPY . .
+RUN npm -w apps/web run build
+
+FROM node:20-alpine AS runner
+ENV NODE_ENV=production
+WORKDIR /app
+COPY --from=build /app/node_modules /app/node_modules
+COPY --from=build /app/apps/web/.next /app/apps/web/.next
+COPY --from=build /app/apps/web/public /app/apps/web/public
+COPY --from=build /app/apps/web/app /app/apps/web/app
+COPY --from=build /app/apps/web/components /app/apps/web/components
+COPY --from=build /app/apps/web/images /app/apps/web/images
+COPY --from=build /app/apps/web/lib /app/apps/web/lib
+COPY --from=build /app/apps/web/next.config.mjs /app/apps/web/next.config.mjs
+COPY --from=build /app/apps/web/package.json /app/apps/web/package.json
+WORKDIR /app/apps/web
+CMD ["npm", "run", "start"]
