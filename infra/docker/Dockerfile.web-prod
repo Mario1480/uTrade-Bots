@@ -1,8 +1,15 @@
 FROM node:20-alpine AS deps
 WORKDIR /app
 COPY package.json package-lock.json ./
-COPY apps/web/package.json ./apps/web/package.json
-COPY packages/*/package.json ./packages/
+COPY apps/api/package.json apps/api/package.json
+COPY apps/web/package.json apps/web/package.json
+COPY apps/runner/package.json apps/runner/package.json
+COPY packages/core/package.json packages/core/package.json
+COPY packages/db/package.json packages/db/package.json
+COPY packages/exchange/package.json packages/exchange/package.json
+COPY packages/pricing/package.json packages/pricing/package.json
+COPY packages/risk/package.json packages/risk/package.json
+COPY packages/strategy/package.json packages/strategy/package.json
 RUN npm ci
 
 FROM deps AS build
