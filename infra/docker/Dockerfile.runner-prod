@@ -4,11 +4,19 @@ COPY package.json package-lock.json ./
 COPY apps/api/package.json apps/web/package.json apps/runner/package.json ./apps/
 COPY packages/*/package.json ./packages/
 COPY prisma ./prisma
-RUN npm ci
+RUN npm ci --include=dev \
+  && npm install -D @types/node
 
 FROM deps AS build
 COPY . .
-RUN npm -ws run build && npx prisma generate
+RUN npm -w packages/core run build \
+  && npm -w packages/db run build \
+  && npm -w packages/exchange run build \
+  && npm -w packages/pricing run build \
+  && npm -w packages/risk run build \
+  && npm -w packages/strategy run build \
+  && npm -w apps/runner run build \
+  && npx prisma generate
 
 FROM node:20-alpine AS runner
 ENV NODE_ENV=production
