@@ -101,4 +101,3 @@ docker compose -f docker-compose.prod.yml up -d --build
 echo "==> Done"
 echo "Web: ${WEB_DOMAIN:+https://${WEB_DOMAIN}}"
 echo "API: ${API_DOMAIN:+https://${API_DOMAIN}/health}"
- 
