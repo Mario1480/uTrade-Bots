@@ -2,7 +2,7 @@
 
 ## Prereqs
 - Docker + Docker Compose installed
-- `.env` configured on the server
+- `.env.prod` configured on the server
 
 ## Build + Start
 
@@ -35,3 +35,4 @@ docker compose -f docker-compose.prod.yml up -d --build
 ## Notes
 - Postgres uses a named volume (`pgdata`), so data persists across restarts.
 - API runs `prisma migrate deploy` on startup.
+- `docker-compose.prod.yml` uses `.env.prod` (no dev mounts).

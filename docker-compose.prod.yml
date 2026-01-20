@@ -3,7 +3,7 @@ services:
     image: postgres:16-alpine
     restart: unless-stopped
     env_file:
-      - .env
+      - .env.prod
     environment:
       POSTGRES_USER: mm
       POSTGRES_PASSWORD: mm
@@ -29,7 +29,7 @@ services:
       dockerfile: infra/docker/Dockerfile.api-prod
     restart: unless-stopped
     env_file:
-      - .env
+      - .env.prod
     environment:
       NODE_ENV: "production"
       API_PORT: "8080"
@@ -61,7 +61,7 @@ services:
       dockerfile: infra/docker/Dockerfile.web-prod
     restart: unless-stopped
     env_file:
-      - .env
+      - .env.prod
     environment:
       NODE_ENV: "production"
       BITMART_BASE_URL: ${BITMART_BASE_URL:-https://api-cloud.bitmart.com}
@@ -87,7 +87,7 @@ services:
       dockerfile: infra/docker/Dockerfile.runner-prod
     restart: unless-stopped
     env_file:
-      - .env
+      - .env.prod
     environment:
       NODE_ENV: "production"
       LOG_LEVEL: "info"

@@ -36,6 +36,8 @@ const origins = (process.env.CORS_ORIGINS ?? "http://localhost:3000")
   .map(s => s.trim())
   .filter(Boolean);
 const REAUTH_OTP_TTL_MIN = Number(process.env.REAUTH_OTP_TTL_MIN ?? "10");
+const RUNNER_STALE_MS = Number(process.env.RUNNER_STALE_MS ?? "60000");
+const RUNNER_ALERT_COOLDOWN_MS = Number(process.env.RUNNER_ALERT_COOLDOWN_MS ?? "900000");
 
 function isAllowedOrigin(origin?: string | null) {
   if (!origin) return false;
@@ -424,6 +426,21 @@ async function sendTelegramWithFallback(text: string) {
   return { ok: false, error: "telegram_not_configured" };
 }
 
+async function getRunnerAlertAt() {
+  const row = await prisma.globalSetting.findUnique({ where: { key: "runner.alert" } });
+  const raw = (row?.value as Record<string, any>) ?? {};
+  const last = Number(raw.lastAlertAt ?? 0);
+  return Number.isFinite(last) ? last : 0;
+}
+
+async function setRunnerAlertAt(ts: number) {
+  await prisma.globalSetting.upsert({
+    where: { key: "runner.alert" },
+    create: { key: "runner.alert", value: { lastAlertAt: ts } },
+    update: { value: { lastAlertAt: ts } }
+  });
+}
+
 app.get("/health", (_req, res) => res.json({ ok: true }));
 
 app.get("/ready", async (_req, res) => {
@@ -463,6 +480,20 @@ app.get("/ready", async (_req, res) => {
       db: { ok: dbOk, error: dbError },
       migrations: { ok: migrationsOk, error: migrationsError }
     }
+  });
+});
+
+app.get("/runner/status", requireAuth, async (_req, res) => {
+  const status = await prisma.runnerStatus.findUnique({ where: { id: "main" } });
+  if (!status) {
+    return res.json({ ok: false, stale: true, status: null });
+  }
+  const lastTickAt = status.lastTickAt?.getTime?.() ?? 0;
+  const stale = lastTickAt > 0 ? Date.now() - lastTickAt > RUNNER_STALE_MS : true;
+  res.json({
+    ok: !stale,
+    stale,
+    status
   });
 });
 
@@ -2500,11 +2531,35 @@ app.post("/bots/:id/stop", requireAuth, requirePermission("bots.start_pause_stop
 
 const port = Number(process.env.API_PORT || "8080");
 
+function startRunnerMonitor() {
+  const intervalMs = Number(process.env.RUNNER_MONITOR_INTERVAL_MS ?? "30000");
+  setInterval(async () => {
+    try {
+      const status = await prisma.runnerStatus.findUnique({ where: { id: "main" } });
+      if (!status) return;
+      const lastTickAt = status.lastTickAt?.getTime?.() ?? 0;
+      if (lastTickAt <= 0) return;
+      const stale = Date.now() - lastTickAt > RUNNER_STALE_MS;
+      if (!stale) return;
+
+      const lastAlertAt = await getRunnerAlertAt();
+      if (Date.now() - lastAlertAt < RUNNER_ALERT_COOLDOWN_MS) return;
+
+      const msg = `[ALERT] Runner heartbeat stale (>60s).\nlastTickAt=${new Date(lastTickAt).toISOString()}\nbotsRunning=${status.botsRunning}\nbotsErrored=${status.botsErrored}`;
+      await sendTelegramWithFallback(msg);
+      await setRunnerAlertAt(Date.now());
+    } catch (e) {
+      logger.warn("runner monitor failed", { err: String(e) });
+    }
+  }, intervalMs).unref();
+}
+
 async function start() {
   const seed = await seedAdmin();
   if (!seed.seeded) {
     logger.info("admin not created", { scope: "seed", reason: seed.reason });
   }
+  startRunnerMonitor();
   app.listen(port, () => logger.info("API listening", { port }));
 }
 

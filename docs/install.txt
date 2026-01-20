@@ -1,7 +1,3 @@
-Klar — hier ist eine saubere, genaue Installationsanleitung (VPS + Caddy + Docker + HTTPS + ENV), die du direkt als docs/INSTALL_VPS_UBUNTU22_CADDY.md in GitHub ablegen kannst.
-
-⸻
-
 Installation (Ubuntu 22.04 + Docker + Caddy + HTTPS)
 
 Diese Anleitung beschreibt die Installation des Market-Maker Projekts auf einem Ubuntu 22.04 VPS mit Caddy als Reverse Proxy und HTTPS (Let’s Encrypt).
@@ -16,6 +12,17 @@ Voraussetzungen
 	•	80/tcp
 	•	443/tcp
 	•	optional 22/tcp (SSH)
+
+
+
+Alternative: Installationsskript nutzen
+
+Auf dem Server:
+
+curl -O https://raw.githubusercontent.com/Mario1480/Market-Maker/main/scripts/install_vps.sh
+chmod +x install_vps.sh
+sudo ./install_vps.sh
+
 
 ⸻
 
@@ -117,7 +124,7 @@ nano .env
 
 Beispiel .env (Production/HTTPS):
 
-NODE_ENV=development
+NODE_ENV=production
 
 # ===== Database =====
 DATABASE_URL=postgresql://mm:mm@postgres:5432/marketmaker
@@ -143,39 +150,40 @@ CORS_ORIGINS=https://test.uliquid.vip,http://localhost:3000
 # ===== Exchange =====
 BITMART_BASE_URL=https://api-cloud.bitmart.com
 
-
-⸻
-
-6) docker-compose.dev.yml prüfen (wichtig!)
-
-Wichtig: In docker-compose.dev.yml darf kein hardcoded NEXT_PUBLIC_API_URL=http://localhost:8080 stehen, sonst wird .env überschrieben.
-
-Korrekt ist z.B.:
-
-web:
-  env_file:
-    - .env
-  environment:
-    NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL}
-    API_BASE_URL: ${API_BASE_URL}
+# ===== SMTP / Invites =====
+SMTP_HOST=smtp.hostinger.com
+SMTP_PORT=465
+SMTP_USER=no-reply@uliquid.vip
+SMTP_PASS=CHANGE_ME
+SMTP_FROM="uLiquid <no-reply@uliquid.vip>"
+SMTP_SECURE=true
+INVITE_BASE_URL=https://test.uliquid.vip
 
 
 ⸻
 
-7) Container starten
+6) docker-compose.prod.yml prüfen (wichtig!)
+
+Wichtig: In docker-compose.prod.yml gibt es keine dev‑Mounts und keine hardcoded API URLs.
+
+Für Development nutzt du weiterhin docker-compose.dev.yml.
+
+⸻
+
+7) Container starten (Production)
 
 cd /opt/market-maker
-docker compose -f docker-compose.dev.yml up -d --build
+docker compose -f docker-compose.prod.yml up -d --build
 
 Status prüfen:
 
-docker compose -f docker-compose.dev.yml ps
+docker compose -f docker-compose.prod.yml ps
 
 Logs:
 
-docker compose -f docker-compose.dev.yml logs -f --tail=200 api
-docker compose -f docker-compose.dev.yml logs -f --tail=200 web
-docker compose -f docker-compose.dev.yml logs -f --tail=200 runner
+docker compose -f docker-compose.prod.yml logs -f --tail=200 api
+docker compose -f docker-compose.prod.yml logs -f --tail=200 web
+docker compose -f docker-compose.prod.yml logs -f --tail=200 runner
 
 
 ⸻
@@ -202,12 +210,11 @@ Ursache: falsche API URL im Browser (z.B. localhost:8080).
 
 Fix:
 	•	NEXT_PUBLIC_API_URL in .env korrekt setzen
-	•	sicherstellen, dass docker-compose.dev.yml es nicht überschreibt
 	•	Web neu bauen:
 
-docker compose -f docker-compose.dev.yml down
-docker compose -f docker-compose.dev.yml build --no-cache web
-docker compose -f docker-compose.dev.yml up -d
+docker compose -f docker-compose.prod.yml down
+docker compose -f docker-compose.prod.yml build --no-cache web
+docker compose -f docker-compose.prod.yml up -d
 
 B) Runner crasht mit Missing env: BITMART_BASE_URL
 
@@ -217,7 +224,7 @@ BITMART_BASE_URL=https://api-cloud.bitmart.com
 
 Dann:
 
-docker compose -f docker-compose.dev.yml up -d runner
+docker compose -f docker-compose.prod.yml up -d runner
 
 C) HTTPS “Connection refused”
 
@@ -232,4 +239,19 @@ Fix:
 
 cd /opt/market-maker
 git pull
+docker compose -f docker-compose.prod.yml up -d --build
+
+⸻
+
+11) Lokale Entwicklung (optional)
+
+Für lokale Tests und Hot-Reload:
+
+cd /opt/market-maker
 docker compose -f docker-compose.dev.yml up -d --build
+
+Web:
+	•	http://localhost:3000
+
+API:
+	•	http://localhost:8080/health

@@ -16,8 +16,11 @@ Defaults:
 
 The script writes a timestamped file like:
 ```
-/opt/market-maker/backups/mm_YYYYMMDD_HHMM.sql
+/opt/market-maker/backups/mm_YYYYMMDD_HHMM.sql.gz
 ```
+
+Retention:
+- Deletes backups older than 14 days.
 
 Override defaults:
 ```sh
@@ -31,7 +34,7 @@ scripts/backup_db.sh
 ## Restore
 
 ```sh
-scripts/restore_db.sh /opt/market-maker/backups/mm_YYYYMMDD_HHMM.sql
+scripts/restore_db.sh /opt/market-maker/backups/mm_YYYYMMDD_HHMM.sql.gz
 ```
 
 What it does:
@@ -44,7 +47,14 @@ Override defaults:
 COMPOSE_FILE=docker-compose.dev.yml \
 DB_NAME=marketmaker \
 DB_USER=mm \
-scripts/restore_db.sh /opt/market-maker/backups/mm_YYYYMMDD_HHMM.sql
+scripts/restore_db.sh /opt/market-maker/backups/mm_YYYYMMDD_HHMM.sql.gz
+```
+
+## Automation (cron)
+
+Example daily 03:00 backup:
+```
+0 3 * * * /opt/market-maker/scripts/backup_db.sh >> /opt/market-maker/backups/backup.log 2>&1
 ```
 
 ## Notes

@@ -4,15 +4,16 @@ import type { Exchange } from "@mm/exchange";
 import { BotStateMachine } from "./state-machine.js";
 import { runLoop } from "./loop.js";
 import { log } from "./logger.js";
-import { loadBotAndConfigs, loadCexConfig, loadLatestBotAndConfigs } from "./db.js";
+import {
+  getRuntimeCounts,
+  loadBotAndConfigs,
+  loadCexConfig,
+  loadRunningBotIds,
+  upsertRunnerStatus,
+  writeRuntime
+} from "./db.js";
 import { createServer } from "http";
-import { getRunnerHealth, setBotStatus } from "./health.js";
-
-function mustEnv(k: string): string {
-  const v = process.env[k];
-  if (!v) throw new Error(`Missing env: ${k}`);
-  return v;
-}
+import { getRunnerHealth, noteTick, setBotStatus, setRunnerCounts } from "./health.js";
 
 function optionalEnv(k: string): string | null {
   const v = process.env[k];
@@ -21,6 +22,115 @@ function optionalEnv(k: string): string | null {
 
 function sleep(ms: number): Promise<void> {
   return new Promise((r) => setTimeout(r, ms));
+}
+
+async function startBotLoop(botId: string, tickMs: number) {
+  let backoffMs = 1000;
+  const maxBackoffMs = 30_000;
+
+  while (true) {
+    try {
+      setBotStatus("RUNNING");
+      const { bot, mm, vol, risk, notificationConfig, priceSupportConfig } = await loadBotAndConfigs(botId);
+      const symbol = bot.symbol;
+
+      if (bot.exchange !== "bitmart") {
+        const reason = `UNSUPPORTED_EXCHANGE:${bot.exchange}`;
+        await writeRuntime({
+          botId,
+          status: "ERROR",
+          reason,
+          openOrders: null,
+          openOrdersMm: null,
+          openOrdersVol: null,
+          lastVolClientOrderId: null
+        });
+        throw new Error(reason);
+      }
+
+      const baseUrl = process.env.BITMART_BASE_URL;
+      if (!baseUrl) {
+        const reason = "MISSING_ENV:BITMART_BASE_URL";
+        await writeRuntime({
+          botId,
+          status: "ERROR",
+          reason,
+          openOrders: null,
+          openOrdersMm: null,
+          openOrdersVol: null,
+          lastVolClientOrderId: null
+        });
+        throw new Error("Missing env: BITMART_BASE_URL");
+      }
+
+      const cex = await loadCexConfig(bot.exchange);
+      const rest = new BitmartRestClient(
+        baseUrl,
+        cex.apiKey,
+        cex.apiSecret,
+        cex.apiMemo ?? ""
+      );
+
+      const exchange: Exchange = {
+        getMidPrice: (s) => rest.getTicker(s),
+        getBalances: () => rest.getBalances(),
+        getOpenOrders: (s) => rest.getOpenOrders(s),
+        getMyTrades: (s, params) => rest.getMyTrades(s, params),
+        placeOrder: (q) => rest.placeOrder(q),
+        cancelOrder: (s, id) => rest.cancelOrder(s, id),
+        cancelAll: (s) => rest.cancelAll(s)
+      };
+
+      const sm = new BotStateMachine();
+      log.info({ botId: bot.id, name: bot.name, symbol, tickMs }, "starting runner (bot)");
+      backoffMs = 1000;
+      await runLoop({
+        botId: bot.id,
+        symbol,
+        exchange,
+        mm,
+        vol,
+        risk,
+        notificationConfig,
+        priceSupportConfig,
+        tickMs,
+        sm
+      });
+      log.warn({ botId: bot.id }, "runner loop exited unexpectedly");
+    } catch (e) {
+      const errStr = String(e);
+      let reason = errStr;
+      if (errStr.startsWith("Missing env:")) {
+        const envName = errStr.split(":").pop()?.trim() ?? "UNKNOWN";
+        reason = `MISSING_ENV:${envName}`;
+      } else if (errStr.includes("CEX config not found")) {
+        reason = "MISSING_CEX_CONFIG";
+      } else if (errStr.includes("CEX config incomplete")) {
+        reason = "INCOMPLETE_CEX_CONFIG";
+      } else if (errStr.includes("Bot missing configs")) {
+        reason = "INVALID_CONFIG";
+      } else if (errStr.includes("Bot not found")) {
+        reason = "BOT_NOT_FOUND";
+      }
+
+      log.warn({ botId, err: errStr }, "runner setup failed");
+      setBotStatus("ERROR", reason);
+      try {
+        await writeRuntime({
+          botId,
+          status: "ERROR",
+          reason,
+          openOrders: null,
+          openOrdersMm: null,
+          openOrdersVol: null,
+          lastVolClientOrderId: null
+        });
+      } catch {}
+    }
+
+    await sleep(backoffMs);
+    backoffMs = Math.min(maxBackoffMs, backoffMs * 2);
+  }
 }
 
 async function main() {
@@ -50,59 +160,40 @@ async function main() {
 
   const requestedBotId = optionalEnv("RUNNER_BOT_ID");
   const tickMs = Number(process.env.RUNNER_TICK_MS || "800");
-  let backoffMs = 1000;
-  const maxBackoffMs = 30_000;
+  const scanMs = Number(process.env.RUNNER_SCAN_MS || "5000");
+  const botLoops = new Map<string, boolean>();
 
   while (true) {
     try {
-      setBotStatus("RUNNING");
-      const { bot, mm, vol, risk, notificationConfig, priceSupportConfig } = requestedBotId
-        ? await loadBotAndConfigs(requestedBotId)
-        : await loadLatestBotAndConfigs();
-      const symbol = bot.symbol;
-
-      if (bot.exchange !== "bitmart") {
-        throw new Error(`Unsupported exchange: ${bot.exchange}`);
+      const botIds = requestedBotId ? [requestedBotId] : await loadRunningBotIds();
+      if (botIds.length === 0) {
+        log.warn("runner idle: no bots found");
+      }
+      for (const botId of botIds) {
+        if (!botLoops.has(botId)) {
+          botLoops.set(botId, true);
+          void startBotLoop(botId, tickMs);
+        }
       }
 
-      const cex = await loadCexConfig(bot.exchange);
-      const rest = new BitmartRestClient(
-        mustEnv("BITMART_BASE_URL"),
-        cex.apiKey,
-        cex.apiSecret,
-        cex.apiMemo ?? ""
-      );
-
-      const exchange: Exchange = {
-        getMidPrice: (s) => rest.getTicker(s),
-        getBalances: () => rest.getBalances(),
-        getOpenOrders: (s) => rest.getOpenOrders(s),
-        getMyTrades: (s, params) => rest.getMyTrades(s, params),
-        placeOrder: (q) => rest.placeOrder(q),
-        cancelOrder: (s, id) => rest.cancelOrder(s, id),
-        cancelAll: (s) => rest.cancelAll(s)
-      };
-
-      const sm = new BotStateMachine();
-      log.info(
-        { botId: bot.id, name: bot.name, symbol, tickMs },
-        requestedBotId ? "starting runner (explicit bot id)" : "starting runner (latest bot)"
-      );
-      backoffMs = 1000;
-      await runLoop({ botId: bot.id, symbol, exchange, mm, vol, risk, notificationConfig, priceSupportConfig, tickMs, sm });
-      log.warn({ botId: bot.id }, "runner loop exited unexpectedly");
+      try {
+        const counts = await getRuntimeCounts();
+        setRunnerCounts(counts.botsRunning, counts.botsErrored);
+        await upsertRunnerStatus({
+          lastTickAt: new Date(),
+          botsRunning: counts.botsRunning,
+          botsErrored: counts.botsErrored,
+          version: process.env.VERSION ?? null
+        });
+      } catch (e) {
+        log.warn({ err: String(e) }, "runner status update failed");
+      }
+      noteTick();
     } catch (e) {
       const errStr = String(e);
-      if (errStr.includes("No bots found")) {
-        log.warn({ err: errStr }, "runner idle: no bots found");
-      } else {
-        log.error({ err: errStr }, "runner setup failed");
-      }
-      setBotStatus("ERROR", errStr);
+      log.warn({ err: errStr }, "runner supervisor error");
     }
-
-    await sleep(backoffMs);
-    backoffMs = Math.min(maxBackoffMs, backoffMs * 2);
+    await sleep(scanMs);
   }
 }
 

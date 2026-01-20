@@ -9,9 +9,11 @@ DB_USER="${DB_USER:-mm}"
 mkdir -p "${BACKUP_DIR}"
 
 ts="$(date +"%Y%m%d_%H%M")"
-outfile="${BACKUP_DIR}/mm_${ts}.sql"
+outfile="${BACKUP_DIR}/mm_${ts}.sql.gz"
 
 docker compose -f "${COMPOSE_FILE}" exec -T postgres \
-  pg_dump -U "${DB_USER}" -d "${DB_NAME}" > "${outfile}"
+  pg_dump -U "${DB_USER}" -d "${DB_NAME}" | gzip > "${outfile}"
+
+find "${BACKUP_DIR}" -type f -name "mm_*.sql.gz" -mtime +14 -print -delete
 
 echo "Backup written to ${outfile}"

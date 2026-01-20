@@ -360,3 +360,12 @@ model GlobalSetting {
   value     Json?
   updatedAt DateTime @updatedAt
 }
+
+model RunnerStatus {
+  id          String   @id @default("main")
+  updatedAt   DateTime @updatedAt
+  lastTickAt  DateTime
+  botsRunning Int
+  botsErrored Int
+  version     String?
+}

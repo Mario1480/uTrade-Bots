@@ -1095,32 +1095,63 @@ export async function runLoop(params: {
       await sleep(sleepMs);
     } catch (e) {
       const errStr = String(e);
+      const isRateLimit =
+        errStr.includes("429") ||
+        errStr.toLowerCase().includes("rate limit");
+      const isExchangeDown =
+        errStr.includes("502") ||
+        errStr.includes("503") ||
+        errStr.includes("504") ||
+        errStr.includes("Bad Gateway") ||
+        errStr.includes("Service Unavailable");
+      const isDbDown =
+        errStr.toLowerCase().includes("prisma") ||
+        errStr.toLowerCase().includes("database") ||
+        errStr.includes("ECONNREFUSED") ||
+        errStr.includes("ETIMEDOUT");
       const isTransient =
         errStr.includes("fetch failed") ||
         errStr.includes("ECONNRESET") ||
         errStr.includes("ENOTFOUND") ||
-        errStr.includes("ETIMEDOUT") ||
-        errStr.includes("ECONNREFUSED") ||
         errStr.includes("Unexpected token <") ||
         errStr.includes("SyntaxError: Unexpected token") ||
         errStr.includes("non-JSON response") ||
-        errStr.includes("Bad Gateway") ||
-        errStr.includes("Service Unavailable");
+        isExchangeDown ||
+        isRateLimit ||
+        isDbDown;
+
+      let reason = errStr;
+      if (errStr.startsWith("Missing env:")) {
+        const envName = errStr.split(":").pop()?.trim() ?? "UNKNOWN";
+        reason = `MISSING_ENV:${envName}`;
+      } else if (isRateLimit) {
+        reason = "EXCHANGE_RATE_LIMIT";
+      } else if (isExchangeDown) {
+        reason = "EXCHANGE_UNAVAILABLE";
+      } else if (isDbDown) {
+        reason = "DB_UNAVAILABLE";
+      } else if (errStr.includes("MASTER_FEED_STALE")) {
+        reason = "MASTER_FEED_STALE";
+      }
+
+      if (reason.length > 240) {
+        reason = reason.slice(0, 237) + "...";
+      }
 
       if (isTransient) {
-        log.warn({ err: errStr }, "transient loop error");
+        log.warn({ err: errStr, reason }, "transient loop error");
         try {
           await writeRuntime({
             botId,
-            status: "RUNNING",
-            reason: `Network error: ${errStr}`,
+            status: "ERROR",
+            reason,
             openOrders: null,
             openOrdersMm: null,
             openOrdersVol: null,
             lastVolClientOrderId: null
           });
         } catch {}
-        setBotStatus("RUNNING");
+        setBotStatus("ERROR", reason);
         const elapsed = Date.now() - t0;
         const sleepMs = Math.max(0, tickMs - elapsed);
         noteTick();
@@ -1128,11 +1159,11 @@ export async function runLoop(params: {
         continue;
       }
 
-      log.error({ err: errStr }, "loop error");
+      log.error({ err: errStr, reason }, "loop error");
       try {
         await exchange.cancelAll(symbol);
       } catch {}
-      sm.set("ERROR", errStr);
+      sm.set("ERROR", reason);
       setBotStatus("ERROR", sm.getReason());
       try {
         await writeRuntime({

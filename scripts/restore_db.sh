@@ -2,7 +2,7 @@
 set -euo pipefail
 
 if [[ $# -lt 1 ]]; then
-  echo "Usage: $0 /path/to/backup.sql"
+  echo "Usage: $0 /path/to/backup.sql(.gz)"
   exit 1
 fi
 
@@ -18,8 +18,13 @@ fi
 
 docker compose -f "${COMPOSE_FILE}" stop api runner
 
-docker compose -f "${COMPOSE_FILE}" exec -T postgres \
-  psql -U "${DB_USER}" -d "${DB_NAME}" -v ON_ERROR_STOP=1 < "${BACKUP_FILE}"
+if [[ "${BACKUP_FILE}" == *.gz ]]; then
+  gunzip -c "${BACKUP_FILE}" | docker compose -f "${COMPOSE_FILE}" exec -T postgres \
+    psql -U "${DB_USER}" -d "${DB_NAME}" -v ON_ERROR_STOP=1
+else
+  docker compose -f "${COMPOSE_FILE}" exec -T postgres \
+    psql -U "${DB_USER}" -d "${DB_NAME}" -v ON_ERROR_STOP=1 < "${BACKUP_FILE}"
+fi
 
 docker compose -f "${COMPOSE_FILE}" up -d api runner
 

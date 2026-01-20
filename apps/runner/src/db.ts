@@ -247,6 +247,46 @@ export async function loadCexConfig(exchange: string) {
   return cfg;
 }
 
+export async function loadRunningBotIds() {
+  const bots = await prisma.bot.findMany({
+    where: { status: "RUNNING" },
+    select: { id: true }
+  });
+  return bots.map((b) => b.id);
+}
+
+export async function getRuntimeCounts() {
+  const [botsRunning, botsErrored] = await Promise.all([
+    prisma.botRuntime.count({ where: { status: "RUNNING" } }),
+    prisma.botRuntime.count({ where: { status: "ERROR" } })
+  ]);
+  return { botsRunning, botsErrored };
+}
+
+export async function upsertRunnerStatus(params: {
+  lastTickAt: Date;
+  botsRunning: number;
+  botsErrored: number;
+  version?: string | null;
+}) {
+  await prisma.runnerStatus.upsert({
+    where: { id: "main" },
+    create: {
+      id: "main",
+      lastTickAt: params.lastTickAt,
+      botsRunning: params.botsRunning,
+      botsErrored: params.botsErrored,
+      version: params.version ?? null
+    },
+    update: {
+      lastTickAt: params.lastTickAt,
+      botsRunning: params.botsRunning,
+      botsErrored: params.botsErrored,
+      version: params.version ?? undefined
+    }
+  });
+}
+
 export async function writeRuntime(params: {
   botId: string;
   status: string;
