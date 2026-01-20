@@ -83,8 +83,9 @@ export default function RolesPage() {
         apiGet<any[]>(`/workspaces/${meRes.workspaceId}/roles`)
       ]);
       setMembers(membersRes);
-      setRoles(rolesRes);
-      if (!inviteRoleId && rolesRes.length) setInviteRoleId(rolesRes[0].id);
+      const sortedRoles = sortRoles(rolesRes);
+      setRoles(sortedRoles);
+      if (!inviteRoleId && sortedRoles.length) setInviteRoleId(sortedRoles[0].id);
     } catch (e) {
       setError(errMsg(e));
     }
@@ -96,6 +97,21 @@ export default function RolesPage() {
 
   const canManage = Boolean(me?.permissions?.["users.manage_roles"] || me?.isSuperadmin);
   const canManageMembers = Boolean(me?.permissions?.["users.manage_members"] || me?.isSuperadmin);
+
+  function sortRoles(list: any[]) {
+    const order = new Map([
+      ["Admin", 0],
+      ["Operator 1", 1],
+      ["Operator 2", 2],
+      ["Viewer", 3]
+    ]);
+    return [...list].sort((a, b) => {
+      const aRank = order.has(a.name) ? order.get(a.name) : 99;
+      const bRank = order.has(b.name) ? order.get(b.name) : 99;
+      if (aRank !== bRank) return aRank - bRank;
+      return String(a.name).localeCompare(String(b.name));
+    });
+  }
 
   function handleMemberReauthError(e: any, retry: () => Promise<void>) {
     if (isReauthError(e)) {
