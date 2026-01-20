@@ -17,6 +17,7 @@ import { BotStateMachine } from "./state-machine.js";
 import { OrderManager } from "./order-manager.js";
 import { inventoryRatio } from "./inventory.js";
 import { log } from "./logger.js";
+import { noteTick, setBotStatus } from "./health.js";
 import {
   loadBotAndConfigs,
   loadSystemSettings,
@@ -138,6 +139,7 @@ export async function runLoop(params: {
   let lastFillSync = 0;
 
   sm.set("RUNNING");
+  setBotStatus("RUNNING");
   await writeRuntime({
     botId,
     status: "RUNNING",
@@ -157,6 +159,7 @@ export async function runLoop(params: {
     if (botRow.status === "STOPPED") {
       await exchange.cancelAll(symbol);
       sm.set("STOPPED", "Stopped from UI/API");
+      setBotStatus("STOPPED", sm.getReason());
       await writeRuntime({
         botId,
         status: "STOPPED",
@@ -172,6 +175,7 @@ export async function runLoop(params: {
         const b = (await loadBotAndConfigs(botId)).bot;
         if (b.status === "RUNNING") {
           sm.set("RUNNING", "");
+          setBotStatus("RUNNING");
           fundsAlertSent = false;
           fundsWarnSent = false;
           await writeRuntime({
@@ -187,6 +191,7 @@ export async function runLoop(params: {
         }
         if (b.status === "PAUSED") {
           sm.set("PAUSED", "Paused from UI/API");
+          setBotStatus("PAUSED", sm.getReason());
           await writeRuntime({
             botId,
             status: "PAUSED",
@@ -203,6 +208,7 @@ export async function runLoop(params: {
     if (botRow.status === "PAUSED") {
       await exchange.cancelAll(symbol);
       sm.set("PAUSED", "Paused from UI/API");
+      setBotStatus("PAUSED", sm.getReason());
       await writeRuntime({
         botId,
         status: "PAUSED",
@@ -218,6 +224,7 @@ export async function runLoop(params: {
         const b = (await loadBotAndConfigs(botId)).bot;
         if (b.status === "RUNNING") {
           sm.set("RUNNING", "");
+          setBotStatus("RUNNING");
           fundsAlertSent = false;
           fundsWarnSent = false;
           await writeRuntime({
@@ -233,6 +240,7 @@ export async function runLoop(params: {
         }
         if (b.status === "STOPPED") {
           sm.set("STOPPED", "Stopped while paused");
+          setBotStatus("STOPPED", sm.getReason());
           await writeRuntime({
             botId,
             status: "STOPPED",
@@ -315,6 +323,7 @@ export async function runLoop(params: {
       const mid = priceFollowEnabled ? masterMid : execMid;
 
       if (priceFollowEnabled && Date.now() - mid.ts > masterStaleMs) {
+        setBotStatus("ERROR", "MASTER_FEED_STALE");
         await writeRuntime({
           botId,
           status: "ERROR",
@@ -327,6 +336,7 @@ export async function runLoop(params: {
           openOrdersVol: 0,
           lastVolClientOrderId: null
         });
+        noteTick();
         await sleep(tickMs);
         continue;
       }
@@ -1076,10 +1086,12 @@ export async function runLoop(params: {
         freeBase,
         tradedNotionalToday: volState.tradedNotional
       });
+      setBotStatus("RUNNING");
       errorBackoffMs = 1000;
 
       const elapsed = Date.now() - t0;
       const sleepMs = Math.max(0, tickMs - elapsed);
+      noteTick();
       await sleep(sleepMs);
     } catch (e) {
       const errStr = String(e);
@@ -1108,8 +1120,10 @@ export async function runLoop(params: {
             lastVolClientOrderId: null
           });
         } catch {}
+        setBotStatus("RUNNING");
         const elapsed = Date.now() - t0;
         const sleepMs = Math.max(0, tickMs - elapsed);
+        noteTick();
         await sleep(sleepMs);
         continue;
       }
@@ -1119,6 +1133,7 @@ export async function runLoop(params: {
         await exchange.cancelAll(symbol);
       } catch {}
       sm.set("ERROR", errStr);
+      setBotStatus("ERROR", sm.getReason());
       try {
         await writeRuntime({
           botId,
@@ -1145,12 +1160,14 @@ export async function runLoop(params: {
       );
       const sleepMs = errorBackoffMs;
       errorBackoffMs = Math.min(maxBackoffMs, errorBackoffMs * 2);
+      noteTick();
       await sleep(sleepMs);
       continue;
     }
     } catch (e) {
       const errStr = String(e);
       log.warn({ err: errStr }, "runner setup error");
+      setBotStatus("ERROR", errStr);
       try {
         await writeRuntime({
           botId,

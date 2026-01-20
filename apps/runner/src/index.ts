@@ -5,6 +5,8 @@ import { BotStateMachine } from "./state-machine.js";
 import { runLoop } from "./loop.js";
 import { log } from "./logger.js";
 import { loadBotAndConfigs, loadCexConfig, loadLatestBotAndConfigs } from "./db.js";
+import { createServer } from "http";
+import { getRunnerHealth, setBotStatus } from "./health.js";
 
 function mustEnv(k: string): string {
   const v = process.env[k];
@@ -22,6 +24,30 @@ function sleep(ms: number): Promise<void> {
 }
 
 async function main() {
+  const runnerPort = Number(process.env.RUNNER_PORT || "8091");
+  const server = createServer((req, res) => {
+    const url = req.url || "/";
+    if (url.startsWith("/health")) {
+      res.statusCode = 200;
+      res.setHeader("content-type", "application/json");
+      res.end(JSON.stringify({ ok: true }));
+      return;
+    }
+    if (url.startsWith("/ready")) {
+      const health = getRunnerHealth();
+      const ok = health.lastTickAt > 0;
+      res.statusCode = ok ? 200 : 503;
+      res.setHeader("content-type", "application/json");
+      res.end(JSON.stringify({ ok, ...health }));
+      return;
+    }
+    res.statusCode = 404;
+    res.end("not found");
+  });
+  server.listen(runnerPort, "0.0.0.0", () => {
+    log.info({ port: runnerPort }, "runner health server listening");
+  });
+
   const requestedBotId = optionalEnv("RUNNER_BOT_ID");
   const tickMs = Number(process.env.RUNNER_TICK_MS || "800");
   let backoffMs = 1000;
@@ -29,6 +55,7 @@ async function main() {
 
   while (true) {
     try {
+      setBotStatus("RUNNING");
       const { bot, mm, vol, risk, notificationConfig, priceSupportConfig } = requestedBotId
         ? await loadBotAndConfigs(requestedBotId)
         : await loadLatestBotAndConfigs();
@@ -71,6 +98,7 @@ async function main() {
       } else {
         log.error({ err: errStr }, "runner setup failed");
       }
+      setBotStatus("ERROR", errStr);
     }
 
     await sleep(backoffMs);

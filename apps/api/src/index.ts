@@ -425,6 +425,46 @@ async function sendTelegramWithFallback(text: string) {
 
 app.get("/health", (_req, res) => res.json({ ok: true }));
 
+app.get("/ready", async (_req, res) => {
+  const requiredEnv = ["DATABASE_URL"];
+  const missingEnv = requiredEnv.filter((key) => !process.env[key]);
+  const envOk = missingEnv.length === 0;
+
+  let dbOk = false;
+  let dbError: string | null = null;
+  try {
+    await prisma.$queryRaw`SELECT 1`;
+    dbOk = true;
+  } catch (e) {
+    dbOk = false;
+    dbError = String(e);
+  }
+
+  let migrationsOk = false;
+  let migrationsError: string | null = null;
+  try {
+    const rows = (await prisma.$queryRawUnsafe(
+      "SELECT COUNT(*)::int AS count FROM _prisma_migrations WHERE finished_at IS NULL AND rolled_back_at IS NULL"
+    )) as Array<{ count: number }>;
+    const count = Number(rows?.[0]?.count ?? 0);
+    migrationsOk = Number.isFinite(count) && count === 0;
+    if (!migrationsOk) migrationsError = "pending_or_failed_migrations";
+  } catch (e) {
+    migrationsOk = false;
+    migrationsError = String(e);
+  }
+
+  const ok = envOk && dbOk && migrationsOk;
+  res.status(ok ? 200 : 503).json({
+    ok,
+    checks: {
+      env: { ok: envOk, missing: missingEnv },
+      db: { ok: dbOk, error: dbError },
+      migrations: { ok: migrationsOk, error: migrationsError }
+    }
+  });
+});
+
 app.post("/auth/register", async (req, res) => {
   const allowRegister = (process.env.ALLOW_REGISTER ?? "false").toLowerCase() === "true";
   if (!allowRegister) return res.status(403).json({ error: "registration_disabled" });
