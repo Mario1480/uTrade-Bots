@@ -46,7 +46,7 @@ export default function GlobalDefaultsPage() {
     setError("");
     try {
       const parsed = JSON.parse(value || "{}");
-      const res = await apiPut(`/global-settings/${encodeURIComponent(key)}`, { value: parsed });
+      const res = await apiPut<GlobalSetting>(`/global-settings/${encodeURIComponent(key)}`, { value: parsed });
       setStatus("saved");
       setTimeout(() => setStatus(""), 1200);
       setSettings((prev) => {
