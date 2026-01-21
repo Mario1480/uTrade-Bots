@@ -176,7 +176,7 @@ const PriceSupportConfig = z.object({
   budgetUsdt: z.number(),
   maxOrderUsdt: z.number(),
   cooldownMs: z.number().int(),
-  mode: z.enum(["PASSIVE", "MIXED"])
+  mode: z.enum(["PASSIVE", "MIXED", "ACTIVE"])
 });
 
 const PriceFollowConfig = z.object({
