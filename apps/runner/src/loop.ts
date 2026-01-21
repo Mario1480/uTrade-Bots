@@ -694,16 +694,47 @@ export async function runLoop(params: {
               const bid = mid.bid ?? mid.mid;
               const ask = mid.ask ?? mid.mid;
               const floor = priceSupportConfig.floorPrice;
-              const offset = Math.max(volLastMinBumpAbs, bid * 0.00005);
-              let price = Math.min(floor, bid + offset);
-              if (Number.isFinite(ask) && ask > 0) {
-                price = Math.min(price, ask * (1 - 0.00005));
-              }
-              if (Number.isFinite(price) && price > 0) {
-                const notional = Math.min(priceSupportConfig.maxOrderUsdt, remainingUsdt, freeUsdt);
-                if (notional <= 0) {
-                  log.info({ remainingUsdt, freeUsdt }, "price support skipped: insufficient USDT");
-                } else {
+              const notional = Math.min(priceSupportConfig.maxOrderUsdt, remainingUsdt, freeUsdt);
+              if (notional <= 0) {
+                log.info({ remainingUsdt, freeUsdt }, "price support skipped: insufficient USDT");
+              } else if (priceSupportConfig.mode === "ACTIVE") {
+                const execPrice = Number.isFinite(ask) && ask > 0 ? ask : mid.mid;
+                if (Number.isFinite(execPrice) && execPrice > 0) {
+                  const qty = notional / execPrice;
+                  const order = {
+                    symbol,
+                    side: "buy" as const,
+                    type: "market" as const,
+                    qty,
+                    quoteQty: notional,
+                    clientOrderId: `ps_${botId}_${nowMs}`
+                  };
+                  try {
+                    const placed = await exchange.placeOrder(order);
+                    if (placed?.id && order.clientOrderId) {
+                      await upsertOrderMap({
+                        botId,
+                        symbol,
+                        orderId: placed.id,
+                        clientOrderId: order.clientOrderId
+                      });
+                    }
+                    priceSupportConfig.lastActionAt = nowMs;
+                    await updatePriceSupportConfig(botId, {
+                      lastActionAt: BigInt(nowMs)
+                    });
+                    log.info({ order }, "price support market order submitted");
+                  } catch (e) {
+                    log.warn({ err: String(e), order }, "price support market order failed");
+                  }
+                }
+              } else {
+                const offset = Math.max(volLastMinBumpAbs, bid * 0.00005);
+                let price = Math.min(floor, bid + offset);
+                if (Number.isFinite(ask) && ask > 0) {
+                  price = Math.min(price, ask * (1 - 0.00005));
+                }
+                if (Number.isFinite(price) && price > 0) {
                   const qty = notional / price;
                   const postOnly = priceSupportConfig.mode !== "MIXED";
                   const order = {
