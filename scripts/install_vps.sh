@@ -98,6 +98,19 @@ echo "==> Starting services"
 cd "${APP_DIR}"
 docker compose -f docker-compose.prod.yml up -d --build
 
+echo "==> Enabling Price Support feature flag"
+for _i in {1..30}; do
+  if docker compose -f docker-compose.prod.yml exec -T postgres psql -U mm -d marketmaker -tAc \
+    "select count(*) from \"Workspace\" where name = \$\$${ADMIN_WORKSPACE_NAME}\$\$;" | tr -d " " | grep -q "^[1-9]"; then
+    docker compose -f docker-compose.prod.yml exec -T postgres psql -U mm -d marketmaker -c \
+      "update \"Workspace\"
+       set \"features\" = jsonb_set(coalesce(\"features\", '{}'::jsonb), '{priceSupport}', 'true'::jsonb, true)
+       where name = \$\$${ADMIN_WORKSPACE_NAME}\$\$;"
+    break
+  fi
+  sleep 2
+done
+
 echo "==> Done"
 echo "Web: ${WEB_DOMAIN:+https://${WEB_DOMAIN}}"
 echo "API: ${API_DOMAIN:+https://${API_DOMAIN}/health}"
