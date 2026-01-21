@@ -14,7 +14,7 @@ type PriceSupportConfig = {
   spentUsdt: number;
   maxOrderUsdt: number;
   cooldownMs: number;
-  mode: "PASSIVE" | "MIXED";
+  mode: "PASSIVE" | "MIXED" | "ACTIVE";
   stoppedReason?: string | null;
 };
 
@@ -249,13 +249,14 @@ export default function PriceSupportPage() {
           />
           <SelectField
             label="Mode"
-            hint="PASSIVE = post-only, MIXED = more aggressive"
+            hint="PASSIVE = post-only, MIXED = aggressive limits, ACTIVE = market buys"
             value={config.mode}
             options={[
               { label: "Passive", value: "PASSIVE" },
-              { label: "Mixed", value: "MIXED" }
+              { label: "Mixed", value: "MIXED" },
+              { label: "Active (Market)", value: "ACTIVE" }
             ]}
-            onChange={(v) => setConfig({ ...config, mode: v as "PASSIVE" | "MIXED" })}
+            onChange={(v) => setConfig({ ...config, mode: v as "PASSIVE" | "MIXED" | "ACTIVE" })}
           />
         </div>
 
