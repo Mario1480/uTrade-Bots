@@ -5,5 +5,5 @@ export type OrderType = "limit" | "market";
 
 export type Distribution = "LINEAR" | "VALLEY" | "RANDOM";
 export type VolumeMode = "PASSIVE" | "MIXED" | "ACTIVE";
-export type PriceSupportMode = "PASSIVE" | "MIXED";
+export type PriceSupportMode = "PASSIVE" | "MIXED" | "ACTIVE";
 export type PriceSourceType = "TICKER" | "ORDERBOOK_MID";
