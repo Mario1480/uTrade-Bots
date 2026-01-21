@@ -13,6 +13,8 @@ COPY packages/strategy/package.json packages/strategy/package.json
 RUN npm ci --include=dev --workspaces --include-workspace-root
 
 FROM deps AS build
+ARG NEXT_PUBLIC_API_URL
+ENV NEXT_PUBLIC_API_URL=${NEXT_PUBLIC_API_URL}
 COPY . .
 RUN npm -w apps/web run build
 
