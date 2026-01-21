@@ -707,7 +707,7 @@ export async function runLoop(params: {
                     type: "market" as const,
                     qty,
                     quoteQty: notional,
-                    clientOrderId: `ps_${botId.slice(0, 8)}_${nowMs.toString(36)}`
+                    clientOrderId: `ps${botId.slice(0, 8)}${nowMs.toString(36)}`
                   };
                   try {
                     const placed = await exchange.placeOrder(order);
@@ -744,7 +744,7 @@ export async function runLoop(params: {
                     price,
                     qty,
                     postOnly,
-                    clientOrderId: `ps_${botId.slice(0, 8)}_${nowMs.toString(36)}`
+                    clientOrderId: `ps${botId.slice(0, 8)}${nowMs.toString(36)}`
                   };
                   try {
                     const placed = await exchange.placeOrder(order);
