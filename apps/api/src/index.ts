@@ -9,7 +9,7 @@ import type { Prisma } from "@prisma/client";
 import { prisma } from "@mm/db";
 import { BitmartRestClient, fromExchangeSymbol } from "@mm/exchange";
 import { buildMmQuotes } from "@mm/strategy";
-import { clamp, normalizeSymbol } from "@mm/core";
+import { clamp, normalizeSymbol, signLicenseBody, mapLicenseErrorFromStatus, type LicenseVerifyResponse } from "@mm/core";
 import { z } from "zod";
 import {
   createReauth,
@@ -40,6 +40,11 @@ const origins = (process.env.CORS_ORIGINS ?? "http://localhost:3000")
 const REAUTH_OTP_TTL_MIN = Number(process.env.REAUTH_OTP_TTL_MIN ?? "10");
 const RUNNER_STALE_MS = Number(process.env.RUNNER_STALE_MS ?? "60000");
 const RUNNER_ALERT_COOLDOWN_MS = Number(process.env.RUNNER_ALERT_COOLDOWN_MS ?? "900000");
+const LICENSE_CONFIG_KEY = "license.config";
+const LICENSE_TIMEOUT_MS = Number(process.env.LICENSE_VERIFY_TIMEOUT_MS ?? "8000");
+const LICENSE_BASE_URL = process.env.LICENSE_SERVER_URL ?? "https://license-server.uliquid.vip";
+const LICENSE_SECRET = process.env.LICENSE_SERVER_SECRET ?? "";
+const LICENSE_VERSION = process.env.APP_VERSION ?? undefined;
 
 function isAllowedOrigin(origin?: string | null) {
   if (!origin) return false;
@@ -48,6 +53,68 @@ function isAllowedOrigin(origin?: string | null) {
 
 function hashOtp(code: string) {
   return crypto.createHash("sha256").update(code).digest("hex");
+}
+
+function maskLicenseKey(key?: string | null) {
+  if (!key) return null;
+  const trimmed = key.trim();
+  if (trimmed.length <= 4) return "****";
+  return `****${trimmed.slice(-4)}`;
+}
+
+async function fetchWithTimeout(url: string, init: RequestInit, timeoutMs: number) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    return await fetch(url, { ...init, signal: controller.signal });
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+async function getLicenseConfig() {
+  const row = await prisma.globalSetting.findUnique({ where: { key: LICENSE_CONFIG_KEY } });
+  const raw = (row?.value as Record<string, any>) ?? {};
+  const licenseKey = raw.licenseKey ?? process.env.LICENSE_KEY ?? null;
+  const instanceId = raw.instanceId ?? process.env.LICENSE_INSTANCE_ID ?? null;
+  const source = raw.licenseKey || raw.instanceId ? "db" : licenseKey || instanceId ? "env" : "none";
+  return { licenseKey, instanceId, source };
+}
+
+async function verifyLicenseServer(params: { licenseKey: string; instanceId: string }) {
+  const base = LICENSE_BASE_URL.endsWith("/api/license/verify")
+    ? LICENSE_BASE_URL
+    : `${LICENSE_BASE_URL.replace(/\\/$/, "")}/api/license/verify`;
+
+  const body = JSON.stringify({
+    licenseKey: params.licenseKey,
+    instanceId: params.instanceId,
+    ...(LICENSE_VERSION ? { version: LICENSE_VERSION } : {})
+  });
+
+  const headers: Record<string, string> = {
+    "content-type": "application/json"
+  };
+  if (LICENSE_SECRET) {
+    headers["x-uliquid-signature"] = await signLicenseBody(body, LICENSE_SECRET);
+  }
+
+  try {
+    const resp = await fetchWithTimeout(base, { method: "POST", headers, body }, LICENSE_TIMEOUT_MS);
+    if (!resp.ok) {
+      const code = mapLicenseErrorFromStatus(resp.status);
+      let message: string | undefined;
+      try {
+        const json = (await resp.json()) as { error?: string };
+        if (json?.error) message = json.error;
+      } catch {}
+      return { ok: false as const, error: { code, status: resp.status, message } };
+    }
+    const data = (await resp.json()) as LicenseVerifyResponse;
+    return { ok: true as const, data };
+  } catch (err) {
+    return { ok: false as const, error: { code: "NETWORK_ERROR", message: String(err) } };
+  }
 }
 
 async function getReauthOtpEnabled(): Promise<boolean> {
@@ -2330,6 +2397,116 @@ app.put("/settings/alerts", requireAuth, async (req, res) => {
     }
   });
   res.json(cfg);
+});
+
+app.get("/settings/subscription", requireAuth, async (req, res) => {
+  const user = getUserFromLocals(res);
+  if (!isSuperadmin(user)) return res.status(403).json({ error: "forbidden" });
+
+  const cfg = await getLicenseConfig();
+  if (!cfg.licenseKey || !cfg.instanceId) {
+    return res.json({
+      configured: false,
+      licenseKeyMasked: maskLicenseKey(cfg.licenseKey),
+      instanceId: cfg.instanceId ?? null,
+      status: null,
+      validUntil: null,
+      limits: null,
+      features: null,
+      overrides: null,
+      checkedAt: null,
+      error: null,
+      source: cfg.source
+    });
+  }
+
+  const verified = await verifyLicenseServer({
+    licenseKey: cfg.licenseKey,
+    instanceId: cfg.instanceId
+  });
+
+  if (!verified.ok) {
+    return res.json({
+      configured: true,
+      licenseKeyMasked: maskLicenseKey(cfg.licenseKey),
+      instanceId: cfg.instanceId,
+      status: null,
+      validUntil: null,
+      limits: null,
+      features: null,
+      overrides: null,
+      checkedAt: new Date().toISOString(),
+      error: verified.error,
+      source: cfg.source
+    });
+  }
+
+  return res.json({
+    configured: true,
+    licenseKeyMasked: maskLicenseKey(cfg.licenseKey),
+    instanceId: cfg.instanceId,
+    status: verified.data.status,
+    validUntil: verified.data.validUntil,
+    limits: verified.data.limits,
+    features: verified.data.features,
+    overrides: verified.data.overrides,
+    checkedAt: new Date().toISOString(),
+    error: null,
+    source: cfg.source
+  });
+});
+
+app.put("/settings/subscription", requireAuth, async (req, res) => {
+  const user = getUserFromLocals(res);
+  if (!isSuperadmin(user)) return res.status(403).json({ error: "forbidden" });
+
+  const body = z
+    .object({
+      licenseKey: z.string().trim().min(1),
+      instanceId: z.string().trim().min(1)
+    })
+    .parse(req.body);
+
+  await prisma.globalSetting.upsert({
+    where: { key: LICENSE_CONFIG_KEY },
+    update: { value: { licenseKey: body.licenseKey, instanceId: body.instanceId } },
+    create: { key: LICENSE_CONFIG_KEY, value: { licenseKey: body.licenseKey, instanceId: body.instanceId } }
+  });
+
+  const verified = await verifyLicenseServer({
+    licenseKey: body.licenseKey,
+    instanceId: body.instanceId
+  });
+
+  if (!verified.ok) {
+    return res.json({
+      configured: true,
+      licenseKeyMasked: maskLicenseKey(body.licenseKey),
+      instanceId: body.instanceId,
+      status: null,
+      validUntil: null,
+      limits: null,
+      features: null,
+      overrides: null,
+      checkedAt: new Date().toISOString(),
+      error: verified.error,
+      source: "db"
+    });
+  }
+
+  return res.json({
+    configured: true,
+    licenseKeyMasked: maskLicenseKey(body.licenseKey),
+    instanceId: body.instanceId,
+    status: verified.data.status,
+    validUntil: verified.data.validUntil,
+    limits: verified.data.limits,
+    features: verified.data.features,
+    overrides: verified.data.overrides,
+    checkedAt: new Date().toISOString(),
+    error: null,
+    source: "db"
+  });
 });
 
 app.put("/settings/security", requireAuth, async (req, res) => {

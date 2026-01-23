@@ -6,6 +6,8 @@ import { runLoop } from "./loop.js";
 import { log } from "./logger.js";
 import {
   getRuntimeCounts,
+  getBotCount,
+  getCexCount,
   loadBotAndConfigs,
   loadCexConfig,
   loadRunningBotIds,
@@ -14,6 +16,7 @@ import {
 } from "./db.js";
 import { createServer } from "http";
 import { getRunnerHealth, noteTick, setBotStatus, setRunnerCounts } from "./health.js";
+import { getLicenseState, refreshLicense } from "./license-manager.js";
 
 function optionalEnv(k: string): string | null {
   const v = process.env[k];
@@ -135,6 +138,7 @@ async function startBotLoop(botId: string, tickMs: number) {
 
 async function main() {
   const runnerPort = Number(process.env.RUNNER_PORT || "8091");
+  const licenseState = getLicenseState();
   const server = createServer((req, res) => {
     const url = req.url || "/";
     if (url.startsWith("/health")) {
@@ -158,18 +162,42 @@ async function main() {
     log.info({ port: runnerPort }, "runner health server listening");
   });
 
+  try {
+    const [botCount, cexCount] = await Promise.all([getBotCount(), getCexCount()]);
+    await refreshLicense({ botCount, cexCount });
+  } catch (e) {
+    log.warn({ err: String(e) }, "initial license check failed");
+  }
+
   const requestedBotId = optionalEnv("RUNNER_BOT_ID");
   const tickMs = Number(process.env.RUNNER_TICK_MS || "800");
   const scanMs = Number(process.env.RUNNER_SCAN_MS || "5000");
+  const licenseRefreshMs = Number(process.env.LICENSE_VERIFY_INTERVAL_MIN || "15") * 60_000;
   const botLoops = new Map<string, boolean>();
+  let lastLicenseRefresh = 0;
 
   while (true) {
     try {
+      const now = Date.now();
+      if (now - lastLicenseRefresh >= licenseRefreshMs) {
+        try {
+          const [botCount, cexCount] = await Promise.all([getBotCount(), getCexCount()]);
+          await refreshLicense({ botCount, cexCount });
+        } catch (e) {
+          log.warn({ err: String(e) }, "license refresh failed");
+        }
+        lastLicenseRefresh = now;
+      }
+
       const botIds = requestedBotId ? [requestedBotId] : await loadRunningBotIds();
       if (botIds.length === 0) {
         log.warn("runner idle: no bots found");
       }
       for (const botId of botIds) {
+        if (!licenseState.ok || (licenseState.enforce && !licenseState.enforce.allowed)) {
+          log.warn({ reason: licenseState.enforce?.reason ?? licenseState.lastError?.code }, "license blocked bot start");
+          break;
+        }
         if (!botLoops.has(botId)) {
           botLoops.set(botId, true);
           void startBotLoop(botId, tickMs);

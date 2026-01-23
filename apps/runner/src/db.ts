@@ -263,6 +263,14 @@ export async function getRuntimeCounts() {
   return { botsRunning, botsErrored };
 }
 
+export async function getBotCount() {
+  return prisma.bot.count();
+}
+
+export async function getCexCount() {
+  return prisma.cexConfig.count();
+}
+
 export async function upsertRunnerStatus(params: {
   lastTickAt: Date;
   botsRunning: number;

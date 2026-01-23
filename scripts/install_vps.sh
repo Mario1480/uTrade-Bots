@@ -19,6 +19,11 @@ ADMIN_WORKSPACE_NAME="${ADMIN_WORKSPACE_NAME:-Main}"
 read -r -p "Invite base URL (e.g. https://test.example.com) [blank to skip]: " INVITE_BASE_URL
 read -r -s -p "SMTP password for no-reply@uliquid.vip (leave blank to set later): " SMTP_PASS
 echo ""
+read -r -p "License key (required): " LICENSE_KEY
+read -r -p "License instance id [hostname]: " LICENSE_INSTANCE_ID
+LICENSE_INSTANCE_ID="${LICENSE_INSTANCE_ID:-$(hostname)}"
+read -r -s -p "License server secret (optional): " LICENSE_SERVER_SECRET
+echo ""
 
 echo "==> Installing system dependencies"
 apt update -y
@@ -65,6 +70,14 @@ SMTP_PASS=${SMTP_PASS}
 SMTP_FROM="uLiquid <no-reply@uliquid.vip>"
 SMTP_SECURE=true
 INVITE_BASE_URL=${INVITE_BASE_URL}
+
+LICENSE_KEY=${LICENSE_KEY}
+LICENSE_INSTANCE_ID=${LICENSE_INSTANCE_ID}
+LICENSE_SERVER_URL=https://license-server.uliquid.vip
+LICENSE_SERVER_SECRET=${LICENSE_SERVER_SECRET}
+LICENSE_VERIFY_INTERVAL_MIN=15
+LICENSE_GRACE_MIN=120
+APP_VERSION=
 EOF
 
 # Optional: keep .env in sync for troubleshooting/dev tooling

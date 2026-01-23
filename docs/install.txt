@@ -159,6 +159,15 @@ SMTP_FROM="uLiquid <no-reply@uliquid.vip>"
 SMTP_SECURE=true
 INVITE_BASE_URL=https://test.uliquid.vip
 
+# ===== License =====
+LICENSE_KEY=UUID
+LICENSE_INSTANCE_ID=vps-123
+LICENSE_SERVER_URL=https://license-server.uliquid.vip
+LICENSE_SERVER_SECRET=
+LICENSE_VERIFY_INTERVAL_MIN=15
+LICENSE_GRACE_MIN=120
+APP_VERSION=
+
 Optional: Falls Tools noch .env erwarten, kannst du .env.prod nach .env kopieren:
 cp .env.prod .env
 

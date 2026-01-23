@@ -22,6 +22,8 @@ import { noteTick, setBotStatus } from "./health.js";
 import {
   loadBotAndConfigs,
   loadSystemSettings,
+  getBotCount,
+  getCexCount,
   updateBotFlags,
   updatePriceSupportConfig,
   writeAlert,
@@ -30,6 +32,7 @@ import {
 } from "./db.js";
 import { alert } from "./alerts.js";
 import { syncVolumeFills } from "./fills.js";
+import { ensureLicense } from "./license-manager.js";
 
 function normalizeAsset(a: string): string {
   return a.toUpperCase().split("-")[0];
@@ -138,6 +141,7 @@ export async function runLoop(params: {
   let lastReload = 0;
   const fillsEveryMs = 3_000;
   let lastFillSync = 0;
+  let licenseBlocked = false;
 
   sm.set("RUNNING");
   setBotStatus("RUNNING");
@@ -272,6 +276,45 @@ export async function runLoop(params: {
       systemSettings = await loadSystemSettings();
       volSched = new VolumeScheduler(vol);
       riskEngine = new RiskEngine(risk);
+
+      const [botCount, cexCount] = await Promise.all([getBotCount(), getCexCount()]);
+      const license = await ensureLicense({
+        botCount,
+        cexCount,
+        usePriceSupport: Boolean(priceSupportConfig?.enabled),
+        usePriceFollow: Boolean(botRow.priceFollowEnabled),
+        useAiRecommendations: false
+      });
+      const licenseAllowed = license.ok && (license.enforce?.allowed ?? true);
+      if (!licenseAllowed) {
+        const reason = license.enforce?.reason ?? license.lastError?.code ?? "LICENSE_INVALID";
+        if (!licenseBlocked) {
+          try {
+            await exchange.cancelAll(symbol);
+          } catch {}
+        }
+        licenseBlocked = true;
+        sm.set("PAUSED", reason);
+        setBotStatus("PAUSED", sm.getReason());
+        await writeRuntime({
+          botId,
+          status: "PAUSED",
+          reason: sm.getReason(),
+          openOrders: null,
+          openOrdersMm: null,
+          openOrdersVol: null,
+          lastVolClientOrderId: null
+        });
+      } else if (licenseBlocked) {
+        licenseBlocked = false;
+        sm.set("RUNNING", "");
+        setBotStatus("RUNNING");
+      }
+    }
+
+    if (licenseBlocked) {
+      await sleep(tickMs);
+      continue;
     }
 
     if (!systemSettings.tradingEnabled) {
