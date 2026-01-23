@@ -19,7 +19,7 @@ ADMIN_WORKSPACE_NAME="${ADMIN_WORKSPACE_NAME:-Main}"
 read -r -p "Invite base URL (e.g. https://test.example.com) [blank to skip]: " INVITE_BASE_URL
 read -r -s -p "SMTP password for no-reply@uliquid.vip (leave blank to set later): " SMTP_PASS
 echo ""
-read -r -p "License key (required): " LICENSE_KEY
+read -r -p "License key (optional, can set in UI): " LICENSE_KEY
 read -r -p "License instance id [hostname]: " LICENSE_INSTANCE_ID
 LICENSE_INSTANCE_ID="${LICENSE_INSTANCE_ID:-$(hostname)}"
 read -r -s -p "License server secret (optional): " LICENSE_SERVER_SECRET
