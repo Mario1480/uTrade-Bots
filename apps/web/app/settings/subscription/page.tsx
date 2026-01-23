@@ -150,8 +150,7 @@ export default function SubscriptionPage() {
       <div className="card" style={{ padding: 12, fontSize: 13, marginTop: 12 }}>
         <div style={{ fontWeight: 700, marginBottom: 6 }}>License configuration</div>
         <div style={{ color: "var(--muted)", marginBottom: 10 }}>
-          Note: The runner reads license values from environment variables. Updating here may
-          require a restart to apply to trading.
+          License changes are picked up automatically by the runner during the next verification cycle.
         </div>
         <div style={{ display: "grid", gap: 10, marginBottom: 10 }}>
           <label style={{ display: "grid", gap: 6 }}>
