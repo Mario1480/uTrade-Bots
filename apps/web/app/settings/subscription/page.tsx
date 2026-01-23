@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useEffect, useState } from "react";
-import { ApiError, apiGet, apiPut } from "../../../lib/api";
+import { ApiError, apiDelete, apiGet, apiPut } from "../../../lib/api";
 
 type SubscriptionStatus = {
   configured: boolean;
@@ -77,6 +77,25 @@ export default function SubscriptionPage() {
       setStatus(res);
       setLicenseKey("");
       setMsg("Saved and verified.");
+    } catch (e) {
+      setMsg(errMsg(e));
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function clearLicense() {
+    if (!confirm("Remove the stored license key? This will disable licensed features until a new key is saved.")) {
+      return;
+    }
+    setSaving(true);
+    setMsg(null);
+    try {
+      const res = await apiDelete<SubscriptionStatus>("/settings/subscription");
+      setStatus(res);
+      setLicenseKey("");
+      setInstanceId("");
+      setMsg("License removed.");
     } catch (e) {
       setMsg(errMsg(e));
     } finally {
@@ -190,6 +209,9 @@ export default function SubscriptionPage() {
           </button>
           <button className="btn" onClick={loadStatus} disabled={loading}>
             Refresh status
+          </button>
+          <button className="btn btnStop" onClick={clearLicense} disabled={saving || loading}>
+            Remove license
           </button>
         </div>
         {msg ? <div style={{ marginTop: 10, color: "var(--muted)" }}>{msg}</div> : null}
