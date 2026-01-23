@@ -40,7 +40,7 @@ export default function SubscriptionPage() {
   const [saving, setSaving] = useState(false);
   const [msg, setMsg] = useState<string | null>(null);
   const [licenseKey, setLicenseKey] = useState("");
-  const [instanceId, setInstanceId] = useState("");
+  const [workspaceId, setWorkspaceId] = useState("");
   const [status, setStatus] = useState<SubscriptionStatus | null>(null);
 
   function errMsg(e: any): string {
@@ -54,9 +54,12 @@ export default function SubscriptionPage() {
   async function loadStatus() {
     setLoading(true);
     try {
-      const data = await apiGet<SubscriptionStatus>("/settings/subscription");
+      const [data, me] = await Promise.all([
+        apiGet<SubscriptionStatus>("/settings/subscription"),
+        apiGet<{ workspaceId: string }>("/auth/me")
+      ]);
       setStatus(data);
-      setInstanceId(data.instanceId ?? "");
+      setWorkspaceId(me.workspaceId ?? "");
       setLicenseKey("");
     } catch (e) {
       setMsg(errMsg(e));
@@ -70,8 +73,7 @@ export default function SubscriptionPage() {
     setMsg(null);
     try {
       const payload = {
-        licenseKey: licenseKey.trim(),
-        instanceId: instanceId.trim()
+        licenseKey: licenseKey.trim()
       };
       const res = await apiPut<SubscriptionStatus>("/settings/subscription", payload);
       setStatus(res);
@@ -94,7 +96,7 @@ export default function SubscriptionPage() {
       const res = await apiDelete<SubscriptionStatus>("/settings/subscription");
       setStatus(res);
       setLicenseKey("");
-      setInstanceId("");
+      setWorkspaceId("");
       setMsg("License removed.");
     } catch (e) {
       setMsg(errMsg(e));
@@ -117,7 +119,7 @@ export default function SubscriptionPage() {
           ← Back to dashboard
         </Link>
       </div>
-      <h2 style={{ marginTop: 0 }}>Subscription</h2>
+      <h2 style={{ marginTop: 0 }}>License Management</h2>
       <div className="card" style={{ padding: 12, fontSize: 13 }}>
         <div style={{ fontWeight: 700, marginBottom: 6 }}>License status</div>
         {loading ? (
@@ -194,12 +196,11 @@ export default function SubscriptionPage() {
             />
           </label>
           <label style={{ display: "grid", gap: 6 }}>
-            <span style={{ fontSize: 12, color: "var(--muted)" }}>Instance ID</span>
+            <span style={{ fontSize: 12, color: "var(--muted)" }}>Instance ID (workspace)</span>
             <input
               className="input"
-              placeholder="vps-123"
-              value={instanceId}
-              onChange={(e) => setInstanceId(e.target.value)}
+              value={workspaceId || status?.instanceId || ""}
+              readOnly
             />
           </label>
         </div>
