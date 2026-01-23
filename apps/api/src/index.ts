@@ -2588,6 +2588,33 @@ app.put("/settings/subscription", requireAuth, async (req, res) => {
   });
 });
 
+app.delete("/settings/subscription", requireAuth, async (req, res) => {
+  const user = getUserFromLocals(res);
+  if (!isSuperadmin(user)) return res.status(403).json({ error: "forbidden" });
+
+  await prisma.globalSetting.deleteMany({ where: { key: LICENSE_CONFIG_KEY } });
+  await syncWorkspaceFeatures({
+    priceSupport: false,
+    priceFollow: false,
+    aiRecommendations: false
+  });
+
+  return res.json({
+    configured: false,
+    licenseKeyMasked: null,
+    instanceId: null,
+    status: null,
+    validUntil: null,
+    limits: null,
+    features: null,
+    overrides: null,
+    checkedAt: new Date().toISOString(),
+    error: null,
+    source: "none",
+    usage: await getLicenseUsage()
+  });
+});
+
 app.put("/settings/security", requireAuth, async (req, res) => {
   const data = SecuritySettings.parse(req.body);
   const user = getUserFromLocals(res);
