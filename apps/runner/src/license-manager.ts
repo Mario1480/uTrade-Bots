@@ -45,7 +45,7 @@ async function emitLicenseAlerts(state: LicenseState) {
     lastNotifiedEnforce = enforceReason;
     const limits = state.enforce?.limits;
     const limitsMsg = limits
-      ? `bots=${limits.botsUsed}/${limits.maxBots ?? "∞"}, cex=${limits.cexUsed}/${limits.maxCex ?? "∞"}`
+      ? `bots=${lastCounts.botCount}/${limits.maxBots ?? "∞"}, cex=${lastCounts.cexCount}/${limits.maxCex ?? "∞"}`
       : "limits unavailable";
     await alert("error", "License limit/feature blocked", `Reason: ${enforceReason}. ${limitsMsg}`);
   } else if (!enforceReason) {
