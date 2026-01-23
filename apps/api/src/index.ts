@@ -2472,12 +2472,14 @@ app.get("/settings/subscription", requireAuth, async (req, res) => {
   if (!isSuperadmin(user)) return res.status(403).json({ error: "forbidden" });
 
   const cfg = await getLicenseConfig();
+  const workspaceId = getWorkspaceId(res);
   const usage = await getLicenseUsage();
-  if (!cfg.licenseKey || !cfg.instanceId) {
+  const effectiveInstanceId = cfg.instanceId ?? workspaceId ?? null;
+  if (!cfg.licenseKey || !effectiveInstanceId) {
     return res.json({
       configured: false,
       licenseKeyMasked: maskLicenseKey(cfg.licenseKey),
-      instanceId: cfg.instanceId ?? null,
+      instanceId: effectiveInstanceId,
       status: null,
       validUntil: null,
       limits: null,
@@ -2492,14 +2494,14 @@ app.get("/settings/subscription", requireAuth, async (req, res) => {
 
   const verified = await verifyLicenseServer({
     licenseKey: cfg.licenseKey,
-    instanceId: cfg.instanceId
+    instanceId: effectiveInstanceId
   });
 
   if (!verified.ok) {
     return res.json({
       configured: true,
       licenseKeyMasked: maskLicenseKey(cfg.licenseKey),
-      instanceId: cfg.instanceId,
+      instanceId: effectiveInstanceId,
       status: null,
       validUntil: null,
       limits: null,
@@ -2536,20 +2538,21 @@ app.put("/settings/subscription", requireAuth, async (req, res) => {
 
   const body = z
     .object({
-      licenseKey: z.string().trim().min(1),
-      instanceId: z.string().trim().min(1)
+      licenseKey: z.string().trim().min(1)
     })
     .parse(req.body);
+  const workspaceId = getWorkspaceId(res);
+  if (!workspaceId) return res.status(400).json({ error: "workspace_missing" });
 
   await prisma.globalSetting.upsert({
     where: { key: LICENSE_CONFIG_KEY },
-    update: { value: { licenseKey: body.licenseKey, instanceId: body.instanceId } },
-    create: { key: LICENSE_CONFIG_KEY, value: { licenseKey: body.licenseKey, instanceId: body.instanceId } }
+    update: { value: { licenseKey: body.licenseKey, instanceId: workspaceId } },
+    create: { key: LICENSE_CONFIG_KEY, value: { licenseKey: body.licenseKey, instanceId: workspaceId } }
   });
 
   const verified = await verifyLicenseServer({
     licenseKey: body.licenseKey,
-    instanceId: body.instanceId
+    instanceId: workspaceId
   });
   const usage = await getLicenseUsage();
 
@@ -2557,7 +2560,7 @@ app.put("/settings/subscription", requireAuth, async (req, res) => {
     return res.json({
       configured: true,
       licenseKeyMasked: maskLicenseKey(body.licenseKey),
-      instanceId: body.instanceId,
+      instanceId: workspaceId,
       status: null,
       validUntil: null,
       limits: null,
@@ -2575,7 +2578,7 @@ app.put("/settings/subscription", requireAuth, async (req, res) => {
   return res.json({
     configured: true,
     licenseKeyMasked: maskLicenseKey(body.licenseKey),
-    instanceId: body.instanceId,
+    instanceId: workspaceId,
     status: verified.data.status,
     validUntil: verified.data.validUntil,
     limits: verified.data.limits,
