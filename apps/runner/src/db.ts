@@ -372,6 +372,15 @@ export async function loadSystemSettings() {
   };
 }
 
+export async function loadLicenseConfig() {
+  const row = await prisma.globalSetting.findUnique({ where: { key: "license.config" } });
+  const raw = (row?.value as Record<string, any>) ?? {};
+  return {
+    licenseKey: raw.licenseKey ?? null,
+    instanceId: raw.instanceId ?? null
+  };
+}
+
 export async function updateBotFlags(params: {
   botId: string;
   status?: string;
