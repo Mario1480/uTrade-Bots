@@ -24,7 +24,7 @@ export default function SettingsPage() {
         </Link>
         <Link className="card" href="/settings/subscription" style={{ padding: 12 }}>
           <div style={{ fontWeight: 700, marginBottom: 6 }}>Subscription</div>
-          <div style={{ fontSize: 12, color: "var(--muted)" }}>Plan, usage, billing</div>
+          <div style={{ fontSize: 12, color: "var(--muted)" }}>License Management</div>
         </Link>
         <Link className="card" href="/settings/users" style={{ padding: 12 }}>
           <div style={{ fontWeight: 700, marginBottom: 6 }}>My Account</div>
