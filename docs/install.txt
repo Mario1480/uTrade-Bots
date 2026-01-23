@@ -168,6 +168,8 @@ LICENSE_VERIFY_INTERVAL_MIN=15
 LICENSE_GRACE_MIN=120
 APP_VERSION=
 
+Hinweis: Du kannst den License Key + Instance ID auch im UI unter Settings → Subscription setzen.
+
 Optional: Falls Tools noch .env erwarten, kannst du .env.prod nach .env kopieren:
 cp .env.prod .env
 
