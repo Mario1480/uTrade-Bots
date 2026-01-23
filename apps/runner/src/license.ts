@@ -56,7 +56,7 @@ export async function verifyLicenseOnce(params: {
   const base = envOptional("LICENSE_SERVER_URL") ?? DEFAULT_BASE_URL;
   const url = base.endsWith("/api/license/verify")
     ? base
-    : `${base.replace(/\\/$/, "")}/api/license/verify`;
+    : `${base.replace(/\/$/, "")}/api/license/verify`;
   const secret = envOptional("LICENSE_SERVER_SECRET") ?? "";
   const timeoutMs = numEnv("LICENSE_VERIFY_TIMEOUT_MS", DEFAULT_TIMEOUT_MS);
 
