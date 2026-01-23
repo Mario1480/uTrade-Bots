@@ -8,6 +8,8 @@ import {
   enforceLicense,
   type LicenseEnforcementResult
 } from "@mm/core";
+import { log } from "./logger.js";
+import { loadLicenseConfig } from "./db.js";
 
 export type LicenseState = {
   ok: boolean;
@@ -23,14 +25,6 @@ const DEFAULT_BASE_URL = "https://license-server.uliquid.vip";
 const DEFAULT_VERIFY_MIN = 15;
 const DEFAULT_GRACE_MIN = 120;
 const DEFAULT_TIMEOUT_MS = 8000;
-
-function envRequired(key: string): string {
-  const v = process.env[key];
-  if (!v || v.trim().length === 0) {
-    throw new Error(`Missing env: ${key}`);
-  }
-  return v.trim();
-}
 
 function envOptional(key: string): string | null {
   const v = process.env[key];
@@ -115,8 +109,6 @@ export function createLicenseManager() {
     grace: false
   };
 
-  const licenseKey = envRequired("LICENSE_KEY");
-  const instanceId = envRequired("LICENSE_INSTANCE_ID");
   const version = envOptional("APP_VERSION");
   const verifyMin = numEnv("LICENSE_VERIFY_INTERVAL_MIN", DEFAULT_VERIFY_MIN);
   const graceMin = numEnv("LICENSE_GRACE_MIN", DEFAULT_GRACE_MIN);
@@ -126,6 +118,17 @@ export function createLicenseManager() {
     state.lastCheckAt = now;
 
     try {
+      const cfg = await loadLicenseConfig();
+      const licenseKey = cfg.licenseKey ?? envOptional("LICENSE_KEY");
+      const instanceId = cfg.instanceId ?? envOptional("LICENSE_INSTANCE_ID");
+      if (!licenseKey || !instanceId) {
+        const err: LicenseError = {
+          code: "INVALID_REQUEST",
+          message: "Missing licenseKey or instanceId"
+        };
+        throw err;
+      }
+
       const response = await verifyLicenseOnce({ licenseKey, instanceId, version });
       state.lastResponse = response;
       state.lastError = null;
