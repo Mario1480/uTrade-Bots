@@ -14,6 +14,26 @@ type CexConfig = {
   updatedAt?: string;
 };
 
+type SubscriptionStatus = {
+  limits: {
+    includedBots: number;
+    addOnBots: number;
+    includedCex: number;
+    addOnCex: number;
+  } | null;
+  overrides: {
+    manual: boolean;
+    unlimited: boolean;
+    note?: string;
+  } | null;
+  usage?: {
+    bots: number;
+    cex: number;
+  } | null;
+  status: string | null;
+  configured: boolean;
+};
+
 const EXCHANGES = [{ label: "Bitmart", value: "bitmart" }];
 const DEFAULT_EXCHANGE = "bitmart";
 
@@ -34,6 +54,7 @@ export default function ExchangeAccountsPage() {
   });
   const [status, setStatus] = useState<string>("");
   const [error, setError] = useState<string>("");
+  const [licenseStatus, setLicenseStatus] = useState<SubscriptionStatus | null>(null);
 
   function errMsg(e: any): string {
     if (e instanceof ApiError) return `${e.message} (HTTP ${e.status})`;
@@ -62,6 +83,19 @@ export default function ExchangeAccountsPage() {
   async function loadList() {
     const list = await apiGet<CexConfig[]>("/settings/cex");
     setItems(list);
+  }
+
+  async function loadLicenseStatus() {
+    try {
+      const data = await apiGet<SubscriptionStatus>("/settings/subscription");
+      setLicenseStatus(data);
+    } catch (e) {
+      if (e instanceof ApiError && e.status === 403) {
+        setLicenseStatus(null);
+        return;
+      }
+      setLicenseStatus(null);
+    }
   }
 
   async function loadSelected(nextExchange: string) {
@@ -112,6 +146,10 @@ export default function ExchangeAccountsPage() {
     }
     load();
   }, [exchange]);
+
+  useEffect(() => {
+    loadLicenseStatus();
+  }, []);
 
   async function unlock() {
     requireReauth(async () => {
@@ -214,6 +252,13 @@ export default function ExchangeAccountsPage() {
   const filtered = onlyConfigured
     ? items.filter((cfg) => Boolean(cfg.apiKey) && Boolean(cfg.apiSecret))
     : items;
+  const maxCex = licenseStatus?.overrides?.unlimited
+    ? null
+    : licenseStatus?.limits
+      ? licenseStatus.limits.includedCex + licenseStatus.limits.addOnCex
+      : null;
+  const usedCex = licenseStatus?.usage?.cex ?? items.length;
+  const limitReached = typeof maxCex === "number" ? usedCex >= maxCex : false;
 
   return (
     <div style={{ maxWidth: 980 }}>
@@ -234,10 +279,20 @@ export default function ExchangeAccountsPage() {
         <div>
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10 }}>
             <h3 style={{ margin: 0 }}>Accounts</h3>
-            <button className={`btn btnPrimary ${isReadOnly ? "btnDisabled" : ""}`} onClick={addNew} disabled={isReadOnly}>
+            <button
+              className={`btn btnPrimary ${isReadOnly || limitReached ? "btnDisabled" : ""}`}
+              onClick={addNew}
+              disabled={isReadOnly || limitReached}
+              title={limitReached ? "CEX limit reached for your subscription." : undefined}
+            >
               Add CEX
             </button>
           </div>
+          {limitReached ? (
+            <div style={{ fontSize: 12, color: "var(--warn)", marginBottom: 8 }}>
+              CEX limit reached for your subscription.
+            </div>
+          ) : null}
           <label style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 10, fontSize: 13 }}>
             <input
               type="checkbox"

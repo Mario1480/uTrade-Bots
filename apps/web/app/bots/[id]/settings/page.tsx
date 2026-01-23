@@ -483,6 +483,7 @@ export default function BotPage() {
 
   if (!bot || !mm || !vol || !risk || !notify) return <div>Loading…</div>;
   const showPriceSupport = Boolean(me?.features?.priceSupport);
+  const showPriceFollow = Boolean(me?.features?.priceFollow);
 
   return (
     <div>
@@ -895,7 +896,7 @@ export default function BotPage() {
         />
       </div>
 
-      {priceFollow ? (
+      {priceFollow && showPriceFollow ? (
         <AccordionSection title="Price Follow">
           <div style={{ fontSize: 12, color: "var(--muted)", marginBottom: 10 }}>
             Use a master price feed for pricing while executing orders on the bot exchange.

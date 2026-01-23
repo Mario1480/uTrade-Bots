@@ -26,6 +26,10 @@ type SubscriptionStatus = {
     unlimited: boolean;
     note?: string;
   } | null;
+  usage?: {
+    bots: number;
+    cex: number;
+  } | null;
   checkedAt: string | null;
   error: { code: string; status?: number; message?: string } | null;
   source: "db" | "env" | "none";
@@ -125,6 +129,14 @@ export default function SubscriptionPage() {
               <div>
                 <b>Limits:</b> bots {status.limits.includedBots + status.limits.addOnBots}
                 {", "}cex {status.limits.includedCex + status.limits.addOnCex}
+              </div>
+            ) : null}
+            {status.usage ? (
+              <div>
+                <b>Usage:</b> bots {status.usage.bots}
+                {status.limits ? ` / ${status.limits.includedBots + status.limits.addOnBots}` : ""}
+                {", "}cex {status.usage.cex}
+                {status.limits ? ` / ${status.limits.includedCex + status.limits.addOnCex}` : ""}
               </div>
             ) : null}
             {status.features ? (

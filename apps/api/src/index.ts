@@ -45,6 +45,7 @@ const LICENSE_TIMEOUT_MS = Number(process.env.LICENSE_VERIFY_TIMEOUT_MS ?? "8000
 const LICENSE_BASE_URL = process.env.LICENSE_SERVER_URL ?? "https://license-server.uliquid.vip";
 const LICENSE_SECRET = process.env.LICENSE_SERVER_SECRET ?? "";
 const LICENSE_VERSION = process.env.APP_VERSION ?? undefined;
+const LICENSE_FEATURE_KEYS = ["priceSupport", "priceFollow", "aiRecommendations"];
 
 function isAllowedOrigin(origin?: string | null) {
   if (!origin) return false;
@@ -60,6 +61,17 @@ function maskLicenseKey(key?: string | null) {
   const trimmed = key.trim();
   if (trimmed.length <= 4) return "****";
   return `****${trimmed.slice(-4)}`;
+}
+
+function resolveLicenseFeatures(data: LicenseVerifyResponse) {
+  if (data.status !== "ACTIVE") {
+    return {
+      priceSupport: false,
+      priceFollow: false,
+      aiRecommendations: false
+    };
+  }
+  return data.features;
 }
 
 async function fetchWithTimeout(url: string, init: RequestInit, timeoutMs: number) {
@@ -79,6 +91,34 @@ async function getLicenseConfig() {
   const instanceId = raw.instanceId ?? process.env.LICENSE_INSTANCE_ID ?? null;
   const source = raw.licenseKey || raw.instanceId ? "db" : licenseKey || instanceId ? "env" : "none";
   return { licenseKey, instanceId, source };
+}
+
+async function getLicenseUsage() {
+  const [bots, cex] = await Promise.all([
+    prisma.bot.count(),
+    prisma.cexConfig.count()
+  ]);
+  return { bots, cex };
+}
+
+async function syncWorkspaceFeatures(features: { priceSupport: boolean; priceFollow: boolean; aiRecommendations: boolean }) {
+  const workspaces = await prisma.workspace.findMany({
+    select: { id: true, features: true }
+  });
+
+  await Promise.all(
+    workspaces.map((ws) => {
+      const current = (ws.features as Record<string, any>) ?? {};
+      const next = { ...current };
+      for (const key of LICENSE_FEATURE_KEYS) {
+        next[key] = features[key as keyof typeof features];
+      }
+      return prisma.workspace.update({
+        where: { id: ws.id },
+        data: { features: next }
+      });
+    })
+  );
 }
 
 async function verifyLicenseServer(params: { licenseKey: string; instanceId: string }) {
@@ -2365,6 +2405,34 @@ app.post("/bots/:id/vol/stop", requireAuth, requirePermission("bots.start_pause_
 
 app.put("/settings/cex", requireAuth, requirePermission("exchange_keys.edit"), requireReauth, async (req, res) => {
   const data = CexConfig.parse(req.body);
+  const existing = await prisma.cexConfig.findUnique({ where: { exchange: data.exchange } });
+
+  if (!existing) {
+    const cfg = await getLicenseConfig();
+    if (!cfg.licenseKey || !cfg.instanceId) {
+      return res.status(403).json({ error: "license_missing" });
+    }
+    const verified = await verifyLicenseServer({
+      licenseKey: cfg.licenseKey,
+      instanceId: cfg.instanceId
+    });
+    if (!verified.ok) {
+      return res.status(403).json({ error: "license_unverified", details: verified.error });
+    }
+    if (verified.data.status !== "ACTIVE") {
+      return res.status(403).json({ error: "license_inactive", status: verified.data.status });
+    }
+    const limits = verified.data.limits;
+    const overrides = verified.data.overrides;
+    if (!overrides?.unlimited) {
+      const maxCex = (limits?.includedCex ?? 0) + (limits?.addOnCex ?? 0);
+      const used = await prisma.cexConfig.count();
+      if (used >= maxCex) {
+        return res.status(409).json({ error: "cex_limit_reached", limit: maxCex, used });
+      }
+    }
+  }
+
   const cfg = await prisma.cexConfig.upsert({
     where: { exchange: data.exchange },
     update: {
@@ -2404,6 +2472,7 @@ app.get("/settings/subscription", requireAuth, async (req, res) => {
   if (!isSuperadmin(user)) return res.status(403).json({ error: "forbidden" });
 
   const cfg = await getLicenseConfig();
+  const usage = await getLicenseUsage();
   if (!cfg.licenseKey || !cfg.instanceId) {
     return res.json({
       configured: false,
@@ -2416,7 +2485,8 @@ app.get("/settings/subscription", requireAuth, async (req, res) => {
       overrides: null,
       checkedAt: null,
       error: null,
-      source: cfg.source
+      source: cfg.source,
+      usage
     });
   }
 
@@ -2437,9 +2507,12 @@ app.get("/settings/subscription", requireAuth, async (req, res) => {
       overrides: null,
       checkedAt: new Date().toISOString(),
       error: verified.error,
-      source: cfg.source
+      source: cfg.source,
+      usage
     });
   }
+
+  await syncWorkspaceFeatures(resolveLicenseFeatures(verified.data));
 
   return res.json({
     configured: true,
@@ -2452,7 +2525,8 @@ app.get("/settings/subscription", requireAuth, async (req, res) => {
     overrides: verified.data.overrides,
     checkedAt: new Date().toISOString(),
     error: null,
-    source: cfg.source
+    source: cfg.source,
+    usage
   });
 });
 
@@ -2477,6 +2551,7 @@ app.put("/settings/subscription", requireAuth, async (req, res) => {
     licenseKey: body.licenseKey,
     instanceId: body.instanceId
   });
+  const usage = await getLicenseUsage();
 
   if (!verified.ok) {
     return res.json({
@@ -2490,9 +2565,12 @@ app.put("/settings/subscription", requireAuth, async (req, res) => {
       overrides: null,
       checkedAt: new Date().toISOString(),
       error: verified.error,
-      source: "db"
+      source: "db",
+      usage
     });
   }
+
+  await syncWorkspaceFeatures(resolveLicenseFeatures(verified.data));
 
   return res.json({
     configured: true,
@@ -2505,7 +2583,8 @@ app.put("/settings/subscription", requireAuth, async (req, res) => {
     overrides: verified.data.overrides,
     checkedAt: new Date().toISOString(),
     error: null,
-    source: "db"
+    source: "db",
+    usage
   });
 });
 
