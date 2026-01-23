@@ -84,7 +84,7 @@ async function getLicenseConfig() {
 async function verifyLicenseServer(params: { licenseKey: string; instanceId: string }) {
   const base = LICENSE_BASE_URL.endsWith("/api/license/verify")
     ? LICENSE_BASE_URL
-    : `${LICENSE_BASE_URL.replace(/\\/$/, "")}/api/license/verify`;
+    : `${LICENSE_BASE_URL.replace(/\/$/, "")}/api/license/verify`;
 
   const body = JSON.stringify({
     licenseKey: params.licenseKey,
