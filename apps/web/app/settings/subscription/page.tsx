@@ -195,14 +195,12 @@ export default function SubscriptionPage() {
               onChange={(e) => setLicenseKey(e.target.value)}
             />
           </label>
-          <label style={{ display: "grid", gap: 6 }}>
-            <span style={{ fontSize: 12, color: "var(--muted)" }}>Instance ID (workspace)</span>
-            <input
-              className="input"
-              value={workspaceId || status?.instanceId || ""}
-              readOnly
-            />
-          </label>
+          <div style={{ fontSize: 12, color: "var(--muted)" }}>
+            Instance ID is automatically set to your workspace ID:
+            <span style={{ marginLeft: 6, fontWeight: 600 }}>
+              {workspaceId || status?.instanceId || "—"}
+            </span>
+          </div>
         </div>
         <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 10 }}>
           <button className="btn btnPrimary" onClick={save} disabled={saving}>
