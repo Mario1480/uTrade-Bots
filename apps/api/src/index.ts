@@ -2041,8 +2041,8 @@ app.post("/bots", requireAuth, requirePermission("bots.create"), async (req, res
       symbol: canonicalSymbol,
       exchange: data.exchange,
       status: "STOPPED",
-      mmEnabled: true,
-      volEnabled: true,
+      mmEnabled: false,
+      volEnabled: false,
       mmConfig: {
         create: {
           spreadPct: 0.004,
