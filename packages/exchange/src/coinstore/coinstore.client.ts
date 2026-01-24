@@ -77,7 +77,8 @@ export class CoinstoreRestClient {
 
     const headers: Record<string, string> = {
       "Content-Type": "application/json",
-      Accept: "application/json",
+      Accept: "*/*",
+      Connection: "keep-alive",
       "User-Agent": "Mozilla/5.0 (compatible; uLiquidBot/1.0)"
     };
 
