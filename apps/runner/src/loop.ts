@@ -105,9 +105,17 @@ export async function runLoop(params: {
     const cached = priceFeedCache.get(key);
     const now = Date.now();
     if (cached && now - cached.ts < priceFeedTtlMs) return cached.mid;
-    const mid = await getMarketDataClient(exchangeKey).getMidPrice(symbolKey);
-    priceFeedCache.set(key, { mid, ts: now });
-    return mid;
+    try {
+      const mid = await getMarketDataClient(exchangeKey).getMidPrice(symbolKey);
+      priceFeedCache.set(key, { mid, ts: now });
+      return mid;
+    } catch (e) {
+      if (cached && now - cached.ts < priceFeedTtlMs * 6) {
+        log.warn({ err: String(e) }, "market price fetch failed, using cache");
+        return cached.mid;
+      }
+      throw e;
+    }
   }
   let volSched = new VolumeScheduler(vol);
   let riskEngine = new RiskEngine(risk);
@@ -421,7 +429,10 @@ export async function runLoop(params: {
           log.warn({ err: String(e) }, "open orders fetch failed, using cache");
           open = lastOpenOrders;
         } else {
-          throw e;
+          log.warn({ err: String(e) }, "open orders fetch failed, using empty");
+          open = [];
+          lastOpenOrders = open;
+          lastOpenOrdersAt = t0;
         }
       }
       const midValid =
