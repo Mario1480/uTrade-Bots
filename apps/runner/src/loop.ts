@@ -85,7 +85,7 @@ export async function runLoop(params: {
       const baseUrl = process.env.BITMART_BASE_URL || "https://api-cloud.bitmart.com";
       rest = new BitmartRestClient(baseUrl, "", "", "");
     } else if (key === "coinstore") {
-      const baseUrl = process.env.COINSTORE_BASE_URL || "https://api.coinstore.com/api";
+      const baseUrl = process.env.COINSTORE_BASE_URL || "https://api.coinstore.com";
       rest = new CoinstoreRestClient(baseUrl, "", "");
     } else {
       throw new Error(`Unsupported exchange: ${exchangeKey}`);
