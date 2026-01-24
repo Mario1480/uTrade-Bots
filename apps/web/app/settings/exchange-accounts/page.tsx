@@ -34,7 +34,10 @@ type SubscriptionStatus = {
   configured: boolean;
 };
 
-const EXCHANGES = [{ label: "Bitmart", value: "bitmart" }];
+const EXCHANGES = [
+  { label: "Bitmart", value: "bitmart" },
+  { label: "Coinstore", value: "coinstore" }
+];
 const DEFAULT_EXCHANGE = "bitmart";
 
 export default function ExchangeAccountsPage() {
@@ -478,6 +481,7 @@ function isConfigured(cfg: CexConfig) {
 function exchangeIcon(exchange: string) {
   const key = exchange.toLowerCase();
   if (key === "bitmart") return "🟡";
+  if (key === "coinstore") return "🟦";
   return "💱";
 }
 

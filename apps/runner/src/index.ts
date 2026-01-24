@@ -1,5 +1,5 @@
 import "dotenv/config";
-import { BitmartRestClient } from "@mm/exchange";
+import { BitmartRestClient, CoinstoreRestClient } from "@mm/exchange";
 import type { Exchange } from "@mm/exchange";
 import { BotStateMachine } from "./state-machine.js";
 import { runLoop } from "./loop.js";
@@ -27,6 +27,13 @@ function sleep(ms: number): Promise<void> {
   return new Promise((r) => setTimeout(r, ms));
 }
 
+function getExchangeBaseUrl(exchange: string): string | null {
+  const key = exchange.toLowerCase();
+  if (key === "bitmart") return process.env.BITMART_BASE_URL || "https://api-cloud.bitmart.com";
+  if (key === "coinstore") return process.env.COINSTORE_BASE_URL || "https://api.coinstore.com/api";
+  return null;
+}
+
 async function startBotLoop(botId: string, tickMs: number) {
   let backoffMs = 1000;
   const maxBackoffMs = 30_000;
@@ -37,7 +44,8 @@ async function startBotLoop(botId: string, tickMs: number) {
       const { bot, mm, vol, risk, notificationConfig, priceSupportConfig } = await loadBotAndConfigs(botId);
       const symbol = bot.symbol;
 
-      if (bot.exchange !== "bitmart") {
+      const exchangeKey = bot.exchange.toLowerCase();
+      if (exchangeKey !== "bitmart" && exchangeKey !== "coinstore") {
         const reason = `UNSUPPORTED_EXCHANGE:${bot.exchange}`;
         await writeRuntime({
           botId,
@@ -51,9 +59,9 @@ async function startBotLoop(botId: string, tickMs: number) {
         throw new Error(reason);
       }
 
-      const baseUrl = process.env.BITMART_BASE_URL;
+      const baseUrl = getExchangeBaseUrl(exchangeKey);
       if (!baseUrl) {
-        const reason = "MISSING_ENV:BITMART_BASE_URL";
+        const reason = `MISSING_ENV:${exchangeKey.toUpperCase()}_BASE_URL`;
         await writeRuntime({
           botId,
           status: "ERROR",
@@ -63,16 +71,14 @@ async function startBotLoop(botId: string, tickMs: number) {
           openOrdersVol: null,
           lastVolClientOrderId: null
         });
-        throw new Error("Missing env: BITMART_BASE_URL");
+        throw new Error(`Missing env: ${exchangeKey.toUpperCase()}_BASE_URL`);
       }
 
       const cex = await loadCexConfig(bot.exchange);
-      const rest = new BitmartRestClient(
-        baseUrl,
-        cex.apiKey,
-        cex.apiSecret,
-        cex.apiMemo ?? ""
-      );
+      const rest =
+        exchangeKey === "bitmart"
+          ? new BitmartRestClient(baseUrl, cex.apiKey, cex.apiSecret, cex.apiMemo ?? "")
+          : new CoinstoreRestClient(baseUrl, cex.apiKey, cex.apiSecret);
 
       const exchange: Exchange = {
         getMidPrice: (s) => rest.getTicker(s),

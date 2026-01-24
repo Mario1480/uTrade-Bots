@@ -130,6 +130,7 @@ export default function NewBotPage() {
             <span style={{ fontSize: 12, color: "var(--muted)" }}>Exchange</span>
             <select className="input" value={exchange} onChange={(e) => setExchange(e.target.value)}>
               <option value="bitmart">Bitmart</option>
+              <option value="coinstore">Coinstore</option>
             </select>
           </label>
 

@@ -160,7 +160,7 @@ export default function BotPage() {
   const canEditConfig = Boolean(me?.permissions?.["bots.edit_config"] || me?.isSuperadmin) && !isReadOnly;
   const canSavePriceFollow = ready && dirtyPriceFollow && saving !== "saving..." && !isReadOnly;
   const exchangeOptions = useMemo(() => {
-    const list = [bot?.exchange, priceFollow?.priceSourceExchange, "bitmart"]
+    const list = [bot?.exchange, priceFollow?.priceSourceExchange, "bitmart", "coinstore"]
       .filter(Boolean)
       .map((v) => String(v));
     return Array.from(new Set(list));

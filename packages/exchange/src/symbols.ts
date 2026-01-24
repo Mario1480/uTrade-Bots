@@ -45,6 +45,16 @@ export const MexcSymbolAdapter: SymbolAdapter = {
   }
 };
 
+export const CoinstoreSymbolAdapter: SymbolAdapter = {
+  toExchangeSymbol(canonical: string): string {
+    const { base, quote } = splitSymbol(canonical);
+    return `${base}${quote}`;
+  },
+  fromExchangeSymbol(exchangeSymbol: string): string {
+    return normalizeSymbol(exchangeSymbol);
+  }
+};
+
 export function getSymbolAdapter(exchange: string): SymbolAdapter {
   const key = exchange.toLowerCase();
   switch (key) {
@@ -56,6 +66,8 @@ export function getSymbolAdapter(exchange: string): SymbolAdapter {
       return KucoinSymbolAdapter;
     case "mexc":
       return MexcSymbolAdapter;
+    case "coinstore":
+      return CoinstoreSymbolAdapter;
     default:
       return {
         toExchangeSymbol: (canonical) => normalizeSymbol(canonical).replace("/", "_"),

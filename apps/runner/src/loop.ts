@@ -10,7 +10,7 @@ import type {
   Quote
 } from "@mm/core";
 import { splitSymbol } from "@mm/core";
-import { BitmartRestClient } from "@mm/exchange";
+import { BitmartRestClient, CoinstoreRestClient } from "@mm/exchange";
 import { buildMmQuotes, VolumeScheduler } from "@mm/strategy";
 import type { VolumeState as VolState } from "@mm/strategy";
 import { RiskEngine } from "@mm/risk";
@@ -80,14 +80,16 @@ export async function runLoop(params: {
     const key = exchangeKey.toLowerCase();
     const cached = marketDataClients.get(key);
     if (cached) return cached;
-    if (key !== "bitmart") {
+    let rest: BitmartRestClient | CoinstoreRestClient;
+    if (key === "bitmart") {
+      const baseUrl = process.env.BITMART_BASE_URL || "https://api-cloud.bitmart.com";
+      rest = new BitmartRestClient(baseUrl, "", "", "");
+    } else if (key === "coinstore") {
+      const baseUrl = process.env.COINSTORE_BASE_URL || "https://api.coinstore.com/api";
+      rest = new CoinstoreRestClient(baseUrl, "", "");
+    } else {
       throw new Error(`Unsupported exchange: ${exchangeKey}`);
     }
-    const baseUrl = process.env.BITMART_BASE_URL;
-    if (!baseUrl) {
-      throw new Error("Missing env: BITMART_BASE_URL");
-    }
-    const rest = new BitmartRestClient(baseUrl, "", "", "");
     const client: ExchangePublic = {
       getMidPrice: (s) => rest.getTicker(s)
     };

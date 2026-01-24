@@ -7,7 +7,7 @@ import rateLimit from "express-rate-limit";
 import cookieParser from "cookie-parser";
 import type { Prisma } from "@prisma/client";
 import { prisma } from "@mm/db";
-import { BitmartRestClient, fromExchangeSymbol } from "@mm/exchange";
+import { BitmartRestClient, CoinstoreRestClient, fromExchangeSymbol } from "@mm/exchange";
 import { buildMmQuotes } from "@mm/strategy";
 import { clamp, normalizeSymbol, signLicenseBody, mapLicenseErrorFromStatus, type LicenseVerifyResponse } from "@mm/core";
 import { z } from "zod";
@@ -46,6 +46,36 @@ const LICENSE_BASE_URL = process.env.LICENSE_SERVER_URL ?? "https://license-serv
 const LICENSE_SECRET = process.env.LICENSE_SERVER_SECRET ?? "";
 const LICENSE_VERSION = process.env.APP_VERSION ?? undefined;
 const LICENSE_FEATURE_KEYS = ["priceSupport", "priceFollow", "aiRecommendations"];
+
+function getExchangeBaseUrl(exchange: string): string | null {
+  const key = exchange.toLowerCase();
+  if (key === "bitmart") return process.env.BITMART_BASE_URL || "https://api-cloud.bitmart.com";
+  if (key === "coinstore") return process.env.COINSTORE_BASE_URL || "https://api.coinstore.com/api";
+  return null;
+}
+
+function createPrivateRestClient(exchange: string, cex: { apiKey?: string | null; apiSecret?: string | null; apiMemo?: string | null }) {
+  const key = exchange.toLowerCase();
+  const baseUrl = getExchangeBaseUrl(key);
+  if (!baseUrl) throw new Error("unsupported_exchange");
+  if (!cex?.apiKey || !cex?.apiSecret) throw new Error("cex_config_missing");
+  if (key === "bitmart") {
+    return new BitmartRestClient(baseUrl, cex.apiKey, cex.apiSecret, cex.apiMemo ?? "");
+  }
+  if (key === "coinstore") {
+    return new CoinstoreRestClient(baseUrl, cex.apiKey, cex.apiSecret);
+  }
+  throw new Error("unsupported_exchange");
+}
+
+function createPublicRestClient(exchange: string) {
+  const key = exchange.toLowerCase();
+  const baseUrl = getExchangeBaseUrl(key);
+  if (!baseUrl) throw new Error("unsupported_exchange");
+  if (key === "bitmart") return new BitmartRestClient(baseUrl, "", "", "");
+  if (key === "coinstore") return new CoinstoreRestClient(baseUrl, "", "");
+  throw new Error("unsupported_exchange");
+}
 
 function isAllowedOrigin(origin?: string | null) {
   if (!origin) return false;
@@ -1508,17 +1538,15 @@ app.get("/bots/:id/open-orders", requireAuth, requirePermission("bots.view"), as
   const workspaceId = getWorkspaceId(res);
   const bot = await prisma.bot.findFirst({ where: { id: req.params.id, workspaceId } });
   if (!bot) return res.status(404).json({ error: "not_found" });
-  if (bot.exchange.toLowerCase() !== "bitmart") {
+  const exchangeKey = bot.exchange.toLowerCase();
+  if (exchangeKey !== "bitmart" && exchangeKey !== "coinstore") {
     return res.status(400).json({ error: "unsupported_exchange" });
   }
 
   const cex = await prisma.cexConfig.findUnique({ where: { exchange: bot.exchange } });
-  if (!cex?.apiKey || !cex?.apiSecret) {
-    return res.status(400).json({ error: "cex_config_missing" });
-  }
+  if (!cex?.apiKey || !cex?.apiSecret) return res.status(400).json({ error: "cex_config_missing" });
 
-  const baseUrl = process.env.BITMART_BASE_URL || "https://api-cloud.bitmart.com";
-  const rest = new BitmartRestClient(baseUrl, cex.apiKey, cex.apiSecret, cex.apiMemo ?? "");
+  const rest = createPrivateRestClient(exchangeKey, cex);
   const orders = await rest.getOpenOrders(bot.symbol);
 
   const normalized = orders.map((o) => ({
@@ -1551,7 +1579,8 @@ app.post("/bots/:id/manual/limit", requireAuth, requirePermission("trading.manua
   const user = getUserFromLocals(res);
   const bot = await prisma.bot.findFirst({ where: { id: req.params.id, workspaceId } });
   if (!bot) return res.status(404).json({ error: "not_found" });
-  if (bot.exchange.toLowerCase() !== "bitmart") {
+  const exchangeKey = bot.exchange.toLowerCase();
+  if (exchangeKey !== "bitmart" && exchangeKey !== "coinstore") {
     return res.status(400).json({ error: "unsupported_exchange" });
   }
 
@@ -1566,14 +1595,11 @@ app.post("/bots/:id/manual/limit", requireAuth, requirePermission("trading.manua
   }
 
   const cex = await prisma.cexConfig.findUnique({ where: { exchange: bot.exchange } });
-  if (!cex?.apiKey || !cex?.apiSecret) {
-    return res.status(400).json({ error: "cex_config_missing" });
-  }
+  if (!cex?.apiKey || !cex?.apiSecret) return res.status(400).json({ error: "cex_config_missing" });
 
   const tag = data.clientTag ? `_${data.clientTag.replace(/[^a-zA-Z0-9_-]/g, "").slice(0, 12)}` : "";
   const clientOrderId = `man_${bot.id}_${Date.now().toString(36)}${tag}`;
-  const baseUrl = process.env.BITMART_BASE_URL || "https://api-cloud.bitmart.com";
-  const rest = new BitmartRestClient(baseUrl, cex.apiKey, cex.apiSecret, cex.apiMemo ?? "");
+  const rest = createPrivateRestClient(exchangeKey, cex);
 
   try {
     const order = await rest.placeOrder({
@@ -1644,7 +1670,8 @@ app.post("/bots/:id/manual/market", requireAuth, requirePermission("trading.manu
   const user = getUserFromLocals(res);
   const bot = await prisma.bot.findFirst({ where: { id: req.params.id, workspaceId } });
   if (!bot) return res.status(404).json({ error: "not_found" });
-  if (bot.exchange.toLowerCase() !== "bitmart") {
+  const exchangeKey = bot.exchange.toLowerCase();
+  if (exchangeKey !== "bitmart" && exchangeKey !== "coinstore") {
     return res.status(400).json({ error: "unsupported_exchange" });
   }
 
@@ -1661,13 +1688,10 @@ app.post("/bots/:id/manual/market", requireAuth, requirePermission("trading.manu
   }
 
   const cex = await prisma.cexConfig.findUnique({ where: { exchange: bot.exchange } });
-  if (!cex?.apiKey || !cex?.apiSecret) {
-    return res.status(400).json({ error: "cex_config_missing" });
-  }
+  if (!cex?.apiKey || !cex?.apiSecret) return res.status(400).json({ error: "cex_config_missing" });
 
   const clientOrderId = `man_${bot.id}_${Date.now().toString(36)}`;
-  const baseUrl = process.env.BITMART_BASE_URL || "https://api-cloud.bitmart.com";
-  const rest = new BitmartRestClient(baseUrl, cex.apiKey, cex.apiSecret, cex.apiMemo ?? "");
+  const rest = createPrivateRestClient(exchangeKey, cex);
 
   try {
     const order = await rest.placeOrder({
@@ -1730,18 +1754,16 @@ app.post("/bots/:id/manual/cancel", requireAuth, requirePermission("trading.manu
   const workspaceId = getWorkspaceId(res);
   const bot = await prisma.bot.findFirst({ where: { id: req.params.id, workspaceId } });
   if (!bot) return res.status(404).json({ error: "not_found" });
-  if (bot.exchange.toLowerCase() !== "bitmart") {
+  const exchangeKey = bot.exchange.toLowerCase();
+  if (exchangeKey !== "bitmart" && exchangeKey !== "coinstore") {
     return res.status(400).json({ error: "unsupported_exchange" });
   }
 
   const data = ManualCancelOrder.parse(req.body);
   const cex = await prisma.cexConfig.findUnique({ where: { exchange: bot.exchange } });
-  if (!cex?.apiKey || !cex?.apiSecret) {
-    return res.status(400).json({ error: "cex_config_missing" });
-  }
+  if (!cex?.apiKey || !cex?.apiSecret) return res.status(400).json({ error: "cex_config_missing" });
 
-  const baseUrl = process.env.BITMART_BASE_URL || "https://api-cloud.bitmart.com";
-  const rest = new BitmartRestClient(baseUrl, cex.apiKey, cex.apiSecret, cex.apiMemo ?? "");
+  const rest = createPrivateRestClient(exchangeKey, cex);
   await rest.cancelOrder(bot.symbol, data.orderId);
   const user = getUserFromLocals(res);
   await writeAudit({
@@ -1885,26 +1907,40 @@ app.post("/bots/:id/preview/mm", requireAuth, requirePermission("bots.edit_confi
 
 app.get("/exchanges/:exchange/symbols", requireAuth, async (req, res) => {
   const exchange = req.params.exchange.toLowerCase();
-  if (exchange !== "bitmart") {
+  if (exchange !== "bitmart" && exchange !== "coinstore") {
     return res.status(400).json({ error: "unsupported_exchange" });
   }
 
-  const baseUrl = process.env.BITMART_BASE_URL || "https://api-cloud.bitmart.com";
-  const url = new URL("/spot/v1/symbols", baseUrl);
+  let symbols: any[] = [];
+  let rawDetails: any = null;
+  if (exchange === "bitmart") {
+    const baseUrl = process.env.BITMART_BASE_URL || "https://api-cloud.bitmart.com";
+    const url = new URL("/spot/v1/symbols", baseUrl);
 
-  const resp = await fetch(url, { method: "GET" });
-  const json = (await resp.json().catch(() => ({}))) as Record<string, any>;
+    const resp = await fetch(url, { method: "GET" });
+    const json = (await resp.json().catch(() => ({}))) as Record<string, any>;
+    rawDetails = json;
 
-  if (!resp.ok || (json?.code && json.code !== 1000)) {
-    const msg = json?.msg || json?.message || "symbols fetch failed";
-    return res.status(400).json({ error: msg, details: json });
+    if (!resp.ok || (json?.code && json.code !== 1000)) {
+      const msg = json?.msg || json?.message || "symbols fetch failed";
+      return res.status(400).json({ error: msg, details: json });
+    }
+
+    symbols = Array.isArray(json?.data?.symbols)
+      ? json.data.symbols
+      : Array.isArray(json?.data)
+        ? json.data
+        : [];
+  } else {
+    try {
+      const baseUrl = getExchangeBaseUrl(exchange) || "https://api.coinstore.com/api";
+      const rest = new CoinstoreRestClient(baseUrl, "", "");
+      const list = await rest.listSymbols();
+      symbols = list.map((s) => ({ symbol: s }));
+    } catch (e: any) {
+      return res.status(400).json({ error: String(e?.message ?? e), details: rawDetails });
+    }
   }
-
-  const symbols = Array.isArray(json?.data?.symbols)
-    ? json.data.symbols
-    : Array.isArray(json?.data)
-      ? json.data
-      : [];
 
   const mapped = symbols
     .map((s: any) => {
@@ -1929,7 +1965,7 @@ app.get("/exchanges/:exchange/symbols", requireAuth, async (req, res) => {
     .filter(Boolean);
 
   if (mapped.length === 0) {
-    return res.status(502).json({ error: "symbols_unavailable", details: json });
+    return res.status(502).json({ error: "symbols_unavailable", details: rawDetails });
   }
 
   const unique = Array.from(new Map(mapped.map((s: any) => [s.symbol, s])).values());
@@ -1940,14 +1976,10 @@ app.get("/exchanges/:exchange/symbols", requireAuth, async (req, res) => {
 app.get("/price-feed/:exchange/:symbol", requireAuth, requirePermission("bots.view"), async (req, res) => {
   const exchange = req.params.exchange.toLowerCase();
   const symbol = req.params.symbol;
-  if (exchange !== "bitmart") {
+  if (exchange !== "bitmart" && exchange !== "coinstore") {
     return res.status(400).json({ error: "unsupported_exchange" });
   }
-  const baseUrl = process.env.BITMART_BASE_URL;
-  if (!baseUrl) {
-    return res.status(500).json({ error: "missing_bitmart_base_url" });
-  }
-  const rest = new BitmartRestClient(baseUrl, "", "", "");
+  const rest = createPublicRestClient(exchange);
   const mid = await rest.getTicker(symbol);
   res.json({
     exchange,
@@ -2665,35 +2697,48 @@ app.put("/settings/security", requireAuth, async (req, res) => {
 app.post("/settings/cex/verify", requireAuth, requirePermission("exchange_keys.edit"), requireReauth, async (req, res) => {
   const data = CexConfig.parse(req.body);
 
-  // Minimal auth-protected call: balances requires signed headers.
-  const baseUrl = process.env.BITMART_BASE_URL || "https://api-cloud.bitmart.com";
-  const url = new URL("/spot/v1/wallet", baseUrl);
-  const timestamp = Date.now().toString();
-  const body = "{}";
-  const payload = `${timestamp}#${data.apiMemo ?? ""}#${body}`;
-  const sign = crypto
-    .createHmac("sha256", data.apiSecret)
-    .update(payload)
-    .digest("hex");
-
-  const resp = await fetch(url, {
-    method: "GET",
-    headers: {
-      "X-BM-KEY": data.apiKey,
-      "X-BM-SIGN": sign,
-      "X-BM-TIMESTAMP": timestamp,
-      "Content-Type": "application/json"
-    }
-  });
-
-  const json = (await resp.json().catch(() => ({}))) as Record<string, any>;
-
-  if (!resp.ok || (json?.code && json.code !== 1000)) {
-    const msg = json?.msg || json?.message || "verify failed";
-    return res.status(400).json({ ok: false, error: msg, details: json });
+  const exchange = data.exchange.toLowerCase();
+  if (exchange !== "bitmart" && exchange !== "coinstore") {
+    return res.status(400).json({ ok: false, error: "unsupported_exchange" });
   }
 
-  res.json({ ok: true });
+  try {
+    if (exchange === "bitmart") {
+      // Minimal auth-protected call: balances requires signed headers.
+      const baseUrl = process.env.BITMART_BASE_URL || "https://api-cloud.bitmart.com";
+      const url = new URL("/spot/v1/wallet", baseUrl);
+      const timestamp = Date.now().toString();
+      const body = "{}";
+      const payload = `${timestamp}#${data.apiMemo ?? ""}#${body}`;
+      const sign = crypto
+        .createHmac("sha256", data.apiSecret)
+        .update(payload)
+        .digest("hex");
+
+      const resp = await fetch(url, {
+        method: "GET",
+        headers: {
+          "X-BM-KEY": data.apiKey,
+          "X-BM-SIGN": sign,
+          "X-BM-TIMESTAMP": timestamp,
+          "Content-Type": "application/json"
+        }
+      });
+
+      const json = (await resp.json().catch(() => ({}))) as Record<string, any>;
+      if (!resp.ok || (json?.code && json.code !== 1000)) {
+        const msg = json?.msg || json?.message || "verify failed";
+        return res.status(400).json({ ok: false, error: msg, details: json });
+      }
+      return res.json({ ok: true });
+    }
+
+    const rest = createPrivateRestClient(exchange, data);
+    await rest.getBalances();
+    return res.json({ ok: true });
+  } catch (e: any) {
+    return res.status(400).json({ ok: false, error: String(e?.message ?? e) });
+  }
 });
 
 app.post("/bots/:id/start", requireAuth, requirePermission("bots.start_pause_stop"), async (req, res) => {
