@@ -402,6 +402,9 @@ export async function runLoop(params: {
         continue;
       }
       let balances: Balance[] = lastBalances;
+      let balancesStale = false;
+      const allowBalanceFallback =
+        process.env.COINSTORE_ALLOW_BALANCE_429 === "1" || process.env.ALLOW_BALANCE_FALLBACK === "1";
       try {
         if (t0 - lastBalancesAt >= balancesTtlMs) {
           balances = await exchange.getBalances();
@@ -412,6 +415,13 @@ export async function runLoop(params: {
         if (lastBalancesAt > 0 && t0 - lastBalancesAt < balancesTtlMs * 2) {
           log.warn({ err: String(e) }, "balances fetch failed, using cache");
           balances = lastBalances;
+          balancesStale = true;
+        } else if (allowBalanceFallback) {
+          log.warn({ err: String(e) }, "balances fetch failed, using empty");
+          balances = [];
+          lastBalances = balances;
+          lastBalancesAt = t0;
+          balancesStale = true;
         } else {
           throw e;
         }
@@ -619,12 +629,14 @@ export async function runLoop(params: {
         return q.price * q.qty >= 5;
       });
 
-      const decision = riskEngine.evaluate({
-        balances,
-        mid,
-        deviationPct,
-        openOrdersCount: open.length
-      });
+      const decision = balancesStale
+        ? { ok: true, reason: "BALANCES_UNAVAILABLE" }
+        : riskEngine.evaluate({
+            balances,
+            mid,
+            deviationPct,
+            openOrdersCount: open.length
+          });
 
       const freeUsdt = findFree(balances, "USDT");
       const freeBase = findFree(balances, base);
@@ -633,11 +645,11 @@ export async function runLoop(params: {
         log.info({ freeUsdt, freeBase, base, sample }, "balances snapshot");
       }
 
-      const mmFundsOk = !botRow.mmEnabled || (
+      const mmFundsOk = balancesStale || !botRow.mmEnabled || (
         freeUsdt >= mm.budgetQuoteUsdt &&
         freeBase >= mm.budgetBaseToken
       );
-      const volFundsOk = !botRow.volEnabled || (
+      const volFundsOk = balancesStale || !botRow.volEnabled || (
         freeUsdt >= vol.minTradeUsdt ||
         freeBase * mid.mid >= vol.minTradeUsdt
       );
