@@ -176,8 +176,8 @@ async function main() {
   }
 
   const requestedBotId = optionalEnv("RUNNER_BOT_ID");
-  const tickMs = Number(process.env.RUNNER_TICK_MS || "800");
-  const scanMs = Number(process.env.RUNNER_SCAN_MS || "5000");
+  const tickMs = Number(process.env.RUNNER_TICK_MS || "2000");
+  const scanMs = Number(process.env.RUNNER_SCAN_MS || "10000");
   const licenseRefreshMs = Number(process.env.LICENSE_VERIFY_INTERVAL_MIN || "15") * 60_000;
   const botLoops = new Map<string, boolean>();
   let lastLicenseRefresh = 0;
