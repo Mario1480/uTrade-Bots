@@ -74,10 +74,10 @@ export async function runLoop(params: {
 
   const marketDataClients = new Map<string, ExchangePublic>();
   const priceFeedCache = new Map<string, { mid: MidPrice; ts: number }>();
-  const priceFeedTtlMs = Number(process.env.PRICE_FEED_TTL_MS || "5000");
+  const priceFeedTtlMs = Number(process.env.PRICE_FEED_TTL_MS || "8000");
   const masterStaleMs = Number(process.env.PRICE_FOLLOW_STALE_MS || "10000");
-  const balancesTtlMs = Number(process.env.BALANCES_TTL_MS || "10000");
-  const openOrdersTtlMs = Number(process.env.OPEN_ORDERS_TTL_MS || "10000");
+  const balancesTtlMs = Number(process.env.BALANCES_TTL_MS || "30000");
+  const openOrdersTtlMs = Number(process.env.OPEN_ORDERS_TTL_MS || "30000");
 
   function getMarketDataClient(exchangeKey: string): ExchangePublic {
     const key = exchangeKey.toLowerCase();
