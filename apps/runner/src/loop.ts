@@ -7,7 +7,8 @@ import type {
   PriceSupportConfig,
   Balance,
   MidPrice,
-  Quote
+  Quote,
+  Order
 } from "@mm/core";
 import { splitSymbol } from "@mm/core";
 import { BitmartRestClient, CoinstoreRestClient } from "@mm/exchange";
@@ -75,6 +76,8 @@ export async function runLoop(params: {
   const priceFeedCache = new Map<string, { mid: MidPrice; ts: number }>();
   const priceFeedTtlMs = Number(process.env.PRICE_FEED_TTL_MS || "5000");
   const masterStaleMs = Number(process.env.PRICE_FOLLOW_STALE_MS || "10000");
+  const balancesTtlMs = Number(process.env.BALANCES_TTL_MS || "10000");
+  const openOrdersTtlMs = Number(process.env.OPEN_ORDERS_TTL_MS || "10000");
 
   function getMarketDataClient(exchangeKey: string): ExchangePublic {
     const key = exchangeKey.toLowerCase();
@@ -144,6 +147,10 @@ export async function runLoop(params: {
   const fillsEveryMs = 3_000;
   let lastFillSync = 0;
   let licenseBlocked = false;
+  let lastBalances: Balance[] = [];
+  let lastBalancesAt = 0;
+  let lastOpenOrders: Order[] = [];
+  let lastOpenOrdersAt = 0;
 
   sm.set("RUNNING");
   setBotStatus("RUNNING");
@@ -386,8 +393,37 @@ export async function runLoop(params: {
         await sleep(tickMs);
         continue;
       }
-      const balances = await exchange.getBalances();
-      const open = await exchange.getOpenOrders(symbol);
+      let balances: Balance[] = lastBalances;
+      try {
+        if (t0 - lastBalancesAt >= balancesTtlMs) {
+          balances = await exchange.getBalances();
+          lastBalances = balances;
+          lastBalancesAt = t0;
+        }
+      } catch (e) {
+        if (lastBalancesAt > 0 && t0 - lastBalancesAt < balancesTtlMs * 2) {
+          log.warn({ err: String(e) }, "balances fetch failed, using cache");
+          balances = lastBalances;
+        } else {
+          throw e;
+        }
+      }
+
+      let open: Order[] = lastOpenOrders;
+      try {
+        if (t0 - lastOpenOrdersAt >= openOrdersTtlMs) {
+          open = await exchange.getOpenOrders(symbol);
+          lastOpenOrders = open;
+          lastOpenOrdersAt = t0;
+        }
+      } catch (e) {
+        if (lastOpenOrdersAt > 0 && t0 - lastOpenOrdersAt < openOrdersTtlMs * 2) {
+          log.warn({ err: String(e) }, "open orders fetch failed, using cache");
+          open = lastOpenOrders;
+        } else {
+          throw e;
+        }
+      }
       const midValid =
         Number.isFinite(mid.mid) &&
         mid.mid > 0 &&
