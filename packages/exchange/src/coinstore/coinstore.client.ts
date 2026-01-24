@@ -35,7 +35,9 @@ export function buildCoinstoreSignature(payload: string, secret: string, expires
 
 export class CoinstoreRestClient {
   private static lastRequestAt = 0;
-  private static readonly minGapMs = Number(process.env.COINSTORE_MIN_GAP_MS || "100");
+  private static readonly minGapMs = Number(process.env.COINSTORE_MIN_GAP_MS || "500");
+  private readonly tickerTtlMs = Number(process.env.COINSTORE_TICKER_TTL_MS || "8000");
+  private readonly tickerCache = new Map<string, { mid: MidPrice; ts: number }>();
 
   constructor(
     private readonly baseUrl: string,
@@ -220,6 +222,11 @@ export class CoinstoreRestClient {
 
   async getTicker(symbol: string): Promise<MidPrice> {
     const s = toExchangeSymbol("coinstore", symbol);
+    const cached = this.tickerCache.get(s);
+    const now = Date.now();
+    if (cached && now - cached.ts < this.tickerTtlMs) {
+      return cached.mid;
+    }
     const json = await this.request<any>({
       method: "GET",
       path: "/api/v1/market/tickers",
@@ -266,7 +273,9 @@ export class CoinstoreRestClient {
     }
     if (bid <= 0 && last > 0) bid = last;
     if (ask <= 0 && last > 0) ask = last;
-    return { bid, ask, mid, last, ts: nowMs() };
+    const result = { bid, ask, mid, last, ts: nowMs() };
+    this.tickerCache.set(s, { mid: result, ts: now });
+    return result;
   }
 
   async getBalances(): Promise<Balance[]> {
