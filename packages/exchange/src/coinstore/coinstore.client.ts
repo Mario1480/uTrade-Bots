@@ -26,6 +26,10 @@ function withJitter(ms: number) {
   return Math.floor(ms * (0.8 + Math.random() * 0.4));
 }
 
+function normalizeTickerSymbol(value: string) {
+  return value.replace(/[^a-zA-Z0-9]/g, "").toUpperCase();
+}
+
 export function buildCoinstoreSignature(payload: string, secret: string, expiresMs: number) {
   const bucket = Math.floor(expiresMs / 30000).toString();
   const key = crypto.createHmac("sha256", secret).update(bucket).digest("hex");
@@ -237,7 +241,11 @@ export class CoinstoreRestClient {
       auth: "NONE"
     });
     const list: any[] = Array.isArray(json?.data) ? json.data : json?.data?.tickers ?? [];
-    const row = list.find((x) => String(x?.symbol ?? x?.symbolId ?? "") === symbolLower);
+    const target = normalizeTickerSymbol(s);
+    const row = list.find((x) => {
+      const raw = String(x?.symbol ?? x?.symbolId ?? "");
+      return normalizeTickerSymbol(raw) === target || raw.toLowerCase() === symbolLower;
+    });
     if (!row) {
       throw new Error(`Ticker missing symbol ${s}`);
     }
