@@ -22,6 +22,10 @@ function sleep(ms: number) {
   return new Promise((r) => setTimeout(r, ms));
 }
 
+function withJitter(ms: number) {
+  return Math.floor(ms * (0.8 + Math.random() * 0.4));
+}
+
 export function buildCoinstoreSignature(payload: string, secret: string, expiresMs: number) {
   const bucket = Math.floor(expiresMs / 30000).toString();
   const key = crypto.createHmac("sha256", secret).update(bucket).digest("hex");
@@ -30,6 +34,9 @@ export function buildCoinstoreSignature(payload: string, secret: string, expires
 }
 
 export class CoinstoreRestClient {
+  private static lastRequestAt = 0;
+  private static readonly minGapMs = Number(process.env.COINSTORE_MIN_GAP_MS || "100");
+
   constructor(
     private readonly baseUrl: string,
     private readonly apiKey: string,
@@ -79,6 +86,13 @@ export class CoinstoreRestClient {
     let attempt = 0;
     while (true) {
       try {
+        const now = Date.now();
+        const gap = now - CoinstoreRestClient.lastRequestAt;
+        if (gap < CoinstoreRestClient.minGapMs) {
+          await sleep(CoinstoreRestClient.minGapMs - gap);
+        }
+        CoinstoreRestClient.lastRequestAt = Date.now();
+
         const res = await fetch(url, {
           method,
           headers,
@@ -90,7 +104,7 @@ export class CoinstoreRestClient {
           const msg = json?.message || json?.msg || res.statusText || "request_failed";
           const err = new Error(`Coinstore API error ${res.status}: ${msg} (${JSON.stringify(json)})`);
           if ((res.status === 429 || res.status >= 500) && attempt < maxRetries) {
-            await sleep(300 * Math.pow(2, attempt));
+            await sleep(withJitter(800 * Math.pow(2, attempt)));
             attempt += 1;
             continue;
           }
@@ -99,7 +113,7 @@ export class CoinstoreRestClient {
         return json as CoinstoreResponse<T>;
       } catch (e: any) {
         if (attempt < maxRetries && (e?.name === "AbortError" || e?.message?.includes("fetch"))) {
-          await sleep(300 * Math.pow(2, attempt));
+          await sleep(withJitter(800 * Math.pow(2, attempt)));
           attempt += 1;
           continue;
         }
