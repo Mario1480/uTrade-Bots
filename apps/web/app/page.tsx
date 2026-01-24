@@ -58,7 +58,7 @@ export default function Page() {
           <div style={{ fontSize: 13, color: "var(--muted)" }}>Active bots and live status overview.</div>
         </div>
         <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-          <span className="badge badgeWarn">Beta v0.3</span>
+          <span className="badge badgeWarn">Beta v0.4</span>
         </div>
       </div>
 
