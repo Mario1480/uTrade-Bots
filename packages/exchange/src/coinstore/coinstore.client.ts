@@ -114,18 +114,23 @@ export class CoinstoreRestClient {
     if (cached && Date.now() - cached.ts < 10 * 60_000) return cached.meta;
 
     const json = await this.request<any>({
-      method: "GET",
+      method: "POST",
       path: "/api/v2/public/config/spot/symbols",
+      body: {},
       auth: "NONE"
     });
     const list: any[] = Array.isArray(json?.data) ? json.data : json?.data?.symbols ?? [];
-    const row = list.find((x) => String(x?.symbol ?? x?.symbolId ?? x?.tradeSymbol ?? x?.trading_pair ?? "") === s);
+    const row = list.find((x) => {
+      const code = x?.symbolCode ?? x?.symbol ?? x?.symbolId ?? x?.tradeSymbol ?? x?.trading_pair;
+      return String(code ?? "") === s;
+    });
     if (!row) return undefined;
 
     const meta: SymbolMeta = {
       symbol: s,
       priceStep: Number(
-        row.priceTick ??
+        row.tickSz ??
+          row.priceTick ??
           row.price_step ??
           row.tickSize ??
           row.priceIncrement ??
@@ -133,7 +138,8 @@ export class CoinstoreRestClient {
           row.priceStep
       ) || undefined,
       qtyStep: Number(
-        row.qtyStep ??
+        row.lotSz ??
+          row.qtyStep ??
           row.quantityStep ??
           row.baseStep ??
           row.amountStep ??
@@ -156,14 +162,16 @@ export class CoinstoreRestClient {
           row.quantity_precision
       ) || undefined,
       minQty: Number(
-        row.minQty ??
+        row.minLmtSz ??
+          row.minQty ??
           row.minQuantity ??
           row.minAmount ??
           row.minSize ??
           row.min_trade_amount
       ) || undefined,
       minNotional: Number(
-        row.minNotional ??
+        row.minMktVa ??
+          row.minNotional ??
           row.minValue ??
           row.minQuote ??
           row.minTradeValue ??
@@ -177,13 +185,14 @@ export class CoinstoreRestClient {
 
   async listSymbols(): Promise<string[]> {
     const json = await this.request<any>({
-      method: "GET",
+      method: "POST",
       path: "/api/v2/public/config/spot/symbols",
+      body: {},
       auth: "NONE"
     });
     const list: any[] = Array.isArray(json?.data) ? json.data : json?.data?.symbols ?? [];
     return list
-      .map((s) => s?.symbol ?? s?.symbolId ?? s?.tradeSymbol ?? s?.trading_pair)
+      .map((s) => s?.symbolCode ?? s?.symbol ?? s?.symbolId ?? s?.tradeSymbol ?? s?.trading_pair)
       .filter(Boolean)
       .map((s) => {
         try {
