@@ -248,8 +248,9 @@ export class CoinstoreRestClient {
 
   async getBalances(): Promise<Balance[]> {
     const json = await this.request<any>({
-      method: "GET",
+      method: "POST",
       path: "/spot/accountList",
+      body: {},
       auth: "SIGNED"
     });
     const list: any[] = Array.isArray(json?.data) ? json.data : json?.data?.list ?? [];
