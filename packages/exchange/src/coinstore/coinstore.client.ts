@@ -72,7 +72,9 @@ export class CoinstoreRestClient {
     const payload = query && bodyStr ? `${query}&${bodyStr}` : query || bodyStr;
 
     const headers: Record<string, string> = {
-      "Content-Type": "application/json"
+      "Content-Type": "application/json",
+      Accept: "application/json",
+      "User-Agent": "Mozilla/5.0 (compatible; uLiquidBot/1.0)"
     };
 
     if (auth === "SIGNED") {
@@ -227,52 +229,25 @@ export class CoinstoreRestClient {
     if (cached && now - cached.ts < this.tickerTtlMs) {
       return cached.mid;
     }
+    const symbolLower = s.toLowerCase();
     const json = await this.request<any>({
       method: "GET",
-      path: "/api/v1/market/tickers",
+      path: "/api/v1/ticker/price",
+      params: { symbol: symbolLower },
       auth: "NONE"
     });
     const list: any[] = Array.isArray(json?.data) ? json.data : json?.data?.tickers ?? [];
-    const row = list.find((x) => String(x?.symbol ?? x?.symbolId ?? "") === s);
+    const row = list.find((x) => String(x?.symbol ?? x?.symbolId ?? "") === symbolLower);
     if (!row) {
       throw new Error(`Ticker missing symbol ${s}`);
     }
-    let bid = Number(
-      row.bid ??
-        row.bestBid ??
-        row.buy ??
-        row.highestBid ??
-        row.bidPrice ??
-        row.bidPx ??
-        0
-    );
-    let ask = Number(
-      row.ask ??
-        row.bestAsk ??
-        row.sell ??
-        row.lowestAsk ??
-        row.askPrice ??
-        row.askPx ??
-        0
-    );
-    const last = Number(
-      row.last ??
-        row.close ??
-        row.price ??
-        row.lastPrice ??
-        0
-    );
-    const mid =
-      bid > 0 && ask > 0
-        ? (bid + ask) / 2
-        : last > 0
-          ? last
-          : NaN;
+    const last = Number(row.price ?? row.last ?? row.close ?? 0);
+    let bid = last;
+    let ask = last;
+    const mid = last > 0 ? last : NaN;
     if (!Number.isFinite(mid) || mid <= 0) {
       throw new Error(`Ticker missing prices for ${s}`);
     }
-    if (bid <= 0 && last > 0) bid = last;
-    if (ask <= 0 && last > 0) ask = last;
     const result = { bid, ask, mid, last, ts: nowMs() };
     this.tickerCache.set(s, { mid: result, ts: now });
     return result;
@@ -297,8 +272,8 @@ export class CoinstoreRestClient {
     const s = toExchangeSymbol("coinstore", symbol);
     const json = await this.request<any>({
       method: "GET",
-      path: "/api/trade/order/active",
-      params: { symbol: s },
+      path: "/api/v2/trade/order/active",
+      params: { symbol: s.toLowerCase() },
       auth: "SIGNED"
     });
     const list: any[] = Array.isArray(json?.data) ? json.data : json?.data?.list ?? [];
@@ -309,7 +284,7 @@ export class CoinstoreRestClient {
       price: Number(o.price ?? o.orderPrice ?? o.priceAvg ?? 0),
       qty: Number(o.quantity ?? o.qty ?? o.origQty ?? o.orderQty ?? 0),
       status: "open",
-      clientOrderId: o.clientOrderId ?? o.client_order_id ?? undefined
+      clientOrderId: o.clientOrderId ?? o.client_order_id ?? o.clOrdId ?? undefined
     }));
   }
 
