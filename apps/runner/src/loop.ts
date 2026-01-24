@@ -73,7 +73,7 @@ export async function runLoop(params: {
 
   const marketDataClients = new Map<string, ExchangePublic>();
   const priceFeedCache = new Map<string, { mid: MidPrice; ts: number }>();
-  const priceFeedTtlMs = Number(process.env.PRICE_FEED_TTL_MS || "3000");
+  const priceFeedTtlMs = Number(process.env.PRICE_FEED_TTL_MS || "5000");
   const masterStaleMs = Number(process.env.PRICE_FOLLOW_STALE_MS || "10000");
 
   function getMarketDataClient(exchangeKey: string): ExchangePublic {
@@ -110,11 +110,11 @@ export async function runLoop(params: {
   let riskEngine = new RiskEngine(risk);
   const priceEpsPct = Number(process.env.MM_PRICE_EPS_PCT || "0.005");
   const qtyEpsPct = Number(process.env.MM_QTY_EPS_PCT || "0.02");
-  const minRepriceMs = Number(process.env.MM_REPRICE_MS || "10000");
+  const minRepriceMs = Number(process.env.MM_REPRICE_MS || "20000");
   const minRepricePct = Number(process.env.MM_REPRICE_PCT || "0.01");
   const invAlpha = Number(process.env.MM_INV_ALPHA || "0.1");
-  const volCooldownMs = Number(process.env.MM_VOL_COOLDOWN_MS || "30000");
-  const volActiveTtlMs = Number(process.env.VOL_ACTIVE_TTL_MS || "12000");
+  const volCooldownMs = Number(process.env.MM_VOL_COOLDOWN_MS || "60000");
+  const volActiveTtlMs = Number(process.env.VOL_ACTIVE_TTL_MS || "20000");
   const volMmSafetyMult = Number(process.env.VOL_MM_SAFETY_MULT || "1.5");
   const volLastBandPct = Number(process.env.VOL_LAST_BAND_PCT || "0.0001");
   const volInsideSpreadPct = Number(process.env.VOL_INSIDE_SPREAD_PCT || "0.00005");
