@@ -417,9 +417,13 @@ export async function runLoop(params: {
           balances = lastBalances;
           balancesStale = true;
         } else if (allowBalanceFallback) {
-          log.warn({ err: String(e) }, "balances fetch failed, using empty");
-          balances = [];
-          lastBalances = balances;
+          log.warn({ err: String(e) }, "balances fetch failed, using fallback");
+          if (lastBalances.length > 0) {
+            balances = lastBalances;
+          } else {
+            balances = [];
+            lastBalances = balances;
+          }
           lastBalancesAt = t0;
           balancesStale = true;
         } else {
