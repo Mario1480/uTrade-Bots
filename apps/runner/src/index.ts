@@ -30,7 +30,7 @@ function sleep(ms: number): Promise<void> {
 function getExchangeBaseUrl(exchange: string): string | null {
   const key = exchange.toLowerCase();
   if (key === "bitmart") return process.env.BITMART_BASE_URL || "https://api-cloud.bitmart.com";
-  if (key === "coinstore") return process.env.COINSTORE_BASE_URL || "https://api.coinstore.com/api";
+  if (key === "coinstore") return process.env.COINSTORE_BASE_URL || "https://api.coinstore.com";
   return null;
 }
 
