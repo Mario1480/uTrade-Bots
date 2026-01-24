@@ -50,7 +50,7 @@ const LICENSE_FEATURE_KEYS = ["priceSupport", "priceFollow", "aiRecommendations"
 function getExchangeBaseUrl(exchange: string): string | null {
   const key = exchange.toLowerCase();
   if (key === "bitmart") return process.env.BITMART_BASE_URL || "https://api-cloud.bitmart.com";
-  if (key === "coinstore") return process.env.COINSTORE_BASE_URL || "https://api.coinstore.com/api";
+  if (key === "coinstore") return process.env.COINSTORE_BASE_URL || "https://api.coinstore.com";
   return null;
 }
 
@@ -1933,7 +1933,7 @@ app.get("/exchanges/:exchange/symbols", requireAuth, async (req, res) => {
         : [];
   } else {
     try {
-      const baseUrl = getExchangeBaseUrl(exchange) || "https://api.coinstore.com/api";
+      const baseUrl = getExchangeBaseUrl(exchange) || "https://api.coinstore.com";
       const rest = new CoinstoreRestClient(baseUrl, "", "");
       const list = await rest.listSymbols();
       symbols = list.map((s) => ({ symbol: s }));
