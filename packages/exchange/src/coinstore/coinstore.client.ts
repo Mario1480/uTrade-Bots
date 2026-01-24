@@ -115,7 +115,7 @@ export class CoinstoreRestClient {
 
     const json = await this.request<any>({
       method: "GET",
-      path: "/v2/public/config/spot/symbols",
+      path: "/api/v2/public/config/spot/symbols",
       auth: "NONE"
     });
     const list: any[] = Array.isArray(json?.data) ? json.data : json?.data?.symbols ?? [];
@@ -178,7 +178,7 @@ export class CoinstoreRestClient {
   async listSymbols(): Promise<string[]> {
     const json = await this.request<any>({
       method: "GET",
-      path: "/v2/public/config/spot/symbols",
+      path: "/api/v2/public/config/spot/symbols",
       auth: "NONE"
     });
     const list: any[] = Array.isArray(json?.data) ? json.data : json?.data?.symbols ?? [];
@@ -199,7 +199,7 @@ export class CoinstoreRestClient {
     const s = toExchangeSymbol("coinstore", symbol);
     const json = await this.request<any>({
       method: "GET",
-      path: "/v1/market/tickers",
+      path: "/api/v1/market/tickers",
       auth: "NONE"
     });
     const list: any[] = Array.isArray(json?.data) ? json.data : json?.data?.tickers ?? [];
@@ -249,7 +249,7 @@ export class CoinstoreRestClient {
   async getBalances(): Promise<Balance[]> {
     const json = await this.request<any>({
       method: "POST",
-      path: "/spot/accountList",
+      path: "/api/spot/accountList",
       body: {},
       auth: "SIGNED"
     });
@@ -265,7 +265,7 @@ export class CoinstoreRestClient {
     const s = toExchangeSymbol("coinstore", symbol);
     const json = await this.request<any>({
       method: "GET",
-      path: "/trade/order/active",
+      path: "/api/trade/order/active",
       params: { symbol: s },
       auth: "SIGNED"
     });
@@ -318,7 +318,7 @@ export class CoinstoreRestClient {
 
     const json = await this.request<any>({
       method: "POST",
-      path: "/trade/order/place",
+      path: "/api/trade/order/place",
       body,
       auth: "SIGNED"
     });
@@ -340,7 +340,7 @@ export class CoinstoreRestClient {
     const s = toExchangeSymbol("coinstore", symbol);
     await this.request<any>({
       method: "POST",
-      path: "/trade/order/cancel",
+      path: "/api/trade/order/cancel",
       body: { symbol: s, orderId },
       auth: "SIGNED"
     });
@@ -365,7 +365,7 @@ export class CoinstoreRestClient {
     const s = toExchangeSymbol("coinstore", symbol);
     const json = await this.request<any>({
       method: "GET",
-      path: "/trade/match/accountMatches",
+      path: "/api/trade/match/accountMatches",
       params: {
         symbol: s,
         limit: params?.limit,
