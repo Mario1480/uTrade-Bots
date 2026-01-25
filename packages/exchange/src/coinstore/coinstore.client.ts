@@ -49,8 +49,8 @@ export function buildCoinstoreSignature(payload: string, secret: string, expires
 
 export class CoinstoreRestClient {
   private static lastRequestAt = 0;
-  private static readonly minGapMs = Number(process.env.COINSTORE_MIN_GAP_MS || "500");
-  private readonly tickerTtlMs = Number(process.env.COINSTORE_TICKER_TTL_MS || "8000");
+  private static readonly minGapMs = Number(process.env.COINSTORE_MIN_GAP_MS || "1500");
+  private readonly tickerTtlMs = Number(process.env.COINSTORE_TICKER_TTL_MS || "15000");
   private readonly tickerCache = new Map<string, { mid: MidPrice; ts: number }>();
 
   constructor(
