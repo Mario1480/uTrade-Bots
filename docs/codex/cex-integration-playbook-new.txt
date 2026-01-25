@@ -1,0 +1,97 @@
+ROLE: You are Codex working in this repository. Implement a new CEX adapter that conforms to the existing architecture (exchange interface, runner, api, web). Do not invent new patterns; follow existing code style.
+
+GOAL:
+Add a new CEX integration with minimal disruption. The adapter must support:
+- public: getMid / getOrderbook (optional) / symbol meta (tickSize, stepSize, minQty, minNotional)
+- private: getBalances, getOpenOrders, placeOrder (limit + market if supported), cancelOrder, cancelAll
+- fills/trades: getMyTrades for fill-based volume counter
+- clientOrderId preservation (critical for mm-/vol- prefixes)
+
+CRITICAL PITFALLS (learned from Coinstore)
+1) Base URL / Path prefixes:
+   - Many CEX require /api prefix (404 if missing). Implement a single apiPrefix config and a startup sanity check:
+     - public ping/time endpoint AND a signed private endpoint
+   - If core endpoints return 404 -> fail with BASE_URL_OR_PATH_INVALID (no silent retries).
+
+2) Cloudflare/WAF/IP whitelist:
+   - Detect Cloudflare “Just a moment” HTML or server: cloudflare.
+   - If detected -> stop retries and surface message IP_NOT_WHITELISTED_OR_WAF_BLOCK.
+   - Implement rate limit/backoff:
+     - 429 => exponential backoff + jitter (max 30s)
+     - 5xx => small retry budget
+     - do NOT retry other 4xx
+
+3) Canonical symbols:
+   - Internal symbol format MUST be canonical "BASE/QUOTE" uppercase.
+   - Implement adapter: toExchangeSymbol(canon) and fromExchangeSymbol(raw).
+   - Always normalize symbol case/format for openOrders/cancelAll/getMyTrades/placeOrder.
+
+4) Symbol meta mapping must be verified:
+   - tickSize/stepSize/minQty/minNotional must be non-zero and consistent.
+   - normalizePrice/normalizeQty must not round to zero.
+   - Enforce minNotional before sending: price*qty >= minNotional.
+   - If normalizeQty becomes 0 -> throw QTY_NORMALIZED_TO_ZERO.
+
+5) openOrders must include clientOrderId:
+   - Many exchanges return empty if symbol format/case wrong.
+   - Ensure openOrders uses correct symbol (often uppercase).
+   - If exchange returns duplicate clientOrderId error, regenerate once and retry safely.
+
+6) Manual Trading:
+   - Ensure UI -> API -> adapter chain is correct.
+   - Implement a manual order endpoint that returns exchange error codes/messages clearly.
+   - Verify not blocked by RBAC, Re-Auth, licensing, or symbol mismatch.
+
+CONSTRAINTS:
+- Keep existing interfaces stable. If interface must be extended, implement for all existing exchanges.
+- All “public” endpoints MUST NOT send API key headers.
+- Private endpoints must be properly authenticated (SIGNED if required).
+- Use clientOrderId prefixes:
+  - Market Making orders: "mm-<...>"
+  - Volume orders: "vol<timestamp>" (must match /^vol(\d+)/)
+- Precision normalization must be applied before submitting orders:
+  - normalizePrice(price, tickSize)
+  - normalizeQty(qty, stepSize, minQty)
+  - enforce minNotional (price*qty)
+- Never log secrets.
+
+DELIVERABLES:
+1) New adapter files:
+   - packages/exchange/src/<cex>/<cex>.client.ts
+   - packages/exchange/src/<cex>/index.ts (exports)
+2) Register adapter in factory/registry:
+   - packages/exchange/src/index.ts (or existing registry)
+3) API:
+   - /exchanges/<cex>/symbols (returns canonical symbols)
+4) Runner:
+   - must create Exchange instance for <cex>
+   - getMyTrades must work (fill counter)
+5) Tests / Smoke checks:
+   - minimal signing unit test if possible
+   - add a smoke script or doc steps:
+     a) public symbols list
+     b) getMid
+     c) balances
+     d) place limit post-only + cancel
+     e) openOrders shows clientOrderId
+     f) manual order endpoint executes and errors are visible
+
+STEP-BY-STEP PLAN:
+A) Inspect existing exchange interfaces and reuse helpers (normalizePrice/Qty).
+B) Implement HTTP client core with auth modes NONE vs SIGNED.
+C) Implement symbol registry listSymbols() + meta mapping (validated).
+D) Implement balances/openOrders with correct symbol format/case.
+E) Implement place/cancel/cancelAll with precision and minNotional checks.
+F) Implement getMyTrades with timestamp ms + cursor pagination.
+G) Wire into registry + API symbols endpoint.
+H) Run smoke checks (public + private + manual trades).
+
+ACCEPTANCE CHECKS:
+1) Create bot in UI with exchange=<cex>, symbol=<pair>
+2) Start runner
+3) Runtime shows mid/bid/ask and balances
+4) MM places mm- orders, openOrders increments
+5) Volume places vol... orders, openOrders increments
+6) Fill counter increases only on real fills (getMyTrades ok)
+7) Manual order endpoint places a real order or returns a clear exchange error code/message
+8) No secrets in logs
