@@ -1600,6 +1600,18 @@ app.post("/bots/:id/manual/limit", requireAuth, requirePermission("trading.manua
   const tag = data.clientTag ? `_${data.clientTag.replace(/[^a-zA-Z0-9_-]/g, "").slice(0, 12)}` : "";
   const clientOrderId = `man_${bot.id}_${Date.now().toString(36)}${tag}`;
   const rest = createPrivateRestClient(exchangeKey, cex);
+  if (process.env.MANUAL_TRADE_DEBUG === "1") {
+    console.info("[manual] limit request", {
+      botId: bot.id,
+      exchange: bot.exchange,
+      symbol: bot.symbol,
+      side,
+      price,
+      qty,
+      postOnly,
+      clientOrderId
+    });
+  }
 
   try {
     const order = await rest.placeOrder({
@@ -1692,6 +1704,17 @@ app.post("/bots/:id/manual/market", requireAuth, requirePermission("trading.manu
 
   const clientOrderId = `man_${bot.id}_${Date.now().toString(36)}`;
   const rest = createPrivateRestClient(exchangeKey, cex);
+  if (process.env.MANUAL_TRADE_DEBUG === "1") {
+    console.info("[manual] market request", {
+      botId: bot.id,
+      exchange: bot.exchange,
+      symbol: bot.symbol,
+      side,
+      qty: side === "sell" ? qty : undefined,
+      notional: side === "buy" ? notional : undefined,
+      clientOrderId
+    });
+  }
 
   try {
     const order = await rest.placeOrder({
