@@ -34,6 +34,7 @@ services:
       NODE_ENV: "production"
       API_PORT: "8080"
       DATABASE_URL: postgresql://mm:mm@postgres:5432/marketmaker?schema=public
+      MANUAL_TRADE_DEBUG: "1"
     ports:
       - "8080:8080"
     depends_on:
@@ -96,7 +97,16 @@ services:
       DATABASE_URL: postgresql://mm:mm@postgres:5432/marketmaker?schema=public
       RUNNER_BOT_ID: ""
       RUNNER_TICK_MS: "15000"
+      RUNNER_SCAN_MS: "45000"
       RUNNER_PORT: "8091"
+      MM_REPRICE_MS: "45000"
+      OPEN_ORDERS_TTL_MS: "90000"
+      BALANCES_TTL_MS: "90000"
+      COINSTORE_MIN_GAP_MS: "1500"
+      COINSTORE_TICKER_TTL_MS: "15000"
+      COINSTORE_ALLOW_BALANCE_429: "1"
+      COINSTORE_BALANCE_DEBUG: "1"
+      COINSTORE_ORDER_DEBUG: "1"
     depends_on:
       api:
         condition: service_healthy
