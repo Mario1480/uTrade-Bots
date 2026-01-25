@@ -330,8 +330,25 @@ export class CoinstoreRestClient {
       id: String(o.orderId ?? o.order_id ?? o.id ?? ""),
       symbol: fromExchangeSymbol("coinstore", String(o.symbol ?? s)),
       side: String(o.side ?? o.direction ?? o.tradeSide ?? "").toLowerCase() === "sell" ? "sell" : "buy",
-      price: Number(o.price ?? o.orderPrice ?? o.priceAvg ?? 0),
-      qty: Number(o.quantity ?? o.qty ?? o.origQty ?? o.orderQty ?? 0),
+      price: pickNumber(o, [
+        "price",
+        "orderPrice",
+        "priceAvg",
+        "avgPrice",
+        "dealPrice",
+        "matchPrice",
+        "tradePrice"
+      ]),
+      qty: pickNumber(o, [
+        "quantity",
+        "qty",
+        "origQty",
+        "orderQty",
+        "amount",
+        "size",
+        "volume",
+        "totalQty"
+      ]),
       status: "open",
       clientOrderId: o.clientOrderId ?? o.client_order_id ?? o.clOrdId ?? undefined
     }));
