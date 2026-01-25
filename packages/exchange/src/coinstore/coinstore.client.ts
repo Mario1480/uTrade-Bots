@@ -326,13 +326,16 @@ export class CoinstoreRestClient {
       auth: "SIGNED"
     });
     const list: any[] = Array.isArray(json?.data) ? json.data : json?.data?.list ?? [];
-    return list.map((o) => ({
+    const orders = list.map((o) => ({
       id: String(o.orderId ?? o.order_id ?? o.id ?? ""),
       symbol: fromExchangeSymbol("coinstore", String(o.symbol ?? s)),
       side: String(o.side ?? o.direction ?? o.tradeSide ?? "").toLowerCase() === "sell" ? "sell" : "buy",
       price: pickNumber(o, [
         "price",
+        "entrustPrice",
+        "entrust_price",
         "orderPrice",
+        "order_price",
         "priceAvg",
         "avgPrice",
         "dealPrice",
@@ -342,8 +345,11 @@ export class CoinstoreRestClient {
       qty: pickNumber(o, [
         "quantity",
         "qty",
+        "entrustQty",
+        "entrust_qty",
         "origQty",
         "orderQty",
+        "order_qty",
         "amount",
         "size",
         "volume",
@@ -352,6 +358,18 @@ export class CoinstoreRestClient {
       status: "open",
       clientOrderId: o.clientOrderId ?? o.client_order_id ?? o.clOrdId ?? undefined
     }));
+    if (process.env.COINSTORE_OPEN_ORDERS_DEBUG === "1") {
+      const sample = orders.slice(0, 3).map((o) => ({
+        id: o.id,
+        side: o.side,
+        price: o.price,
+        qty: o.qty,
+        clientOrderId: o.clientOrderId
+      }));
+      // eslint-disable-next-line no-console
+      console.warn("[coinstore] openOrders sample", sample);
+    }
+    return orders;
   }
 
   async placeOrder(q: Quote): Promise<Order> {
