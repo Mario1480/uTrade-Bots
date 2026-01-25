@@ -47,6 +47,15 @@ export function buildCoinstoreSignature(payload: string, secret: string, expires
   return { key, sign };
 }
 
+function sanitizeClientOrderId(input?: string): string | undefined {
+  if (!input) return undefined;
+  const cleaned = input.replace(/[^a-zA-Z0-9]/g, "");
+  if (!cleaned) return undefined;
+  if (cleaned.length <= 32) return cleaned;
+  const hash = crypto.createHash("sha256").update(cleaned).digest("hex").slice(0, 6);
+  return `${cleaned.slice(0, 26)}${hash}`;
+}
+
 export class CoinstoreRestClient {
   private static lastRequestAt = 0;
   private static readonly minGapMs = Number(process.env.COINSTORE_MIN_GAP_MS || "1500");
@@ -475,7 +484,8 @@ export class CoinstoreRestClient {
       ordQty: String(qty)
     };
     if (q.type === "limit") body.ordPrice = String(price);
-    if (q.clientOrderId) body.clOrdId = q.clientOrderId;
+    const clientOrderId = sanitizeClientOrderId(q.clientOrderId);
+    if (clientOrderId) body.clOrdId = clientOrderId;
     if (q.postOnly) {
       (body as any).postOnly = "true";
     }
@@ -496,7 +506,7 @@ export class CoinstoreRestClient {
       price: q.type === "market" ? price : price,
       qty,
       status: "open",
-      clientOrderId: q.clientOrderId
+      clientOrderId
     };
   }
 
