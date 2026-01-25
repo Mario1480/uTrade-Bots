@@ -153,9 +153,14 @@ export class CoinstoreRestClient {
       auth: "NONE"
     });
     const list: any[] = Array.isArray(json?.data) ? json.data : json?.data?.symbols ?? [];
+    const normalizeCode = (v: unknown) =>
+      String(v ?? "")
+        .replace(/[^A-Za-z0-9]/g, "")
+        .toUpperCase();
+    const target = normalizeCode(s);
     const row = list.find((x) => {
       const code = x?.symbolCode ?? x?.symbol ?? x?.symbolId ?? x?.tradeSymbol ?? x?.trading_pair;
-      return String(code ?? "") === s;
+      return normalizeCode(code) === target;
     });
     if (!row) return undefined;
 
@@ -168,7 +173,9 @@ export class CoinstoreRestClient {
           row.tickSize ??
           row.priceIncrement ??
           row.price_increment ??
-          row.priceStep
+          row.priceStep ??
+          row.price_step_size ??
+          row.price_step_sz
       ) || undefined,
       qtyStep: Number(
         row.lotSz ??
@@ -177,13 +184,18 @@ export class CoinstoreRestClient {
           row.baseStep ??
           row.amountStep ??
           row.lotSize ??
-          row.lot_size
+          row.lot_size ??
+          row.qty_step ??
+          row.quantity_step
       ) || undefined,
       pricePrecision: Number(
         row.pricePrecision ??
           row.priceScale ??
           row.priceDigits ??
-          row.price_precision
+          row.price_precision ??
+          row.priceDecimal ??
+          row.priceDecimals ??
+          row.price_decimals
       ) || undefined,
       qtyPrecision: Number(
         row.quantityPrecision ??
@@ -192,7 +204,11 @@ export class CoinstoreRestClient {
           row.amountScale ??
           row.baseScale ??
           row.quantityScale ??
-          row.quantity_precision
+          row.quantity_precision ??
+          row.qtyDecimal ??
+          row.qtyDecimals ??
+          row.qty_decimals ??
+          row.quantityDecimals
       ) || undefined,
       minQty: Number(
         row.minLmtSz ??
@@ -200,7 +216,9 @@ export class CoinstoreRestClient {
           row.minQuantity ??
           row.minAmount ??
           row.minSize ??
-          row.min_trade_amount
+          row.min_trade_amount ??
+          row.minTradeAmount ??
+          row.min_base_amount
       ) || undefined,
       minNotional: Number(
         row.minMktVa ??
@@ -208,7 +226,9 @@ export class CoinstoreRestClient {
           row.minValue ??
           row.minQuote ??
           row.minTradeValue ??
-          row.min_trade_value
+          row.min_trade_value ??
+          row.minQuoteAmount ??
+          row.min_quote_amount
       ) || undefined
     };
 
@@ -407,6 +427,9 @@ export class CoinstoreRestClient {
     const meta = await this.getSymbolMeta(q.symbol);
     let price = q.price ?? 0;
     let qty = q.qty ?? 0;
+    const fallbackPrecision = 8;
+    const hasPriceRule = Boolean(meta?.priceStep) || typeof meta?.pricePrecision === "number";
+    const hasQtyRule = Boolean(meta?.qtyStep) || typeof meta?.qtyPrecision === "number";
 
     if (q.type === "market" && q.side === "buy" && (!qty || qty <= 0) && q.quoteQty) {
       const mid = await this.getTicker(q.symbol);
@@ -418,11 +441,20 @@ export class CoinstoreRestClient {
       if (!Number.isFinite(qty) || qty <= 0) throw new Error("limit order requires qty");
       price = normalizePrice(price, meta);
       qty = normalizeQty(qty, meta);
+      if (!hasPriceRule) {
+        price = Math.floor(price * 10 ** fallbackPrecision + 1e-12) / 10 ** fallbackPrecision;
+      }
+      if (!hasQtyRule) {
+        qty = Math.floor(qty * 10 ** fallbackPrecision + 1e-12) / 10 ** fallbackPrecision;
+      }
       const mins = checkMins({ price, qty, meta });
       if (!mins.ok) throw new Error(`[coinstore] min check failed: ${mins.reason}`);
     } else {
       if (!Number.isFinite(qty) || qty <= 0) throw new Error("market order requires qty");
       qty = normalizeQty(qty, meta);
+      if (!hasQtyRule) {
+        qty = Math.floor(qty * 10 ** fallbackPrecision + 1e-12) / 10 ** fallbackPrecision;
+      }
     }
 
     const body: Record<string, string> = {
