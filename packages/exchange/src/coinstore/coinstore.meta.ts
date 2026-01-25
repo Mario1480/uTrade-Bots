@@ -25,14 +25,30 @@ export function roundDownToPrecision(x: number, precision: number): number {
 
 export function normalizePrice(price: number, meta?: SymbolMeta): number {
   if (!meta) return price;
-  if (meta.priceStep && meta.priceStep > 0) return roundDownToStep(price, meta.priceStep);
+  if (meta.priceStep && meta.priceStep > 0) {
+    if (price > 0 && price < meta.priceStep) {
+      if (typeof meta.pricePrecision === "number") {
+        return roundDownToPrecision(price, meta.pricePrecision);
+      }
+      return price;
+    }
+    return roundDownToStep(price, meta.priceStep);
+  }
   if (typeof meta.pricePrecision === "number") return roundDownToPrecision(price, meta.pricePrecision);
   return price;
 }
 
 export function normalizeQty(qty: number, meta?: SymbolMeta): number {
   if (!meta) return qty;
-  if (meta.qtyStep && meta.qtyStep > 0) return roundDownToStep(qty, meta.qtyStep);
+  if (meta.qtyStep && meta.qtyStep > 0) {
+    if (qty > 0 && qty < meta.qtyStep) {
+      if (typeof meta.qtyPrecision === "number") {
+        return roundDownToPrecision(qty, meta.qtyPrecision);
+      }
+      return qty;
+    }
+    return roundDownToStep(qty, meta.qtyStep);
+  }
   if (typeof meta.qtyPrecision === "number") return roundDownToPrecision(qty, meta.qtyPrecision);
   return qty;
 }
