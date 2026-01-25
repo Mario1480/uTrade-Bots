@@ -30,6 +30,16 @@ function normalizeTickerSymbol(value: string) {
   return value.replace(/[^a-zA-Z0-9]/g, "").toUpperCase();
 }
 
+function pickNumber(obj: any, keys: string[]) {
+  for (const k of keys) {
+    const v = obj?.[k];
+    if (v === undefined || v === null || v === "") continue;
+    const n = Number(v);
+    if (Number.isFinite(n)) return n;
+  }
+  return 0;
+}
+
 export function buildCoinstoreSignature(payload: string, secret: string, expiresMs: number) {
   const bucket = Math.floor(expiresMs / 30000).toString();
   const key = crypto.createHmac("sha256", secret).update(bucket).digest("hex");
@@ -269,11 +279,41 @@ export class CoinstoreRestClient {
       body: {},
       auth: "SIGNED"
     });
-    const list: any[] = Array.isArray(json?.data) ? json.data : json?.data?.list ?? [];
-    return list.map((x) => ({
-      asset: String(x.coin ?? x.asset ?? x.currency ?? x.symbol ?? x.name ?? ""),
-      free: Number(x.available ?? x.availableAmount ?? x.available_balance ?? x.free ?? 0),
-      locked: Number(x.frozen ?? x.locked ?? x.frozenAmount ?? x.hold ?? 0)
+    const list: any[] = Array.isArray(json?.data)
+      ? json.data
+      : json?.data?.list ?? json?.data?.accountList ?? json?.data?.balances ?? [];
+    const byAsset = new Map<string, { free: number; locked: number }>();
+    for (const x of list) {
+      const asset = String(x.coin ?? x.asset ?? x.currency ?? x.symbol ?? x.name ?? "").toUpperCase();
+      if (!asset) continue;
+      const free = pickNumber(x, [
+        "available",
+        "availableAmount",
+        "available_balance",
+        "availableBalance",
+        "free",
+        "usable",
+        "balance",
+        "total",
+        "totalAmount"
+      ]);
+      const locked = pickNumber(x, [
+        "frozen",
+        "locked",
+        "frozenAmount",
+        "freezeAmount",
+        "hold",
+        "holdAmount"
+      ]);
+      const prev = byAsset.get(asset) ?? { free: 0, locked: 0 };
+      prev.free += free;
+      prev.locked += locked;
+      byAsset.set(asset, prev);
+    }
+    return Array.from(byAsset.entries()).map(([asset, v]) => ({
+      asset,
+      free: v.free,
+      locked: v.locked
     }));
   }
 
