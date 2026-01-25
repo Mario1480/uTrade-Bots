@@ -326,11 +326,27 @@ export class CoinstoreRestClient {
       auth: "SIGNED"
     });
     const list: any[] = Array.isArray(json?.data) ? json.data : json?.data?.list ?? [];
+    if (process.env.COINSTORE_OPEN_ORDERS_DEBUG === "1") {
+      const rawSample = list.slice(0, 3);
+      // eslint-disable-next-line no-console
+      console.warn("[coinstore] openOrders raw", JSON.stringify(rawSample, null, 2));
+    }
     const orders = list.map((o) => {
       const sideRaw = String(o.side ?? o.direction ?? o.tradeSide ?? "").toLowerCase();
       const side: "buy" | "sell" = sideRaw === "sell" ? "sell" : "buy";
       return {
-      id: String(o.orderId ?? o.order_id ?? o.id ?? ""),
+      id: String(
+        o.orderId ??
+          o.order_id ??
+          o.id ??
+          o.entrustId ??
+          o.entrust_id ??
+          o.orderNo ??
+          o.orderSn ??
+          o.clOrdId ??
+          o.clientOrderId ??
+          ""
+      ),
       symbol: fromExchangeSymbol("coinstore", String(o.symbol ?? s)),
       side,
       price: pickNumber(o, [
@@ -356,7 +372,13 @@ export class CoinstoreRestClient {
         "amount",
         "size",
         "volume",
-        "totalQty"
+        "totalQty",
+        "number",
+        "entrustAmount",
+        "baseQty",
+        "baseAmount",
+        "baseVolume",
+        "tradeQty"
       ]),
       status: "open" as const,
       clientOrderId: o.clientOrderId ?? o.client_order_id ?? o.clOrdId ?? undefined
