@@ -342,7 +342,7 @@ export class CoinstoreRestClient {
     const json = await this.request<any>({
       method: "GET",
       path: "/api/v2/trade/order/active",
-      params: { symbol: s.toLowerCase() },
+      params: { symbol: s },
       auth: "SIGNED"
     });
     const list: any[] = Array.isArray(json?.data) ? json.data : json?.data?.list ?? [];
