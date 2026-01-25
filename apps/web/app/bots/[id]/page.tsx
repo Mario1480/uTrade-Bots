@@ -43,6 +43,7 @@ export default function BotOverviewPage() {
   const [manualPostOnly, setManualPostOnly] = useState(true);
   const [manualConfirm, setManualConfirm] = useState(false);
   const [manualBusy, setManualBusy] = useState(false);
+  const [manualCancelId, setManualCancelId] = useState<string | null>(null);
   const [reauthOpen, setReauthOpen] = useState(false);
   const [pendingAction, setPendingAction] = useState<(() => Promise<void>) | null>(null);
   const systemSettings = useSystemSettings();
@@ -261,6 +262,28 @@ export default function BotOverviewPage() {
     }
   }
 
+  async function cancelManual(orderId: string) {
+    if (!canManualLimit) {
+      showToast("error", "Manual limit trading disabled.");
+      return;
+    }
+    setManualCancelId(orderId);
+    try {
+      await apiPost(`/bots/${id}/manual/cancel`, { orderId });
+      showToast("success", "Manual order cancelled");
+      await loadOrders();
+    } catch (e) {
+      if (isReauthError(e)) {
+        setManualCancelId(null);
+        requireReauth(() => cancelManual(orderId));
+        return;
+      }
+      showToast("error", errMsg(e));
+    } finally {
+      setManualCancelId(null);
+    }
+  }
+
   const openAll = useMemo(() => {
     if (!orders) return [];
     return [...orders.mm, ...orders.vol, ...orders.other];
@@ -268,6 +291,10 @@ export default function BotOverviewPage() {
 
   const canManualLimit = Boolean(me?.permissions?.["trading.manual_limit"] || me?.isSuperadmin);
   const canManualMarket = Boolean(me?.permissions?.["trading.manual_market"] || me?.isSuperadmin);
+  const manualOrders = useMemo(() => {
+    if (!orders) return [];
+    return orders.other.filter((o) => (o.clientOrderId ?? "").startsWith("man_"));
+  }, [orders]);
 
   const baseSymbol = useMemo(() => {
     const raw = bot?.symbol ? String(bot.symbol) : "";
@@ -464,6 +491,38 @@ export default function BotOverviewPage() {
             <OrderTable title="Asks" rows={asks} accent="#ef4444" />
             <OrderTable title="Bids" rows={bids} accent="#22c55e" />
           </div>
+          <div style={{ marginTop: 12 }}>
+            <h4 style={{ margin: "8px 0 6px 0" }}>Manual Limit Orders</h4>
+            {manualOrders.length === 0 ? (
+              <div style={{ fontSize: 12, color: "var(--muted)" }}>No manual limit orders.</div>
+            ) : (
+              <div style={{ display: "grid", gap: 6 }}>
+                {manualOrders.map((o) => (
+                  <div
+                    key={o.id}
+                    className="card"
+                    style={{ padding: "8px 10px", display: "flex", alignItems: "center", gap: 10 }}
+                  >
+                    <div style={{ width: 42, fontWeight: 700, textTransform: "uppercase", fontSize: 12 }}>
+                      {o.side}
+                    </div>
+                    <div style={{ flex: 1, fontSize: 12 }}>
+                      <div>Price: {o.price}</div>
+                      <div>Qty: {o.qty}</div>
+                      <div style={{ color: "var(--muted)" }}>CID: {o.clientOrderId ?? "—"}</div>
+                    </div>
+                    <button
+                      className={`btn ${manualCancelId === o.id ? "btnDisabled" : ""}`}
+                      onClick={() => cancelManual(o.id)}
+                      disabled={manualCancelId === o.id || isReadOnly}
+                    >
+                      {manualCancelId === o.id ? "Cancelling..." : "Cancel"}
+                    </button>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
         </section>
 
         <section className="card" style={{ padding: 12 }}>
@@ -657,7 +716,23 @@ function OrderTable({ title, rows, accent }: { title: string; rows: Order[]; acc
               rows.map((r) => (
                 <tr key={r.id} style={{ borderTop: "1px solid rgba(255,255,255,.06)" }}>
                   <td style={{ paddingTop: 6, paddingBottom: 6, overflow: "hidden", textOverflow: "ellipsis" }}>
-                    {formatNum(r.price)}
+                    <span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
+                      {formatNum(r.price)}
+                      {(r.clientOrderId ?? "").startsWith("man_") ? (
+                        <span
+                          style={{
+                            fontSize: 10,
+                            padding: "2px 6px",
+                            borderRadius: 999,
+                            border: "1px solid rgba(59,130,246,0.7)",
+                            color: "#93c5fd",
+                            whiteSpace: "nowrap"
+                          }}
+                        >
+                          manual
+                        </span>
+                      ) : null}
+                    </span>
                   </td>
                   <td style={{ textAlign: "right", overflow: "hidden", textOverflow: "ellipsis" }}>
                     {formatNum(r.qty)}
