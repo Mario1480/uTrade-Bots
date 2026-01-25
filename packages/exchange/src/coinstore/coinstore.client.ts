@@ -428,8 +428,12 @@ export class CoinstoreRestClient {
     let price = q.price ?? 0;
     let qty = q.qty ?? 0;
     const fallbackPrecision = 8;
-    const hasPriceRule = Boolean(meta?.priceStep) || typeof meta?.pricePrecision === "number";
-    const hasQtyRule = Boolean(meta?.qtyStep) || typeof meta?.qtyPrecision === "number";
+    const hasPriceRule =
+      (Boolean(meta?.priceStep) && price >= (meta?.priceStep ?? 0)) ||
+      typeof meta?.pricePrecision === "number";
+    const hasQtyRule =
+      (Boolean(meta?.qtyStep) && qty >= (meta?.qtyStep ?? 0)) ||
+      typeof meta?.qtyPrecision === "number";
 
     if (q.type === "market" && q.side === "buy" && (!qty || qty <= 0) && q.quoteQty) {
       const mid = await this.getTicker(q.symbol);
