@@ -339,6 +339,7 @@ export class CoinstoreRestClient {
         o.orderId ??
           o.order_id ??
           o.id ??
+          o.ordId ??
           o.entrustId ??
           o.entrust_id ??
           o.orderNo ??
@@ -355,6 +356,7 @@ export class CoinstoreRestClient {
         "entrust_price",
         "orderPrice",
         "order_price",
+        "ordPrice",
         "priceAvg",
         "avgPrice",
         "dealPrice",
@@ -369,6 +371,7 @@ export class CoinstoreRestClient {
         "origQty",
         "orderQty",
         "order_qty",
+        "ordQty",
         "amount",
         "size",
         "volume",
@@ -378,7 +381,8 @@ export class CoinstoreRestClient {
         "baseQty",
         "baseAmount",
         "baseVolume",
-        "tradeQty"
+        "tradeQty",
+        "leavesQty"
       ]),
       status: "open" as const,
       clientOrderId: o.clientOrderId ?? o.client_order_id ?? o.clOrdId ?? undefined
