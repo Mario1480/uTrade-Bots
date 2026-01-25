@@ -427,7 +427,8 @@ export class CoinstoreRestClient {
     const meta = await this.getSymbolMeta(q.symbol);
     let price = q.price ?? 0;
     let qty = q.qty ?? 0;
-    const fallbackPrecision = 8;
+    const fallbackPricePrecision = Number(process.env.COINSTORE_FALLBACK_PRICE_DECIMALS || "4");
+    const fallbackQtyPrecision = Number(process.env.COINSTORE_FALLBACK_QTY_DECIMALS || "8");
     const hasPriceRule =
       (Boolean(meta?.priceStep) && price >= (meta?.priceStep ?? 0)) ||
       typeof meta?.pricePrecision === "number";
@@ -446,10 +447,14 @@ export class CoinstoreRestClient {
       price = normalizePrice(price, meta);
       qty = normalizeQty(qty, meta);
       if (!hasPriceRule) {
-        price = Math.floor(price * 10 ** fallbackPrecision + 1e-12) / 10 ** fallbackPrecision;
+        price =
+          Math.floor(price * 10 ** fallbackPricePrecision + 1e-12) /
+          10 ** fallbackPricePrecision;
       }
       if (!hasQtyRule) {
-        qty = Math.floor(qty * 10 ** fallbackPrecision + 1e-12) / 10 ** fallbackPrecision;
+        qty =
+          Math.floor(qty * 10 ** fallbackQtyPrecision + 1e-12) /
+          10 ** fallbackQtyPrecision;
       }
       const mins = checkMins({ price, qty, meta });
       if (!mins.ok) throw new Error(`[coinstore] min check failed: ${mins.reason}`);
@@ -457,7 +462,9 @@ export class CoinstoreRestClient {
       if (!Number.isFinite(qty) || qty <= 0) throw new Error("market order requires qty");
       qty = normalizeQty(qty, meta);
       if (!hasQtyRule) {
-        qty = Math.floor(qty * 10 ** fallbackPrecision + 1e-12) / 10 ** fallbackPrecision;
+        qty =
+          Math.floor(qty * 10 ** fallbackQtyPrecision + 1e-12) /
+          10 ** fallbackQtyPrecision;
       }
     }
 
