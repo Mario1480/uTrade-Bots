@@ -328,7 +328,7 @@ export class CoinstoreRestClient {
     const list: any[] = Array.isArray(json?.data) ? json.data : json?.data?.list ?? [];
     const orders = list.map((o) => {
       const sideRaw = String(o.side ?? o.direction ?? o.tradeSide ?? "").toLowerCase();
-      const side = sideRaw === "sell" ? "sell" : "buy";
+      const side: "buy" | "sell" = sideRaw === "sell" ? "sell" : "buy";
       return {
       id: String(o.orderId ?? o.order_id ?? o.id ?? ""),
       symbol: fromExchangeSymbol("coinstore", String(o.symbol ?? s)),
