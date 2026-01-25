@@ -405,6 +405,7 @@ export async function runLoop(params: {
       let balancesStale = false;
       const allowBalanceFallback =
         process.env.COINSTORE_ALLOW_BALANCE_429 === "1" || process.env.ALLOW_BALANCE_FALLBACK === "1";
+      const balanceDebug = process.env.COINSTORE_BALANCE_DEBUG === "1";
       try {
         if (t0 - lastBalancesAt >= balancesTtlMs) {
           balances = await exchange.getBalances();
@@ -429,6 +430,14 @@ export async function runLoop(params: {
         } else {
           throw e;
         }
+      }
+      if (balanceDebug) {
+        const sample = balances.slice(0, 8).map((b) => ({
+          asset: b.asset,
+          free: b.free,
+          locked: b.locked
+        }));
+        log.info({ balancesCount: balances.length, sample }, "balances debug");
       }
 
       let open: Order[] = lastOpenOrders;
