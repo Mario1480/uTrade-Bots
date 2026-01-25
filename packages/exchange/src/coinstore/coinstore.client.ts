@@ -428,11 +428,11 @@ export class CoinstoreRestClient {
     const body: Record<string, string> = {
       symbol: s,
       side: q.side.toUpperCase(),
-      orderType: q.type.toUpperCase(),
-      quantity: String(qty)
+      ordType: q.type.toUpperCase(),
+      ordQty: String(qty)
     };
-    if (q.type === "limit") body.price = String(price);
-    if (q.clientOrderId) body.clientOrderId = q.clientOrderId;
+    if (q.type === "limit") body.ordPrice = String(price);
+    if (q.clientOrderId) body.clOrdId = q.clientOrderId;
     if (q.postOnly) {
       (body as any).postOnly = "true";
     }
@@ -445,7 +445,7 @@ export class CoinstoreRestClient {
     });
 
     const data = json?.data ?? {};
-    const orderId = String(data.orderId ?? data.order_id ?? data.id ?? "");
+    const orderId = String(data.orderId ?? data.order_id ?? data.ordId ?? data.id ?? "");
     return {
       id: orderId || q.clientOrderId || `${Date.now()}`,
       symbol: normalizeSymbol(q.symbol),
