@@ -490,6 +490,10 @@ export class CoinstoreRestClient {
       (body as any).postOnly = "true";
     }
 
+    if (process.env.COINSTORE_ORDER_DEBUG === "1") {
+      // eslint-disable-next-line no-console
+      console.info("[coinstore] placeOrder payload", body);
+    }
     const json = await this.request<any>({
       method: "POST",
       path: "/api/trade/order/place",
