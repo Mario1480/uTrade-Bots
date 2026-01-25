@@ -76,8 +76,8 @@ export async function runLoop(params: {
   const priceFeedCache = new Map<string, { mid: MidPrice; ts: number }>();
   const priceFeedTtlMs = Number(process.env.PRICE_FEED_TTL_MS || "15000");
   const masterStaleMs = Number(process.env.PRICE_FOLLOW_STALE_MS || "10000");
-  const balancesTtlMs = Number(process.env.BALANCES_TTL_MS || "90000");
-  const openOrdersTtlMs = Number(process.env.OPEN_ORDERS_TTL_MS || "90000");
+  const balancesTtlMs = Number(process.env.BALANCES_TTL_MS || "30000");
+  const openOrdersTtlMs = Number(process.env.OPEN_ORDERS_TTL_MS || "30000");
 
   function getMarketDataClient(exchangeKey: string): ExchangePublic {
     const key = exchangeKey.toLowerCase();
@@ -121,7 +121,7 @@ export async function runLoop(params: {
   let riskEngine = new RiskEngine(risk);
   const priceEpsPct = Number(process.env.MM_PRICE_EPS_PCT || "0.005");
   const qtyEpsPct = Number(process.env.MM_QTY_EPS_PCT || "0.02");
-  const minRepriceMs = Number(process.env.MM_REPRICE_MS || "45000");
+  const minRepriceMs = Number(process.env.MM_REPRICE_MS || "15000");
   const minRepricePct = Number(process.env.MM_REPRICE_PCT || "0.01");
   const invAlpha = Number(process.env.MM_INV_ALPHA || "0.1");
   const volCooldownMs = Number(process.env.MM_VOL_COOLDOWN_MS || "60000");
