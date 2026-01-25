@@ -74,10 +74,10 @@ export async function runLoop(params: {
 
   const marketDataClients = new Map<string, ExchangePublic>();
   const priceFeedCache = new Map<string, { mid: MidPrice; ts: number }>();
-  const priceFeedTtlMs = Number(process.env.PRICE_FEED_TTL_MS || "8000");
+  const priceFeedTtlMs = Number(process.env.PRICE_FEED_TTL_MS || "15000");
   const masterStaleMs = Number(process.env.PRICE_FOLLOW_STALE_MS || "10000");
-  const balancesTtlMs = Number(process.env.BALANCES_TTL_MS || "30000");
-  const openOrdersTtlMs = Number(process.env.OPEN_ORDERS_TTL_MS || "30000");
+  const balancesTtlMs = Number(process.env.BALANCES_TTL_MS || "90000");
+  const openOrdersTtlMs = Number(process.env.OPEN_ORDERS_TTL_MS || "90000");
 
   function getMarketDataClient(exchangeKey: string): ExchangePublic {
     const key = exchangeKey.toLowerCase();
@@ -121,7 +121,7 @@ export async function runLoop(params: {
   let riskEngine = new RiskEngine(risk);
   const priceEpsPct = Number(process.env.MM_PRICE_EPS_PCT || "0.005");
   const qtyEpsPct = Number(process.env.MM_QTY_EPS_PCT || "0.02");
-  const minRepriceMs = Number(process.env.MM_REPRICE_MS || "20000");
+  const minRepriceMs = Number(process.env.MM_REPRICE_MS || "45000");
   const minRepricePct = Number(process.env.MM_REPRICE_PCT || "0.01");
   const invAlpha = Number(process.env.MM_INV_ALPHA || "0.1");
   const volCooldownMs = Number(process.env.MM_VOL_COOLDOWN_MS || "60000");
@@ -404,7 +404,8 @@ export async function runLoop(params: {
       let balances: Balance[] = lastBalances;
       let balancesStale = false;
       const allowBalanceFallback =
-        process.env.COINSTORE_ALLOW_BALANCE_429 === "1" || process.env.ALLOW_BALANCE_FALLBACK === "1";
+        process.env.COINSTORE_ALLOW_BALANCE_429 !== "0" ||
+        process.env.ALLOW_BALANCE_FALLBACK === "1";
       const balanceDebug = process.env.COINSTORE_BALANCE_DEBUG === "1";
       try {
         if (t0 - lastBalancesAt >= balancesTtlMs) {
