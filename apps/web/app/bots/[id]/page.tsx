@@ -44,6 +44,7 @@ export default function BotOverviewPage() {
   const [manualConfirm, setManualConfirm] = useState(false);
   const [manualBusy, setManualBusy] = useState(false);
   const [manualCancelId, setManualCancelId] = useState<string | null>(null);
+  const [manualError, setManualError] = useState<string | null>(null);
   const [reauthOpen, setReauthOpen] = useState(false);
   const [pendingAction, setPendingAction] = useState<(() => Promise<void>) | null>(null);
   const systemSettings = useSystemSettings();
@@ -155,13 +156,16 @@ export default function BotOverviewPage() {
   }, [id]);
 
   async function submitManual() {
+    setManualError(null);
     const canLimit = Boolean(me?.permissions?.["trading.manual_limit"] || me?.isSuperadmin);
     const canMarket = Boolean(me?.permissions?.["trading.manual_market"] || me?.isSuperadmin);
     if (manualType === "LIMIT" && !canLimit) {
+      setManualError("Manual limit trading disabled.");
       showToast("error", "Manual limit trading disabled.");
       return;
     }
     if (manualType === "MARKET" && !canMarket) {
+      setManualError("Manual market trading disabled.");
       showToast("error", "Manual market trading disabled.");
       return;
     }
@@ -171,6 +175,7 @@ export default function BotOverviewPage() {
         const price = Number(manualPrice);
         const qty = Number(manualQty);
         if (!Number.isFinite(price) || price <= 0 || !Number.isFinite(qty) || qty <= 0) {
+          setManualError("Enter a valid price and quantity.");
           showToast("error", "Enter a valid price and quantity.");
           return;
         }
@@ -184,12 +189,14 @@ export default function BotOverviewPage() {
         showToast("success", "Limit order submitted");
       } else {
         if (!manualConfirm) {
+          setManualError("Confirm market order first.");
           showToast("error", "Confirm market order first.");
           return;
         }
         if (manualSide === "buy") {
           const spend = Number(manualSpend);
           if (!Number.isFinite(spend) || spend <= 0) {
+            setManualError("Enter a valid spend amount.");
             showToast("error", "Enter a valid spend amount.");
             return;
           }
@@ -200,6 +207,7 @@ export default function BotOverviewPage() {
         } else {
           const qty = Number(manualQty);
           if (!Number.isFinite(qty) || qty <= 0) {
+            setManualError("Enter a valid quantity.");
             showToast("error", "Enter a valid quantity.");
             return;
           }
@@ -212,10 +220,12 @@ export default function BotOverviewPage() {
       }
     } catch (e) {
       if (isReauthError(e)) {
+        setManualError("Re-auth required for manual trades.");
         showToast("error", "Re-auth required for manual trades.");
         requireReauth(submitManual);
         return;
       }
+      setManualError(errMsg(e));
       showToast("error", errMsg(e));
     } finally {
       setManualBusy(false);
@@ -663,6 +673,9 @@ export default function BotOverviewPage() {
               >
                 {manualBusy ? "Submitting..." : "Submit manual order"}
               </button>
+              {manualError ? (
+                <div style={{ fontSize: 12, color: "#fca5a5" }}>{manualError}</div>
+              ) : null}
             </div>
           )}
         </section>
