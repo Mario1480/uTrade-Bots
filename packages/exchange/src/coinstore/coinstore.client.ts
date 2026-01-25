@@ -358,7 +358,7 @@ export class CoinstoreRestClient {
         "volume",
         "totalQty"
       ]),
-      status: "open",
+      status: "open" as const,
       clientOrderId: o.clientOrderId ?? o.client_order_id ?? o.clOrdId ?? undefined
       };
     });
