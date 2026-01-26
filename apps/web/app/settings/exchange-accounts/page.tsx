@@ -415,7 +415,7 @@ export default function ExchangeAccountsPage() {
                 value={form.apiMemo ?? ""}
                 onChange={(e) => setForm({ ...form, apiMemo: e.target.value })}
                 className="input"
-                placeholder="optional (Bitmart memo)"
+                placeholder="optional"
                 disabled={!unlocked || isReadOnly}
               />
             </Field>
