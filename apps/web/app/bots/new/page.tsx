@@ -141,6 +141,7 @@ export default function NewBotPage() {
             <select className="input" value={exchange} onChange={(e) => setExchange(e.target.value)}>
               <option value="bitmart">Bitmart</option>
               <option value="coinstore">Coinstore</option>
+              <option value="pionex">Pionex</option>
             </select>
           </label>
 

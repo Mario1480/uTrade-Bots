@@ -166,7 +166,7 @@ export default function BotPage() {
   const canSavePriceFollow = ready && dirtyPriceFollow && saving !== "saving..." && !isReadOnly;
   const canSaveNotify = ready && dirtyNotify && saving !== "saving..." && !isReadOnly;
   const exchangeOptions = useMemo(() => {
-    const list = [bot?.exchange, priceFollow?.priceSourceExchange, "bitmart", "coinstore"]
+    const list = [bot?.exchange, priceFollow?.priceSourceExchange, "bitmart", "coinstore", "pionex"]
       .filter(Boolean)
       .map((v) => String(v));
     return Array.from(new Set(list));

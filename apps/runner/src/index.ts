@@ -1,5 +1,5 @@
 import "dotenv/config";
-import { BitmartRestClient, CoinstoreRestClient } from "@mm/exchange";
+import { BitmartRestClient, CoinstoreRestClient, PionexRestClient } from "@mm/exchange";
 import type { Exchange } from "@mm/exchange";
 import { BotStateMachine } from "./state-machine.js";
 import { runLoop } from "./loop.js";
@@ -31,6 +31,7 @@ function getExchangeBaseUrl(exchange: string): string | null {
   const key = exchange.toLowerCase();
   if (key === "bitmart") return process.env.BITMART_BASE_URL || "https://api-cloud.bitmart.com";
   if (key === "coinstore") return process.env.COINSTORE_BASE_URL || "https://api.coinstore.com";
+  if (key === "pionex") return process.env.PIONEX_BASE_URL || "https://api.pionex.com";
   return null;
 }
 
@@ -45,7 +46,7 @@ async function startBotLoop(botId: string, tickMs: number) {
       const symbol = bot.symbol;
 
       const exchangeKey = bot.exchange.toLowerCase();
-      if (exchangeKey !== "bitmart" && exchangeKey !== "coinstore") {
+      if (exchangeKey !== "bitmart" && exchangeKey !== "coinstore" && exchangeKey !== "pionex") {
         const reason = `UNSUPPORTED_EXCHANGE:${bot.exchange}`;
         await writeRuntime({
           botId,
@@ -78,7 +79,13 @@ async function startBotLoop(botId: string, tickMs: number) {
       const rest =
         exchangeKey === "bitmart"
           ? new BitmartRestClient(baseUrl, cex.apiKey, cex.apiSecret, cex.apiMemo ?? "")
-          : new CoinstoreRestClient(baseUrl, cex.apiKey, cex.apiSecret);
+          : exchangeKey === "coinstore"
+            ? new CoinstoreRestClient(baseUrl, cex.apiKey, cex.apiSecret)
+            : new PionexRestClient(baseUrl, cex.apiKey, cex.apiSecret);
+
+      if (exchangeKey === "pionex") {
+        await (rest as PionexRestClient).sanityCheck();
+      }
 
       const exchange: Exchange = {
         getMidPrice: (s) => rest.getTicker(s),
