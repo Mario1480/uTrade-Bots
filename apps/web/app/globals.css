@@ -42,6 +42,14 @@ a { color: inherit; }
   padding: 14px 16px;
 }
 
+.appHeaderTop {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  width: 100%;
+}
+
 .appLogo {
   display: inline-flex;
   align-items: center;
@@ -71,6 +79,28 @@ a { color: inherit; }
   display: flex;
   gap: 10px;
   flex-wrap: wrap;
+}
+
+.appBurger {
+  display: none;
+  width: 44px;
+  height: 44px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  background: transparent;
+  color: var(--text);
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  padding: 0;
+}
+
+.appBurger span {
+  display: block;
+  width: 18px;
+  height: 2px;
+  background: var(--text);
+  border-radius: 2px;
 }
 
 .appMain {
@@ -416,7 +446,10 @@ a { color: inherit; }
   }
   .appHeaderInner {
     flex-direction: column;
-    align-items: flex-start;
+    align-items: stretch;
+  }
+  .appHeaderTop {
+    width: 100%;
   }
   .appLogoMark {
     width: 44px;
@@ -425,8 +458,17 @@ a { color: inherit; }
   .appLogoText {
     font-size: 18px;
   }
+  .appBurger {
+    display: inline-flex;
+  }
   .appNav {
     width: 100%;
+    display: none;
+    flex-direction: column;
+    gap: 8px;
+  }
+  .appNavOpen {
+    display: flex;
   }
   .appNav .btn {
     width: 100%;
