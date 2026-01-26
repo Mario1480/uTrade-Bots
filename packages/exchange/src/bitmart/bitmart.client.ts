@@ -19,6 +19,18 @@ export class BitmartRestClient {
   ) {}
 
   private readonly metaCache = new Map<string, { meta: SymbolMeta; ts: number }>();
+  private readonly maxClientOrderId = 32;
+
+  private compactClientOrderId(raw: string): string {
+    if (raw.length <= this.maxClientOrderId) return raw;
+    const prefix =
+      raw.startsWith("man") ? "man" :
+      raw.startsWith("mm-") || raw.startsWith("mmb") || raw.startsWith("mms") ? "mm" :
+      raw.startsWith("vol") ? "vol" :
+      "ord";
+    const hash = crypto.createHash("sha256").update(raw).digest("hex");
+    return (prefix + hash).slice(0, this.maxClientOrderId);
+  }
 
   private async parseJson(res: Response, label: string): Promise<any> {
     const text = await res.text();
@@ -330,7 +342,7 @@ export class BitmartRestClient {
       body.post_only = true;
       body.postOnly = true;
     }
-    if (q.clientOrderId) body.client_order_id = q.clientOrderId;
+    if (q.clientOrderId) body.client_order_id = this.compactClientOrderId(q.clientOrderId);
 
     const json: any = await this.request("POST", "/spot/v2/submit_order", body, "SIGNED");
     const orderId = String(json.data?.order_id ?? json.data?.orderId ?? "");
@@ -341,7 +353,7 @@ export class BitmartRestClient {
       price: q.price ?? 0,
       qty: q.qty,
       status: "open",
-      clientOrderId: q.clientOrderId
+      clientOrderId: q.clientOrderId ? this.compactClientOrderId(q.clientOrderId) : undefined
     };
   }
 
