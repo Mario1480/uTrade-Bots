@@ -60,6 +60,16 @@ export default function NewBotPage() {
     return symbolOptions.filter((s) => s.toLowerCase().includes(q));
   }, [symbolOptions, symbolQuery]);
 
+  useEffect(() => {
+    if (filteredOptions.length === 0) {
+      if (symbol) setSymbol("");
+      return;
+    }
+    if (!filteredOptions.includes(symbol)) {
+      setSymbol(filteredOptions[0]);
+    }
+  }, [filteredOptions, symbol]);
+
   const canCreate = useMemo(() => {
     return name.trim().length > 0 && !!exchange && !!symbol && !saving;
   }, [name, exchange, symbol, saving]);
