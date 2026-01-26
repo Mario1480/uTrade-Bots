@@ -218,10 +218,8 @@ export class PionexRestClient {
     return list
       .filter((s) => {
         const type = String(s?.type ?? s?.symbolType ?? "").toUpperCase();
-        const enable = s?.enable;
         const state = String(s?.state ?? s?.status ?? "").toUpperCase();
         if (type && type !== "SPOT") return false;
-        if (enable === false) return false;
         if (state && !["ONLINE", "TRADING", "ENABLED", "ACTIVE"].includes(state)) return false;
         return true;
       })
