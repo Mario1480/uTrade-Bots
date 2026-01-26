@@ -376,10 +376,14 @@ export class PionexRestClient {
 
   async cancelOrder(symbol: string, orderId: string): Promise<void> {
     const s = toExchangeSymbol("pionex", symbol);
+    const orderIdNum = Number(orderId);
+    if (!Number.isFinite(orderIdNum) || orderIdNum <= 0) {
+      throw new Error(`[pionex] invalid orderId: ${orderId}`);
+    }
     await this.request<any>({
       method: "DELETE",
       path: "/api/v1/trade/order",
-      body: { symbol: s, orderId },
+      body: { symbol: s, orderId: orderIdNum },
       auth: "SIGNED"
     });
   }
