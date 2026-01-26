@@ -61,7 +61,16 @@ export const PionexSymbolAdapter: SymbolAdapter = {
     return `${base}_${quote}`;
   },
   fromExchangeSymbol(exchangeSymbol: string): string {
-    return normalizeSymbol(exchangeSymbol.replace("_", "/"));
+    const raw = String(exchangeSymbol);
+    if (raw.includes("_")) return normalizeSymbol(raw.replace("_", "/"));
+    const upper = raw.toUpperCase();
+    const knownQuotes = ["USDT", "USDC", "USD", "EUR", "BTC", "ETH", "BNB"];
+    const quote = knownQuotes.find((q) => upper.endsWith(q));
+    if (quote) {
+      const base = upper.slice(0, -quote.length);
+      if (base) return normalizeSymbol(`${base}/${quote}`);
+    }
+    return normalizeSymbol(upper);
   }
 };
 
