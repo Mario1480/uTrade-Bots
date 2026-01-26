@@ -1,9 +1,12 @@
 type NotificationsFormProps = {
   notify: any;
   onChange: (next: any) => void;
+  onSave: () => void;
+  canSave: boolean;
+  saveLabel: string;
 };
 
-export function NotificationsForm({ notify, onChange }: NotificationsFormProps) {
+export function NotificationsForm({ notify, onChange, onSave, canSave, saveLabel }: NotificationsFormProps) {
   return (
     <details className="card" style={{ padding: 12, marginBottom: 16 }}>
       <summary style={{ cursor: "pointer", fontWeight: 700, marginBottom: 10 }}>Notifications</summary>
@@ -32,6 +35,15 @@ export function NotificationsForm({ notify, onChange }: NotificationsFormProps) 
           onChange={(e) => onChange({ ...notify, fundsWarnPct: parsePct(e.target.value, notify.fundsWarnPct) })}
         />
       </label>
+      <div style={{ marginTop: 10 }}>
+        <button
+          className={`btn btnPrimary ${!canSave ? "btnDisabled" : ""}`}
+          onClick={onSave}
+          disabled={!canSave}
+        >
+          {saveLabel}
+        </button>
+      </div>
     </details>
   );
 }
