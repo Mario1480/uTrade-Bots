@@ -93,6 +93,7 @@ a { color: inherit; }
   justify-content: center;
   gap: 5px;
   padding: 0;
+  flex-direction: column;
 }
 
 .appBurger span {
