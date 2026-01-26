@@ -315,7 +315,10 @@ export default function BotOverviewPage() {
   const canManualMarket = Boolean(me?.permissions?.["trading.manual_market"] || me?.isSuperadmin);
   const manualOrders = useMemo(() => {
     if (!orders) return [];
-    return orders.other.filter((o) => (o.clientOrderId ?? "").startsWith("man_"));
+    return orders.other.filter((o) => {
+      const cid = o.clientOrderId ?? "";
+      return cid.startsWith("man_") || cid.startsWith("man");
+    });
   }, [orders]);
 
   const baseSymbol = useMemo(() => {
