@@ -2100,18 +2100,18 @@ app.post("/bots", requireAuth, requirePermission("bots.create"), async (req, res
       volEnabled: false,
       mmConfig: {
         create: {
-          spreadPct: 0.004,
-          maxSpreadPct: 0.0015,
-          levelsUp: 5,
-          levelsDown: 5,
-          budgetQuoteUsdt: 2000,
-          budgetBaseToken: 2000,
+          spreadPct: 0.5,
+          maxSpreadPct: 20,
+          levelsUp: 10,
+          levelsDown: 10,
+          budgetQuoteUsdt: 500,
+          budgetBaseToken: 500,
           minOrderUsdt: 5,
           maxOrderUsdt: 0,
-          distribution: "VALLEY",
-          jitterPct: 0.0002,
-          skewFactor: 0.25,
-          maxSkew: 0.006
+          distribution: "LINEAR",
+          jitterPct: 0.0,
+          skewFactor: 0.0,
+          maxSkew: 0.0
         }
       },
       volConfig: {
@@ -2129,10 +2129,10 @@ app.post("/bots", requireAuth, requirePermission("bots.create"), async (req, res
       },
       riskConfig: {
         create: {
-          minUsdt: 200,
-          maxDeviationPct: 0.8,
-          maxOpenOrders: 30,
-          maxDailyLoss: 200
+          minUsdt: 0,
+          maxDeviationPct: 0,
+          maxOpenOrders: 0,
+          maxDailyLoss: 0
         }
       },
       notificationConfig: {
