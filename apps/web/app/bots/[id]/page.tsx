@@ -46,6 +46,12 @@ export default function BotOverviewPage() {
   const [manualCancelId, setManualCancelId] = useState<string | null>(null);
   const [manualError, setManualError] = useState<string | null>(null);
   const [manualDebug, setManualDebug] = useState<string | null>(null);
+  const manualEstCost = useMemo(() => {
+    const price = Number(manualPrice);
+    const qty = Number(manualQty);
+    if (!Number.isFinite(price) || !Number.isFinite(qty) || price <= 0 || qty <= 0) return null;
+    return price * qty;
+  }, [manualPrice, manualQty]);
   const [reauthOpen, setReauthOpen] = useState(false);
   const [pendingAction, setPendingAction] = useState<(() => Promise<void>) | null>(null);
   const systemSettings = useSystemSettings();
@@ -636,6 +642,9 @@ export default function BotOverviewPage() {
                       placeholder="0"
                     />
                   </label>
+                  <div style={{ fontSize: 12, color: "var(--muted)" }}>
+                    Estimated cost (USDT): {manualEstCost ? manualEstCost.toFixed(6) : "—"}
+                  </div>
                   <label style={{ fontSize: 13, display: "flex", alignItems: "center", gap: 8 }}>
                     <input
                       type="checkbox"
