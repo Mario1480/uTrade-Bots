@@ -62,6 +62,7 @@ export const PionexSymbolAdapter: SymbolAdapter = {
   },
   fromExchangeSymbol(exchangeSymbol: string): string {
     const raw = String(exchangeSymbol);
+    if (raw.includes("/")) return normalizeSymbol(raw);
     if (raw.includes("_")) return normalizeSymbol(raw.replace("_", "/"));
     const upper = raw.toUpperCase();
     const knownQuotes = ["USDT", "USDC", "USD", "EUR", "BTC", "ETH", "BNB"];
