@@ -2108,8 +2108,8 @@ app.post("/bots", requireAuth, requirePermission("bots.create"), async (req, res
       volEnabled: false,
       mmConfig: {
         create: {
-          spreadPct: 0.5,
-          maxSpreadPct: 20,
+          spreadPct: 0.05,
+          maxSpreadPct: 0.2,
           levelsUp: 10,
           levelsDown: 10,
           budgetQuoteUsdt: 500,
