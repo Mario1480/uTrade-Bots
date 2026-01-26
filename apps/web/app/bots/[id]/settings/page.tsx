@@ -147,18 +147,24 @@ export default function BotPage() {
     if (!baseline || !priceFollow) return false;
     return JSON.stringify(priceFollow) !== JSON.stringify(baseline.priceFollow);
   }, [baseline, priceFollow]);
+  const dirtyNotify = useMemo(() => {
+    if (!baseline || !notify) return false;
+    return JSON.stringify(notify) !== JSON.stringify(baseline.notify);
+  }, [baseline, notify]);
 
   const canSave = ready && dirty && saving !== "saving..." && !isReadOnly;
   const mmSaveLabel = saving === "saving..." ? "Saving..." : dirtyMm ? "Save Config" : "Saved";
   const volSaveLabel = saving === "saving..." ? "Saving..." : dirtyVol ? "Save Config" : "Saved";
   const riskSaveLabel = saving === "saving..." ? "Saving..." : dirtyRisk ? "Save Config" : "Saved";
   const priceFollowSaveLabel = saving === "saving..." ? "Saving..." : dirtyPriceFollow ? "Save Config" : "Saved";
+  const notifySaveLabel = saving === "saving..." ? "Saving..." : dirtyNotify ? "Save Config" : "Saved";
   const canViewPresets = Boolean(me?.permissions?.["presets.view"] || me?.isSuperadmin);
   const canCreatePresets = Boolean(me?.permissions?.["presets.create"] || me?.isSuperadmin) && !isReadOnly;
   const canApplyPresets = Boolean(me?.permissions?.["presets.apply"] || me?.isSuperadmin) && !isReadOnly;
   const canDeletePresets = Boolean(me?.permissions?.["presets.delete"] || me?.isSuperadmin) && !isReadOnly;
   const canEditConfig = Boolean(me?.permissions?.["bots.edit_config"] || me?.isSuperadmin) && !isReadOnly;
   const canSavePriceFollow = ready && dirtyPriceFollow && saving !== "saving..." && !isReadOnly;
+  const canSaveNotify = ready && dirtyNotify && saving !== "saving..." && !isReadOnly;
   const exchangeOptions = useMemo(() => {
     const list = [bot?.exchange, priceFollow?.priceSourceExchange, "bitmart", "coinstore"]
       .filter(Boolean)
@@ -968,7 +974,13 @@ export default function BotPage() {
         </AccordionSection>
       ) : null}
 
-      <NotificationsForm notify={notify} onChange={setNotify} />
+      <NotificationsForm
+        notify={notify}
+        onChange={setNotify}
+        onSave={save}
+        canSave={canSaveNotify}
+        saveLabel={notifySaveLabel}
+      />
     </div>
   );
 }
