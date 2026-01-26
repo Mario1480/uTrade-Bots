@@ -436,6 +436,7 @@ export class CoinstoreRestClient {
     const meta = await this.getSymbolMeta(q.symbol);
     let price = q.price ?? 0;
     let qty = q.qty ?? 0;
+    const quoteQty = q.quoteQty;
     const fallbackPricePrecision = Number(process.env.COINSTORE_FALLBACK_PRICE_DECIMALS || "4");
     const fallbackQtyPrecision = Number(process.env.COINSTORE_FALLBACK_QTY_DECIMALS || "8");
     const hasPriceRule =
@@ -445,9 +446,9 @@ export class CoinstoreRestClient {
       (Boolean(meta?.qtyStep) && qty >= (meta?.qtyStep ?? 0)) ||
       typeof meta?.qtyPrecision === "number";
 
-    if (q.type === "market" && q.side === "buy" && (!qty || qty <= 0) && q.quoteQty) {
+    if (q.type === "market" && q.side === "buy" && (!qty || qty <= 0) && quoteQty) {
       const mid = await this.getTicker(q.symbol);
-      qty = q.quoteQty / (mid.last ?? mid.mid);
+      qty = quoteQty / (mid.last ?? mid.mid);
     }
 
     if (q.type === "limit") {
@@ -468,22 +469,39 @@ export class CoinstoreRestClient {
       const mins = checkMins({ price, qty, meta });
       if (!mins.ok) throw new Error(`[coinstore] min check failed: ${mins.reason}`);
     } else {
-      if (!Number.isFinite(qty) || qty <= 0) throw new Error("market order requires qty");
-      qty = normalizeQty(qty, meta);
-      if (!hasQtyRule) {
-        qty =
-          Math.floor(qty * 10 ** fallbackQtyPrecision + 1e-12) /
-          10 ** fallbackQtyPrecision;
+      if (q.side === "buy" && quoteQty && quoteQty > 0) {
+        if (meta?.minNotional && quoteQty < meta.minNotional) {
+          throw new Error(`[coinstore] min check failed: notional ${quoteQty} < minNotional ${meta.minNotional}`);
+        }
+      } else {
+        if (!Number.isFinite(qty) || qty <= 0) throw new Error("market order requires qty");
+        qty = normalizeQty(qty, meta);
+        if (!hasQtyRule) {
+          qty =
+            Math.floor(qty * 10 ** fallbackQtyPrecision + 1e-12) /
+            10 ** fallbackQtyPrecision;
+        }
+        if (meta?.minQty && qty < meta.minQty) {
+          throw new Error(`[coinstore] min check failed: qty ${qty} < minQty ${meta.minQty}`);
+        }
       }
     }
 
     const body: Record<string, string> = {
       symbol: s,
       side: q.side.toUpperCase(),
-      ordType: q.type.toUpperCase(),
-      ordQty: String(qty)
+      ordType: q.type.toUpperCase()
     };
-    if (q.type === "limit") body.ordPrice = String(price);
+    if (q.type === "limit") {
+      body.ordPrice = String(price);
+      body.ordQty = String(qty);
+    } else {
+      if (q.side === "buy" && quoteQty && quoteQty > 0) {
+        (body as any).ordAmt = String(quoteQty);
+      } else {
+        body.ordQty = String(qty);
+      }
+    }
     const clientOrderId = sanitizeClientOrderId(q.clientOrderId);
     if (clientOrderId) body.clOrdId = clientOrderId;
     if (q.postOnly) {
