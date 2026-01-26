@@ -7,6 +7,10 @@ Add a new CEX integration with minimal disruption. The adapter must support:
 - fills/trades: getMyTrades for fill-based volume counter
 - clientOrderId preservation (critical for mm-/vol- prefixes)
 
+CEX Name:
+CEX API Docs: 
+Trading: 
+
 CRITICAL PITFALLS (learned from Coinstore)
 1) Base URL / Path prefixes:
    - Many CEX require /api prefix (404 if missing). Implement a single apiPrefix config and a startup sanity check:
