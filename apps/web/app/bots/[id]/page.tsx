@@ -45,6 +45,7 @@ export default function BotOverviewPage() {
   const [manualBusy, setManualBusy] = useState(false);
   const [manualCancelId, setManualCancelId] = useState<string | null>(null);
   const [manualError, setManualError] = useState<string | null>(null);
+  const [manualDebug, setManualDebug] = useState<string | null>(null);
   const [reauthOpen, setReauthOpen] = useState(false);
   const [pendingAction, setPendingAction] = useState<(() => Promise<void>) | null>(null);
   const systemSettings = useSystemSettings();
@@ -157,15 +158,18 @@ export default function BotOverviewPage() {
 
   async function submitManual() {
     setManualError(null);
+    setManualDebug("submit clicked");
     const canLimit = Boolean(me?.permissions?.["trading.manual_limit"] || me?.isSuperadmin);
     const canMarket = Boolean(me?.permissions?.["trading.manual_market"] || me?.isSuperadmin);
     if (manualType === "LIMIT" && !canLimit) {
       setManualError("Manual limit trading disabled.");
+      setManualDebug("blocked: missing permission trading.manual_limit");
       showToast("error", "Manual limit trading disabled.");
       return;
     }
     if (manualType === "MARKET" && !canMarket) {
       setManualError("Manual market trading disabled.");
+      setManualDebug("blocked: missing permission trading.manual_market");
       showToast("error", "Manual market trading disabled.");
       return;
     }
@@ -176,6 +180,7 @@ export default function BotOverviewPage() {
         const qty = Number(manualQty);
         if (!Number.isFinite(price) || price <= 0 || !Number.isFinite(qty) || qty <= 0) {
           setManualError("Enter a valid price and quantity.");
+          setManualDebug("blocked: invalid price/quantity");
           showToast("error", "Enter a valid price and quantity.");
           return;
         }
@@ -186,10 +191,12 @@ export default function BotOverviewPage() {
           postOnly: manualPostOnly,
           timeInForce: "GTC"
         });
+        setManualDebug("limit submitted");
         showToast("success", "Limit order submitted");
       } else {
         if (!manualConfirm) {
           setManualError("Confirm market order first.");
+          setManualDebug("blocked: market confirm missing");
           showToast("error", "Confirm market order first.");
           return;
         }
@@ -197,6 +204,7 @@ export default function BotOverviewPage() {
           const spend = Number(manualSpend);
           if (!Number.isFinite(spend) || spend <= 0) {
             setManualError("Enter a valid spend amount.");
+            setManualDebug("blocked: invalid spend amount");
             showToast("error", "Enter a valid spend amount.");
             return;
           }
@@ -208,6 +216,7 @@ export default function BotOverviewPage() {
           const qty = Number(manualQty);
           if (!Number.isFinite(qty) || qty <= 0) {
             setManualError("Enter a valid quantity.");
+            setManualDebug("blocked: invalid quantity");
             showToast("error", "Enter a valid quantity.");
             return;
           }
@@ -216,15 +225,18 @@ export default function BotOverviewPage() {
             quantity: qty
           });
         }
+        setManualDebug("market submitted");
         showToast("success", "Market order submitted");
       }
     } catch (e) {
       if (isReauthError(e)) {
         setManualError("Re-auth required for manual trades.");
+        setManualDebug("blocked: re-auth required");
         showToast("error", "Re-auth required for manual trades.");
         requireReauth(submitManual);
         return;
       }
+      setManualDebug(`error: ${errMsg(e)}`);
       setManualError(errMsg(e));
       showToast("error", errMsg(e));
     } finally {
@@ -673,6 +685,9 @@ export default function BotOverviewPage() {
               >
                 {manualBusy ? "Submitting..." : "Submit manual order"}
               </button>
+              {manualDebug ? (
+                <div style={{ fontSize: 12, color: "var(--muted)" }}>Manual debug: {manualDebug}</div>
+              ) : null}
               {manualError ? (
                 <div style={{ fontSize: 12, color: "#fca5a5" }}>{manualError}</div>
               ) : null}
