@@ -28,6 +28,7 @@ import {
   updateBotFlags,
   updatePriceSupportConfig,
   writeAlert,
+  writeBotMetric,
   writeRuntime,
   upsertOrderMap
 } from "./db.js";
@@ -47,6 +48,13 @@ function findFree(balances: Balance[], asset: string): number {
 
 function sleep(ms: number): Promise<void> {
   return new Promise((r) => setTimeout(r, ms));
+}
+
+function computeSpreadPct(mid?: number | null, bid?: number | null, ask?: number | null): number | null {
+  if (!mid || !bid || !ask) return null;
+  if (!Number.isFinite(mid) || !Number.isFinite(bid) || !Number.isFinite(ask)) return null;
+  if (mid <= 0 || ask <= bid) return null;
+  return ((ask - bid) / mid) * 100;
 }
 
 export async function runLoop(params: {
@@ -78,6 +86,7 @@ export async function runLoop(params: {
   const masterStaleMs = Number(process.env.PRICE_FOLLOW_STALE_MS || "10000");
   const balancesTtlMs = Number(process.env.BALANCES_TTL_MS || "30000");
   const openOrdersTtlMs = Number(process.env.OPEN_ORDERS_TTL_MS || "30000");
+  const metricsSampleMs = Math.max(1_000, Number(process.env.METRICS_SAMPLE_SEC || "10") * 1_000);
 
   function getMarketDataClient(exchangeKey: string): ExchangePublic {
     const key = exchangeKey.toLowerCase();
@@ -136,6 +145,7 @@ export async function runLoop(params: {
   const orderMgr = new OrderManager({ priceEpsPct, qtyEpsPct });
   let lastRepriceAt = 0;
   let lastRepriceMid = 0;
+  let lastMetricWriteAt = 0;
   let smoothedInvRatio: number | null = null;
   let lastVolTradeAt = 0;
   let fundsAlertSent = false;
@@ -515,6 +525,38 @@ export async function runLoop(params: {
         { openTotal: open.length, openMm: openMm.length, openVol: openVol.length, lastVolClientOrderId },
         "open orders breakdown"
       );
+
+      // Periodic metrics sampling. Uses existing runtime data only (no extra exchange calls).
+      if (Date.now() - lastMetricWriteAt >= metricsSampleMs) {
+        const midNum = Number.isFinite(mid.mid) ? (mid.mid as number) : null;
+        const bidNum = Number.isFinite(mid.bid) ? (mid.bid as number) : null;
+        const askNum = Number.isFinite(mid.ask) ? (mid.ask as number) : null;
+        const freeQuote = findFree(balances, "USDT");
+        const freeBase = findFree(balances, base);
+        const spreadPct = computeSpreadPct(midNum, bidNum, askNum);
+        const inventoryQuoteValue = midNum && midNum > 0 ? freeQuote + freeBase * midNum : freeQuote;
+        try {
+          await writeBotMetric({
+            botId,
+            mid: midNum,
+            bid: bidNum,
+            ask: askNum,
+            spreadPct,
+            openOrders: open.length,
+            freeQuote,
+            freeBase,
+            inventoryQuoteValue,
+            tradedNotionalToday: volState.tradedNotional ?? null,
+            mmOrders: openMm.length,
+            volOrders: openVol.length,
+            status: sm.getStatus(),
+            reason: sm.getReason() || null
+          });
+          lastMetricWriteAt = Date.now();
+        } catch (e) {
+          log.warn({ err: String(e), botId }, "metrics write failed");
+        }
+      }
 
       if (t0 - lastFillSync > fillsEveryMs) {
         lastFillSync = t0;

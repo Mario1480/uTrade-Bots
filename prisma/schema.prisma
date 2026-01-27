@@ -31,6 +31,7 @@ model Bot {
   runtime    BotRuntime?
   alerts     BotAlert[]
   manualTrades ManualTradeLog[]
+  metrics    BotMetric[]
 }
 
 model MarketMakingConfig {
@@ -110,6 +111,29 @@ model BotRuntime {
   freeBase Float?
 
   tradedNotionalToday Float?
+}
+
+model BotMetric {
+  id                  String   @id @default(cuid())
+  botId               String
+  bot                 Bot      @relation(fields: [botId], references: [id])
+  ts                  DateTime @default(now())
+  mid                 Float?
+  bid                 Float?
+  ask                 Float?
+  spreadPct           Float?
+  openOrders          Int?
+  freeQuote           Float?
+  freeBase            Float?
+  inventoryQuoteValue Float?
+  tradedNotionalToday Float?
+  mmOrders            Int?
+  volOrders           Int?
+  status              String?
+  reason              String?
+
+  @@index([ts])
+  @@index([botId, ts])
 }
 
 model CexConfig {

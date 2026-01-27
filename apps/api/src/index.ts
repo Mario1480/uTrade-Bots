@@ -46,6 +46,18 @@ const LICENSE_BASE_URL = process.env.LICENSE_SERVER_URL ?? "https://license-serv
 const LICENSE_SECRET = process.env.LICENSE_SERVER_SECRET ?? "";
 const LICENSE_VERSION = process.env.APP_VERSION ?? undefined;
 const LICENSE_FEATURE_KEYS = ["priceSupport", "priceFollow", "aiRecommendations"];
+const METRICS_RETENTION_DAYS = Math.max(1, Number(process.env.METRICS_RETENTION_DAYS ?? "7"));
+const METRICS_CLEANUP_KEY = "metrics.cleanup.lastRun";
+const METRICS_CLEANUP_INTERVAL_MS = 12 * 60 * 60_000;
+
+type MetricsRangeKey = "1h" | "6h" | "24h" | "7d" | "30d";
+const METRICS_RANGES: Record<MetricsRangeKey, { lookbackMs: number; stepSec: number }> = {
+  "1h": { lookbackMs: 60 * 60_000, stepSec: 10 },
+  "6h": { lookbackMs: 6 * 60 * 60_000, stepSec: 30 },
+  "24h": { lookbackMs: 24 * 60 * 60_000, stepSec: 60 },
+  "7d": { lookbackMs: 7 * 24 * 60 * 60_000, stepSec: 300 },
+  "30d": { lookbackMs: 30 * 24 * 60 * 60_000, stepSec: 900 }
+};
 
 function getExchangeBaseUrl(exchange: string): string | null {
   const key = exchange.toLowerCase();
@@ -156,6 +168,36 @@ async function syncWorkspaceFeatures(features: { priceSupport: boolean; priceFol
   );
 }
 
+async function runMetricsCleanupIfDue() {
+  const now = new Date();
+  const cutoff = new Date(now.getTime() - METRICS_RETENTION_DAYS * 24 * 60 * 60_000);
+  try {
+    const row = await prisma.globalSetting.findUnique({ where: { key: METRICS_CLEANUP_KEY } });
+    const lastRunRaw = (row?.value as Record<string, any> | undefined)?.lastRunAt;
+    const lastRunAt = lastRunRaw ? new Date(lastRunRaw) : null;
+    if (lastRunAt && now.getTime() - lastRunAt.getTime() < METRICS_CLEANUP_INTERVAL_MS) {
+      return;
+    }
+
+    const deleted = await prisma.botMetric.deleteMany({
+      where: { ts: { lt: cutoff } }
+    });
+
+    await prisma.globalSetting.upsert({
+      where: { key: METRICS_CLEANUP_KEY },
+      create: {
+        key: METRICS_CLEANUP_KEY,
+        value: { lastRunAt: now.toISOString(), deleted: deleted.count } as Prisma.InputJsonValue
+      },
+      update: {
+        value: { lastRunAt: now.toISOString(), deleted: deleted.count } as Prisma.InputJsonValue
+      }
+    });
+  } catch (e) {
+    console.warn("[metrics] cleanup failed", e);
+  }
+}
+
 async function verifyLicenseServer(params: { licenseKey: string; instanceId: string }) {
   const base = LICENSE_BASE_URL.endsWith("/api/license/verify")
     ? LICENSE_BASE_URL
@@ -208,6 +250,12 @@ app.use(cors({
 }));
 app.use(express.json());
 app.use(cookieParser());
+
+// Metrics retention cleanup (guarded by a DB-backed timestamp lock).
+void runMetricsCleanupIfDue();
+setInterval(() => {
+  void runMetricsCleanupIfDue();
+}, METRICS_CLEANUP_INTERVAL_MS);
 
 app.use((req, res, next) => {
   const origin = req.header("origin");
@@ -1506,6 +1554,110 @@ app.get("/bots/:id/runtime", requireAuth, requirePermission("bots.view"), async 
   if (!bot) return res.status(404).json({ error: "not_found" });
   const rt = await prisma.botRuntime.findUnique({ where: { botId: req.params.id } });
   res.json(rt ?? null);
+});
+
+app.get("/bots/:id/metrics", requireAuth, requirePermission("bots.view"), async (req, res) => {
+  const workspaceId = getWorkspaceId(res);
+  const bot = await prisma.bot.findFirst({ where: { id: req.params.id, workspaceId } });
+  if (!bot) return res.status(404).json({ error: "not_found" });
+
+  const rangeKey = String(req.query.range ?? "24h") as MetricsRangeKey;
+  const cfg = METRICS_RANGES[rangeKey] ?? METRICS_RANGES["24h"];
+  const to = new Date();
+  const from = new Date(to.getTime() - cfg.lookbackMs);
+  const stepSec = cfg.stepSec;
+  const stepMs = stepSec * 1_000;
+
+  const rows = await prisma.botMetric.findMany({
+    where: {
+      botId: bot.id,
+      ts: { gte: from, lte: to }
+    },
+    orderBy: { ts: "asc" }
+  });
+
+  type Bucket = {
+    ts: number;
+    midSum: number;
+    midCount: number;
+    spreadSum: number;
+    spreadCount: number;
+    freeQuote: number | null;
+    freeBase: number | null;
+    openOrders: number | null;
+    tradedNotionalToday: number | null;
+    status: string | null;
+    reason: string | null;
+  };
+
+  const buckets = new Map<number, Bucket>();
+
+  for (const row of rows) {
+    const tsMs = row.ts.getTime();
+    const bucketTs = Math.floor(tsMs / stepMs) * stepMs;
+    let bucket = buckets.get(bucketTs);
+    if (!bucket) {
+      bucket = {
+        ts: bucketTs,
+        midSum: 0,
+        midCount: 0,
+        spreadSum: 0,
+        spreadCount: 0,
+        freeQuote: null,
+        freeBase: null,
+        openOrders: null,
+        tradedNotionalToday: null,
+        status: null,
+        reason: null
+      };
+      buckets.set(bucketTs, bucket);
+    }
+
+    const mid = row.mid ?? null;
+    if (mid !== null && Number.isFinite(mid)) {
+      bucket.midSum += mid;
+      bucket.midCount += 1;
+    }
+
+    const spreadPct = row.spreadPct ?? null;
+    if (spreadPct !== null && Number.isFinite(spreadPct)) {
+      bucket.spreadSum += spreadPct;
+      bucket.spreadCount += 1;
+    }
+
+    bucket.freeQuote = row.freeQuote ?? bucket.freeQuote;
+    bucket.freeBase = row.freeBase ?? bucket.freeBase;
+    bucket.openOrders = row.openOrders ?? bucket.openOrders;
+    bucket.status = row.status ?? bucket.status;
+    bucket.reason = row.reason ?? bucket.reason;
+
+    const traded = row.tradedNotionalToday ?? null;
+    if (traded !== null && Number.isFinite(traded)) {
+      bucket.tradedNotionalToday = Math.max(bucket.tradedNotionalToday ?? 0, traded);
+    }
+  }
+
+  const points = Array.from(buckets.values())
+    .sort((a, b) => a.ts - b.ts)
+    .map((b) => ({
+      ts: new Date(b.ts).toISOString(),
+      mid: b.midCount > 0 ? b.midSum / b.midCount : null,
+      spreadPct: b.spreadCount > 0 ? b.spreadSum / b.spreadCount : null,
+      freeQuote: b.freeQuote,
+      freeBase: b.freeBase,
+      openOrders: b.openOrders,
+      tradedNotionalToday: b.tradedNotionalToday,
+      status: b.status,
+      reason: b.reason
+    }));
+
+  res.json({
+    range: rangeKey in METRICS_RANGES ? rangeKey : "24h",
+    from: from.toISOString(),
+    to: to.toISOString(),
+    stepSec,
+    points
+  });
 });
 
 app.delete("/bots/:id", requireAuth, requirePermission("bots.delete"), async (req, res) => {

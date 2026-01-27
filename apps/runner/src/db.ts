@@ -347,6 +347,44 @@ export async function writeRuntime(params: {
   });
 }
 
+export async function writeBotMetric(params: {
+  botId: string;
+  ts?: Date;
+  mid?: number | null;
+  bid?: number | null;
+  ask?: number | null;
+  spreadPct?: number | null;
+  openOrders?: number | null;
+  freeQuote?: number | null;
+  freeBase?: number | null;
+  inventoryQuoteValue?: number | null;
+  tradedNotionalToday?: number | null;
+  mmOrders?: number | null;
+  volOrders?: number | null;
+  status?: string | null;
+  reason?: string | null;
+}) {
+  await prisma.botMetric.create({
+    data: {
+      botId: params.botId,
+      ts: params.ts ?? new Date(),
+      mid: params.mid ?? null,
+      bid: params.bid ?? null,
+      ask: params.ask ?? null,
+      spreadPct: params.spreadPct ?? null,
+      openOrders: params.openOrders ?? null,
+      freeQuote: params.freeQuote ?? null,
+      freeBase: params.freeBase ?? null,
+      inventoryQuoteValue: params.inventoryQuoteValue ?? null,
+      tradedNotionalToday: params.tradedNotionalToday ?? null,
+      mmOrders: params.mmOrders ?? null,
+      volOrders: params.volOrders ?? null,
+      status: params.status ?? null,
+      reason: params.reason ?? null
+    }
+  });
+}
+
 export async function writeAlert(params: {
   botId: string;
   level: "info" | "warn" | "error";
