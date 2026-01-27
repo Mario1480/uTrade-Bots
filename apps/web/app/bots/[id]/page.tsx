@@ -7,6 +7,7 @@ import type { CSSProperties } from "react";
 import ReauthDialog from "../../components/ReauthDialog";
 import { useSystemSettings } from "../../components/SystemBanner";
 import { ApiError, apiDel, apiGet, apiPost } from "../../../lib/api";
+import MetricsSection from "./metrics-section";
 
 type Order = {
   id: string;
@@ -25,28 +26,6 @@ type AlertItem = {
   createdAt: string;
 };
 
-type MetricsRange = "1h" | "6h" | "24h" | "7d" | "30d";
-
-type MetricPoint = {
-  ts: string;
-  mid: number | null;
-  spreadPct: number | null;
-  freeQuote: number | null;
-  freeBase: number | null;
-  openOrders: number | null;
-  tradedNotionalToday: number | null;
-  status: string | null;
-  reason: string | null;
-};
-
-type MetricsResponse = {
-  range: MetricsRange;
-  from: string;
-  to: string;
-  stepSec: number;
-  points: MetricPoint[];
-};
-
 export default function BotOverviewPage() {
   const params = useParams();
   const id = params.id as string;
@@ -56,10 +35,6 @@ export default function BotOverviewPage() {
   const [rt, setRt] = useState<any>(null);
   const [orders, setOrders] = useState<{ mm: Order[]; vol: Order[]; other: Order[] } | null>(null);
   const [alerts, setAlerts] = useState<AlertItem[]>([]);
-  const [metricsRange, setMetricsRange] = useState<MetricsRange>("24h");
-  const [metrics, setMetrics] = useState<MetricsResponse | null>(null);
-  const [metricsLoading, setMetricsLoading] = useState(false);
-  const [metricsError, setMetricsError] = useState<string | null>(null);
   const [toast, setToast] = useState<{ type: "error" | "success"; msg: string } | null>(null);
   const [manualType, setManualType] = useState<"LIMIT" | "MARKET">("LIMIT");
   const [manualSide, setManualSide] = useState<"buy" | "sell">("buy");
@@ -161,19 +136,6 @@ export default function BotOverviewPage() {
     }
   }
 
-  async function loadMetrics(range: MetricsRange) {
-    try {
-      setMetricsLoading(true);
-      setMetricsError(null);
-      const data = await apiGet<MetricsResponse>(`/bots/${id}/metrics?range=${range}`);
-      setMetrics(data);
-    } catch (e) {
-      setMetricsError(errMsg(e));
-    } finally {
-      setMetricsLoading(false);
-    }
-  }
-
   async function clearAlerts() {
     try {
       await apiDel(`/bots/${id}/alerts`);
@@ -200,13 +162,6 @@ export default function BotOverviewPage() {
       clearInterval(t3);
     };
   }, [id]);
-
-  useEffect(() => {
-    if (!id) return;
-    loadMetrics(metricsRange);
-    const t = setInterval(() => loadMetrics(metricsRange), 10_000);
-    return () => clearInterval(t);
-  }, [id, metricsRange]);
 
   async function submitManual() {
     setManualError(null);
@@ -377,8 +332,6 @@ export default function BotOverviewPage() {
     const raw = bot?.symbol ? String(bot.symbol) : "";
     return raw.split(/[/_-]/)[0] || "Base";
   }, [bot]);
-  const metricsPoints = metrics?.points ?? [];
-  const metricsLast = metricsPoints.length ? metricsPoints[metricsPoints.length - 1] : null;
 
   const asks = useMemo(() => {
     return openAll
@@ -629,49 +582,7 @@ export default function BotOverviewPage() {
       </div>
 
       <div className="overviewGrid" style={{ marginTop: 16 }}>
-        <section className="card" style={{ padding: 12 }}>
-          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, flexWrap: "wrap" }}>
-            <h3 style={{ marginTop: 0 }}>Metrics</h3>
-            <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
-              {(["1h", "6h", "24h", "7d"] as MetricsRange[]).map((r) => (
-                <button
-                  key={r}
-                  className={`btn ${metricsRange === r ? "btnPrimary" : ""} ${metricsLoading ? "btnDisabled" : ""}`}
-                  onClick={() => setMetricsRange(r)}
-                  disabled={metricsLoading}
-                >
-                  {r}
-                </button>
-              ))}
-            </div>
-          </div>
-
-          {metricsLoading ? (
-            <div style={{ fontSize: 12, color: "var(--muted)" }}>Loading metrics…</div>
-          ) : null}
-          {metricsError ? (
-            <div style={{ fontSize: 12, color: "#fca5a5" }}>{metricsError}</div>
-          ) : null}
-          {!metricsLoading && metricsPoints.length === 0 ? (
-            <div style={{ fontSize: 12, color: "var(--muted)" }}>
-              No metrics yet. Runner must be running.
-            </div>
-          ) : null}
-
-          {metricsPoints.length > 0 ? (
-            <>
-              <div style={{ fontSize: 12, color: "var(--muted)", marginBottom: 8 }}>
-                Last updated: {formatUpdated(metricsLast?.ts)}
-              </div>
-              <div className="gridTwoCol" style={{ "--grid-gap": "8px" } as CSSProperties}>
-                <MiniLineChart title="Mid price" series={toSeries(metricsPoints, "mid")} color="var(--brand)" />
-                <MiniLineChart title="Spread %" series={toSeries(metricsPoints, "spreadPct")} color="#f59e0b" />
-                <MiniLineChart title="Free quote (USDT)" series={toSeries(metricsPoints, "freeQuote")} color="#22c55e" />
-                <MiniLineChart title={`Free base (${baseSymbol})`} series={toSeries(metricsPoints, "freeBase")} color="#a78bfa" />
-              </div>
-            </>
-          ) : null}
-        </section>
+        <MetricsSection botId={id} symbol={bot?.symbol} />
       </div>
 
       <div className="overviewGrid" style={{ marginTop: 16 }}>
@@ -800,88 +711,6 @@ export default function BotOverviewPage() {
             </div>
           )}
         </section>
-      </div>
-    </div>
-  );
-}
-
-function toSeries(points: MetricPoint[], key: keyof MetricPoint) {
-  return points
-    .map((p) => ({
-      ts: new Date(p.ts).getTime(),
-      value: typeof p[key] === "number" ? (p[key] as number) : null
-    }))
-    .filter((p) => Number.isFinite(p.ts));
-}
-
-function MiniLineChart(props: {
-  title: string;
-  series: { ts: number; value: number | null }[];
-  color: string;
-  height?: number;
-}) {
-  const height = props.height ?? 120;
-  const width = 100;
-  const padding = 6;
-  const valid = props.series.filter((p) => p.value !== null && Number.isFinite(p.value));
-  const latest = valid.length ? valid[valid.length - 1]?.value ?? null : null;
-
-  if (valid.length < 2) {
-    return (
-      <div className="card" style={{ padding: 10 }}>
-        <div style={{ fontSize: 12, color: "var(--muted)" }}>{props.title}</div>
-        <div style={{ marginTop: 8, fontSize: 12, color: "var(--muted)" }}>No data</div>
-      </div>
-    );
-  }
-
-  const minX = valid[0].ts;
-  const maxX = valid[valid.length - 1].ts;
-  const minY = Math.min(...valid.map((p) => p.value as number));
-  const maxY = Math.max(...valid.map((p) => p.value as number));
-  const spanX = Math.max(1, maxX - minX);
-  const spanY = Math.max(1e-9, maxY - minY);
-
-  const points = valid.map((p) => {
-    const x = ((p.ts - minX) / spanX) * (width - padding * 2) + padding;
-    const y =
-      height -
-      (((p.value as number) - minY) / spanY) * (height - padding * 2) -
-      padding;
-    return `${x.toFixed(2)},${y.toFixed(2)}`;
-  });
-
-  const lastPoint = points[points.length - 1];
-  const [lastX, lastY] = lastPoint.split(",").map((s) => Number(s));
-
-  return (
-    <div className="card" style={{ padding: 10 }}>
-      <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between", gap: 8 }}>
-        <div style={{ fontSize: 12, color: "var(--muted)" }}>{props.title}</div>
-        <div style={{ fontSize: 13, fontWeight: 700 }}>{formatNum(latest, 6)}</div>
-      </div>
-      <svg
-        viewBox={`0 0 ${width} ${height}`}
-        width="100%"
-        height={height}
-        preserveAspectRatio="none"
-        style={{ marginTop: 8, display: "block" }}
-      >
-        <polyline
-          fill="none"
-          stroke={props.color}
-          strokeWidth={1.8}
-          strokeLinejoin="round"
-          strokeLinecap="round"
-          points={points.join(" ")}
-        />
-        {Number.isFinite(lastX) && Number.isFinite(lastY) ? (
-          <circle cx={lastX} cy={lastY} r={2.5} fill={props.color} />
-        ) : null}
-      </svg>
-      <div style={{ display: "flex", justifyContent: "space-between", marginTop: 4, fontSize: 11, color: "var(--muted)" }}>
-        <span>{formatNum(minY, 6)}</span>
-        <span>{formatNum(maxY, 6)}</span>
       </div>
     </div>
   );
