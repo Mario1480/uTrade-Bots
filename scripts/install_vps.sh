@@ -29,6 +29,10 @@ echo "==> Installing system dependencies"
 apt update -y
 apt install -y curl ca-certificates gnupg unzip git ufw
 
+echo "==> Installing Node.js 20"
+curl -fsSL https://deb.nodesource.com/setup_20.x | bash -
+apt install -y nodejs
+
 echo "==> Installing Docker"
 curl -fsSL https://get.docker.com | sh
 
@@ -109,6 +113,10 @@ fi
 
 echo "==> Starting services"
 cd "${APP_DIR}"
+
+echo "==> Installing web chart dependency (recharts)"
+npm install -w apps/web recharts@^2.13.0
+
 docker compose -f docker-compose.prod.yml up -d --build
 
 echo "==> Enabling Price Support feature flag"
