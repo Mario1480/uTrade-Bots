@@ -166,8 +166,16 @@ export class PionexRestClient {
         throw new Error("[pionex] BASE_URL_OR_PATH_INVALID");
       }
 
-      if (res.status === 429 && path === "/api/v1/common/symbols") {
-        return { result: true, data: { symbols: [] } } as PionexResponse<T>;
+      if (res.status === 429) {
+        if (path === "/api/v1/common/symbols") {
+          return { result: true, data: { symbols: [] } } as PionexResponse<T>;
+        }
+        if (path === "/api/v1/market/bookTickers") {
+          return { result: true, data: { tickers: [] } } as PionexResponse<T>;
+        }
+        if (path === "/api/v1/market/tickers") {
+          return { result: true, data: { tickers: [] } } as PionexResponse<T>;
+        }
       }
 
       const json = await this.parseJson(res, `${method} ${path}`);
@@ -306,6 +314,7 @@ export class PionexRestClient {
       const e = err instanceof Error ? err : new Error(String(err));
       if (/429|Too Many Requests/i.test(e.message)) {
         if (cached) return cached.mid;
+        return { mid: 0, bid: 0, ask: 0, ts: nowMs() };
       }
       throw e;
     }
