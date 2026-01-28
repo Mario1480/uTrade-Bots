@@ -162,6 +162,10 @@ export class PionexRestClient {
         throw new Error("[pionex] BASE_URL_OR_PATH_INVALID");
       }
 
+      if (res.status === 429 && path === "/api/v1/common/symbols") {
+        return { result: true, data: { symbols: [] } } as PionexResponse<T>;
+      }
+
       const json = await this.parseJson(res, `${method} ${path}`);
       if (!res.ok || json?.result === false) {
         const msg = json?.message || json?.msg || res.statusText || "request_failed";
