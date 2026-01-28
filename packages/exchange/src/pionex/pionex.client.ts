@@ -70,8 +70,11 @@ export function buildPionexSignature(payload: string, secret: string) {
 }
 
 export class PionexRestClient {
+  private static lastRequestAt = 0;
+  private static readonly minGapMs = 800;
   private readonly metaCache = new Map<string, { meta: SymbolMeta; ts: number }>();
   private readonly symbolCache = new Map<string, { symbols: any[]; ts: number }>();
+  private readonly symbolCacheTtlMs = 15 * 60_000;
 
   constructor(
     private readonly baseUrl: string,
@@ -138,6 +141,13 @@ export class PionexRestClient {
     const maxRetries = 2;
     let attempt = 0;
     while (true) {
+      const now = Date.now();
+      const gap = now - PionexRestClient.lastRequestAt;
+      if (gap < PionexRestClient.minGapMs) {
+        await sleep(PionexRestClient.minGapMs - gap);
+      }
+      PionexRestClient.lastRequestAt = Date.now();
+
       const res = await fetch(url, {
         method,
         headers,
@@ -200,7 +210,7 @@ export class PionexRestClient {
 
   private async listSymbolsRaw(): Promise<any[]> {
     const cached = this.symbolCache.get("symbols");
-    if (cached && Date.now() - cached.ts < 10 * 60_000) return cached.symbols;
+    if (cached && Date.now() - cached.ts < this.symbolCacheTtlMs) return cached.symbols;
 
     const json = await this.request<any>({
       method: "GET",
