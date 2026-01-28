@@ -112,6 +112,7 @@ export default function MetricsSection(props: MetricsSectionProps) {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [data, setData] = useState<MetricsResponse | null>(null);
+  const [isMobile, setIsMobile] = useState(false);
 
   const baseSymbol = useMemo(() => getBaseSymbol(symbol), [symbol]);
 
@@ -135,6 +136,19 @@ export default function MetricsSection(props: MetricsSectionProps) {
   useEffect(() => {
     void loadMetrics();
   }, [loadMetrics]);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const media = window.matchMedia("(max-width: 900px)");
+    const update = () => setIsMobile(media.matches);
+    update();
+    if (media.addEventListener) {
+      media.addEventListener("change", update);
+      return () => media.removeEventListener("change", update);
+    }
+    media.addListener(update);
+    return () => media.removeListener(update);
+  }, []);
 
   const points = data?.points ?? [];
 
@@ -174,18 +188,18 @@ export default function MetricsSection(props: MetricsSectionProps) {
   const kpiGridStyle: CSSProperties = {
     display: "grid",
     gap: 8,
-    gridTemplateColumns: "repeat(4, minmax(0, 1fr))"
+    gridTemplateColumns: isMobile ? "repeat(2, minmax(0, 1fr))" : "repeat(4, minmax(0, 1fr))"
   };
 
   const chartGridStyle: CSSProperties = {
     display: "grid",
     gap: 10,
-    gridTemplateColumns: "repeat(2, minmax(0, 1fr))"
+    gridTemplateColumns: isMobile ? "1fr" : "repeat(2, minmax(0, 1fr))"
   };
 
   const chartCardStyle: CSSProperties = {
     padding: 10,
-    minHeight: 220,
+    minHeight: isMobile ? 190 : 220,
     display: "flex",
     flexDirection: "column",
     gap: 8
@@ -201,7 +215,9 @@ export default function MetricsSection(props: MetricsSectionProps) {
           alignItems: "center",
           justifyContent: "space-between",
           gap: 8,
-          flexWrap: "wrap"
+          flexWrap: "wrap",
+          flexDirection: isMobile ? "column" : "row",
+          alignItems: isMobile ? "flex-start" : "center"
         }}
       >
         <h3 style={{ marginTop: 0, marginBottom: 0 }}>Metrics</h3>
@@ -273,7 +289,7 @@ export default function MetricsSection(props: MetricsSectionProps) {
           <div style={{ marginTop: 12 }}>
             <div className="gridTwoCol" style={chartGridStyle}>
               <ChartCard title="Mid Price Over Time" style={chartCardStyle}>
-                <ResponsiveContainer width="100%" height={190}>
+                <ResponsiveContainer width="100%" height={isMobile ? 160 : 190}>
                   <LineChart data={chartPoints} margin={{ top: 8, right: 12, left: 0, bottom: 0 }}>
                     <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.08)" />
                     <XAxis
@@ -303,7 +319,7 @@ export default function MetricsSection(props: MetricsSectionProps) {
               </ChartCard>
 
               <ChartCard title="Spread % Over Time" style={chartCardStyle}>
-                <ResponsiveContainer width="100%" height={190}>
+                <ResponsiveContainer width="100%" height={isMobile ? 160 : 190}>
                   <LineChart data={chartPoints} margin={{ top: 8, right: 12, left: 0, bottom: 0 }}>
                     <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.08)" />
                     <XAxis
@@ -333,7 +349,7 @@ export default function MetricsSection(props: MetricsSectionProps) {
               </ChartCard>
 
               <ChartCard title="Inventory Over Time" style={chartCardStyle}>
-                <ResponsiveContainer width="100%" height={190}>
+                <ResponsiveContainer width="100%" height={isMobile ? 160 : 190}>
                   <LineChart data={chartPoints} margin={{ top: 8, right: 12, left: 0, bottom: 0 }}>
                     <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.08)" />
                     <XAxis
@@ -345,6 +361,14 @@ export default function MetricsSection(props: MetricsSectionProps) {
                       tick={{ fontSize: 11, fill: "var(--muted)" }}
                     />
                     <YAxis
+                      yAxisId="quote"
+                      tick={{ fontSize: 11, fill: "var(--muted)" }}
+                      width={70}
+                      domain={["auto", "auto"]}
+                    />
+                    <YAxis
+                      yAxisId="base"
+                      orientation="right"
                       tick={{ fontSize: 11, fill: "var(--muted)" }}
                       width={70}
                       domain={["auto", "auto"]}
@@ -359,6 +383,7 @@ export default function MetricsSection(props: MetricsSectionProps) {
                       strokeWidth={2}
                       dot={false}
                       isAnimationActive={false}
+                      yAxisId="quote"
                     />
                     <Line
                       name={`Free ${baseSymbol}`}
@@ -368,13 +393,14 @@ export default function MetricsSection(props: MetricsSectionProps) {
                       strokeWidth={2}
                       dot={false}
                       isAnimationActive={false}
+                      yAxisId="base"
                     />
                   </LineChart>
                 </ResponsiveContainer>
               </ChartCard>
 
               <ChartCard title="Volume Today" style={chartCardStyle}>
-                <ResponsiveContainer width="100%" height={190}>
+                <ResponsiveContainer width="100%" height={isMobile ? 160 : 190}>
                   <LineChart data={chartPoints} margin={{ top: 8, right: 12, left: 0, bottom: 0 }}>
                     <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.08)" />
                     <XAxis
