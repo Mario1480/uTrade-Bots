@@ -179,12 +179,7 @@ export class PionexRestClient {
   }
 
   async sanityCheck(): Promise<void> {
-    await this.request({
-      method: "GET",
-      path: "/api/v1/common/symbols",
-      params: { type: "SPOT" },
-      auth: "NONE"
-    });
+    await this.listSymbolsRaw();
     if (this.apiKey && this.apiSecret) {
       await this.getBalances();
     }
