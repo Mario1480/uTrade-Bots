@@ -322,10 +322,12 @@ export class PionexRestClient {
       if (status === "OPEN" || status === "OPENED" || status === "PARTIALLY_FILLED") mapped = "open";
       else if (status === "CLOSED" || status === "FILLED") mapped = "filled";
       else if (status === "CANCELED" || status === "CANCELLED") mapped = "canceled";
+      const side: Order["side"] =
+        String(o.side ?? "").toLowerCase() === "sell" ? "sell" : "buy";
       return {
         id: String(o.orderId ?? o.id ?? ""),
         symbol: fromExchangeSymbol("pionex", String(o.symbol ?? s)),
-        side: String(o.side ?? "").toLowerCase() === "sell" ? "sell" : "buy",
+        side,
         price,
         qty,
         status: mapped,
