@@ -83,6 +83,7 @@ export class PionexRestClient {
   private readonly balancesTtlMs = 15_000;
   private readonly tickerCache = new Map<string, { mid: MidPrice; ts: number }>();
   private readonly tickerTtlMs = 60_000;
+  private readonly lastGoodTicker = new Map<string, MidPrice>();
 
   constructor(
     private readonly baseUrl: string,
@@ -291,12 +292,15 @@ export class PionexRestClient {
       const ask = Number(t.ask ?? t.bestAsk ?? 0);
       const mid = last || (bid && ask ? (bid + ask) / 2 : 0);
       const out = { mid, bid, ask, last, ts: nowMs() };
+      if (mid > 0) this.lastGoodTicker.set(s, out);
       this.tickerCache.set(s, { mid: out, ts: Date.now() });
       return out;
     } catch (err) {
       const e = err instanceof Error ? err : new Error(String(err));
       if (/429|Too Many Requests/i.test(e.message)) {
         if (cached) return cached.mid;
+        const lastGood = this.lastGoodTicker.get(s);
+        if (lastGood) return lastGood;
         return { mid: 0, bid: 0, ask: 0, ts: nowMs() };
       }
       throw e;
@@ -340,35 +344,44 @@ export class PionexRestClient {
     if (cached && Date.now() - cached.ts < this.openOrdersTtlMs) {
       return cached.orders;
     }
-    const json = await this.request<any>({
-      method: "GET",
-      path: "/api/v1/trade/openOrders",
-      params: { symbol: s },
-      auth: "SIGNED"
-    });
-    const list: any[] = Array.isArray(json?.data?.orders) ? json.data.orders : [];
-    const orders = list.map((o) => {
-      const price = Number(o.price ?? o.orderPrice ?? o.avgPrice ?? 0);
-      const qty = Number(o.size ?? o.quantity ?? o.amount ?? 0);
-      const status = String(o.status ?? o.state ?? "").toUpperCase();
-      let mapped: Order["status"] = "unknown";
-      if (status === "OPEN" || status === "OPENED" || status === "PARTIALLY_FILLED") mapped = "open";
-      else if (status === "CLOSED" || status === "FILLED") mapped = "filled";
-      else if (status === "CANCELED" || status === "CANCELLED") mapped = "canceled";
-      const side: Order["side"] =
-        String(o.side ?? "").toLowerCase() === "sell" ? "sell" : "buy";
-      return {
-        id: String(o.orderId ?? o.id ?? ""),
-        symbol: fromExchangeSymbol("pionex", String(o.symbol ?? s)),
-        side,
-        price,
-        qty,
-        status: mapped,
-        clientOrderId: o.clientOrderId ? String(o.clientOrderId) : undefined
-      };
-    });
-    this.openOrdersCache.set(s, { orders, ts: Date.now() });
-    return orders;
+    try {
+      const json = await this.request<any>({
+        method: "GET",
+        path: "/api/v1/trade/openOrders",
+        params: { symbol: s },
+        auth: "SIGNED"
+      });
+      const list: any[] = Array.isArray(json?.data?.orders) ? json.data.orders : [];
+      const orders = list.map((o) => {
+        const price = Number(o.price ?? o.orderPrice ?? o.avgPrice ?? 0);
+        const qty = Number(o.size ?? o.quantity ?? o.amount ?? 0);
+        const status = String(o.status ?? o.state ?? "").toUpperCase();
+        let mapped: Order["status"] = "unknown";
+        if (status === "OPEN" || status === "OPENED" || status === "PARTIALLY_FILLED") mapped = "open";
+        else if (status === "CLOSED" || status === "FILLED") mapped = "filled";
+        else if (status === "CANCELED" || status === "CANCELLED") mapped = "canceled";
+        const side: Order["side"] =
+          String(o.side ?? "").toLowerCase() === "sell" ? "sell" : "buy";
+        return {
+          id: String(o.orderId ?? o.id ?? ""),
+          symbol: fromExchangeSymbol("pionex", String(o.symbol ?? s)),
+          side,
+          price,
+          qty,
+          status: mapped,
+          clientOrderId: o.clientOrderId ? String(o.clientOrderId) : undefined
+        };
+      });
+      this.openOrdersCache.set(s, { orders, ts: Date.now() });
+      return orders;
+    } catch (err) {
+      const e = err instanceof Error ? err : new Error(String(err));
+      if (/429|Too Many Requests/i.test(e.message)) {
+        if (cached) return cached.orders;
+        return [];
+      }
+      throw e;
+    }
   }
 
   async placeOrder(q: Quote): Promise<Order> {
@@ -480,34 +493,42 @@ export class PionexRestClient {
     params?: { startTimeMs?: number; limit?: number }
   ): Promise<MyTrade[]> {
     const s = toExchangeSymbol("pionex", symbol);
-    const json = await this.request<any>({
-      method: "GET",
-      path: "/api/v1/trade/fills",
-      params: {
-        symbol: s,
-        startTime: params?.startTimeMs,
-        limit: params?.limit
-      },
-      auth: "SIGNED"
-    });
-    const list: any[] = Array.isArray(json?.data?.fills) ? json.data.fills : [];
-    return list.map((t) => {
-      const price = Number(t.price ?? 0);
-      const qty = Number(t.size ?? t.amount ?? 0);
-      const notional =
-        Number(t.amount ?? t.quoteQty ?? t.notional) ||
-        (price > 0 && qty > 0 ? price * qty : 0);
-      const timestamp = Number(t.timestamp ?? t.time ?? t.createdAt ?? nowMs());
-      return {
-        id: String(t.id ?? t.tradeId ?? `${timestamp}`),
-        orderId: t.orderId ? String(t.orderId) : undefined,
-        clientOrderId: t.clientOrderId ? String(t.clientOrderId) : undefined,
-        side: String(t.side ?? "").toLowerCase() === "sell" ? "sell" : "buy",
-        price,
-        qty,
-        notional,
-        timestamp
-      };
-    });
+    try {
+      const json = await this.request<any>({
+        method: "GET",
+        path: "/api/v1/trade/fills",
+        params: {
+          symbol: s,
+          startTime: params?.startTimeMs,
+          limit: params?.limit
+        },
+        auth: "SIGNED"
+      });
+      const list: any[] = Array.isArray(json?.data?.fills) ? json.data.fills : [];
+      return list.map((t) => {
+        const price = Number(t.price ?? 0);
+        const qty = Number(t.size ?? t.amount ?? 0);
+        const notional =
+          Number(t.amount ?? t.quoteQty ?? t.notional) ||
+          (price > 0 && qty > 0 ? price * qty : 0);
+        const timestamp = Number(t.timestamp ?? t.time ?? t.createdAt ?? nowMs());
+        return {
+          id: String(t.id ?? t.tradeId ?? `${timestamp}`),
+          orderId: t.orderId ? String(t.orderId) : undefined,
+          clientOrderId: t.clientOrderId ? String(t.clientOrderId) : undefined,
+          side: String(t.side ?? "").toLowerCase() === "sell" ? "sell" : "buy",
+          price,
+          qty,
+          notional,
+          timestamp
+        };
+      });
+    } catch (err) {
+      const e = err instanceof Error ? err : new Error(String(err));
+      if (/429|Too Many Requests/i.test(e.message)) {
+        return [];
+      }
+      throw e;
+    }
   }
 }
