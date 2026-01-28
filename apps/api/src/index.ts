@@ -33,7 +33,7 @@ import { sendInviteEmail, sendReauthOtpEmail } from "./email.js";
 const app = express();
 app.set("trust proxy", 1);
 
-const origins = (process.env.CORS_ORIGINS ?? "http://localhost:3000")
+const origins = (process.env.CORS_ORIGINS ?? "http://localhost:3000,https://marketmaker.uliquid.vip,https://www.marketmaker.uliquid.vip")
   .split(",")
   .map(s => s.trim())
   .filter(Boolean);
@@ -96,6 +96,7 @@ function createPublicRestClient(exchange: string) {
 
 function isAllowedOrigin(origin?: string | null) {
   if (!origin) return false;
+  if (origins.includes("*")) return true;
   return origins.includes(origin);
 }
 
@@ -246,7 +247,9 @@ app.use(cors({
     if (isAllowedOrigin(origin)) return cb(null, true);
     return cb(null, false);
   },
-  credentials: true
+  credentials: true,
+  methods: ["GET", "HEAD", "PUT", "PATCH", "POST", "DELETE", "OPTIONS"],
+  allowedHeaders: ["Content-Type", "x-csrf-token"]
 }));
 app.use(express.json());
 app.use(cookieParser());
