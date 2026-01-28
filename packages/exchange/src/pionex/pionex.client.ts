@@ -214,11 +214,13 @@ export class PionexRestClient {
   }
 
   private async listSymbolsRaw(): Promise<any[]> {
-    if (PionexRestClient.lastSymbolsErrorAt && Date.now() - PionexRestClient.lastSymbolsErrorAt < 60_000) {
-      if (PionexRestClient.lastSymbolsError) throw PionexRestClient.lastSymbolsError;
-    }
     const cached = this.symbolCache.get("symbols");
     if (cached && Date.now() - cached.ts < this.symbolCacheTtlMs) return cached.symbols;
+
+    if (PionexRestClient.lastSymbolsErrorAt && Date.now() - PionexRestClient.lastSymbolsErrorAt < 60_000) {
+      if (cached) return cached.symbols;
+      if (PionexRestClient.lastSymbolsError) throw PionexRestClient.lastSymbolsError;
+    }
 
     let json: any;
     try {
@@ -234,6 +236,9 @@ export class PionexRestClient {
       const e = err instanceof Error ? err : new Error(String(err));
       PionexRestClient.lastSymbolsErrorAt = Date.now();
       PionexRestClient.lastSymbolsError = e;
+      if (cached) return cached.symbols;
+      // If the exchange rate-limits symbols, allow a soft-fail so runner can continue.
+      if (/429|Too Many Requests/i.test(e.message)) return [];
       throw e;
     }
     const list: any[] = Array.isArray(json?.data?.symbols) ? json.data.symbols : [];
