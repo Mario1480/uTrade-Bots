@@ -72,6 +72,10 @@ export function buildPionexSignature(payload: string, secret: string) {
 export class PionexRestClient {
   private static lastRequestAt = 0;
   private static readonly minGapMs = 1500;
+  private static banUntilAt = 0;
+  private static readonly banBaseMs = 60_000;
+  private static readonly banExtendMs = 10_000;
+  private static queue: Promise<unknown> = Promise.resolve();
   private readonly metaCache = new Map<string, { meta: SymbolMeta; ts: number }>();
   private readonly symbolCache = new Map<string, { symbols: any[]; ts: number }>();
   private readonly symbolCacheTtlMs = 15 * 60_000;
@@ -90,6 +94,29 @@ export class PionexRestClient {
     private readonly apiKey: string,
     private readonly apiSecret: string
   ) {}
+
+  private static async enqueue<T>(fn: () => Promise<T>): Promise<T> {
+    const run = PionexRestClient.queue.then(fn, fn);
+    PionexRestClient.queue = run.catch(() => undefined);
+    return run;
+  }
+
+  private static registerRateLimitHit() {
+    const now = Date.now();
+    if (PionexRestClient.banUntilAt > now) {
+      PionexRestClient.banUntilAt += PionexRestClient.banExtendMs;
+      return;
+    }
+    PionexRestClient.banUntilAt = now + PionexRestClient.banBaseMs;
+  }
+
+  private static async waitForBanIfNeeded() {
+    const now = Date.now();
+    const waitMs = PionexRestClient.banUntilAt - now;
+    if (waitMs > 0) {
+      await sleep(waitMs);
+    }
+  }
 
   private async parseJson(res: Response, label: string): Promise<any> {
     const text = await res.text();
@@ -110,89 +137,93 @@ export class PionexRestClient {
   }
 
   private async request<T>(opts: RequestOpts): Promise<PionexResponse<T>> {
-    const { method, path, params = {}, body, auth = "NONE" } = opts;
-    const paramsWithTs = { ...params };
-    if (auth === "SIGNED") {
-      paramsWithTs.timestamp = nowMs();
-    }
-
-    const { entries, query } = buildQueryParams(paramsWithTs);
-    const pathUrl = query ? `${path}?${query}` : path;
-    const bodyStr = body && (method === "POST" || method === "DELETE") ? JSON.stringify(body) : "";
-    // Per Pionex auth docs: signature = METHOD + PATH_URL (+ body for POST/DELETE).
-    const signPayload = `${method}${pathUrl}${
-      bodyStr && (method === "POST" || method === "DELETE") ? bodyStr : ""
-    }`;
-
-    const url = new URL(path, this.baseUrl);
-    if (entries.length > 0) {
-      const sp = new URLSearchParams();
-      for (const [k, v] of entries) {
-        sp.set(k, String(v));
-      }
-      url.search = sp.toString();
-    }
-
-    const headers: Record<string, string> = {
-      "Content-Type": "application/json",
-      Accept: "application/json",
-      "User-Agent": "Mozilla/5.0 (compatible; uLiquidBot/1.0)"
-    };
-
-    if (auth === "SIGNED") {
-      if (!this.apiKey || !this.apiSecret) {
-        throw new Error("[pionex] missing api credentials");
-      }
-      headers["PIONEX-KEY"] = this.apiKey;
-      headers["PIONEX-SIGNATURE"] = buildPionexSignature(signPayload, this.apiSecret);
-    }
-
-    const maxRetries = 4;
-    let attempt = 0;
-    while (true) {
-      const now = Date.now();
-      const gap = now - PionexRestClient.lastRequestAt;
-      if (gap < PionexRestClient.minGapMs) {
-        await sleep(PionexRestClient.minGapMs - gap);
-      }
-      PionexRestClient.lastRequestAt = Date.now();
-
-      const res = await fetch(url, {
-        method,
-        headers,
-        body: method === "POST" || method === "DELETE" ? bodyStr : undefined
-      });
-
-      if (res.status === 404) {
-        throw new Error("[pionex] BASE_URL_OR_PATH_INVALID");
+    return PionexRestClient.enqueue(async () => {
+      const { method, path, params = {}, body, auth = "NONE" } = opts;
+      const paramsWithTs = { ...params };
+      if (auth === "SIGNED") {
+        paramsWithTs.timestamp = nowMs();
       }
 
-      if (res.status === 429) {
-        if (path === "/api/v1/common/symbols") {
-          return { result: true, data: { symbols: [] } } as PionexResponse<T>;
+      const { entries, query } = buildQueryParams(paramsWithTs);
+      const pathUrl = query ? `${path}?${query}` : path;
+      const bodyStr = body && (method === "POST" || method === "DELETE") ? JSON.stringify(body) : "";
+      // Per Pionex auth docs: signature = METHOD + PATH_URL (+ body for POST/DELETE).
+      const signPayload = `${method}${pathUrl}${
+        bodyStr && (method === "POST" || method === "DELETE") ? bodyStr : ""
+      }`;
+
+      const url = new URL(path, this.baseUrl);
+      if (entries.length > 0) {
+        const sp = new URLSearchParams();
+        for (const [k, v] of entries) {
+          sp.set(k, String(v));
         }
-        if (path === "/api/v1/market/bookTickers") {
-          return { result: true, data: { tickers: [] } } as PionexResponse<T>;
-        }
-        if (path === "/api/v1/market/tickers") {
-          return { result: true, data: { tickers: [] } } as PionexResponse<T>;
-        }
+        url.search = sp.toString();
       }
 
-      const json = await this.parseJson(res, `${method} ${path}`);
-      if (!res.ok || json?.result === false) {
-        const msg = json?.message || json?.msg || res.statusText || "request_failed";
-        const err = new Error(`Pionex API error ${res.status}: ${msg} (${JSON.stringify(json)})`);
-        if ((res.status === 429 || res.status >= 500) && attempt < maxRetries) {
-          const backoff = Math.min(30_000, 1000 * Math.pow(2, attempt));
-          await sleep(withJitter(backoff));
-          attempt += 1;
-          continue;
+      const headers: Record<string, string> = {
+        "Content-Type": "application/json",
+        Accept: "application/json",
+        "User-Agent": "Mozilla/5.0 (compatible; uLiquidBot/1.0)"
+      };
+
+      if (auth === "SIGNED") {
+        if (!this.apiKey || !this.apiSecret) {
+          throw new Error("[pionex] missing api credentials");
         }
-        throw err;
+        headers["PIONEX-KEY"] = this.apiKey;
+        headers["PIONEX-SIGNATURE"] = buildPionexSignature(signPayload, this.apiSecret);
       }
-      return json as PionexResponse<T>;
-    }
+
+      const maxRetries = 2;
+      let attempt = 0;
+      while (true) {
+        await PionexRestClient.waitForBanIfNeeded();
+        const now = Date.now();
+        const gap = now - PionexRestClient.lastRequestAt;
+        if (gap < PionexRestClient.minGapMs) {
+          await sleep(PionexRestClient.minGapMs - gap);
+        }
+        PionexRestClient.lastRequestAt = Date.now();
+
+        const res = await fetch(url, {
+          method,
+          headers,
+          body: method === "POST" || method === "DELETE" ? bodyStr : undefined
+        });
+
+        if (res.status === 404) {
+          throw new Error("[pionex] BASE_URL_OR_PATH_INVALID");
+        }
+
+        if (res.status === 429) {
+          PionexRestClient.registerRateLimitHit();
+          if (path === "/api/v1/common/symbols") {
+            return { result: true, data: { symbols: [] } } as PionexResponse<T>;
+          }
+          if (path === "/api/v1/market/bookTickers") {
+            return { result: true, data: { tickers: [] } } as PionexResponse<T>;
+          }
+          if (path === "/api/v1/market/tickers") {
+            return { result: true, data: { tickers: [] } } as PionexResponse<T>;
+          }
+        }
+
+        const json = await this.parseJson(res, `${method} ${path}`);
+        if (!res.ok || json?.result === false) {
+          const msg = json?.message || json?.msg || res.statusText || "request_failed";
+          const err = new Error(`Pionex API error ${res.status}: ${msg} (${JSON.stringify(json)})`);
+          if ((res.status === 429 || res.status >= 500) && attempt < maxRetries) {
+            const backoff = Math.min(30_000, 1000 * Math.pow(2, attempt));
+            await sleep(withJitter(backoff));
+            attempt += 1;
+            continue;
+          }
+          throw err;
+        }
+        return json as PionexResponse<T>;
+      }
+    });
   }
 
   async sanityCheck(): Promise<void> {
