@@ -79,6 +79,8 @@ export class PionexRestClient {
   private static lastSymbolsError: Error | null = null;
   private readonly openOrdersCache = new Map<string, { orders: Order[]; ts: number }>();
   private readonly openOrdersTtlMs = 10_000;
+  private readonly balancesCache = new Map<string, { balances: Balance[]; ts: number }>();
+  private readonly balancesTtlMs = 15_000;
 
   constructor(
     private readonly baseUrl: string,
@@ -292,17 +294,32 @@ export class PionexRestClient {
   // ---------- Private ----------
 
   async getBalances(): Promise<Balance[]> {
-    const json = await this.request<any>({
-      method: "GET",
-      path: "/api/v1/account/balances",
-      auth: "SIGNED"
-    });
-    const list: any[] = Array.isArray(json?.data?.balances) ? json.data.balances : [];
-    return list.map((b) => ({
-      asset: String(b.coin ?? b.asset ?? b.currency ?? ""),
-      free: Number(b.free ?? b.available ?? b.balance ?? 0),
-      locked: Number(b.locked ?? b.hold ?? b.frozen ?? 0)
-    }));
+    const cached = this.balancesCache.get("balances");
+    if (cached && Date.now() - cached.ts < this.balancesTtlMs) {
+      return cached.balances;
+    }
+    try {
+      const json = await this.request<any>({
+        method: "GET",
+        path: "/api/v1/account/balances",
+        auth: "SIGNED"
+      });
+      const list: any[] = Array.isArray(json?.data?.balances) ? json.data.balances : [];
+      const balances = list.map((b) => ({
+        asset: String(b.coin ?? b.asset ?? b.currency ?? ""),
+        free: Number(b.free ?? b.available ?? b.balance ?? 0),
+        locked: Number(b.locked ?? b.hold ?? b.frozen ?? 0)
+      }));
+      this.balancesCache.set("balances", { balances, ts: Date.now() });
+      return balances;
+    } catch (err) {
+      const e = err instanceof Error ? err : new Error(String(err));
+      if (/429|Too Many Requests/i.test(e.message)) {
+        if (cached) return cached.balances;
+        return [];
+      }
+      throw e;
+    }
   }
 
   async getOpenOrders(symbol: string): Promise<Order[]> {
