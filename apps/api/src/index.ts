@@ -1673,6 +1673,7 @@ app.delete("/bots/:id", requireAuth, requirePermission("bots.delete"), async (re
   await prisma.$transaction([
     prisma.botAlert.deleteMany({ where: { botId } }),
     prisma.botRuntime.deleteMany({ where: { botId } }),
+    prisma.botMetric.deleteMany({ where: { botId } }),
     prisma.marketMakingConfig.deleteMany({ where: { botId } }),
     prisma.volumeConfig.deleteMany({ where: { botId } }),
     prisma.riskConfig.deleteMany({ where: { botId } }),
