@@ -212,7 +212,6 @@ export default function MetricsSection(props: MetricsSectionProps) {
       <div
         style={{
           display: "flex",
-          alignItems: "center",
           justifyContent: "space-between",
           gap: 8,
           flexWrap: "wrap",
