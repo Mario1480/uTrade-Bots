@@ -82,7 +82,7 @@ export class PionexRestClient {
   private readonly balancesCache = new Map<string, { balances: Balance[]; ts: number }>();
   private readonly balancesTtlMs = 15_000;
   private readonly tickerCache = new Map<string, { mid: MidPrice; ts: number }>();
-  private readonly tickerTtlMs = 10_000;
+  private readonly tickerTtlMs = 60_000;
 
   constructor(
     private readonly baseUrl: string,
@@ -280,34 +280,17 @@ export class PionexRestClient {
     try {
       const json = await this.request<any>({
         method: "GET",
-        path: "/api/v1/market/bookTickers",
+        path: "/api/v1/market/tickers",
         params: { symbol: s, type: "SPOT" },
         auth: "NONE"
       });
-      const list: any[] = Array.isArray(json?.data?.tickers) ? json.data.tickers : [];
-      const row =
-        list.find((t) => String(t.symbol ?? t.symbolId ?? t.tradingPair ?? t.trading_pair) === s) ??
-        list[0] ??
-        {};
-      let bid = Number(row.bidPrice ?? row.bid ?? row.bestBid ?? 0);
-      let ask = Number(row.askPrice ?? row.ask ?? row.bestAsk ?? 0);
-      if (!bid || !ask) {
-        const fallback = await this.request<any>({
-          method: "GET",
-          path: "/api/v1/market/tickers",
-          params: { symbol: s, type: "SPOT" },
-          auth: "NONE"
-        });
-        const rows: any[] = Array.isArray(fallback?.data?.tickers) ? fallback.data.tickers : [];
-        const t = rows.find((x) => String(x.symbol) === s) ?? rows[0] ?? {};
-        const last = Number(t.close ?? t.last ?? t.lastPrice ?? 0);
-        const mid = last || bid || ask || 0;
-        const out = { mid, bid, ask, last, ts: nowMs() };
-        this.tickerCache.set(s, { mid: out, ts: Date.now() });
-        return out;
-      }
-      const mid = (bid + ask) / 2;
-      const out = { mid, bid, ask, ts: nowMs() };
+      const rows: any[] = Array.isArray(json?.data?.tickers) ? json.data.tickers : [];
+      const t = rows.find((x) => String(x.symbol) === s) ?? rows[0] ?? {};
+      const last = Number(t.close ?? t.last ?? t.lastPrice ?? 0);
+      const bid = Number(t.bid ?? t.bestBid ?? 0);
+      const ask = Number(t.ask ?? t.bestAsk ?? 0);
+      const mid = last || (bid && ask ? (bid + ask) / 2 : 0);
+      const out = { mid, bid, ask, last, ts: nowMs() };
       this.tickerCache.set(s, { mid: out, ts: Date.now() });
       return out;
     } catch (err) {
