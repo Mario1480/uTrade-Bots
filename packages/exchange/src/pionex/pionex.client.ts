@@ -71,10 +71,14 @@ export function buildPionexSignature(payload: string, secret: string) {
 
 export class PionexRestClient {
   private static lastRequestAt = 0;
-  private static readonly minGapMs = 800;
+  private static readonly minGapMs = 1500;
   private readonly metaCache = new Map<string, { meta: SymbolMeta; ts: number }>();
   private readonly symbolCache = new Map<string, { symbols: any[]; ts: number }>();
   private readonly symbolCacheTtlMs = 15 * 60_000;
+  private static lastSymbolsErrorAt = 0;
+  private static lastSymbolsError: Error | null = null;
+  private readonly openOrdersCache = new Map<string, { orders: Order[]; ts: number }>();
+  private readonly openOrdersTtlMs = 10_000;
 
   constructor(
     private readonly baseUrl: string,
@@ -138,7 +142,7 @@ export class PionexRestClient {
       headers["PIONEX-SIGNATURE"] = buildPionexSignature(signPayload, this.apiSecret);
     }
 
-    const maxRetries = 2;
+    const maxRetries = 4;
     let attempt = 0;
     while (true) {
       const now = Date.now();
@@ -163,7 +167,8 @@ export class PionexRestClient {
         const msg = json?.message || json?.msg || res.statusText || "request_failed";
         const err = new Error(`Pionex API error ${res.status}: ${msg} (${JSON.stringify(json)})`);
         if ((res.status === 429 || res.status >= 500) && attempt < maxRetries) {
-          await sleep(withJitter(800 * Math.pow(2, attempt)));
+          const backoff = Math.min(30_000, 1000 * Math.pow(2, attempt));
+          await sleep(withJitter(backoff));
           attempt += 1;
           continue;
         }
@@ -209,15 +214,28 @@ export class PionexRestClient {
   }
 
   private async listSymbolsRaw(): Promise<any[]> {
+    if (PionexRestClient.lastSymbolsErrorAt && Date.now() - PionexRestClient.lastSymbolsErrorAt < 60_000) {
+      if (PionexRestClient.lastSymbolsError) throw PionexRestClient.lastSymbolsError;
+    }
     const cached = this.symbolCache.get("symbols");
     if (cached && Date.now() - cached.ts < this.symbolCacheTtlMs) return cached.symbols;
 
-    const json = await this.request<any>({
-      method: "GET",
-      path: "/api/v1/common/symbols",
-      params: { type: "SPOT" },
-      auth: "NONE"
-    });
+    let json: any;
+    try {
+      json = await this.request<any>({
+        method: "GET",
+        path: "/api/v1/common/symbols",
+        params: { type: "SPOT" },
+        auth: "NONE"
+      });
+      PionexRestClient.lastSymbolsErrorAt = 0;
+      PionexRestClient.lastSymbolsError = null;
+    } catch (err) {
+      const e = err instanceof Error ? err : new Error(String(err));
+      PionexRestClient.lastSymbolsErrorAt = Date.now();
+      PionexRestClient.lastSymbolsError = e;
+      throw e;
+    }
     const list: any[] = Array.isArray(json?.data?.symbols) ? json.data.symbols : [];
     this.symbolCache.set("symbols", { symbols: list, ts: Date.now() });
     return list;
@@ -285,6 +303,10 @@ export class PionexRestClient {
 
   async getOpenOrders(symbol: string): Promise<Order[]> {
     const s = toExchangeSymbol("pionex", symbol);
+    const cached = this.openOrdersCache.get(s);
+    if (cached && Date.now() - cached.ts < this.openOrdersTtlMs) {
+      return cached.orders;
+    }
     const json = await this.request<any>({
       method: "GET",
       path: "/api/v1/trade/openOrders",
@@ -292,7 +314,7 @@ export class PionexRestClient {
       auth: "SIGNED"
     });
     const list: any[] = Array.isArray(json?.data?.orders) ? json.data.orders : [];
-    return list.map((o) => {
+    const orders = list.map((o) => {
       const price = Number(o.price ?? o.orderPrice ?? o.avgPrice ?? 0);
       const qty = Number(o.size ?? o.quantity ?? o.amount ?? 0);
       const status = String(o.status ?? o.state ?? "").toUpperCase();
@@ -310,6 +332,8 @@ export class PionexRestClient {
         clientOrderId: o.clientOrderId ? String(o.clientOrderId) : undefined
       };
     });
+    this.openOrdersCache.set(s, { orders, ts: Date.now() });
+    return orders;
   }
 
   async placeOrder(q: Quote): Promise<Order> {
