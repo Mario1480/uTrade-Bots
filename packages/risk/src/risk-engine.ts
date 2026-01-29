@@ -42,8 +42,8 @@ export class RiskEngine {
       return { ok: false, action: "STOP", reason: `Daily loss limit reached: ${ctx.dailyPnl}` };
     }
 
-    // Stale data guard (10s)
-    if (Date.now() - ctx.mid.ts > 10_000) {
+    // Stale data guard (60s)
+    if (Date.now() - ctx.mid.ts > 60_000) {
       return { ok: false, action: "PAUSE", reason: "Stale market data" };
     }
 
