@@ -1,32 +1,22 @@
 import type { DextoolsNormalizedPrice } from "./types.js";
 
-const DEFAULT_BASE_URL = "https://public-api.dextools.io";
-const DEFAULT_PLAN = "trial";
+const DEFAULT_BASE_URL = "https://api.dexscreener.com";
 
 type DextoolsClientOptions = {
   baseUrl?: string;
-  plan?: string;
-  apiKey?: string | null;
   timeoutMs?: number;
 };
 
-type RawDextoolsResponse = {
-  data?: {
-    price?: number;
-    price5m?: number;
-    variation5m?: number;
-    price1h?: number;
-    variation1h?: number;
-    price24h?: number;
-    variation24h?: number;
-  };
-  price?: number;
-  price5m?: number;
-  variation5m?: number;
-  price1h?: number;
-  variation1h?: number;
-  price24h?: number;
-  variation24h?: number;
+type RawDexscreenerPair = {
+  chainId?: string;
+  priceUsd?: string | number;
+  priceNative?: string | number;
+  liquidity?: { usd?: number | string };
+  priceChange?: { m5?: number | string; h1?: number | string; h24?: number | string };
+};
+
+type RawDexscreenerResponse = {
+  pairs?: RawDexscreenerPair[];
 };
 
 async function fetchWithTimeout(url: string, init: RequestInit, timeoutMs: number) {
@@ -41,54 +31,61 @@ async function fetchWithTimeout(url: string, init: RequestInit, timeoutMs: numbe
 
 export class DextoolsClient {
   private baseUrl: string;
-  private plan: string;
-  private apiKey: string | null;
   private timeoutMs: number;
 
   constructor(opts?: DextoolsClientOptions) {
-    this.baseUrl = opts?.baseUrl ?? process.env.DEXTOOLS_BASE_URL ?? DEFAULT_BASE_URL;
-    this.plan = opts?.plan ?? process.env.DEXTOOLS_PLAN ?? DEFAULT_PLAN;
-    this.apiKey = opts?.apiKey ?? process.env.DEXTOOLS_API_KEY ?? null;
+    this.baseUrl =
+      opts?.baseUrl ??
+      process.env.DEXSCREENER_BASE_URL ??
+      process.env.DEXTOOLS_BASE_URL ??
+      DEFAULT_BASE_URL;
     this.timeoutMs = opts?.timeoutMs ?? 8000;
   }
 
-  private buildUrl(chain: string, tokenAddress: string) {
+  private buildUrl(tokenAddress: string) {
     const base = this.baseUrl.replace(/\/$/, "");
-    const plan = this.plan.replace(/^\/|\/$/g, "");
-    return `${base}/${plan}/v2/token/${chain}/${tokenAddress}/price`;
+    return `${base}/latest/dex/tokens/${tokenAddress}`;
   }
 
   async getTokenPrice(chain: string, tokenAddress: string): Promise<DextoolsNormalizedPrice> {
-    const url = this.buildUrl(chain, tokenAddress);
+    const url = this.buildUrl(tokenAddress);
     const headers: Record<string, string> = { accept: "application/json" };
-    if (this.apiKey) {
-      headers["X-API-KEY"] = this.apiKey;
-    }
-
     const res = await fetchWithTimeout(url, { method: "GET", headers }, this.timeoutMs);
     const text = await res.text();
     if (!res.ok) {
       const snippet = text.slice(0, 300);
-      throw new Error(`[dextools] ${res.status} ${res.statusText}: ${snippet}`);
+      throw new Error(`[dexscreener] ${res.status} ${res.statusText}: ${snippet}`);
     }
 
-    let json: RawDextoolsResponse;
+    let json: RawDexscreenerResponse;
     try {
-      json = JSON.parse(text) as RawDextoolsResponse;
+      json = JSON.parse(text) as RawDexscreenerResponse;
     } catch (e) {
       const snippet = text.slice(0, 300);
-      throw new Error(`[dextools] non-JSON response ${res.status} ${res.statusText}: ${snippet}`);
+      throw new Error(`[dexscreener] non-JSON response ${res.status} ${res.statusText}: ${snippet}`);
     }
 
-    const price = Number(json?.data?.price ?? json?.price);
+    const pairs = Array.isArray(json?.pairs) ? json.pairs : [];
+    const targetChain = chain?.trim().toLowerCase();
+    const candidates = targetChain
+      ? pairs.filter((p) => String(p.chainId ?? "").toLowerCase() === targetChain)
+      : pairs;
+    const best = candidates.reduce<RawDexscreenerPair | null>((acc, pair) => {
+      if (!pair) return acc;
+      const liq = Number(pair.liquidity?.usd ?? 0);
+      if (!acc) return pair;
+      const accLiq = Number(acc.liquidity?.usd ?? 0);
+      return liq > accLiq ? pair : acc;
+    }, null);
+    const price = Number(best?.priceUsd);
     if (!Number.isFinite(price) || price <= 0) {
-      throw new Error("[dextools] missing/invalid price");
+      throw new Error("[dexscreener] missing/invalid price");
     }
 
     return {
       price,
       ts: Date.now(),
-      raw: json
+      raw: { pair: best, response: json }
     };
   }
 }
