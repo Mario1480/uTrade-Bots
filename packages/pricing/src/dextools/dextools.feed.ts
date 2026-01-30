@@ -111,13 +111,18 @@ export class DextoolsPriceFeed {
     try {
       const resp = await this.client.getTokenPrice(chain, tokenAddress);
       const raw = resp.raw as any;
+      const pair = raw?.pair ?? {};
+      const toNumber = (value: unknown): number | undefined => {
+        const n = Number(value);
+        return Number.isFinite(n) ? n : undefined;
+      };
       const meta = {
-        price5m: Number(raw?.data?.price5m ?? raw?.price5m),
-        variation5m: Number(raw?.data?.variation5m ?? raw?.variation5m),
-        price1h: Number(raw?.data?.price1h ?? raw?.price1h),
-        variation1h: Number(raw?.data?.variation1h ?? raw?.variation1h),
-        price24h: Number(raw?.data?.price24h ?? raw?.price24h),
-        variation24h: Number(raw?.data?.variation24h ?? raw?.variation24h)
+        price5m: undefined,
+        variation5m: toNumber(pair?.priceChange?.m5),
+        price1h: undefined,
+        variation1h: toNumber(pair?.priceChange?.h1),
+        price24h: undefined,
+        variation24h: toNumber(pair?.priceChange?.h24)
       };
       this.cache.set(key, { mid: resp.price, ts: resp.ts, meta });
       this.recordSuccess(key);
