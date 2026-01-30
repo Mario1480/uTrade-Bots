@@ -25,6 +25,20 @@ LICENSE_INSTANCE_ID="${LICENSE_INSTANCE_ID:-$(hostname)}"
 read -r -s -p "License server secret (optional): " LICENSE_SERVER_SECRET
 echo ""
 
+PRIMARY_IP="$(hostname -I | awk '{print $1}')"
+WEB_ORIGIN="${WEB_DOMAIN:+https://${WEB_DOMAIN}}"
+API_PUBLIC_URL="${API_DOMAIN:+https://${API_DOMAIN}}"
+if [[ -z "${WEB_ORIGIN}" ]]; then
+  WEB_ORIGIN="http://${PRIMARY_IP}:3000"
+fi
+if [[ -z "${API_PUBLIC_URL}" ]]; then
+  API_PUBLIC_URL="http://${PRIMARY_IP}:8080"
+fi
+COOKIE_SECURE_VALUE="true"
+if [[ -z "${WEB_DOMAIN}" ]]; then
+  COOKIE_SECURE_VALUE="false"
+fi
+
 echo "==> Installing system dependencies"
 apt update -y
 apt install -y curl ca-certificates gnupg unzip git ufw
@@ -57,15 +71,16 @@ ADMIN_EMAIL=${ADMIN_EMAIL}
 ADMIN_PASSWORD=${ADMIN_PASSWORD}
 ADMIN_WORKSPACE_NAME=${ADMIN_WORKSPACE_NAME}
 
-NEXT_PUBLIC_API_URL=${API_DOMAIN:+https://${API_DOMAIN}}
+NEXT_PUBLIC_API_URL=${API_PUBLIC_URL}
 API_BASE_URL=http://api:8080
 
 COOKIE_DOMAIN=${WEB_DOMAIN:+.${WEB_DOMAIN#*.}}
-COOKIE_SECURE=true
+COOKIE_SECURE=${COOKIE_SECURE_VALUE}
 
-CORS_ORIGINS=${WEB_DOMAIN:+https://${WEB_DOMAIN}},http://localhost:3000
+CORS_ORIGINS=${WEB_ORIGIN},http://localhost:3000
 
 BITMART_BASE_URL=https://api-cloud.bitmart.com
+DEXSCREENER_BASE_URL=https://api.dexscreener.com
 
 SMTP_HOST=smtp.hostinger.com
 SMTP_PORT=465
