@@ -317,11 +317,7 @@ export async function runLoop(params: {
         usePriceSupport: Boolean(priceSupportConfig?.enabled),
         usePriceFollow: Boolean(botRow.priceFollowEnabled),
         useAiRecommendations: false,
-        useDexPriceFeed: Boolean(
-          botRow.dexPriceFeedEnabled ||
-          botRow.dexDeviationEnabled ||
-          (botRow.priceSourceMode ?? "CEX") !== "CEX"
-        )
+        useDexPriceFeed: false
       });
       lastLicenseFeatures = license.lastResponse?.features ?? null;
       const licenseAllowed = license.ok && (license.enforce?.allowed ?? true);
@@ -372,13 +368,14 @@ export async function runLoop(params: {
     }
 
     try {
-      const priceSourceMode = (botRow.priceSourceMode ?? "CEX") as PriceSourceMode;
+      const licenseDexAllowed = Boolean(lastLicenseFeatures?.dexPriceFeed);
+      const priceSourceMode = ((licenseDexAllowed ? botRow.priceSourceMode : "CEX") ?? "CEX") as PriceSourceMode;
       const priceFollowEnabled = Boolean(botRow.priceFollowEnabled) && priceSourceMode !== "DEXTOOLS";
       const masterExchange = (botRow.priceSourceExchange || botRow.exchange).toLowerCase();
       const masterSymbol = botRow.priceSourceSymbol || symbol;
       const masterType = botRow.priceSourceType || "TICKER";
-      const dexFeedEnabled = Boolean(botRow.dexPriceFeedEnabled);
-      const dexDeviationEnabled = Boolean(botRow.dexDeviationEnabled);
+      const dexFeedEnabled = Boolean(botRow.dexPriceFeedEnabled) && licenseDexAllowed;
+      const dexDeviationEnabled = Boolean(botRow.dexDeviationEnabled) && licenseDexAllowed;
       const dexChain = (botRow.dexChain || "ethereum").toLowerCase();
       const dexTokenAddress = (botRow.dexTokenAddress || "").trim();
       const dexCacheTtlMs = Number.isFinite(botRow.dexCacheTtlMs) ? botRow.dexCacheTtlMs : 3000;
@@ -386,7 +383,6 @@ export async function runLoop(params: {
       const dexMaxDeviationBps = Number.isFinite(botRow.dexMaxDeviationBps) ? botRow.dexMaxDeviationBps : 0;
       const dexDeviationPolicy = botRow.dexDeviationPolicy || "alertOnly";
       const dexNotifyCooldownSec = Number.isFinite(botRow.dexNotifyCooldownSec) ? botRow.dexNotifyCooldownSec : 300;
-      const licenseDexAllowed = Boolean(lastLicenseFeatures?.dexPriceFeed);
 
       if (dexFeedEnabled && dexTokenAddress.length === 0) {
         await writeRuntime({
