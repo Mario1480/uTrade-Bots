@@ -502,7 +502,11 @@ export default function BotOverviewPage() {
             <Kv k="Open orders (Volume)" v={rt?.openOrdersVol} />
             <Kv k="Traded notional today" v={rt?.tradedNotionalToday} />
             <Kv k="Updated at" v={formatUpdated(rt?.updatedAt)} />
-            {dexFeatureEnabled && (rt?.midCex !== undefined || rt?.midDex !== undefined || rt?.dexStatus) ? (
+            {dexFeatureEnabled &&
+            (bot?.dexPriceFeedEnabled ||
+              bot?.dexDeviationEnabled ||
+              (bot?.priceSourceMode ?? "CEX") !== "CEX") &&
+            (rt?.midCex !== undefined || rt?.midDex !== undefined || rt?.dexStatus) ? (
               <>
                 <Kv k="Mid (CEX)" v={rt?.midCex} />
                 <Kv k="Mid (DEX)" v={rt?.midDex} />
