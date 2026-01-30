@@ -4,9 +4,10 @@ type LiveViewProps = {
   runtime: any;
   baseSymbol?: string;
   isSuperadmin?: boolean;
+  showDex?: boolean;
 };
 
-export function LiveView({ runtime, baseSymbol, isSuperadmin }: LiveViewProps) {
+export function LiveView({ runtime, baseSymbol, isSuperadmin, showDex }: LiveViewProps) {
   const baseLabel = baseSymbol ? `Free ${baseSymbol}` : "Free base";
   const staleness = getStaleness(runtime);
   const hint = buildHint(runtime, staleness);
@@ -50,7 +51,7 @@ export function LiveView({ runtime, baseSymbol, isSuperadmin }: LiveViewProps) {
             <Kv k={baseLabel} v={runtime.freeBase} />
             <Kv k="Traded notional today" v={runtime.tradedNotionalToday} />
             <Kv k="Updated at" v={formatUpdated(runtime.updatedAt)} />
-            {runtime?.midCex !== undefined || runtime?.midDex !== undefined || runtime?.dexStatus ? (
+            {showDex && (runtime?.midCex !== undefined || runtime?.midDex !== undefined || runtime?.dexStatus) ? (
               <>
                 <Kv k="Mid (CEX)" v={runtime.midCex} />
                 <Kv k="Mid (DEX)" v={runtime.midDex} />
