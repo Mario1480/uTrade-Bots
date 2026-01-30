@@ -2839,11 +2839,15 @@ app.put("/settings/subscription", requireAuth, async (req, res) => {
   const user = getUserFromLocals(res);
   if (!isSuperadmin(user)) return res.status(403).json({ error: "forbidden" });
 
-  const body = z
+  const parsed = z
     .object({
       licenseKey: z.string().trim().min(1)
     })
-    .parse(req.body);
+    .safeParse(req.body);
+  if (!parsed.success) {
+    return res.status(400).json({ error: "invalid_request", details: parsed.error.errors });
+  }
+  const body = parsed.data;
   const workspaceId = getWorkspaceId(res);
   if (!workspaceId) return res.status(400).json({ error: "workspace_missing" });
 
