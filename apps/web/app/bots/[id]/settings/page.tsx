@@ -684,7 +684,17 @@ export default function BotPage() {
       </div>
 
       <div style={{ marginBottom: 16 }}>
-        <LiveView runtime={rt} baseSymbol={bot?.symbol?.split(/[/_-]/)[0]} isSuperadmin={Boolean(me?.isSuperadmin)} />
+        <LiveView
+          runtime={rt}
+          baseSymbol={bot?.symbol?.split(/[/_-]/)[0]}
+          isSuperadmin={Boolean(me?.isSuperadmin)}
+          showDex={
+            dexFeatureEnabled &&
+            (bot?.dexPriceFeedEnabled ||
+              bot?.dexDeviationEnabled ||
+              (bot?.priceSourceMode ?? "CEX") !== "CEX")
+          }
+        />
       </div>
 
       <div className="card" style={{ padding: 12, marginBottom: 16 }}>
