@@ -1028,7 +1028,7 @@ export default function BotPage() {
       {dexPriceFeed && dexDeviation ? (
         <AccordionSection title="DEX Price Feed">
           <div style={{ fontSize: 12, color: "var(--muted)", marginBottom: 10 }}>
-            Read-only DEX price reference via DEXTools (no trading).
+            Read-only DEX price reference via Dex Screener (no trading).
           </div>
           {!dexFeatureEnabled ? (
             <div style={{ fontSize: 12, color: "var(--warn)", marginBottom: 10 }}>
@@ -1042,7 +1042,7 @@ export default function BotPage() {
               onChange={(e) => setDexPriceFeed({ ...dexPriceFeed, enabled: e.target.checked })}
               disabled={dexControlsDisabled}
             />
-            Enable DEX price feed (DEXTools)
+            Enable DEX price feed (Dex Screener)
           </label>
           <div className="gridTwoCol">
             <label style={{ display: "grid", gap: 6 }}>
@@ -1054,7 +1054,7 @@ export default function BotPage() {
                 disabled={dexControlsDisabled}
               >
                 <option value="CEX">CEX</option>
-                <option value="DEXTOOLS">DEXTools</option>
+                <option value="DEXTOOLS">DEX Screener</option>
                 <option value="HYBRID">Hybrid (monitor only)</option>
               </select>
             </label>
