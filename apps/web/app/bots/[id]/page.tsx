@@ -501,6 +501,15 @@ export default function BotOverviewPage() {
             <Kv k="Open orders (Volume)" v={rt?.openOrdersVol} />
             <Kv k="Traded notional today" v={rt?.tradedNotionalToday} />
             <Kv k="Updated at" v={formatUpdated(rt?.updatedAt)} />
+            {rt?.midCex !== undefined || rt?.midDex !== undefined || rt?.dexStatus ? (
+              <>
+                <Kv k="Mid (CEX)" v={rt?.midCex} />
+                <Kv k="Mid (DEX)" v={rt?.midDex} />
+                <Kv k="DEX diff (bps)" v={rt?.dexDiffBps} />
+                <Kv k="DEX status" v={rt?.dexStatus} />
+                <Kv k="DEX updated" v={formatUpdated(rt?.dexLastUpdate)} />
+              </>
+            ) : null}
           </div>
           {rt && me?.isSuperadmin ? (
             <details style={{ marginTop: 10 }}>

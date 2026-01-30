@@ -310,6 +310,11 @@ export async function writeRuntime(params: {
   freeUsdt?: number | null;
   freeBase?: number | null;
   tradedNotionalToday?: number | null;
+  midCex?: number | null;
+  midDex?: number | null;
+  dexStatus?: string | null;
+  dexDiffBps?: number | null;
+  dexLastUpdate?: Date | null;
 }) {
   await prisma.botRuntime.upsert({
     where: { botId: params.botId },
@@ -327,7 +332,12 @@ export async function writeRuntime(params: {
       lastVolClientOrderId: params.lastVolClientOrderId ?? null,
       freeUsdt: params.freeUsdt ?? null,
       freeBase: params.freeBase ?? null,
-      tradedNotionalToday: params.tradedNotionalToday ?? null
+      tradedNotionalToday: params.tradedNotionalToday ?? null,
+      midCex: params.midCex ?? null,
+      midDex: params.midDex ?? null,
+      dexStatus: params.dexStatus ?? null,
+      dexDiffBps: params.dexDiffBps ?? null,
+      dexLastUpdate: params.dexLastUpdate ?? null
     },
     update: {
       status: params.status,
@@ -342,7 +352,12 @@ export async function writeRuntime(params: {
       lastVolClientOrderId: params.lastVolClientOrderId ?? null,
       freeUsdt: params.freeUsdt ?? null,
       freeBase: params.freeBase ?? null,
-      tradedNotionalToday: params.tradedNotionalToday ?? null
+      tradedNotionalToday: params.tradedNotionalToday ?? null,
+      midCex: params.midCex ?? null,
+      midDex: params.midDex ?? null,
+      dexStatus: params.dexStatus ?? null,
+      dexDiffBps: params.dexDiffBps ?? null,
+      dexLastUpdate: params.dexLastUpdate ?? null
     }
   });
 }

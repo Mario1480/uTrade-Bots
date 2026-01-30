@@ -10,6 +10,7 @@ Add a new CEX integration with minimal disruption. The adapter must support:
 CEX Name:
 CEX API Docs: 
 Trading: 
+Rate Limiting:
 
 CRITICAL PITFALLS (learned from Coinstore)
 1) Base URL / Path prefixes:

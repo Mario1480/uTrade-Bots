@@ -8,13 +8,15 @@ import type {
   Balance,
   MidPrice,
   Quote,
-  Order
+  Order,
+  PriceSourceMode
 } from "@mm/core";
 import { splitSymbol } from "@mm/core";
 import { BitmartRestClient, CoinstoreRestClient } from "@mm/exchange";
 import { buildMmQuotes, VolumeScheduler } from "@mm/strategy";
 import type { VolumeState as VolState } from "@mm/strategy";
 import { RiskEngine } from "@mm/risk";
+import { DextoolsPriceFeed } from "@mm/pricing";
 import { BotStateMachine } from "./state-machine.js";
 import { OrderManager } from "./order-manager.js";
 import { inventoryRatio } from "./inventory.js";
@@ -87,6 +89,9 @@ export async function runLoop(params: {
   const balancesTtlMs = Number(process.env.BALANCES_TTL_MS || "30000");
   const openOrdersTtlMs = Number(process.env.OPEN_ORDERS_TTL_MS || "30000");
   const metricsSampleMs = Math.max(1_000, Number(process.env.METRICS_SAMPLE_SEC || "10") * 1_000);
+  let dexFeed: DextoolsPriceFeed | null = null;
+  let lastDexConfigKey = "";
+  let lastDexAlertAt = 0;
 
   function getMarketDataClient(exchangeKey: string): ExchangePublic {
     const key = exchangeKey.toLowerCase();
@@ -169,6 +174,7 @@ export async function runLoop(params: {
   let lastBalancesAt = 0;
   let lastOpenOrders: Order[] = [];
   let lastOpenOrdersAt = 0;
+  let lastLicenseFeatures: Record<string, any> | null = null;
 
   sm.set("RUNNING");
   setBotStatus("RUNNING");
@@ -310,8 +316,14 @@ export async function runLoop(params: {
         cexCount,
         usePriceSupport: Boolean(priceSupportConfig?.enabled),
         usePriceFollow: Boolean(botRow.priceFollowEnabled),
-        useAiRecommendations: false
+        useAiRecommendations: false,
+        useDexPriceFeed: Boolean(
+          botRow.dexPriceFeedEnabled ||
+          botRow.dexDeviationEnabled ||
+          (botRow.priceSourceMode ?? "CEX") !== "CEX"
+        )
       });
+      lastLicenseFeatures = license.lastResponse?.features ?? null;
       const licenseAllowed = license.ok && (license.enforce?.allowed ?? true);
       if (!licenseAllowed) {
         const reason = license.enforce?.reason ?? license.lastError?.code ?? "LICENSE_INVALID";
@@ -360,10 +372,44 @@ export async function runLoop(params: {
     }
 
     try {
-      const priceFollowEnabled = Boolean(botRow.priceFollowEnabled);
+      const priceSourceMode = (botRow.priceSourceMode ?? "CEX") as PriceSourceMode;
+      const priceFollowEnabled = Boolean(botRow.priceFollowEnabled) && priceSourceMode !== "DEXTOOLS";
       const masterExchange = (botRow.priceSourceExchange || botRow.exchange).toLowerCase();
       const masterSymbol = botRow.priceSourceSymbol || symbol;
       const masterType = botRow.priceSourceType || "TICKER";
+      const dexFeedEnabled = Boolean(botRow.dexPriceFeedEnabled);
+      const dexDeviationEnabled = Boolean(botRow.dexDeviationEnabled);
+      const dexChain = (botRow.dexChain || "ethereum").toLowerCase();
+      const dexTokenAddress = (botRow.dexTokenAddress || "").trim();
+      const dexCacheTtlMs = Number.isFinite(botRow.dexCacheTtlMs) ? botRow.dexCacheTtlMs : 3000;
+      const dexStaleAfterMs = Number.isFinite(botRow.dexStaleAfterMs) ? botRow.dexStaleAfterMs : 15000;
+      const dexMaxDeviationBps = Number.isFinite(botRow.dexMaxDeviationBps) ? botRow.dexMaxDeviationBps : 0;
+      const dexDeviationPolicy = botRow.dexDeviationPolicy || "alertOnly";
+      const dexNotifyCooldownSec = Number.isFinite(botRow.dexNotifyCooldownSec) ? botRow.dexNotifyCooldownSec : 300;
+      const licenseDexAllowed = Boolean(lastLicenseFeatures?.dexPriceFeed);
+
+      if (dexFeedEnabled && dexTokenAddress.length === 0) {
+        await writeRuntime({
+          botId,
+          status: "ERROR",
+          reason: "DEX_TOKEN_ADDRESS_REQUIRED",
+          openOrders: 0,
+          openOrdersMm: 0,
+          openOrdersVol: 0,
+          lastVolClientOrderId: null
+        });
+        await sleep(tickMs);
+        continue;
+      }
+
+      const dexConfigKey = `${dexCacheTtlMs}:${dexStaleAfterMs}`;
+      if (!dexFeed || dexConfigKey !== lastDexConfigKey) {
+        dexFeed = new DextoolsPriceFeed({
+          cacheTtlMs: dexCacheTtlMs,
+          staleAfterMs: dexStaleAfterMs
+        });
+        lastDexConfigKey = dexConfigKey;
+      }
 
       if (priceFollowEnabled && !botRow.priceSourceExchange) {
         await writeRuntime({
@@ -391,7 +437,94 @@ export async function runLoop(params: {
         priceFollowEnabled && execMid.mid > 0
           ? Math.abs(masterMid.mid - execMid.mid) / execMid.mid
           : undefined;
-      const mid = priceFollowEnabled ? masterMid : execMid;
+      const midCex = execMid;
+      let dexResult: { mid: number | null; status: "OK" | "STALE" | "DOWN"; ts: number | null; meta?: any } | null = null;
+      if (dexFeedEnabled && licenseDexAllowed && dexTokenAddress.length > 0 && dexFeed) {
+        dexResult = await dexFeed.getPrice(dexChain, dexTokenAddress);
+      }
+      const midDex = dexResult?.mid ?? null;
+      const dexStatus = dexResult?.status ?? (dexFeedEnabled ? "DOWN" : null);
+      const dexTs = dexResult?.ts ?? null;
+      const diffBps =
+        midDex && midDex > 0 && midCex?.mid && midCex.mid > 0
+          ? (Math.abs(midCex.mid - midDex) / midDex) * 10000
+          : null;
+      let mid: MidPrice = priceFollowEnabled ? masterMid : execMid;
+      if (priceSourceMode === "DEXTOOLS" && dexFeedEnabled) {
+        if (!midDex || dexResult?.status !== "OK") {
+          const reason = dexResult?.status === "STALE" ? "DEX_FEED_STALE" : "DEX_FEED_DOWN";
+          setBotStatus("ERROR", reason);
+          await writeRuntime({
+            botId,
+            status: "ERROR",
+            reason,
+            mid: null,
+            bid: null,
+            ask: null,
+            openOrders: 0,
+            openOrdersMm: 0,
+            openOrdersVol: 0,
+            lastVolClientOrderId: null,
+            midCex: Number.isFinite(midCex.mid) ? midCex.mid : null,
+            midDex: midDex,
+            dexStatus,
+            dexDiffBps: diffBps,
+            dexLastUpdate: dexTs ? new Date(dexTs) : null
+          });
+          noteTick();
+          await sleep(tickMs);
+          continue;
+        }
+        mid = {
+          mid: midDex,
+          bid: midDex,
+          ask: midDex,
+          ts: dexTs ?? Date.now()
+        };
+      }
+
+      if (
+        dexDeviationEnabled &&
+        dexFeedEnabled &&
+        licenseDexAllowed &&
+        diffBps !== null &&
+        dexMaxDeviationBps > 0 &&
+        diffBps > dexMaxDeviationBps
+      ) {
+        const now = Date.now();
+        const shouldNotify = now - lastDexAlertAt >= dexNotifyCooldownSec * 1000;
+        if (shouldNotify) {
+          lastDexAlertAt = now;
+          await alert(
+            "warn",
+            "DEX_CEX_DEVIATION_TOO_HIGH",
+            `bot=${botName} symbol=${symbol} cex=${midCex.mid} dex=${midDex} diffBps=${diffBps.toFixed(2)} threshold=${dexMaxDeviationBps} policy=${dexDeviationPolicy} dexStatus=${dexStatus}`
+          );
+        }
+        if (dexDeviationPolicy === "freeze") {
+          try {
+            await exchange.cancelAll(symbol);
+          } catch {}
+          sm.set("PAUSED", "DEX_DEVIATION");
+          setBotStatus("PAUSED", "DEX_DEVIATION");
+          await writeRuntime({
+            botId,
+            status: "PAUSED",
+            reason: "DEX_DEVIATION",
+            openOrders: null,
+            openOrdersMm: null,
+            openOrdersVol: null,
+            lastVolClientOrderId: null,
+            midCex: Number.isFinite(midCex.mid) ? midCex.mid : null,
+            midDex: midDex,
+            dexStatus,
+            dexDiffBps: diffBps,
+            dexLastUpdate: dexTs ? new Date(dexTs) : null
+          });
+          await sleep(tickMs);
+          continue;
+        }
+      }
 
       if (priceFollowEnabled && Date.now() - mid.ts > masterStaleMs) {
         setBotStatus("ERROR", "MASTER_FEED_STALE");
@@ -405,7 +538,12 @@ export async function runLoop(params: {
           openOrders: 0,
           openOrdersMm: 0,
           openOrdersVol: 0,
-          lastVolClientOrderId: null
+          lastVolClientOrderId: null,
+          midCex: Number.isFinite(midCex.mid) ? midCex.mid : null,
+          midDex: midDex,
+          dexStatus,
+          dexDiffBps: diffBps,
+          dexLastUpdate: dexTs ? new Date(dexTs) : null
         });
         noteTick();
         await sleep(tickMs);
@@ -1276,7 +1414,12 @@ export async function runLoop(params: {
         lastVolClientOrderId,
         freeUsdt,
         freeBase,
-        tradedNotionalToday: volState.tradedNotional
+        tradedNotionalToday: volState.tradedNotional,
+        midCex: Number.isFinite(midCex.mid) ? midCex.mid : null,
+        midDex: midDex,
+        dexStatus,
+        dexDiffBps: diffBps,
+        dexLastUpdate: dexTs ? new Date(dexTs) : null
       });
       setBotStatus("RUNNING");
       errorBackoffMs = 1000;

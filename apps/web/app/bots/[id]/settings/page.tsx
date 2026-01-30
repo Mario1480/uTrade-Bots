@@ -25,6 +25,9 @@ export default function BotPage() {
   const [notify, setNotify] = useState<any>(null);
   const [priceSupport, setPriceSupport] = useState<any>(null);
   const [priceFollow, setPriceFollow] = useState<any>(null);
+  const [dexPriceFeed, setDexPriceFeed] = useState<any>(null);
+  const [dexDeviation, setDexDeviation] = useState<any>(null);
+  const [priceSourceMode, setPriceSourceMode] = useState<string>("CEX");
   const [preview, setPreview] = useState<{
     mid: number;
     bids: any[];
@@ -41,10 +44,22 @@ export default function BotPage() {
   const [fieldErrors, setFieldErrors] = useState<{
     budgetQuoteUsdt?: string;
     budgetBaseToken?: string;
+    dexTokenAddress?: string;
+    dexMaxDeviationBps?: string;
+    priceSourceMode?: string;
   } | null>(null);
 
   const [toast, setToast] = useState<{ type: "error" | "success"; msg: string } | null>(null);
-  const [baseline, setBaseline] = useState<{ mm: any; vol: any; risk: any; notify: any; priceFollow: any } | null>(null);
+  const [baseline, setBaseline] = useState<{
+    mm: any;
+    vol: any;
+    risk: any;
+    notify: any;
+    priceFollow: any;
+    dexPriceFeed: any;
+    dexDeviation: any;
+    priceSourceMode: string;
+  } | null>(null);
   const [presets, setPresets] = useState<any[]>([]);
   const [presetName, setPresetName] = useState("");
   const [presetDescription, setPresetDescription] = useState("");
@@ -88,14 +103,34 @@ export default function BotPage() {
         priceSourceSymbol: b.priceSourceSymbol ?? b.symbol ?? "",
         priceSourceType: b.priceSourceType ?? "TICKER"
       };
+      const dexFeed = {
+        enabled: Boolean(b.dexPriceFeedEnabled),
+        chain: b.dexChain ?? "ethereum",
+        tokenAddress: b.dexTokenAddress ?? "",
+        cacheTtlMs: b.dexCacheTtlMs ?? 3000,
+        staleAfterMs: b.dexStaleAfterMs ?? 15000
+      };
+      const dexDev = {
+        enabled: Boolean(b.dexDeviationEnabled),
+        maxDeviationBps: b.dexMaxDeviationBps ?? 0,
+        policy: b.dexDeviationPolicy ?? "alertOnly",
+        notifyCooldownSec: b.dexNotifyCooldownSec ?? 300
+      };
+      const priceSourceModeValue = b.priceSourceMode ?? "CEX";
       setPriceFollow(follow);
+      setDexPriceFeed(dexFeed);
+      setDexDeviation(dexDev);
+      setPriceSourceMode(priceSourceModeValue);
       setMe(meRes);
       setBaseline({
         mm: b.mmConfig,
         vol: b.volConfig,
         risk: b.riskConfig,
         notify: b.notificationConfig ?? { fundsWarnEnabled: true, fundsWarnPct: 0.1 },
-        priceFollow: follow
+        priceFollow: follow,
+        dexPriceFeed: dexFeed,
+        dexDeviation: dexDev,
+        priceSourceMode: priceSourceModeValue
       });
       await loadPresets(meRes, b, presetFilterMatch);
     } catch (e) {
@@ -121,16 +156,18 @@ export default function BotPage() {
   }, [id]);
 
   const ready = useMemo(
-    () => !!(mm && vol && risk && notify && priceFollow && baseline),
-    [mm, vol, risk, notify, priceFollow, baseline]
+    () => !!(mm && vol && risk && notify && priceFollow && dexPriceFeed && dexDeviation && priceSourceMode && baseline),
+    [mm, vol, risk, notify, priceFollow, dexPriceFeed, dexDeviation, priceSourceMode, baseline]
   );
   const dirty = useMemo(() => {
-    if (!baseline || !mm || !vol || !risk || !notify || !priceFollow) return false;
+    if (!baseline || !mm || !vol || !risk || !notify || !priceFollow || !dexPriceFeed || !dexDeviation || !priceSourceMode) {
+      return false;
+    }
     // simple deep compare via stable JSON stringify
-    const a = JSON.stringify({ mm, vol, risk, notify, priceFollow });
+    const a = JSON.stringify({ mm, vol, risk, notify, priceFollow, dexPriceFeed, dexDeviation, priceSourceMode });
     const b = JSON.stringify(baseline);
     return a !== b;
-  }, [baseline, mm, vol, risk, notify, priceFollow]);
+  }, [baseline, mm, vol, risk, notify, priceFollow, dexPriceFeed, dexDeviation, priceSourceMode]);
   const dirtyMm = useMemo(() => {
     if (!baseline || !mm) return false;
     return JSON.stringify(mm) !== JSON.stringify(baseline.mm);
@@ -147,6 +184,16 @@ export default function BotPage() {
     if (!baseline || !priceFollow) return false;
     return JSON.stringify(priceFollow) !== JSON.stringify(baseline.priceFollow);
   }, [baseline, priceFollow]);
+  const dirtyDex = useMemo(() => {
+    if (!baseline || !dexPriceFeed || !dexDeviation || !priceSourceMode) return false;
+    const current = JSON.stringify({ dexPriceFeed, dexDeviation, priceSourceMode });
+    const base = JSON.stringify({
+      dexPriceFeed: baseline.dexPriceFeed,
+      dexDeviation: baseline.dexDeviation,
+      priceSourceMode: baseline.priceSourceMode
+    });
+    return current !== base;
+  }, [baseline, dexPriceFeed, dexDeviation, priceSourceMode]);
   const dirtyNotify = useMemo(() => {
     if (!baseline || !notify) return false;
     return JSON.stringify(notify) !== JSON.stringify(baseline.notify);
@@ -157,6 +204,7 @@ export default function BotPage() {
   const volSaveLabel = saving === "saving..." ? "Saving..." : dirtyVol ? "Save Config" : "Saved";
   const riskSaveLabel = saving === "saving..." ? "Saving..." : dirtyRisk ? "Save Config" : "Saved";
   const priceFollowSaveLabel = saving === "saving..." ? "Saving..." : dirtyPriceFollow ? "Save Config" : "Saved";
+  const dexSaveLabel = saving === "saving..." ? "Saving..." : dirtyDex ? "Save Config" : "Saved";
   const notifySaveLabel = saving === "saving..." ? "Saving..." : dirtyNotify ? "Save Config" : "Saved";
   const canViewPresets = Boolean(me?.permissions?.["presets.view"] || me?.isSuperadmin);
   const canCreatePresets = Boolean(me?.permissions?.["presets.create"] || me?.isSuperadmin) && !isReadOnly;
@@ -164,7 +212,10 @@ export default function BotPage() {
   const canDeletePresets = Boolean(me?.permissions?.["presets.delete"] || me?.isSuperadmin) && !isReadOnly;
   const canEditConfig = Boolean(me?.permissions?.["bots.edit_config"] || me?.isSuperadmin) && !isReadOnly;
   const canSavePriceFollow = ready && dirtyPriceFollow && saving !== "saving..." && !isReadOnly;
+  const canSaveDex = ready && dirtyDex && saving !== "saving..." && !isReadOnly;
   const canSaveNotify = ready && dirtyNotify && saving !== "saving..." && !isReadOnly;
+  const dexFeatureEnabled = Boolean(me?.features?.dexPriceFeed);
+  const dexControlsDisabled = !dexFeatureEnabled || !canEditConfig;
   const exchangeOptions = useMemo(() => {
     const list = [bot?.exchange, priceFollow?.priceSourceExchange, "bitmart", "coinstore", "pionex"]
       .filter(Boolean)
@@ -177,14 +228,14 @@ export default function BotPage() {
     try {
       setSaving("saving...");
       setFieldErrors(null);
-      await apiPut(`/bots/${id}/config`, { mm, vol, risk, notify, priceFollow });
-      setBaseline({ mm, vol, risk, notify, priceFollow });
+      await apiPut(`/bots/${id}/config`, { mm, vol, risk, notify, priceFollow, dexPriceFeed, dexDeviation, priceSourceMode });
+      setBaseline({ mm, vol, risk, notify, priceFollow, dexPriceFeed, dexDeviation, priceSourceMode });
       setSaving("saved");
       showToast("success", "Config saved");
       setTimeout(() => setSaving(""), 1200);
     } catch (e) {
       setSaving("");
-      if (e instanceof ApiError && e.payload?.error === "min_budget") {
+      if (e instanceof ApiError && e.payload?.details?.errors) {
         setFieldErrors(e.payload?.details?.errors ?? null);
       }
       showToast("error", errMsg(e));
@@ -969,6 +1020,162 @@ export default function BotPage() {
               disabled={!canSavePriceFollow}
             >
               {priceFollowSaveLabel}
+            </button>
+          </div>
+        </AccordionSection>
+      ) : null}
+
+      {dexPriceFeed && dexDeviation ? (
+        <AccordionSection title="DEX Price Feed">
+          <div style={{ fontSize: 12, color: "var(--muted)", marginBottom: 10 }}>
+            Read-only DEX price reference via DEXTools (no trading).
+          </div>
+          {!dexFeatureEnabled ? (
+            <div style={{ fontSize: 12, color: "var(--warn)", marginBottom: 10 }}>
+              Add-on required: DEX price feed is not enabled for your license.
+            </div>
+          ) : null}
+          <label style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 12 }}>
+            <input
+              type="checkbox"
+              checked={Boolean(dexPriceFeed.enabled)}
+              onChange={(e) => setDexPriceFeed({ ...dexPriceFeed, enabled: e.target.checked })}
+              disabled={dexControlsDisabled}
+            />
+            Enable DEX price feed (DEXTools)
+          </label>
+          <div className="gridTwoCol">
+            <label style={{ display: "grid", gap: 6 }}>
+              <span style={{ fontSize: 12, color: "var(--muted)" }}>Price source mode</span>
+              <select
+                className="input"
+                value={priceSourceMode ?? "CEX"}
+                onChange={(e) => setPriceSourceMode(e.target.value)}
+                disabled={dexControlsDisabled}
+              >
+                <option value="CEX">CEX</option>
+                <option value="DEXTOOLS">DEXTools</option>
+                <option value="HYBRID">Hybrid (monitor only)</option>
+              </select>
+            </label>
+            <div />
+          </div>
+          <div className="gridTwoCol" style={{ marginTop: 10 }}>
+            <label style={{ display: "grid", gap: 6 }}>
+              <span style={{ fontSize: 12, color: "var(--muted)" }}>Chain</span>
+              <select
+                className="input"
+                value={dexPriceFeed.chain ?? "ethereum"}
+                onChange={(e) => setDexPriceFeed({ ...dexPriceFeed, chain: e.target.value })}
+                disabled={dexControlsDisabled}
+              >
+                <option value="ethereum">ethereum</option>
+              </select>
+            </label>
+            <label style={{ display: "grid", gap: 6 }}>
+              <span style={{ fontSize: 12, color: "var(--muted)" }}>Token address</span>
+              <input
+                className="input"
+                value={dexPriceFeed.tokenAddress ?? ""}
+                onChange={(e) => setDexPriceFeed({ ...dexPriceFeed, tokenAddress: e.target.value })}
+                disabled={dexControlsDisabled}
+                placeholder="0x..."
+              />
+              {fieldErrors?.dexTokenAddress ? (
+                <div style={{ fontSize: 12, color: "#ff6b6b" }}>{fieldErrors.dexTokenAddress}</div>
+              ) : null}
+            </label>
+          </div>
+          <div className="gridTwoCol" style={{ marginTop: 10 }}>
+            <label style={{ display: "grid", gap: 6 }}>
+              <span style={{ fontSize: 12, color: "var(--muted)" }}>Cache TTL (ms)</span>
+              <input
+                className="input"
+                type="number"
+                min={0}
+                value={dexPriceFeed.cacheTtlMs ?? 3000}
+                onChange={(e) => setDexPriceFeed({ ...dexPriceFeed, cacheTtlMs: Number(e.target.value) })}
+                disabled={dexControlsDisabled}
+              />
+            </label>
+            <label style={{ display: "grid", gap: 6 }}>
+              <span style={{ fontSize: 12, color: "var(--muted)" }}>Stale after (ms)</span>
+              <input
+                className="input"
+                type="number"
+                min={0}
+                value={dexPriceFeed.staleAfterMs ?? 15000}
+                onChange={(e) => setDexPriceFeed({ ...dexPriceFeed, staleAfterMs: Number(e.target.value) })}
+                disabled={dexControlsDisabled}
+              />
+            </label>
+          </div>
+          <div style={{ marginTop: 12, fontSize: 12, color: "var(--muted)" }}>
+            Deviation monitoring between CEX and DEX.
+          </div>
+          <label style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 8 }}>
+            <input
+              type="checkbox"
+              checked={Boolean(dexDeviation.enabled)}
+              onChange={(e) => setDexDeviation({ ...dexDeviation, enabled: e.target.checked })}
+              disabled={dexControlsDisabled}
+            />
+            Enable deviation alerts / freeze
+          </label>
+          <div className="gridTwoCol" style={{ marginTop: 10 }}>
+            <label style={{ display: "grid", gap: 6 }}>
+              <span style={{ fontSize: 12, color: "var(--muted)" }}>Max deviation (bps)</span>
+              <input
+                className="input"
+                type="number"
+                min={0}
+                value={dexDeviation.maxDeviationBps ?? 0}
+                onChange={(e) => setDexDeviation({ ...dexDeviation, maxDeviationBps: Number(e.target.value) })}
+                disabled={dexControlsDisabled}
+              />
+              {fieldErrors?.dexMaxDeviationBps ? (
+                <div style={{ fontSize: 12, color: "#ff6b6b" }}>{fieldErrors.dexMaxDeviationBps}</div>
+              ) : null}
+            </label>
+            <label style={{ display: "grid", gap: 6 }}>
+              <span style={{ fontSize: 12, color: "var(--muted)" }}>Policy</span>
+              <select
+                className="input"
+                value={dexDeviation.policy ?? "alertOnly"}
+                onChange={(e) => setDexDeviation({ ...dexDeviation, policy: e.target.value })}
+                disabled={dexControlsDisabled}
+              >
+                <option value="alertOnly">Alert only</option>
+                <option value="freeze">Freeze quoting</option>
+              </select>
+            </label>
+          </div>
+          <div className="gridTwoCol" style={{ marginTop: 10 }}>
+            <label style={{ display: "grid", gap: 6 }}>
+              <span style={{ fontSize: 12, color: "var(--muted)" }}>Notify cooldown (sec)</span>
+              <input
+                className="input"
+                type="number"
+                min={0}
+                value={dexDeviation.notifyCooldownSec ?? 300}
+                onChange={(e) => setDexDeviation({ ...dexDeviation, notifyCooldownSec: Number(e.target.value) })}
+                disabled={dexControlsDisabled}
+              />
+            </label>
+            <div />
+          </div>
+          {fieldErrors?.priceSourceMode ? (
+            <div style={{ fontSize: 12, color: "#ff6b6b", marginTop: 8 }}>
+              {fieldErrors.priceSourceMode}
+            </div>
+          ) : null}
+          <div style={{ marginTop: 12 }}>
+            <button
+              className={`btn btnPrimary ${!canSaveDex || dexControlsDisabled ? "btnDisabled" : ""}`}
+              onClick={save}
+              disabled={!canSaveDex || dexControlsDisabled}
+            >
+              {dexSaveLabel}
             </button>
           </div>
         </AccordionSection>

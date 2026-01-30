@@ -7,3 +7,4 @@ export type Distribution = "LINEAR" | "VALLEY" | "RANDOM";
 export type VolumeMode = "PASSIVE" | "MIXED" | "ACTIVE";
 export type PriceSupportMode = "PASSIVE" | "MIXED" | "ACTIVE";
 export type PriceSourceType = "TICKER" | "ORDERBOOK_MID";
+export type PriceSourceMode = "CEX" | "DEXTOOLS" | "HYBRID";

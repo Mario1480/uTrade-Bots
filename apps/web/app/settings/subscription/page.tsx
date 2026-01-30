@@ -20,6 +20,7 @@ type SubscriptionStatus = {
     priceSupport: boolean;
     priceFollow: boolean;
     aiRecommendations: boolean;
+    dexPriceFeed?: boolean;
   } | null;
   overrides: {
     manual: boolean;
@@ -165,7 +166,8 @@ export default function SubscriptionPage() {
                 <b>Features:</b>{" "}
                 {`priceSupport=${status.features.priceSupport ? "on" : "off"}, `}
                 {`priceFollow=${status.features.priceFollow ? "on" : "off"}, `}
-                {`ai=${status.features.aiRecommendations ? "on" : "off"}`}
+                {`ai=${status.features.aiRecommendations ? "on" : "off"}, `}
+                {`dexPriceFeed=${status.features.dexPriceFeed ? "on" : "off"}`}
               </div>
             ) : null}
             {status.overrides ? (

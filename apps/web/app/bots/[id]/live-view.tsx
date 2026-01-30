@@ -50,6 +50,15 @@ export function LiveView({ runtime, baseSymbol, isSuperadmin }: LiveViewProps) {
             <Kv k={baseLabel} v={runtime.freeBase} />
             <Kv k="Traded notional today" v={runtime.tradedNotionalToday} />
             <Kv k="Updated at" v={formatUpdated(runtime.updatedAt)} />
+            {runtime?.midCex !== undefined || runtime?.midDex !== undefined || runtime?.dexStatus ? (
+              <>
+                <Kv k="Mid (CEX)" v={runtime.midCex} />
+                <Kv k="Mid (DEX)" v={runtime.midDex} />
+                <Kv k="DEX diff (bps)" v={runtime.dexDiffBps} />
+                <Kv k="DEX status" v={runtime.dexStatus} />
+                <Kv k="DEX updated" v={formatUpdated(runtime.dexLastUpdate)} />
+              </>
+            ) : null}
           </div>
 
           {isSuperadmin ? (

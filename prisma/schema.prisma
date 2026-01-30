@@ -19,6 +19,16 @@ model Bot {
   priceSourceExchange String?
   priceSourceSymbol String?
   priceSourceType String @default("TICKER")
+  priceSourceMode String @default("CEX")
+  dexPriceFeedEnabled Boolean @default(false)
+  dexChain String @default("ethereum")
+  dexTokenAddress String?
+  dexCacheTtlMs Int @default(3000)
+  dexStaleAfterMs Int @default(15000)
+  dexDeviationEnabled Boolean @default(false)
+  dexMaxDeviationBps Int @default(0)
+  dexDeviationPolicy String @default("alertOnly")
+  dexNotifyCooldownSec Int @default(300)
   createdAt DateTime @default(now())
   workspaceId String?
   workspace   Workspace? @relation(fields: [workspaceId], references: [id])
@@ -111,6 +121,12 @@ model BotRuntime {
   freeBase Float?
 
   tradedNotionalToday Float?
+
+  midCex Float?
+  midDex Float?
+  dexStatus String?
+  dexDiffBps Float?
+  dexLastUpdate DateTime?
 }
 
 model BotMetric {

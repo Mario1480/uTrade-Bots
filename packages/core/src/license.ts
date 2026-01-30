@@ -13,6 +13,7 @@ export type LicenseVerifyResponse = {
     priceSupport: boolean;
     priceFollow: boolean;
     aiRecommendations: boolean;
+    dexPriceFeed?: boolean;
   };
   overrides: {
     manual: boolean;
@@ -48,6 +49,7 @@ export type LicenseEnforcementInput = {
   usePriceSupport: boolean;
   usePriceFollow: boolean;
   useAiRecommendations: boolean;
+  useDexPriceFeed: boolean;
 };
 
 export type LicenseEnforcementResult = {
@@ -183,6 +185,17 @@ export function enforceLicense(params: LicenseEnforcementInput): LicenseEnforcem
     return {
       allowed: false,
       reason: "LICENSE_FEATURE_AI",
+      limits,
+      status: response.status,
+      validUntil: response.validUntil,
+      features: response.features
+    };
+  }
+
+  if (params.useDexPriceFeed && !response.features.dexPriceFeed) {
+    return {
+      allowed: false,
+      reason: "LICENSE_FEATURE_DEX_PRICE_FEED",
       limits,
       status: response.status,
       validUntil: response.validUntil,

@@ -45,7 +45,7 @@ const LICENSE_TIMEOUT_MS = Number(process.env.LICENSE_VERIFY_TIMEOUT_MS ?? "8000
 const LICENSE_BASE_URL = process.env.LICENSE_SERVER_URL ?? "https://license-server.uliquid.vip";
 const LICENSE_SECRET = process.env.LICENSE_SERVER_SECRET ?? "";
 const LICENSE_VERSION = process.env.APP_VERSION ?? undefined;
-const LICENSE_FEATURE_KEYS = ["priceSupport", "priceFollow", "aiRecommendations"];
+const LICENSE_FEATURE_KEYS = ["priceSupport", "priceFollow", "aiRecommendations", "dexPriceFeed"];
 const METRICS_RETENTION_DAYS = Math.max(1, Number(process.env.METRICS_RETENTION_DAYS ?? "7"));
 const METRICS_CLEANUP_KEY = "metrics.cleanup.lastRun";
 const METRICS_CLEANUP_INTERVAL_MS = 12 * 60 * 60_000;
@@ -116,10 +116,17 @@ function resolveLicenseFeatures(data: LicenseVerifyResponse) {
     return {
       priceSupport: false,
       priceFollow: false,
-      aiRecommendations: false
+      aiRecommendations: false,
+      dexPriceFeed: false
     };
   }
-  return data.features;
+  return {
+    priceSupport: false,
+    priceFollow: false,
+    aiRecommendations: false,
+    dexPriceFeed: false,
+    ...(data.features ?? {})
+  };
 }
 
 async function fetchWithTimeout(url: string, init: RequestInit, timeoutMs: number) {
@@ -149,7 +156,14 @@ async function getLicenseUsage() {
   return { bots, cex };
 }
 
-async function syncWorkspaceFeatures(features: { priceSupport: boolean; priceFollow: boolean; aiRecommendations: boolean }) {
+async function syncWorkspaceFeatures(features: { priceSupport: boolean; priceFollow: boolean; aiRecommendations: boolean; dexPriceFeed?: boolean }) {
+  const normalized = {
+    priceSupport: false,
+    priceFollow: false,
+    aiRecommendations: false,
+    dexPriceFeed: false,
+    ...features
+  };
   const workspaces = await prisma.workspace.findMany({
     select: { id: true, features: true }
   });
@@ -159,7 +173,7 @@ async function syncWorkspaceFeatures(features: { priceSupport: boolean; priceFol
       const current = (ws.features as Record<string, any>) ?? {};
       const next = { ...current };
       for (const key of LICENSE_FEATURE_KEYS) {
-        next[key] = features[key as keyof typeof features];
+        next[key] = normalized[key as keyof typeof normalized];
       }
       return prisma.workspace.update({
         where: { id: ws.id },
@@ -379,6 +393,23 @@ const PriceFollowConfig = z.object({
   priceSourceType: z.enum(["TICKER", "ORDERBOOK_MID"]).optional()
 });
 
+const DexPriceFeedConfig = z.object({
+  enabled: z.boolean(),
+  chain: z.string().optional(),
+  tokenAddress: z.string().optional().nullable(),
+  cacheTtlMs: z.number().int().optional(),
+  staleAfterMs: z.number().int().optional()
+});
+
+const DexDeviationConfig = z.object({
+  enabled: z.boolean(),
+  maxDeviationBps: z.number().int(),
+  policy: z.enum(["alertOnly", "freeze"]),
+  notifyCooldownSec: z.number().int()
+});
+
+const PriceSourceModeConfig = z.enum(["CEX", "DEXTOOLS", "HYBRID"]);
+
 const PresetPayload = z.object({
   mm: MMConfig,
   vol: VolConfig,
@@ -502,7 +533,13 @@ async function getWorkspaceFeatures(workspaceId: string): Promise<Record<string,
     where: { id: workspaceId },
     select: { features: true }
   });
-  return (ws?.features as Record<string, any>) ?? {};
+  return {
+    priceSupport: false,
+    priceFollow: false,
+    aiRecommendations: false,
+    dexPriceFeed: false,
+    ...((ws?.features as Record<string, any>) ?? {})
+  };
 }
 
 async function getSystemSettings() {
@@ -2359,7 +2396,10 @@ app.put("/bots/:id/config", requireAuth, requirePermission("bots.edit_config"), 
     risk: RiskConfig,
     notify: NotificationConfig,
     priceSupport: PriceSupportConfig.optional(),
-    priceFollow: PriceFollowConfig.optional()
+    priceFollow: PriceFollowConfig.optional(),
+    dexPriceFeed: DexPriceFeedConfig.optional(),
+    dexDeviation: DexDeviationConfig.optional(),
+    priceSourceMode: PriceSourceModeConfig.optional()
   }).parse(req.body);
 
   if (!isSuperadmin(user) && !roleAllows(res, "risk.edit")) {
@@ -2388,7 +2428,16 @@ app.put("/bots/:id/config", requireAuth, requirePermission("bots.edit_config"), 
 
   const features = await getWorkspaceFeatures(workspaceId);
   const priceSupportFeature = Boolean(features?.priceSupport);
+  const dexPriceFeedFeature = Boolean(features?.dexPriceFeed);
   if (payload.priceSupport && !priceSupportFeature) {
+    return res.status(403).json({ error: "feature_disabled" });
+  }
+  if (
+    (payload.dexPriceFeed?.enabled ||
+      payload.dexDeviation?.enabled ||
+      (payload.priceSourceMode && payload.priceSourceMode !== "CEX")) &&
+    !dexPriceFeedFeature
+  ) {
     return res.status(403).json({ error: "feature_disabled" });
   }
 
@@ -2411,6 +2460,24 @@ app.put("/bots/:id/config", requireAuth, requirePermission("bots.edit_config"), 
     if (!payload.priceFollow.priceSourceExchange || payload.priceFollow.priceSourceExchange.trim().length === 0) {
       errors.priceSourceExchange = "Master exchange required";
     }
+  }
+
+  if (payload.dexPriceFeed?.enabled) {
+    if (!payload.dexPriceFeed.tokenAddress || payload.dexPriceFeed.tokenAddress.trim().length === 0) {
+      errors.dexTokenAddress = "Token address required";
+    } else if (!/^0x[a-fA-F0-9]{40}$/.test(payload.dexPriceFeed.tokenAddress.trim())) {
+      errors.dexTokenAddress = "Invalid token address";
+    }
+  }
+
+  if (payload.priceSourceMode && payload.priceSourceMode !== "CEX") {
+    if (!payload.dexPriceFeed?.enabled) {
+      errors.priceSourceMode = "DEX price feed must be enabled for this mode";
+    }
+  }
+
+  if (payload.dexDeviation?.enabled && payload.dexDeviation.maxDeviationBps <= 0) {
+    errors.dexMaxDeviationBps = "Max deviation must be > 0";
   }
 
   if (Object.keys(errors).length > 0) {
@@ -2489,6 +2556,24 @@ app.put("/bots/:id/config", requireAuth, requirePermission("bots.edit_config"), 
         priceSourceExchange: sourceExchange,
         priceSourceSymbol: sourceSymbol,
         priceSourceType: payload.priceFollow.priceSourceType ?? bot.priceSourceType ?? "TICKER"
+      }
+    });
+  }
+
+  if (payload.dexPriceFeed || payload.dexDeviation || payload.priceSourceMode) {
+    await prisma.bot.update({
+      where: { id: botId },
+      data: {
+        priceSourceMode: payload.priceSourceMode ?? bot.priceSourceMode ?? "CEX",
+        dexPriceFeedEnabled: payload.dexPriceFeed?.enabled ?? bot.dexPriceFeedEnabled ?? false,
+        dexChain: payload.dexPriceFeed?.chain ?? bot.dexChain ?? "ethereum",
+        dexTokenAddress: payload.dexPriceFeed?.tokenAddress?.trim() ?? bot.dexTokenAddress ?? null,
+        dexCacheTtlMs: payload.dexPriceFeed?.cacheTtlMs ?? bot.dexCacheTtlMs ?? 3000,
+        dexStaleAfterMs: payload.dexPriceFeed?.staleAfterMs ?? bot.dexStaleAfterMs ?? 15000,
+        dexDeviationEnabled: payload.dexDeviation?.enabled ?? bot.dexDeviationEnabled ?? false,
+        dexMaxDeviationBps: payload.dexDeviation?.maxDeviationBps ?? bot.dexMaxDeviationBps ?? 0,
+        dexDeviationPolicy: payload.dexDeviation?.policy ?? bot.dexDeviationPolicy ?? "alertOnly",
+        dexNotifyCooldownSec: payload.dexDeviation?.notifyCooldownSec ?? bot.dexNotifyCooldownSec ?? 300
       }
     });
   }
@@ -2818,7 +2903,8 @@ app.delete("/settings/subscription", requireAuth, async (req, res) => {
   await syncWorkspaceFeatures({
     priceSupport: false,
     priceFollow: false,
-    aiRecommendations: false
+    aiRecommendations: false,
+    dexPriceFeed: false
   });
 
   return res.json({

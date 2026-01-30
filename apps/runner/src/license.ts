@@ -113,7 +113,7 @@ export function createLicenseManager() {
   const verifyMin = numEnv("LICENSE_VERIFY_INTERVAL_MIN", DEFAULT_VERIFY_MIN);
   const graceMin = numEnv("LICENSE_GRACE_MIN", DEFAULT_GRACE_MIN);
 
-  async function checkOnce(meta: { botCount: number; cexCount: number; usePriceSupport: boolean; usePriceFollow: boolean; useAiRecommendations: boolean }) {
+  async function checkOnce(meta: { botCount: number; cexCount: number; usePriceSupport: boolean; usePriceFollow: boolean; useAiRecommendations: boolean; useDexPriceFeed: boolean }) {
     const now = Date.now();
     state.lastCheckAt = now;
 
@@ -143,7 +143,8 @@ export function createLicenseManager() {
         cexCount: meta.cexCount,
         usePriceSupport: meta.usePriceSupport,
         usePriceFollow: meta.usePriceFollow,
-        useAiRecommendations: meta.useAiRecommendations
+        useAiRecommendations: meta.useAiRecommendations,
+        useDexPriceFeed: meta.useDexPriceFeed
       });
       if (!state.enforce.allowed) {
         state.ok = false;

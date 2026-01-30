@@ -9,6 +9,7 @@ type LicenseMeta = {
   usePriceSupport: boolean;
   usePriceFollow: boolean;
   useAiRecommendations: boolean;
+  useDexPriceFeed: boolean;
 };
 
 const manager = createLicenseManager();
@@ -72,7 +73,8 @@ export async function refreshLicense(meta: { botCount: number; cexCount: number 
     cexCount: meta.cexCount,
     usePriceSupport: false,
     usePriceFollow: false,
-    useAiRecommendations: false
+    useAiRecommendations: false,
+    useDexPriceFeed: false
   });
   await emitLicenseAlerts(state);
   return state;
@@ -92,7 +94,8 @@ export async function ensureLicense(meta: LicenseMeta): Promise<LicenseState> {
       cexCount: meta.cexCount,
       usePriceSupport: meta.usePriceSupport,
       usePriceFollow: meta.usePriceFollow,
-      useAiRecommendations: meta.useAiRecommendations
+      useAiRecommendations: meta.useAiRecommendations,
+      useDexPriceFeed: meta.useDexPriceFeed
     });
     if (!manager.state.enforce.allowed) {
       manager.state.ok = false;

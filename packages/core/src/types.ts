@@ -1,4 +1,12 @@
-import type { Distribution, Side, OrderType, VolumeMode, PriceSupportMode, PriceSourceType } from "./enums.js";
+import type {
+  Distribution,
+  Side,
+  OrderType,
+  VolumeMode,
+  PriceSupportMode,
+  PriceSourceType,
+  PriceSourceMode
+} from "./enums.js";
 
 export type Money = number;
 
@@ -60,6 +68,27 @@ export interface PriceFollowConfig {
   priceSourceExchange?: string | null;
   priceSourceSymbol?: string | null;
   priceSourceType: PriceSourceType;
+}
+
+export interface DexPriceFeedConfig {
+  enabled: boolean;
+  chain: string;
+  tokenAddress: string;
+  cacheTtlMs: number;
+  staleAfterMs: number;
+}
+
+export interface DexCexDeviationConfig {
+  enabled: boolean;
+  maxDeviationBps: number;
+  policy: "alertOnly" | "freeze";
+  notifyCooldownSec: number;
+}
+
+export interface DexPriceConfig {
+  priceSourceMode: PriceSourceMode;
+  dexPriceFeed: DexPriceFeedConfig;
+  dexDeviation: DexCexDeviationConfig;
 }
 
 export interface Quote {

@@ -46,7 +46,7 @@ test("enforceLicense blocks limits and features unless unlimited", () => {
     status: "ACTIVE",
     validUntil: "2026-12-31T23:59:59Z",
     limits: { includedBots: 1, addOnBots: 0, includedCex: 1, addOnCex: 0 },
-    features: { priceSupport: false, priceFollow: true, aiRecommendations: false },
+    features: { priceSupport: false, priceFollow: true, aiRecommendations: false, dexPriceFeed: false },
     overrides: { manual: false, unlimited: false }
   };
 
@@ -56,7 +56,8 @@ test("enforceLicense blocks limits and features unless unlimited", () => {
     cexCount: 1,
     usePriceSupport: false,
     usePriceFollow: false,
-    useAiRecommendations: false
+    useAiRecommendations: false,
+    useDexPriceFeed: false
   });
   assert.equal(tooManyBots.allowed, false);
   assert.equal(tooManyBots.reason, "LICENSE_BOT_LIMIT");
@@ -67,7 +68,8 @@ test("enforceLicense blocks limits and features unless unlimited", () => {
     cexCount: 1,
     usePriceSupport: true,
     usePriceFollow: false,
-    useAiRecommendations: false
+    useAiRecommendations: false,
+    useDexPriceFeed: false
   });
   assert.equal(featureBlocked.allowed, false);
   assert.equal(featureBlocked.reason, "LICENSE_FEATURE_PRICE_SUPPORT");
@@ -78,7 +80,8 @@ test("enforceLicense blocks limits and features unless unlimited", () => {
     cexCount: 99,
     usePriceSupport: false,
     usePriceFollow: true,
-    useAiRecommendations: false
+    useAiRecommendations: false,
+    useDexPriceFeed: false
   });
   assert.equal(unlimitedOk.allowed, true);
 });
