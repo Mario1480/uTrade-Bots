@@ -1025,16 +1025,11 @@ export default function BotPage() {
         </AccordionSection>
       ) : null}
 
-      {dexPriceFeed && dexDeviation ? (
+      {dexPriceFeed && dexDeviation && dexFeatureEnabled ? (
         <AccordionSection title="DEX Price Feed">
           <div style={{ fontSize: 12, color: "var(--muted)", marginBottom: 10 }}>
             Read-only DEX price reference via Dex Screener (no trading).
           </div>
-          {!dexFeatureEnabled ? (
-            <div style={{ fontSize: 12, color: "var(--warn)", marginBottom: 10 }}>
-              Add-on required: DEX price feed is not enabled for your license.
-            </div>
-          ) : null}
           <label style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 12 }}>
             <input
               type="checkbox"
@@ -1053,9 +1048,7 @@ export default function BotPage() {
                 onChange={(e) => setPriceSourceMode(e.target.value)}
                 disabled={dexControlsDisabled}
               >
-                <option value="CEX">CEX</option>
                 <option value="DEXTOOLS">DEX Screener</option>
-                <option value="HYBRID">Hybrid (monitor only)</option>
               </select>
             </label>
             <div />
