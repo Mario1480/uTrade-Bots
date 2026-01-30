@@ -1070,6 +1070,22 @@ export default function BotPage() {
                 disabled={dexControlsDisabled}
               >
                 <option value="ethereum">ethereum</option>
+                <option value="solana">solana</option>
+                <option value="base">base</option>
+                <option value="bsc">bsc</option>
+                <option value="polygon">polygon</option>
+                <option value="ton">ton</option>
+                <option value="avalanche">avalanche</option>
+                <option value="arbitrum">arbitrum</option>
+                <option value="sui">sui</option>
+                <option value="cronos">cronos</option>
+                <option value="sonic">sonic</option>
+                <option value="hedera">hedera</option>
+                <option value="tron">tron</option>
+                <option value="aptos">aptos</option>
+                <option value="algorand">algorand</option>
+                <option value="cardano">cardano</option>
+                <option value="polkadot">polkadot</option>
               </select>
             </label>
             <label style={{ display: "grid", gap: 6 }}>
