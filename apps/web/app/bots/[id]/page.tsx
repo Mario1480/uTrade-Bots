@@ -57,6 +57,7 @@ export default function BotOverviewPage() {
   const [pendingAction, setPendingAction] = useState<(() => Promise<void>) | null>(null);
   const systemSettings = useSystemSettings();
   const isReadOnly = systemSettings.readOnlyMode;
+  const dexFeatureEnabled = Boolean(me?.features?.dexPriceFeed);
   const priceFollowLabel = bot?.priceFollowEnabled
     ? `${bot.priceSourceExchange || bot.exchange} · ${bot.priceSourceSymbol || bot.symbol}`
     : null;
@@ -501,7 +502,7 @@ export default function BotOverviewPage() {
             <Kv k="Open orders (Volume)" v={rt?.openOrdersVol} />
             <Kv k="Traded notional today" v={rt?.tradedNotionalToday} />
             <Kv k="Updated at" v={formatUpdated(rt?.updatedAt)} />
-            {rt?.midCex !== undefined || rt?.midDex !== undefined || rt?.dexStatus ? (
+            {dexFeatureEnabled && (rt?.midCex !== undefined || rt?.midDex !== undefined || rt?.dexStatus) ? (
               <>
                 <Kv k="Mid (CEX)" v={rt?.midCex} />
                 <Kv k="Mid (DEX)" v={rt?.midDex} />
