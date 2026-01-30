@@ -120,12 +120,12 @@ function resolveLicenseFeatures(data: LicenseVerifyResponse) {
       dexPriceFeed: false
     };
   }
+  const features = data.features ?? {};
   return {
-    priceSupport: false,
-    priceFollow: false,
-    aiRecommendations: false,
-    dexPriceFeed: false,
-    ...(data.features ?? {})
+    priceSupport: features.priceSupport ?? false,
+    priceFollow: features.priceFollow ?? false,
+    aiRecommendations: features.aiRecommendations ?? false,
+    dexPriceFeed: features.dexPriceFeed ?? false
   };
 }
 
@@ -156,13 +156,12 @@ async function getLicenseUsage() {
   return { bots, cex };
 }
 
-async function syncWorkspaceFeatures(features: { priceSupport: boolean; priceFollow: boolean; aiRecommendations: boolean; dexPriceFeed?: boolean }) {
+async function syncWorkspaceFeatures(features: Partial<{ priceSupport: boolean; priceFollow: boolean; aiRecommendations: boolean; dexPriceFeed: boolean }>) {
   const normalized = {
-    priceSupport: false,
-    priceFollow: false,
-    aiRecommendations: false,
-    dexPriceFeed: false,
-    ...features
+    priceSupport: features.priceSupport ?? false,
+    priceFollow: features.priceFollow ?? false,
+    aiRecommendations: features.aiRecommendations ?? false,
+    dexPriceFeed: features.dexPriceFeed ?? false
   };
   const workspaces = await prisma.workspace.findMany({
     select: { id: true, features: true }
