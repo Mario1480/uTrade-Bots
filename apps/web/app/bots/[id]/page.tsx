@@ -8,6 +8,7 @@ import ReauthDialog from "../../components/ReauthDialog";
 import { useSystemSettings } from "../../components/SystemBanner";
 import { ApiError, apiDel, apiGet, apiPost } from "../../../lib/api";
 import MetricsSection from "./metrics-section";
+import AiInsightsSection from "./ai-insights-section";
 
 type Order = {
   id: string;
@@ -598,6 +599,12 @@ export default function BotOverviewPage() {
       <div className="overviewGrid" style={{ marginTop: 16 }}>
         <MetricsSection botId={id} symbol={bot?.symbol} />
       </div>
+
+      {me?.features?.aiRecommendations ? (
+        <div className="overviewGrid" style={{ marginTop: 16 }}>
+          <AiInsightsSection botId={id} />
+        </div>
+      ) : null}
 
       <div className="overviewGrid" style={{ marginTop: 16 }}>
         <section className="card" style={{ padding: 12 }}>
