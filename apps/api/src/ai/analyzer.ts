@@ -13,6 +13,16 @@ export type AiInsight = {
   recommendation: string;
   confidence?: AiInsightConfidence;
   evidence?: Record<string, any>;
+  suggestedConfig?: {
+    mm?: Partial<Record<string, any>>;
+    vol?: Partial<Record<string, any>>;
+    risk?: Partial<Record<string, any>>;
+  };
+  impactEstimate?: {
+    expectedSpreadChangePct?: number;
+    expectedInventoryDriftReduction?: "low" | "medium" | "high";
+    expectedVolumeProgress?: "low" | "medium" | "high";
+  };
 };
 
 export type AnalyzerResult = {
@@ -274,6 +284,88 @@ function dedupeInsights(list: AiInsight[]) {
   return out;
 }
 
+function isTimeHHMM(v: string) {
+  return /^\d{2}:\d{2}$/.test(v);
+}
+
+function sanitizeSuggestedConfig(raw: any) {
+  if (!raw || typeof raw !== "object") return undefined;
+  const out: { mm?: Record<string, any>; vol?: Record<string, any>; risk?: Record<string, any> } = {};
+
+  const mm = raw.mm;
+  if (mm && typeof mm === "object") {
+    const next: Record<string, any> = {};
+    const num = (v: any) => (Number.isFinite(Number(v)) ? Number(v) : null);
+
+    const spreadPct = num(mm.spreadPct);
+    if (spreadPct !== null && spreadPct > 0 && spreadPct <= 0.5) next.spreadPct = spreadPct;
+    const maxSpreadPct = num(mm.maxSpreadPct);
+    if (maxSpreadPct !== null && maxSpreadPct > 0 && maxSpreadPct <= 0.8) next.maxSpreadPct = maxSpreadPct;
+    const levelsUp = num(mm.levelsUp);
+    if (levelsUp !== null && levelsUp >= 0 && levelsUp <= 30) next.levelsUp = Math.round(levelsUp);
+    const levelsDown = num(mm.levelsDown);
+    if (levelsDown !== null && levelsDown >= 0 && levelsDown <= 30) next.levelsDown = Math.round(levelsDown);
+    const minOrderUsdt = num(mm.minOrderUsdt);
+    if (minOrderUsdt !== null && minOrderUsdt >= 0) next.minOrderUsdt = minOrderUsdt;
+    const maxOrderUsdt = num(mm.maxOrderUsdt);
+    if (maxOrderUsdt !== null && maxOrderUsdt >= 0) next.maxOrderUsdt = maxOrderUsdt;
+    if (minOrderUsdt !== null && maxOrderUsdt !== null && maxOrderUsdt < minOrderUsdt) {
+      delete next.maxOrderUsdt;
+    }
+    const jitterPct = num(mm.jitterPct);
+    if (jitterPct !== null && jitterPct >= 0 && jitterPct <= 0.2) next.jitterPct = jitterPct;
+    const skewFactor = num(mm.skewFactor);
+    if (skewFactor !== null && skewFactor >= 0 && skewFactor <= 1) next.skewFactor = skewFactor;
+    const maxSkew = num(mm.maxSkew);
+    if (maxSkew !== null && maxSkew >= 0 && maxSkew <= 1) next.maxSkew = maxSkew;
+
+    if (Object.keys(next).length) out.mm = next;
+  }
+
+  const vol = raw.vol;
+  if (vol && typeof vol === "object") {
+    const next: Record<string, any> = {};
+    const num = (v: any) => (Number.isFinite(Number(v)) ? Number(v) : null);
+    const dailyNotionalUsdt = num(vol.dailyNotionalUsdt);
+    if (dailyNotionalUsdt !== null && dailyNotionalUsdt > 0) next.dailyNotionalUsdt = dailyNotionalUsdt;
+    const minTradeUsdt = num(vol.minTradeUsdt);
+    if (minTradeUsdt !== null && minTradeUsdt >= 0) next.minTradeUsdt = minTradeUsdt;
+    const maxTradeUsdt = num(vol.maxTradeUsdt);
+    if (maxTradeUsdt !== null && maxTradeUsdt >= 0) next.maxTradeUsdt = maxTradeUsdt;
+    if (minTradeUsdt !== null && maxTradeUsdt !== null && maxTradeUsdt < minTradeUsdt) {
+      delete next.maxTradeUsdt;
+    }
+    const buyPct = num(vol.buyPct);
+    if (buyPct !== null && buyPct >= 0 && buyPct <= 1) next.buyPct = buyPct;
+    const buyBumpTicks = num(vol.buyBumpTicks);
+    if (buyBumpTicks !== null && buyBumpTicks >= 0 && buyBumpTicks <= 20) next.buyBumpTicks = buyBumpTicks;
+    const sellBumpTicks = num(vol.sellBumpTicks);
+    if (sellBumpTicks !== null && sellBumpTicks >= 0 && sellBumpTicks <= 20) next.sellBumpTicks = sellBumpTicks;
+    if (typeof vol.activeFrom === "string" && isTimeHHMM(vol.activeFrom)) next.activeFrom = vol.activeFrom;
+    if (typeof vol.activeTo === "string" && isTimeHHMM(vol.activeTo)) next.activeTo = vol.activeTo;
+
+    if (Object.keys(next).length) out.vol = next;
+  }
+
+  const risk = raw.risk;
+  if (risk && typeof risk === "object") {
+    const next: Record<string, any> = {};
+    const num = (v: any) => (Number.isFinite(Number(v)) ? Number(v) : null);
+    const minUsdt = num(risk.minUsdt);
+    if (minUsdt !== null && minUsdt >= 0) next.minUsdt = minUsdt;
+    const maxDeviationPct = num(risk.maxDeviationPct);
+    if (maxDeviationPct !== null && maxDeviationPct >= 0 && maxDeviationPct <= 0.5) next.maxDeviationPct = maxDeviationPct;
+    const maxOpenOrders = num(risk.maxOpenOrders);
+    if (maxOpenOrders !== null && maxOpenOrders >= 0 && maxOpenOrders <= 10000) next.maxOpenOrders = Math.round(maxOpenOrders);
+    const maxDailyLoss = num(risk.maxDailyLoss);
+    if (maxDailyLoss !== null && maxDailyLoss >= 0) next.maxDailyLoss = maxDailyLoss;
+    if (Object.keys(next).length) out.risk = next;
+  }
+
+  if (!out.mm && !out.vol && !out.risk) return undefined;
+  return out;
+}
+
 function sanitizeAiInsights(raw: any): AiInsight[] {
   if (!Array.isArray(raw)) return [];
   const cleaned: AiInsight[] = [];
@@ -296,6 +388,24 @@ function sanitizeAiInsights(raw: any): AiInsight[] {
     }
     if (item.evidence && typeof item.evidence === "object") {
       insight.evidence = item.evidence;
+    }
+    const suggested = sanitizeSuggestedConfig(item.suggestedConfig);
+    if (suggested) {
+      insight.suggestedConfig = suggested;
+    }
+    const impact = item.impactEstimate;
+    if (impact && typeof impact === "object") {
+      const next: AiInsight["impactEstimate"] = {};
+      if (Number.isFinite(Number(impact.expectedSpreadChangePct))) {
+        next.expectedSpreadChangePct = Number(impact.expectedSpreadChangePct);
+      }
+      if (impact.expectedInventoryDriftReduction === "low" || impact.expectedInventoryDriftReduction === "medium" || impact.expectedInventoryDriftReduction === "high") {
+        next.expectedInventoryDriftReduction = impact.expectedInventoryDriftReduction;
+      }
+      if (impact.expectedVolumeProgress === "low" || impact.expectedVolumeProgress === "medium" || impact.expectedVolumeProgress === "high") {
+        next.expectedVolumeProgress = impact.expectedVolumeProgress;
+      }
+      if (Object.keys(next).length) insight.impactEstimate = next;
     }
     cleaned.push(insight);
   }

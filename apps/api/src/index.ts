@@ -1752,6 +1752,58 @@ app.get("/bots/:id/ai/insights", requireAuth, requirePermission("bots.view"), as
   }
 });
 
+app.get("/bots/:id/ai/suggestions", requireAuth, requirePermission("bots.view"), async (req, res) => {
+  const workspaceId = getWorkspaceId(res);
+  const bot = await prisma.bot.findFirst({
+    where: { id: req.params.id, workspaceId },
+    include: { mmConfig: true, volConfig: true, riskConfig: true } as any
+  });
+  if (!bot) return res.status(404).json({ error: "not_found" });
+
+  const rangeKey = String(req.query.range ?? "24h");
+  const rangeCfg = rangeKey === "7d" ? METRICS_RANGES["7d"] : METRICS_RANGES["24h"];
+  const to = new Date();
+  const from = new Date(to.getTime() - rangeCfg.lookbackMs);
+  const features = await getWorkspaceFeatures(workspaceId);
+  const provider = String(process.env.AI_PROVIDER ?? "none").toLowerCase();
+  const aiEnabled = Boolean(features?.aiRecommendations) && provider !== "none";
+
+  try {
+    const rows = await prisma.botMetric.findMany({
+      where: {
+        botId: bot.id,
+        ts: { gte: from, lte: to }
+      },
+      orderBy: { ts: "asc" }
+    });
+    const analysis = await analyzeBotMetrics({
+      bot,
+      points: rows,
+      range: rangeKey === "7d" ? "7d" : "24h",
+      aiEnabled,
+      workspaceId,
+      now: to
+    });
+    res.json({
+      range: rangeKey === "7d" ? "7d" : "24h",
+      generatedAt: to.toISOString(),
+      healthScore: analysis.healthScore,
+      aiEnabled: analysis.aiEnabled,
+      suggestions: analysis.insights.filter((ins) => Boolean(ins.suggestedConfig)),
+      warning: analysis.warning
+    });
+  } catch (e) {
+    res.json({
+      range: rangeKey === "7d" ? "7d" : "24h",
+      generatedAt: to.toISOString(),
+      healthScore: 100,
+      aiEnabled,
+      suggestions: [],
+      warning: "analysis_failed"
+    });
+  }
+});
+
 app.delete("/bots/:id", requireAuth, requirePermission("bots.delete"), async (req, res) => {
   const workspaceId = getWorkspaceId(res);
   const user = getUserFromLocals(res);

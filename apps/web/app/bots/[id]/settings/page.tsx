@@ -9,6 +9,35 @@ import { LiveView } from "../live-view";
 import { NotificationsForm } from "../notifications-form";
 import { useSystemSettings } from "../../../components/SystemBanner";
 
+type AiSuggestion = {
+  severity: "info" | "warning" | "critical";
+  category: string;
+  title: string;
+  message: string;
+  recommendation: string;
+  confidence?: "low" | "medium" | "high";
+  evidence?: Record<string, any>;
+  suggestedConfig?: {
+    mm?: Record<string, any>;
+    vol?: Record<string, any>;
+    risk?: Record<string, any>;
+  };
+  impactEstimate?: {
+    expectedSpreadChangePct?: number;
+    expectedInventoryDriftReduction?: "low" | "medium" | "high";
+    expectedVolumeProgress?: "low" | "medium" | "high";
+  };
+};
+
+type AiSuggestionsResponse = {
+  range: "24h" | "7d";
+  generatedAt: string;
+  healthScore: number;
+  aiEnabled: boolean;
+  suggestions: AiSuggestion[];
+  warning?: string;
+};
+
 export default function BotPage() {
   const params = useParams();
   const id = params.id as string; // ✅ korrekt für Next 15
@@ -41,6 +70,12 @@ export default function BotPage() {
   const [previewMidOverride, setPreviewMidOverride] = useState("");
   const [includeJitter, setIncludeJitter] = useState(false);
   const [previewSeed, setPreviewSeed] = useState("");
+  const [aiRange, setAiRange] = useState<"24h" | "7d">("24h");
+  const [aiSuggestions, setAiSuggestions] = useState<AiSuggestionsResponse | null>(null);
+  const [aiSuggestionsError, setAiSuggestionsError] = useState<string | null>(null);
+  const [aiSuggestionsLoading, setAiSuggestionsLoading] = useState(false);
+  const [aiExpanded, setAiExpanded] = useState<number | null>(null);
+  const [aiPreview, setAiPreview] = useState<Record<string, { before?: any; after?: any; loading?: boolean; error?: string }>>({});
   const [fieldErrors, setFieldErrors] = useState<{
     budgetQuoteUsdt?: string;
     budgetBaseToken?: string;
@@ -216,6 +251,7 @@ export default function BotPage() {
   const canSaveNotify = ready && dirtyNotify && saving !== "saving..." && !isReadOnly;
   const dexFeatureEnabled = Boolean(me?.features?.dexPriceFeed);
   const dexControlsDisabled = !dexFeatureEnabled || !canEditConfig;
+  const aiFeatureEnabled = Boolean(me?.features?.aiRecommendations);
   const exchangeOptions = useMemo(() => {
     const list = [bot?.exchange, priceFollow?.priceSourceExchange, "bitmart", "coinstore", "pionex"]
       .filter(Boolean)
@@ -501,6 +537,58 @@ export default function BotPage() {
     return rt?.mid ?? null;
   }
 
+  async function loadAiSuggestions() {
+    if (!aiFeatureEnabled) return;
+    setAiSuggestionsLoading(true);
+    setAiSuggestionsError(null);
+    try {
+      const res = await apiGet<AiSuggestionsResponse>(`/bots/${id}/ai/suggestions?range=${aiRange}`);
+      setAiSuggestions(res);
+    } catch (e) {
+      setAiSuggestionsError(errMsg(e));
+    } finally {
+      setAiSuggestionsLoading(false);
+    }
+  }
+
+  function applySuggestedConfig(suggested?: AiSuggestion["suggestedConfig"]) {
+    if (!suggested || !canEditConfig) return;
+    if (!confirm("Apply AI suggested changes to draft? This will not save until you click Save Config.")) return;
+    if (suggested.mm) setMm((prev: any) => ({ ...prev, ...suggested.mm }));
+    if (suggested.vol) setVol((prev: any) => ({ ...prev, ...suggested.vol }));
+    if (suggested.risk) setRisk((prev: any) => ({ ...prev, ...suggested.risk }));
+    showToast("success", "AI changes applied to draft (not saved).");
+  }
+
+  async function loadAiPreview(idx: number, suggestedMm?: Record<string, any>) {
+    if (!suggestedMm || !mm) return;
+    const mid = resolveMid();
+    const key = String(idx);
+    if (!mid) {
+      setAiPreview((prev) => ({ ...prev, [key]: { error: "Mid price missing for preview." } }));
+      return;
+    }
+    setAiPreview((prev) => ({ ...prev, [key]: { ...prev[key], loading: true, error: undefined } }));
+    try {
+      const runtime = { mid, freeUsdt: rt?.freeUsdt ?? 0, freeBase: rt?.freeBase ?? 0 };
+      const [before, after] = await Promise.all([
+        apiPost<any>(`/bots/${id}/preview/mm`, {
+          mm,
+          runtime,
+          options: { includeJitter: false, seed: 1 }
+        }),
+        apiPost<any>(`/bots/${id}/preview/mm`, {
+          mm: { ...mm, ...suggestedMm },
+          runtime,
+          options: { includeJitter: false, seed: 1 }
+        })
+      ]);
+      setAiPreview((prev) => ({ ...prev, [key]: { before, after, loading: false } }));
+    } catch (e) {
+      setAiPreview((prev) => ({ ...prev, [key]: { loading: false, error: errMsg(e) } }));
+    }
+  }
+
   async function loadPreview() {
     if (!mm) return;
     const mid = resolveMid();
@@ -537,6 +625,12 @@ export default function BotPage() {
     }, 400);
     return () => clearTimeout(t);
   }, [id, mm, previewMidOverride, includeJitter, previewSeed, rt?.mid, rt?.freeUsdt, rt?.freeBase]);
+
+  useEffect(() => {
+    if (!id || !aiFeatureEnabled) return;
+    loadAiSuggestions();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [id, aiRange, aiFeatureEnabled]);
 
   if (!bot || !mm || !vol || !risk || !notify) return <div>Loading…</div>;
   const showPriceSupport = Boolean(me?.features?.priceSupport);
@@ -963,6 +1057,159 @@ export default function BotPage() {
         />
       </div>
 
+      {aiFeatureEnabled ? (
+        <section className="card" style={{ padding: 12, marginBottom: 16 }}>
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, flexWrap: "wrap" }}>
+            <h3 style={{ marginTop: 0, marginBottom: 0 }}>AI Suggestions (Read‑Only)</h3>
+            <div style={{ display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
+              {(["24h", "7d"] as const).map((r) => (
+                <button
+                  key={r}
+                  className={`btn ${aiRange === r ? "btnPrimary" : ""}`}
+                  onClick={() => setAiRange(r)}
+                  disabled={aiSuggestionsLoading}
+                >
+                  {r}
+                </button>
+              ))}
+              <button className="btn" onClick={loadAiSuggestions} disabled={aiSuggestionsLoading}>
+                {aiSuggestionsLoading ? "Refreshing..." : "Refresh"}
+              </button>
+              <span className="badge" style={{ borderColor: aiSuggestions?.aiEnabled ? "#22c55e" : "#9ca3af", color: aiSuggestions?.aiEnabled ? "#22c55e" : "#9ca3af" }}>
+                {aiSuggestions?.aiEnabled ? "AI enabled" : "AI disabled"}
+              </span>
+            </div>
+          </div>
+
+          {aiSuggestionsError ? (
+            <div style={{ marginTop: 8, fontSize: 12, color: "#ff6b6b" }}>{aiSuggestionsError}</div>
+          ) : null}
+
+          {!aiSuggestionsError && aiSuggestions?.warning ? (
+            <div style={{ marginTop: 8, fontSize: 12, color: "#f59e0b" }}>
+              AI unavailable. Showing rule‑based insights only.
+            </div>
+          ) : null}
+
+          {aiSuggestions && !aiSuggestions.aiEnabled ? (
+            <div style={{ marginTop: 8, fontSize: 12, color: "var(--muted)" }}>
+              AI is disabled. Suggestions are unavailable.
+            </div>
+          ) : null}
+
+          {!aiSuggestionsLoading && (aiSuggestions?.suggestions?.length ?? 0) === 0 ? (
+            <div style={{ marginTop: 10, fontSize: 12, color: "var(--muted)" }}>
+              No AI suggestions available for this range.
+            </div>
+          ) : null}
+
+          {aiSuggestions?.suggestions?.length ? (
+            <div style={{ display: "grid", gap: 10, marginTop: 10 }}>
+              {aiSuggestions.suggestions.map((s, idx) => {
+                const key = String(idx);
+                const expanded = aiExpanded === idx;
+                const diffRows = buildDiffRows(s.suggestedConfig, mm, vol, risk);
+                const previewState = aiPreview[key];
+                return (
+                  <div key={`${s.title}-${idx}`} className="card" style={{ padding: 10 }}>
+                    <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap", marginBottom: 6 }}>
+                      <span className="badge" style={{ borderColor: severityColor(s.severity), color: severityColor(s.severity) }}>
+                        {s.severity}
+                      </span>
+                      {s.confidence ? (
+                        <span className="badge" style={{ borderColor: "#64748b", color: "#94a3b8" }}>
+                          {s.confidence}
+                        </span>
+                      ) : null}
+                      <div style={{ fontWeight: 700 }}>{s.title}</div>
+                    </div>
+                    <div style={{ fontSize: 12, color: "var(--muted)" }}>{s.message}</div>
+                    <div style={{ marginTop: 6, fontSize: 12 }}>
+                      <span style={{ color: "var(--muted)" }}>Recommendation: </span>
+                      <span style={{ fontWeight: 600 }}>{s.recommendation}</span>
+                    </div>
+                    {s.impactEstimate ? (
+                      <div style={{ marginTop: 6, fontSize: 12, color: "var(--muted)" }}>
+                        Impact: {JSON.stringify(s.impactEstimate)}
+                      </div>
+                    ) : null}
+                    {s.evidence ? (
+                      <div style={{ marginTop: 6, fontSize: 11, color: "var(--muted)" }}>
+                        Evidence: {JSON.stringify(s.evidence)}
+                      </div>
+                    ) : null}
+
+                    {s.suggestedConfig ? (
+                      <div style={{ marginTop: 10, display: "flex", gap: 8, flexWrap: "wrap" }}>
+                        <button
+                          className="btn"
+                          onClick={() => {
+                            const next = expanded ? null : idx;
+                            setAiExpanded(next);
+                            if (!expanded && s.suggestedConfig?.mm) {
+                              loadAiPreview(idx, s.suggestedConfig.mm);
+                            }
+                          }}
+                        >
+                          {expanded ? "Hide changes" : "View changes"}
+                        </button>
+                        <button
+                          className={`btn btnPrimary ${!canEditConfig ? "btnDisabled" : ""}`}
+                          onClick={() => applySuggestedConfig(s.suggestedConfig)}
+                          disabled={!canEditConfig}
+                        >
+                          Apply to Draft
+                        </button>
+                      </div>
+                    ) : null}
+
+                    {expanded ? (
+                      <div style={{ marginTop: 10, display: "grid", gap: 10 }}>
+                        <ConfigDiffTable rows={diffRows} />
+                        {s.suggestedConfig?.mm ? (
+                          <div className="gridTwoCol">
+                            <div className="card" style={{ padding: 10 }}>
+                              <div style={{ fontSize: 12, fontWeight: 700, marginBottom: 6 }}>Before</div>
+                              {previewState?.loading ? (
+                                <div style={{ fontSize: 12, color: "var(--muted)" }}>Loading preview…</div>
+                              ) : previewState?.error ? (
+                                <div style={{ fontSize: 12, color: "#ff6b6b" }}>{previewState.error}</div>
+                              ) : (
+                                <div className="gridTwoCol">
+                                  <PreviewTable title="Asks" rows={previewState?.before?.asks ?? []} accent="#ef4444" />
+                                  <PreviewTable title="Bids" rows={previewState?.before?.bids ?? []} accent="#22c55e" />
+                                </div>
+                              )}
+                            </div>
+                            <div className="card" style={{ padding: 10 }}>
+                              <div style={{ fontSize: 12, fontWeight: 700, marginBottom: 6 }}>After</div>
+                              {previewState?.loading ? (
+                                <div style={{ fontSize: 12, color: "var(--muted)" }}>Loading preview…</div>
+                              ) : previewState?.error ? (
+                                <div style={{ fontSize: 12, color: "#ff6b6b" }}>{previewState.error}</div>
+                              ) : (
+                                <div className="gridTwoCol">
+                                  <PreviewTable title="Asks" rows={previewState?.after?.asks ?? []} accent="#ef4444" />
+                                  <PreviewTable title="Bids" rows={previewState?.after?.bids ?? []} accent="#22c55e" />
+                                </div>
+                              )}
+                            </div>
+                          </div>
+                        ) : null}
+                      </div>
+                    ) : null}
+                  </div>
+                );
+              })}
+            </div>
+          ) : null}
+
+          <div style={{ marginTop: 10, fontSize: 11, color: "var(--muted)" }}>
+            AI provides suggestions only. Changes must be applied manually and saved explicitly.
+          </div>
+        </section>
+      ) : null}
+
       {priceFollow && showPriceFollow ? (
         <AccordionSection title="Price Follow">
           <div style={{ fontSize: 12, color: "var(--muted)", marginBottom: 10 }}>
@@ -1211,6 +1458,68 @@ export default function BotPage() {
   );
 }
 
+function severityColor(sev: AiSuggestion["severity"]) {
+  if (sev === "critical") return "#ef4444";
+  if (sev === "warning") return "#f59e0b";
+  return "#3b82f6";
+}
+
+function buildDiffRows(
+  suggested: AiSuggestion["suggestedConfig"] | undefined,
+  mm: any,
+  vol: any,
+  risk: any
+) {
+  if (!suggested) return [];
+  const rows: { label: string; current: any; next: any }[] = [];
+  const add = (section: string, key: string, currentValue: any, nextValue: any) => {
+    rows.push({
+      label: `${section}.${key}`,
+      current: currentValue,
+      next: nextValue
+    });
+  };
+
+  if (suggested.mm) {
+    Object.entries(suggested.mm).forEach(([key, value]) => add("mm", key, mm?.[key], value));
+  }
+  if (suggested.vol) {
+    Object.entries(suggested.vol).forEach(([key, value]) => add("vol", key, vol?.[key], value));
+  }
+  if (suggested.risk) {
+    Object.entries(suggested.risk).forEach(([key, value]) => add("risk", key, risk?.[key], value));
+  }
+  return rows;
+}
+
+function ConfigDiffTable({ rows }: { rows: { label: string; current: any; next: any }[] }) {
+  if (!rows.length) {
+    return <div style={{ fontSize: 12, color: "var(--muted)" }}>No config changes provided.</div>;
+  }
+  return (
+    <div style={{ overflowX: "auto" }}>
+      <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
+        <thead>
+          <tr>
+            <th style={{ textAlign: "left", color: "var(--muted)", fontWeight: 600, paddingBottom: 6 }}>Parameter</th>
+            <th style={{ textAlign: "right", color: "var(--muted)", fontWeight: 600, paddingBottom: 6 }}>Current</th>
+            <th style={{ textAlign: "right", color: "var(--muted)", fontWeight: 600, paddingBottom: 6 }}>Suggested</th>
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map((r) => (
+            <tr key={r.label} style={{ borderTop: "1px solid rgba(255,255,255,.06)" }}>
+              <td style={{ padding: "6px 0", color: "#e8eef7" }}>{r.label}</td>
+              <td style={{ padding: "6px 0", textAlign: "right", color: "var(--muted)" }}>{formatValue(r.current)}</td>
+              <td style={{ padding: "6px 0", textAlign: "right", color: "#e8eef7" }}>{formatValue(r.next)}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
 function PreviewTable({ title, rows, accent }: { title: string; rows: any[]; accent: string }) {
   const maxNotional = Math.max(1, ...rows.map((r) => Number(r?.notional || 0)));
   return (
@@ -1279,6 +1588,12 @@ function PreviewTable({ title, rows, accent }: { title: string; rows: any[]; acc
 function formatNum(v: any, maxDecimals = 8) {
   if (v === null || v === undefined || Number.isNaN(Number(v))) return "—";
   return Number(v).toFixed(maxDecimals).replace(/\.?0+$/, "");
+}
+
+function formatValue(v: any) {
+  if (typeof v === "string") return v;
+  if (typeof v === "boolean") return v ? "true" : "false";
+  return formatNum(v, 6);
 }
 
 function formatDate(value: string) {
