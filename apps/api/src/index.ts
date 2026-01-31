@@ -1712,6 +1712,9 @@ app.get("/bots/:id/ai/insights", requireAuth, requirePermission("bots.view"), as
   const rangeCfg = rangeKey === "7d" ? METRICS_RANGES["7d"] : METRICS_RANGES["24h"];
   const to = new Date();
   const from = new Date(to.getTime() - rangeCfg.lookbackMs);
+  const features = await getWorkspaceFeatures(workspaceId);
+  const provider = String(process.env.AI_PROVIDER ?? "none").toLowerCase();
+  const aiEnabled = Boolean(features?.aiRecommendations) && provider !== "none";
 
   try {
     const rows = await prisma.botMetric.findMany({
@@ -1721,16 +1724,28 @@ app.get("/bots/:id/ai/insights", requireAuth, requirePermission("bots.view"), as
       },
       orderBy: { ts: "asc" }
     });
-    const insights = analyzeBotMetrics({ bot, points: rows, now: to });
+    const analysis = await analyzeBotMetrics({
+      bot,
+      points: rows,
+      range: rangeKey === "7d" ? "7d" : "24h",
+      aiEnabled,
+      workspaceId,
+      now: to
+    });
     res.json({
       range: rangeKey === "7d" ? "7d" : "24h",
       generatedAt: to.toISOString(),
-      insights
+      healthScore: analysis.healthScore,
+      aiEnabled: analysis.aiEnabled,
+      insights: analysis.insights,
+      warning: analysis.warning
     });
   } catch (e) {
     res.json({
       range: rangeKey === "7d" ? "7d" : "24h",
       generatedAt: to.toISOString(),
+      healthScore: 100,
+      aiEnabled,
       insights: [],
       warning: "analysis_failed"
     });
