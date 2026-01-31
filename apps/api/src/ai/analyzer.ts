@@ -359,7 +359,7 @@ export async function analyzeBotMetrics(input: AnalyzerInput): Promise<AnalyzerR
   };
   const prompt = buildAiPrompt(payload);
 
-  let ai: AiCallResult | null = null;
+  let ai: { ok: boolean; data?: any } | null = null;
   try {
     ai = await callAi(prompt);
   } catch {
