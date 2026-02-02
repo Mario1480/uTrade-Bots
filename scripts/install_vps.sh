@@ -94,6 +94,8 @@ COOKIE_SECURE=${COOKIE_SECURE_VALUE}
 CORS_ORIGINS=${WEB_ORIGIN},http://localhost:3000
 
 BITMART_BASE_URL=https://api-cloud.bitmart.com
+COINSTORE_BASE_URL=https://api.coinstore.com
+PIONEX_BASE_URL=https://api.pionex.com
 DEXSCREENER_BASE_URL=https://api.dexscreener.com
 
 SMTP_HOST=smtp.hostinger.com
