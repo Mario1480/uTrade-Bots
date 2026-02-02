@@ -2204,6 +2204,15 @@ app.post("/bots/:id/preview/mm", requireAuth, requirePermission("bots.edit_confi
       .optional()
   }).parse(req.body);
 
+  const mmPreviewConfig = {
+    ...payload.mm,
+    mmRepriceMs: payload.mm.mmRepriceMs ?? 15000,
+    mmRepricePct: payload.mm.mmRepricePct ?? 0.01,
+    mmPriceEpsPct: payload.mm.mmPriceEpsPct ?? 0.005,
+    mmQtyEpsPct: payload.mm.mmQtyEpsPct ?? 0.02,
+    mmInvAlpha: payload.mm.mmInvAlpha ?? 0.1
+  };
+
   const mid = payload.runtime?.mid;
   if (!Number.isFinite(mid) || (mid as number) <= 0) {
     return res.status(400).json({ error: "mid_missing" });
@@ -2217,7 +2226,7 @@ app.post("/bots/:id/preview/mm", requireAuth, requirePermission("bots.edit_confi
   const quotes = buildMmQuotes({
     symbol: "PREVIEW",
     mid: mid as number,
-    cfg: payload.mm,
+    cfg: mmPreviewConfig,
     inventoryRatio,
     includeJitter: payload.options?.includeJitter ?? false,
     seed: payload.options?.seed
