@@ -19,6 +19,20 @@ ADMIN_WORKSPACE_NAME="${ADMIN_WORKSPACE_NAME:-Main}"
 read -r -p "Invite base URL (e.g. https://test.example.com) [blank to skip]: " INVITE_BASE_URL
 read -r -s -p "SMTP password for no-reply@uliquid.vip (leave blank to set later): " SMTP_PASS
 echo ""
+read -r -p "AI provider (none/openai) [none]: " AI_PROVIDER
+AI_PROVIDER="${AI_PROVIDER:-none}"
+read -r -p "AI base URL [https://api.openai.com/v1]: " AI_BASE_URL
+AI_BASE_URL="${AI_BASE_URL:-https://api.openai.com/v1}"
+read -r -s -p "AI API key (leave blank to set later): " AI_API_KEY
+echo ""
+read -r -p "AI model [gpt-4o-mini]: " AI_MODEL
+AI_MODEL="${AI_MODEL:-gpt-4o-mini}"
+read -r -p "AI timeout ms [30000]: " AI_TIMEOUT_MS
+AI_TIMEOUT_MS="${AI_TIMEOUT_MS:-30000}"
+read -r -p "AI cache TTL seconds [300]: " AI_CACHE_TTL_SEC
+AI_CACHE_TTL_SEC="${AI_CACHE_TTL_SEC:-300}"
+read -r -p "AI rate limit per min [30]: " AI_RATE_LIMIT_PER_MIN
+AI_RATE_LIMIT_PER_MIN="${AI_RATE_LIMIT_PER_MIN:-30}"
 read -r -p "License key (optional, can set in UI): " LICENSE_KEY
 read -r -p "License instance id [hostname]: " LICENSE_INSTANCE_ID
 LICENSE_INSTANCE_ID="${LICENSE_INSTANCE_ID:-$(hostname)}"
@@ -89,6 +103,15 @@ SMTP_PASS=${SMTP_PASS}
 SMTP_FROM="uLiquid <no-reply@uliquid.vip>"
 SMTP_SECURE=true
 INVITE_BASE_URL=${INVITE_BASE_URL}
+
+# AI (Read-only insights)
+AI_PROVIDER=${AI_PROVIDER}
+AI_BASE_URL=${AI_BASE_URL}
+AI_API_KEY=${AI_API_KEY}
+AI_MODEL=${AI_MODEL}
+AI_TIMEOUT_MS=${AI_TIMEOUT_MS}
+AI_CACHE_TTL_SEC=${AI_CACHE_TTL_SEC}
+AI_RATE_LIMIT_PER_MIN=${AI_RATE_LIMIT_PER_MIN}
 
 LICENSE_KEY=${LICENSE_KEY}
 LICENSE_INSTANCE_ID=${LICENSE_INSTANCE_ID}
