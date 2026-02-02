@@ -198,6 +198,26 @@ docker compose -f docker-compose.prod.yml logs -f --tail=200 runner
 
 ---
 
+## Updates / Re-Deploy
+
+```bash
+cd /opt/market-maker
+git pull
+docker compose -f docker-compose.prod.yml build
+docker compose -f docker-compose.prod.yml up -d
+docker compose -f docker-compose.prod.yml exec -T api sh -lc "npx prisma migrate deploy"
+```
+
+## Deinstallation (optional)
+
+```bash
+cd /opt/market-maker
+docker compose -f docker-compose.prod.yml down -v
+sudo rm -rf /opt/market-maker
+```
+
+---
+
 ## Add‑Ons & Lizenzen
 
 Einige Features sind lizenziert (z.B. DEX Price Feed, AI Insights).
