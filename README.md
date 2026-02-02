@@ -42,6 +42,34 @@ Browser → Caddy → Web (3000)
 
 ## Installation (VPS – empfohlen)
 
+### Option A) Schnellinstallation via Script
+
+Das Script richtet Docker, Node 20, Caddy (optional), `.env.prod` und die Container ein.
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/Mario1480/Market-Maker/main/scripts/install_vps.sh -o /tmp/install_vps.sh
+chmod +x /tmp/install_vps.sh
+sudo /tmp/install_vps.sh
+```
+
+Der Installer fragt u.a.:
+- Web/API Domain
+- Admin Email/Password
+- SMTP Passwort
+- License Key (optional)
+- AI Provider + Key (optional)
+
+Danach laufen Web + API + Runner automatisch. Logs:
+
+```bash
+docker compose -f /opt/market-maker/docker-compose.prod.yml ps
+docker compose -f /opt/market-maker/docker-compose.prod.yml logs -f --tail=200 api
+docker compose -f /opt/market-maker/docker-compose.prod.yml logs -f --tail=200 web
+docker compose -f /opt/market-maker/docker-compose.prod.yml logs -f --tail=200 runner
+```
+
+### Option B) Manuelle Installation (Schritt für Schritt)
+
 ### 1) Docker installieren
 
 ```bash
@@ -199,4 +227,3 @@ Einige Features sind lizenziert (z.B. DEX Price Feed, AI Insights).
 
 - **Development**: `docker-compose.dev.yml`, Hot Reload
 - **Production**: `docker-compose.prod.yml`, `next build`
-
