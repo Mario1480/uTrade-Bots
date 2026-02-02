@@ -38,6 +38,26 @@ type AiSuggestionsResponse = {
   warning?: string;
 };
 
+const ADVANCED_MM_DEFAULTS = {
+  mmRepriceMs: 15000,
+  mmRepricePct: 0.01,
+  mmPriceEpsPct: 0.005,
+  mmQtyEpsPct: 0.02,
+  mmInvAlpha: 0.1
+};
+
+const ADVANCED_VOL_DEFAULTS = {
+  volCooldownMs: 60000,
+  volActiveTtlMs: 20000,
+  volMmSafetyMult: 1.5,
+  volLastBandPct: 0.0001,
+  volInsideSpreadPct: 0.00005,
+  volLastMinBumpAbs: 0.00000001,
+  volLastMinBumpPct: 0,
+  volBuyTicks: 2,
+  volSellTicks: 2
+};
+
 export default function BotPage() {
   const params = useParams();
   const id = params.id as string; // ✅ korrekt für Next 15
@@ -246,6 +266,7 @@ export default function BotPage() {
   const canApplyPresets = Boolean(me?.permissions?.["presets.apply"] || me?.isSuperadmin) && !isReadOnly;
   const canDeletePresets = Boolean(me?.permissions?.["presets.delete"] || me?.isSuperadmin) && !isReadOnly;
   const canEditConfig = Boolean(me?.permissions?.["bots.edit_config"] || me?.isSuperadmin) && !isReadOnly;
+  const canEditAdvanced = Boolean(me?.isSuperadmin) && !isReadOnly;
   const canSavePriceFollow = ready && dirtyPriceFollow && saving !== "saving..." && !isReadOnly;
   const canSaveDex = ready && dirtyDex && saving !== "saving..." && !isReadOnly;
   const canSaveNotify = ready && dirtyNotify && saving !== "saving..." && !isReadOnly;
@@ -1443,6 +1464,198 @@ export default function BotPage() {
             >
               {dexSaveLabel}
             </button>
+          </div>
+        </AccordionSection>
+      ) : null}
+
+      {mm && vol && me?.isSuperadmin ? (
+        <AccordionSection title="Advanced Settings">
+          <div style={{ fontSize: 12, color: "var(--muted)", marginBottom: 10 }}>
+            Per-bot advanced tuning. Superadmin only.
+          </div>
+          <div style={{ display: "flex", justifyContent: "flex-end", marginBottom: 10 }}>
+            <button
+              className={`btn btnSecondary ${!canEditAdvanced ? "btnDisabled" : ""}`}
+              onClick={() => {
+                setMm((prev: any) => ({ ...prev, ...ADVANCED_MM_DEFAULTS }));
+                setVol((prev: any) => ({ ...prev, ...ADVANCED_VOL_DEFAULTS }));
+              }}
+              disabled={!canEditAdvanced}
+            >
+              Load defaults
+            </button>
+          </div>
+          <div style={{ fontWeight: 600, marginBottom: 8 }}>Market Making</div>
+          <div className="gridTwoCol">
+            <label style={{ display: "grid", gap: 6 }}>
+              <span style={{ fontSize: 12, color: "var(--muted)" }}>mmRepriceMs</span>
+              <input
+                className="input"
+                type="number"
+                min={0}
+                value={mm.mmRepriceMs ?? ADVANCED_MM_DEFAULTS.mmRepriceMs}
+                onChange={(e) => setMm({ ...mm, mmRepriceMs: Number(e.target.value) })}
+                disabled={!canEditAdvanced}
+              />
+            </label>
+            <label style={{ display: "grid", gap: 6 }}>
+              <span style={{ fontSize: 12, color: "var(--muted)" }}>mmRepricePct</span>
+              <input
+                className="input"
+                type="number"
+                min={0}
+                step="0.0001"
+                value={mm.mmRepricePct ?? ADVANCED_MM_DEFAULTS.mmRepricePct}
+                onChange={(e) => setMm({ ...mm, mmRepricePct: Number(e.target.value) })}
+                disabled={!canEditAdvanced}
+              />
+            </label>
+            <label style={{ display: "grid", gap: 6 }}>
+              <span style={{ fontSize: 12, color: "var(--muted)" }}>mmPriceEpsPct</span>
+              <input
+                className="input"
+                type="number"
+                min={0}
+                step="0.0001"
+                value={mm.mmPriceEpsPct ?? ADVANCED_MM_DEFAULTS.mmPriceEpsPct}
+                onChange={(e) => setMm({ ...mm, mmPriceEpsPct: Number(e.target.value) })}
+                disabled={!canEditAdvanced}
+              />
+            </label>
+            <label style={{ display: "grid", gap: 6 }}>
+              <span style={{ fontSize: 12, color: "var(--muted)" }}>mmQtyEpsPct</span>
+              <input
+                className="input"
+                type="number"
+                min={0}
+                step="0.0001"
+                value={mm.mmQtyEpsPct ?? ADVANCED_MM_DEFAULTS.mmQtyEpsPct}
+                onChange={(e) => setMm({ ...mm, mmQtyEpsPct: Number(e.target.value) })}
+                disabled={!canEditAdvanced}
+              />
+            </label>
+            <label style={{ display: "grid", gap: 6 }}>
+              <span style={{ fontSize: 12, color: "var(--muted)" }}>mmInvAlpha</span>
+              <input
+                className="input"
+                type="number"
+                min={0}
+                step="0.01"
+                value={mm.mmInvAlpha ?? ADVANCED_MM_DEFAULTS.mmInvAlpha}
+                onChange={(e) => setMm({ ...mm, mmInvAlpha: Number(e.target.value) })}
+                disabled={!canEditAdvanced}
+              />
+            </label>
+            <div />
+          </div>
+          <div style={{ fontWeight: 600, margin: "14px 0 8px" }}>Volume</div>
+          <div className="gridTwoCol">
+            <label style={{ display: "grid", gap: 6 }}>
+              <span style={{ fontSize: 12, color: "var(--muted)" }}>volCooldownMs</span>
+              <input
+                className="input"
+                type="number"
+                min={0}
+                value={vol.volCooldownMs ?? ADVANCED_VOL_DEFAULTS.volCooldownMs}
+                onChange={(e) => setVol({ ...vol, volCooldownMs: Number(e.target.value) })}
+                disabled={!canEditAdvanced}
+              />
+            </label>
+            <label style={{ display: "grid", gap: 6 }}>
+              <span style={{ fontSize: 12, color: "var(--muted)" }}>volActiveTtlMs</span>
+              <input
+                className="input"
+                type="number"
+                min={0}
+                value={vol.volActiveTtlMs ?? ADVANCED_VOL_DEFAULTS.volActiveTtlMs}
+                onChange={(e) => setVol({ ...vol, volActiveTtlMs: Number(e.target.value) })}
+                disabled={!canEditAdvanced}
+              />
+            </label>
+            <label style={{ display: "grid", gap: 6 }}>
+              <span style={{ fontSize: 12, color: "var(--muted)" }}>volMmSafetyMult</span>
+              <input
+                className="input"
+                type="number"
+                min={0}
+                step="0.01"
+                value={vol.volMmSafetyMult ?? ADVANCED_VOL_DEFAULTS.volMmSafetyMult}
+                onChange={(e) => setVol({ ...vol, volMmSafetyMult: Number(e.target.value) })}
+                disabled={!canEditAdvanced}
+              />
+            </label>
+            <label style={{ display: "grid", gap: 6 }}>
+              <span style={{ fontSize: 12, color: "var(--muted)" }}>volLastBandPct</span>
+              <input
+                className="input"
+                type="number"
+                min={0}
+                step="0.0001"
+                value={vol.volLastBandPct ?? ADVANCED_VOL_DEFAULTS.volLastBandPct}
+                onChange={(e) => setVol({ ...vol, volLastBandPct: Number(e.target.value) })}
+                disabled={!canEditAdvanced}
+              />
+            </label>
+            <label style={{ display: "grid", gap: 6 }}>
+              <span style={{ fontSize: 12, color: "var(--muted)" }}>volInsideSpreadPct</span>
+              <input
+                className="input"
+                type="number"
+                min={0}
+                step="0.0001"
+                value={vol.volInsideSpreadPct ?? ADVANCED_VOL_DEFAULTS.volInsideSpreadPct}
+                onChange={(e) => setVol({ ...vol, volInsideSpreadPct: Number(e.target.value) })}
+                disabled={!canEditAdvanced}
+              />
+            </label>
+            <label style={{ display: "grid", gap: 6 }}>
+              <span style={{ fontSize: 12, color: "var(--muted)" }}>volLastMinBumpAbs</span>
+              <input
+                className="input"
+                type="number"
+                min={0}
+                step="0.00000001"
+                value={vol.volLastMinBumpAbs ?? ADVANCED_VOL_DEFAULTS.volLastMinBumpAbs}
+                onChange={(e) => setVol({ ...vol, volLastMinBumpAbs: Number(e.target.value) })}
+                disabled={!canEditAdvanced}
+              />
+            </label>
+            <label style={{ display: "grid", gap: 6 }}>
+              <span style={{ fontSize: 12, color: "var(--muted)" }}>volLastMinBumpPct</span>
+              <input
+                className="input"
+                type="number"
+                min={0}
+                step="0.0001"
+                value={vol.volLastMinBumpPct ?? ADVANCED_VOL_DEFAULTS.volLastMinBumpPct}
+                onChange={(e) => setVol({ ...vol, volLastMinBumpPct: Number(e.target.value) })}
+                disabled={!canEditAdvanced}
+              />
+            </label>
+            <label style={{ display: "grid", gap: 6 }}>
+              <span style={{ fontSize: 12, color: "var(--muted)" }}>volBuyTicks</span>
+              <input
+                className="input"
+                type="number"
+                min={0}
+                step="1"
+                value={vol.volBuyTicks ?? ADVANCED_VOL_DEFAULTS.volBuyTicks}
+                onChange={(e) => setVol({ ...vol, volBuyTicks: Number(e.target.value) })}
+                disabled={!canEditAdvanced}
+              />
+            </label>
+            <label style={{ display: "grid", gap: 6 }}>
+              <span style={{ fontSize: 12, color: "var(--muted)" }}>volSellTicks</span>
+              <input
+                className="input"
+                type="number"
+                min={0}
+                step="1"
+                value={vol.volSellTicks ?? ADVANCED_VOL_DEFAULTS.volSellTicks}
+                onChange={(e) => setVol({ ...vol, volSellTicks: Number(e.target.value) })}
+                disabled={!canEditAdvanced}
+              />
+            </label>
           </div>
         </AccordionSection>
       ) : null}

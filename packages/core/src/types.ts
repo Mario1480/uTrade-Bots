@@ -23,6 +23,11 @@ export interface MarketMakingConfig {
   jitterPct: number;
   skewFactor: number;
   maxSkew: number;
+  mmRepriceMs: number;
+  mmRepricePct: number;
+  mmPriceEpsPct: number;
+  mmQtyEpsPct: number;
+  mmInvAlpha: number;
 }
 
 export interface VolumeConfig {
@@ -35,6 +40,15 @@ export interface VolumeConfig {
   buyPct: number;
   buyBumpTicks: number;
   sellBumpTicks: number;
+  volCooldownMs: number;
+  volActiveTtlMs: number;
+  volMmSafetyMult: number;
+  volLastBandPct: number;
+  volInsideSpreadPct: number;
+  volLastMinBumpAbs: number;
+  volLastMinBumpPct: number;
+  volBuyTicks: number;
+  volSellTicks: number;
 }
 
 export interface RiskConfig {

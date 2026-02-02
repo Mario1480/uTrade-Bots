@@ -31,7 +31,12 @@ export async function loadBotAndConfigs(botId: string) {
     distribution: bot.mmConfig.distribution as any,
     jitterPct: bot.mmConfig.jitterPct,
     skewFactor: bot.mmConfig.skewFactor,
-    maxSkew: bot.mmConfig.maxSkew
+    maxSkew: bot.mmConfig.maxSkew,
+    mmRepriceMs: bot.mmConfig.mmRepriceMs ?? 15000,
+    mmRepricePct: bot.mmConfig.mmRepricePct ?? 0.01,
+    mmPriceEpsPct: bot.mmConfig.mmPriceEpsPct ?? 0.005,
+    mmQtyEpsPct: bot.mmConfig.mmQtyEpsPct ?? 0.02,
+    mmInvAlpha: bot.mmConfig.mmInvAlpha ?? 0.1
   };
 
   const vol: VolumeConfig = {
@@ -43,7 +48,16 @@ export async function loadBotAndConfigs(botId: string) {
     mode: bot.volConfig.mode as any,
     buyPct: bot.volConfig.buyPct ?? 0.5,
     buyBumpTicks: bot.volConfig.buyBumpTicks ?? 0,
-    sellBumpTicks: bot.volConfig.sellBumpTicks ?? 0
+    sellBumpTicks: bot.volConfig.sellBumpTicks ?? 0,
+    volCooldownMs: bot.volConfig.volCooldownMs ?? 60000,
+    volActiveTtlMs: bot.volConfig.volActiveTtlMs ?? 20000,
+    volMmSafetyMult: bot.volConfig.volMmSafetyMult ?? 1.5,
+    volLastBandPct: bot.volConfig.volLastBandPct ?? 0.0001,
+    volInsideSpreadPct: bot.volConfig.volInsideSpreadPct ?? 0.00005,
+    volLastMinBumpAbs: bot.volConfig.volLastMinBumpAbs ?? 0.00000001,
+    volLastMinBumpPct: bot.volConfig.volLastMinBumpPct ?? 0,
+    volBuyTicks: bot.volConfig.volBuyTicks ?? 2,
+    volSellTicks: bot.volConfig.volSellTicks ?? 2
   };
 
   const risk: RiskConfig = {
@@ -148,7 +162,12 @@ export async function loadLatestBotAndConfigs() {
     distribution: bot.mmConfig.distribution as any,
     jitterPct: bot.mmConfig.jitterPct,
     skewFactor: bot.mmConfig.skewFactor,
-    maxSkew: bot.mmConfig.maxSkew
+    maxSkew: bot.mmConfig.maxSkew,
+    mmRepriceMs: bot.mmConfig.mmRepriceMs ?? 15000,
+    mmRepricePct: bot.mmConfig.mmRepricePct ?? 0.01,
+    mmPriceEpsPct: bot.mmConfig.mmPriceEpsPct ?? 0.005,
+    mmQtyEpsPct: bot.mmConfig.mmQtyEpsPct ?? 0.02,
+    mmInvAlpha: bot.mmConfig.mmInvAlpha ?? 0.1
   };
 
   const vol: VolumeConfig = {
@@ -160,7 +179,16 @@ export async function loadLatestBotAndConfigs() {
     mode: bot.volConfig.mode as any,
     buyPct: bot.volConfig.buyPct ?? 0.5,
     buyBumpTicks: bot.volConfig.buyBumpTicks ?? 0,
-    sellBumpTicks: bot.volConfig.sellBumpTicks ?? 0
+    sellBumpTicks: bot.volConfig.sellBumpTicks ?? 0,
+    volCooldownMs: bot.volConfig.volCooldownMs ?? 60000,
+    volActiveTtlMs: bot.volConfig.volActiveTtlMs ?? 20000,
+    volMmSafetyMult: bot.volConfig.volMmSafetyMult ?? 1.5,
+    volLastBandPct: bot.volConfig.volLastBandPct ?? 0.0001,
+    volInsideSpreadPct: bot.volConfig.volInsideSpreadPct ?? 0.00005,
+    volLastMinBumpAbs: bot.volConfig.volLastMinBumpAbs ?? 0.00000001,
+    volLastMinBumpPct: bot.volConfig.volLastMinBumpPct ?? 0,
+    volBuyTicks: bot.volConfig.volBuyTicks ?? 2,
+    volSellTicks: bot.volConfig.volSellTicks ?? 2
   };
 
   const risk: RiskConfig = {

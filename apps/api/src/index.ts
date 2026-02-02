@@ -350,7 +350,12 @@ const MMConfig = z.object({
   distribution: z.enum(["LINEAR", "VALLEY", "RANDOM"]),
   jitterPct: z.number(),
   skewFactor: z.number(),
-  maxSkew: z.number()
+  maxSkew: z.number(),
+  mmRepriceMs: z.number().int().optional(),
+  mmRepricePct: z.number().optional(),
+  mmPriceEpsPct: z.number().optional(),
+  mmQtyEpsPct: z.number().optional(),
+  mmInvAlpha: z.number().optional()
 });
 
 const VolConfig = z.object({
@@ -362,7 +367,16 @@ const VolConfig = z.object({
   mode: z.enum(["PASSIVE", "MIXED", "ACTIVE"]),
   buyPct: z.number().min(0).max(1),
   buyBumpTicks: z.number().optional(),
-  sellBumpTicks: z.number().optional()
+  sellBumpTicks: z.number().optional(),
+  volCooldownMs: z.number().int().optional(),
+  volActiveTtlMs: z.number().int().optional(),
+  volMmSafetyMult: z.number().optional(),
+  volLastBandPct: z.number().optional(),
+  volInsideSpreadPct: z.number().optional(),
+  volLastMinBumpAbs: z.number().optional(),
+  volLastMinBumpPct: z.number().optional(),
+  volBuyTicks: z.number().int().optional(),
+  volSellTicks: z.number().int().optional()
 });
 
 const RiskConfig = z.object({
@@ -2416,7 +2430,12 @@ app.post("/bots", requireAuth, requirePermission("bots.create"), async (req, res
           distribution: "LINEAR",
           jitterPct: 0.0,
           skewFactor: 0.0,
-          maxSkew: 0.0
+          maxSkew: 0.0,
+          mmRepriceMs: 15000,
+          mmRepricePct: 0.01,
+          mmPriceEpsPct: 0.005,
+          mmQtyEpsPct: 0.02,
+          mmInvAlpha: 0.1
         }
       },
       volConfig: {
@@ -2429,7 +2448,16 @@ app.post("/bots", requireAuth, requirePermission("bots.create"), async (req, res
           mode: "MIXED",
           buyPct: 0.5,
           buyBumpTicks: 0,
-          sellBumpTicks: 0
+          sellBumpTicks: 0,
+          volCooldownMs: 60000,
+          volActiveTtlMs: 20000,
+          volMmSafetyMult: 1.5,
+          volLastBandPct: 0.0001,
+          volInsideSpreadPct: 0.00005,
+          volLastMinBumpAbs: 0.00000001,
+          volLastMinBumpPct: 0,
+          volBuyTicks: 2,
+          volSellTicks: 2
         }
       },
       riskConfig: {
@@ -2591,6 +2619,20 @@ app.put("/bots/:id/config", requireAuth, requirePermission("bots.edit_config"), 
   if (!isSuperadmin(user)) {
     delete (payload.vol as any).buyBumpTicks;
     delete (payload.vol as any).sellBumpTicks;
+    delete (payload.mm as any).mmRepriceMs;
+    delete (payload.mm as any).mmRepricePct;
+    delete (payload.mm as any).mmPriceEpsPct;
+    delete (payload.mm as any).mmQtyEpsPct;
+    delete (payload.mm as any).mmInvAlpha;
+    delete (payload.vol as any).volCooldownMs;
+    delete (payload.vol as any).volActiveTtlMs;
+    delete (payload.vol as any).volMmSafetyMult;
+    delete (payload.vol as any).volLastBandPct;
+    delete (payload.vol as any).volInsideSpreadPct;
+    delete (payload.vol as any).volLastMinBumpAbs;
+    delete (payload.vol as any).volLastMinBumpPct;
+    delete (payload.vol as any).volBuyTicks;
+    delete (payload.vol as any).volSellTicks;
   }
 
   await prisma.marketMakingConfig.update({

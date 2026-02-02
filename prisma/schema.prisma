@@ -60,6 +60,11 @@ model MarketMakingConfig {
   jitterPct       Float
   skewFactor      Float
   maxSkew         Float
+  mmRepriceMs     Int   @default(15000)
+  mmRepricePct    Float @default(0.01)
+  mmPriceEpsPct   Float @default(0.005)
+  mmQtyEpsPct     Float @default(0.02)
+  mmInvAlpha      Float @default(0.1)
 }
 
 model VolumeConfig {
@@ -75,6 +80,15 @@ model VolumeConfig {
   buyPct            Float  @default(0.5)
   buyBumpTicks      Float  @default(0)
   sellBumpTicks     Float  @default(0)
+  volCooldownMs     Int    @default(60000)
+  volActiveTtlMs    Int    @default(20000)
+  volMmSafetyMult   Float  @default(1.5)
+  volLastBandPct    Float  @default(0.0001)
+  volInsideSpreadPct Float @default(0.00005)
+  volLastMinBumpAbs Float  @default(0.00000001)
+  volLastMinBumpPct Float  @default(0)
+  volBuyTicks       Int    @default(2)
+  volSellTicks      Int    @default(2)
 }
 
 model RiskConfig {

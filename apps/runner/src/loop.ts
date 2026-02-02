@@ -133,21 +133,40 @@ export async function runLoop(params: {
   }
   let volSched = new VolumeScheduler(vol);
   let riskEngine = new RiskEngine(risk);
-  const priceEpsPct = Number(process.env.MM_PRICE_EPS_PCT || "0.005");
-  const qtyEpsPct = Number(process.env.MM_QTY_EPS_PCT || "0.02");
-  const minRepriceMs = Number(process.env.MM_REPRICE_MS || "15000");
-  const minRepricePct = Number(process.env.MM_REPRICE_PCT || "0.01");
-  const invAlpha = Number(process.env.MM_INV_ALPHA || "0.1");
-  const volCooldownMs = Number(process.env.MM_VOL_COOLDOWN_MS || "60000");
-  const volActiveTtlMs = Number(process.env.VOL_ACTIVE_TTL_MS || "20000");
-  const volMmSafetyMult = Number(process.env.VOL_MM_SAFETY_MULT || "1.5");
-  const volLastBandPct = Number(process.env.VOL_LAST_BAND_PCT || "0.0001");
-  const volInsideSpreadPct = Number(process.env.VOL_INSIDE_SPREAD_PCT || "0.00005");
-  const volLastMinBumpAbs = Number(process.env.VOL_LAST_MIN_BUMP_ABS || "0.00000001");
-  const volLastMinBumpPct = Number(process.env.VOL_LAST_MIN_BUMP_PCT || "0");
-  const volBuyTicks = Number(process.env.VOL_BUY_TICKS || "2");
-  const volSellTicks = Number(process.env.VOL_SELL_TICKS || "2");
-  const orderMgr = new OrderManager({ priceEpsPct, qtyEpsPct });
+  let priceEpsPct = 0;
+  let qtyEpsPct = 0;
+  let minRepriceMs = 0;
+  let minRepricePct = 0;
+  let invAlpha = 0;
+  let volCooldownMs = 0;
+  let volActiveTtlMs = 0;
+  let volMmSafetyMult = 0;
+  let volLastBandPct = 0;
+  let volInsideSpreadPct = 0;
+  let volLastMinBumpAbs = 0;
+  let volLastMinBumpPct = 0;
+  let volBuyTicks = 0;
+  let volSellTicks = 0;
+
+  const applyAdvancedParams = () => {
+    priceEpsPct = Number(mm.mmPriceEpsPct ?? process.env.MM_PRICE_EPS_PCT ?? "0.005");
+    qtyEpsPct = Number(mm.mmQtyEpsPct ?? process.env.MM_QTY_EPS_PCT ?? "0.02");
+    minRepriceMs = Number(mm.mmRepriceMs ?? process.env.MM_REPRICE_MS ?? "15000");
+    minRepricePct = Number(mm.mmRepricePct ?? process.env.MM_REPRICE_PCT ?? "0.01");
+    invAlpha = Number(mm.mmInvAlpha ?? process.env.MM_INV_ALPHA ?? "0.1");
+    volCooldownMs = Number(vol.volCooldownMs ?? process.env.MM_VOL_COOLDOWN_MS ?? "60000");
+    volActiveTtlMs = Number(vol.volActiveTtlMs ?? process.env.VOL_ACTIVE_TTL_MS ?? "20000");
+    volMmSafetyMult = Number(vol.volMmSafetyMult ?? process.env.VOL_MM_SAFETY_MULT ?? "1.5");
+    volLastBandPct = Number(vol.volLastBandPct ?? process.env.VOL_LAST_BAND_PCT ?? "0.0001");
+    volInsideSpreadPct = Number(vol.volInsideSpreadPct ?? process.env.VOL_INSIDE_SPREAD_PCT ?? "0.00005");
+    volLastMinBumpAbs = Number(vol.volLastMinBumpAbs ?? process.env.VOL_LAST_MIN_BUMP_ABS ?? "0.00000001");
+    volLastMinBumpPct = Number(vol.volLastMinBumpPct ?? process.env.VOL_LAST_MIN_BUMP_PCT ?? "0");
+    volBuyTicks = Number(vol.volBuyTicks ?? process.env.VOL_BUY_TICKS ?? "2");
+    volSellTicks = Number(vol.volSellTicks ?? process.env.VOL_SELL_TICKS ?? "2");
+  };
+
+  applyAdvancedParams();
+  let orderMgr = new OrderManager({ priceEpsPct, qtyEpsPct });
   let lastRepriceAt = 0;
   let lastRepriceMid = 0;
   let lastMetricWriteAt = 0;
@@ -307,6 +326,8 @@ export async function runLoop(params: {
       notificationConfig = loaded.notificationConfig;
       priceSupportConfig = loaded.priceSupportConfig;
       systemSettings = await loadSystemSettings();
+      applyAdvancedParams();
+      orderMgr = new OrderManager({ priceEpsPct, qtyEpsPct });
       volSched = new VolumeScheduler(vol);
       riskEngine = new RiskEngine(risk);
 
