@@ -1079,9 +1079,8 @@ export default function BotPage() {
       </div>
 
       {aiFeatureEnabled ? (
-        <section className="card" style={{ padding: 12, marginBottom: 16 }}>
+        <AccordionSection title="AI Suggestions (Read‑Only)">
           <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, flexWrap: "wrap" }}>
-            <h3 style={{ marginTop: 0, marginBottom: 0 }}>AI Suggestions (Read‑Only)</h3>
             <div style={{ display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
               {(["24h", "7d"] as const).map((r) => (
                 <button
@@ -1096,7 +1095,13 @@ export default function BotPage() {
               <button className="btn" onClick={loadAiSuggestions} disabled={aiSuggestionsLoading}>
                 {aiSuggestionsLoading ? "Refreshing..." : "Refresh"}
               </button>
-              <span className="badge" style={{ borderColor: aiSuggestions?.aiEnabled ? "#22c55e" : "#9ca3af", color: aiSuggestions?.aiEnabled ? "#22c55e" : "#9ca3af" }}>
+              <span
+                className="badge"
+                style={{
+                  borderColor: aiSuggestions?.aiEnabled ? "#22c55e" : "#9ca3af",
+                  color: aiSuggestions?.aiEnabled ? "#22c55e" : "#9ca3af"
+                }}
+              >
                 {aiSuggestions?.aiEnabled ? "AI enabled" : "AI disabled"}
               </span>
             </div>
@@ -1228,7 +1233,7 @@ export default function BotPage() {
           <div style={{ marginTop: 10, fontSize: 11, color: "var(--muted)" }}>
             AI provides suggestions only. Changes must be applied manually and saved explicitly.
           </div>
-        </section>
+        </AccordionSection>
       ) : null}
 
       {priceFollow && showPriceFollow ? (
@@ -1473,6 +1478,10 @@ export default function BotPage() {
           <div style={{ fontSize: 12, color: "var(--muted)", marginBottom: 10 }}>
             Per-bot advanced tuning. Superadmin only.
           </div>
+          <div style={{ fontSize: 12, color: "var(--muted)", marginBottom: 10 }}>
+            Controls repricing thresholds, inventory smoothing, and volume scheduling behavior. Defaults are safe; adjust
+            carefully.
+          </div>
           <div style={{ display: "flex", justifyContent: "flex-end", marginBottom: 10 }}>
             <button
               className={`btn btnSecondary ${!canEditAdvanced ? "btnDisabled" : ""}`}
@@ -1486,6 +1495,9 @@ export default function BotPage() {
             </button>
           </div>
           <div style={{ fontWeight: 600, marginBottom: 8 }}>Market Making</div>
+          <div style={{ fontSize: 12, color: "var(--muted)", marginBottom: 10 }}>
+            Reprice timing/thresholds and inventory smoothing for MM orders.
+          </div>
           <div className="gridTwoCol">
             <label style={{ display: "grid", gap: 6 }}>
               <span style={{ fontSize: 12, color: "var(--muted)" }}>mmRepriceMs</span>
@@ -1549,6 +1561,9 @@ export default function BotPage() {
             <div />
           </div>
           <div style={{ fontWeight: 600, margin: "14px 0 8px" }}>Volume</div>
+          <div style={{ fontSize: 12, color: "var(--muted)", marginBottom: 10 }}>
+            Volume trade timing, spread placement, and safety limits.
+          </div>
           <div className="gridTwoCol">
             <label style={{ display: "grid", gap: 6 }}>
               <span style={{ fontSize: 12, color: "var(--muted)" }}>volCooldownMs</span>
@@ -1656,6 +1671,15 @@ export default function BotPage() {
                 disabled={!canEditAdvanced}
               />
             </label>
+          </div>
+          <div style={{ marginTop: 12 }}>
+            <button
+              className={`btn btnPrimary ${!canEditAdvanced ? "btnDisabled" : ""}`}
+              onClick={save}
+              disabled={!canEditAdvanced}
+            >
+              Save advanced settings
+            </button>
           </div>
         </AccordionSection>
       ) : null}
