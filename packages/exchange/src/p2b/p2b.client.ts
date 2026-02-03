@@ -247,21 +247,18 @@ export class P2BRestClient {
       auth: "SIGNED",
       body: { market: exSymbol }
     });
-    const result = json?.result ?? json;
-    let rows: any[] = [];
-    if (Array.isArray(result?.result)) {
-      rows = result.result;
-    } else if (Array.isArray(result)) {
-      rows = result;
-    } else if (result && typeof result === "object") {
-      const byMarket =
-        (result as any)[exSymbol] ||
-        (result as any)[exSymbol.toUpperCase()] ||
-        (result as any)[exSymbol.toLowerCase()];
-      if (Array.isArray(byMarket)) rows = byMarket;
+    let rows = this.extractOrderRows(json, exSymbol);
+    if (rows.length === 0) {
+      const jsonAll = await this.request<any>({
+        method: "POST",
+        path: "/api/v2/orders",
+        auth: "SIGNED",
+        body: {}
+      });
+      rows = this.extractOrderRows(jsonAll, exSymbol);
     }
     return rows.map((row: any) => ({
-      id: String(row.id),
+      id: String(row.id ?? row.orderId ?? row.order_id ?? row.trade_id ?? ""),
       symbol: fromExchangeSymbol("p2b", row.market || exSymbol),
       side: String(row.side || "").toLowerCase() === "sell" ? "sell" : "buy",
       price: parseNumber(row.price),
@@ -269,6 +266,20 @@ export class P2BRestClient {
       status: "open",
       clientOrderId: undefined
     }));
+  }
+
+  private extractOrderRows(json: any, exSymbol: string): any[] {
+    const result = json?.result ?? json;
+    if (Array.isArray(result?.result)) return result.result;
+    if (Array.isArray(result)) return result;
+    if (result && typeof result === "object") {
+      const byMarket =
+        (result as any)[exSymbol] ||
+        (result as any)[exSymbol.toUpperCase()] ||
+        (result as any)[exSymbol.toLowerCase()];
+      if (Array.isArray(byMarket)) return byMarket;
+    }
+    return [];
   }
 
   async placeOrder(q: Quote): Promise<Order> {
