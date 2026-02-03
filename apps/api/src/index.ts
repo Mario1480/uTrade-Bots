@@ -9,7 +9,14 @@ import type { Prisma } from "@prisma/client";
 import { prisma } from "@mm/db";
 import { BitmartRestClient, CoinstoreRestClient, PionexRestClient, P2BRestClient, fromExchangeSymbol } from "@mm/exchange";
 import { buildMmQuotes } from "@mm/strategy";
-import { clamp, normalizeSymbol, signLicenseBody, mapLicenseErrorFromStatus, type LicenseVerifyResponse } from "@mm/core";
+import {
+  clamp,
+  normalizeSymbol,
+  signLicenseBody,
+  mapLicenseErrorFromStatus,
+  type LicenseVerifyResponse,
+  type Order
+} from "@mm/core";
 import { z } from "zod";
 import {
   createReauth,
