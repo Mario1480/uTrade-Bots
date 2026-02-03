@@ -49,6 +49,7 @@ export default function Page() {
     return Number.isFinite(updated) && now - updated <= 15_000;
   });
   const runnerOffline = bots.length > 0 && !runnerOnline;
+  const runtimeById = new Map(runtimes.map((rt, i) => [bots[i]?.id, rt]));
 
   return (
     <div>
@@ -98,7 +99,15 @@ export default function Page() {
             <Link href="/bots/new" className="btn btnPrimary">New Bot</Link>
           </div>
         ) : (
-          bots.map((b) => (
+          bots.map((b) => {
+            const rt = runtimeById.get(b.id);
+            const mid = formatNum(rt?.mid);
+            const bid = formatNum(rt?.bid);
+            const ask = formatNum(rt?.ask);
+            const freeUsdt = formatNum(rt?.freeUsdt);
+            const freeBase = formatNum(rt?.freeBase);
+            const updatedAt = formatUpdated(rt?.updatedAt);
+            return (
             <div key={b.id} className="card botCard">
               <div className="botCardHeader">
                 <div>
@@ -111,6 +120,27 @@ export default function Page() {
                 <span className={`badge ${b.mmEnabled ? "badgeOk" : "badgeWarn"}`}>MM {b.mmEnabled ? "running" : "stopped"}</span>
                 <span className={`badge ${b.volEnabled ? "badgeOk" : "badgeWarn"}`}>Volume {b.volEnabled ? "running" : "stopped"}</span>
               </div>
+              <div style={{ marginTop: 10, display: "grid", gap: 6, gridTemplateColumns: "repeat(2, minmax(0, 1fr))" }}>
+                <div className="card" style={{ padding: "6px 8px" }}>
+                  <div style={{ fontSize: 11, opacity: 0.7 }}>Mid</div>
+                  <div style={{ fontSize: 13 }}>{mid}</div>
+                </div>
+                <div className="card" style={{ padding: "6px 8px" }}>
+                  <div style={{ fontSize: 11, opacity: 0.7 }}>Bid / Ask</div>
+                  <div style={{ fontSize: 13 }}>{bid} / {ask}</div>
+                </div>
+                <div className="card" style={{ padding: "6px 8px" }}>
+                  <div style={{ fontSize: 11, opacity: 0.7 }}>Free USDT</div>
+                  <div style={{ fontSize: 13 }}>{freeUsdt}</div>
+                </div>
+                <div className="card" style={{ padding: "6px 8px" }}>
+                  <div style={{ fontSize: 11, opacity: 0.7 }}>Free Base</div>
+                  <div style={{ fontSize: 13 }}>{freeBase}</div>
+                </div>
+              </div>
+              <div style={{ marginTop: 8, fontSize: 11, color: "var(--muted)" }}>
+                Updated: {updatedAt}
+              </div>
               <div style={{ marginTop: 12, display: "flex", gap: 8, flexWrap: "wrap" }}>
                 <Link href={`/bots/${b.id}`} className="btn">
                   Bot Overview
@@ -120,7 +150,7 @@ export default function Page() {
                 </Link>
               </div>
             </div>
-          ))
+          )})
         )}
       </div>
     </div>
@@ -132,4 +162,19 @@ function statusBadge(status: string) {
   if (status === "PAUSED") return "badgeWarn";
   if (status === "ERROR") return "badgeDanger";
   return "";
+}
+
+function formatNum(value: any) {
+  if (value === null || value === undefined) return "—";
+  const n = Number(value);
+  if (!Number.isFinite(n)) return String(value);
+  if (Math.abs(n) >= 1) return n.toFixed(4);
+  return n.toFixed(8);
+}
+
+function formatUpdated(value: any) {
+  if (!value) return "—";
+  const d = new Date(value);
+  if (Number.isNaN(d.getTime())) return String(value);
+  return d.toLocaleString();
 }
