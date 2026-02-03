@@ -241,13 +241,22 @@ export class P2BRestClient {
 
   async getOpenOrders(symbol: string): Promise<Order[]> {
     const exSymbol = toExchangeSymbol("p2b", symbol);
-    const json = await this.request<any>({
-      method: "POST",
-      path: "/api/v2/orders",
-      auth: "SIGNED",
-      body: { market: exSymbol }
-    });
-    let rows = this.extractOrderRows(json, exSymbol);
+    let rows: any[] = [];
+    try {
+      const json = await this.request<any>({
+        method: "POST",
+        path: "/api/v2/orders",
+        auth: "SIGNED",
+        body: { market: exSymbol }
+      });
+      rows = this.extractOrderRows(json, exSymbol);
+    } catch (err) {
+      const msg = String((err as Error)?.message ?? err);
+      if (!msg.includes("Unknown market")) {
+        throw err;
+      }
+    }
+
     if (rows.length === 0) {
       const jsonAll = await this.request<any>({
         method: "POST",
@@ -256,6 +265,17 @@ export class P2BRestClient {
         body: {}
       });
       rows = this.extractOrderRows(jsonAll, exSymbol);
+    }
+
+    if (rows.length > 0) {
+      const canon = fromExchangeSymbol("p2b", exSymbol).toUpperCase();
+      const exUpper = exSymbol.toUpperCase();
+      rows = rows.filter((row) => {
+        const m = String(row.market ?? "").toUpperCase();
+        if (!m) return true;
+        if (m === exUpper) return true;
+        return fromExchangeSymbol("p2b", m).toUpperCase() === canon;
+      });
     }
     return rows.map((row: any) => ({
       id: String(row.id ?? row.orderId ?? row.order_id ?? row.trade_id ?? ""),
