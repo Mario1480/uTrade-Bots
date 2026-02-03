@@ -1870,7 +1870,7 @@ app.get("/bots/:id/open-orders", requireAuth, requirePermission("bots.view"), as
   const rest = createPrivateRestClient(exchangeKey, cex);
   const orders = await rest.getOpenOrders(bot.symbol);
 
-  const normalized = orders.map((o) => ({
+  let normalized = orders.map((o) => ({
     id: o.id,
     side: o.side,
     price: o.price,
@@ -1878,6 +1878,26 @@ app.get("/bots/:id/open-orders", requireAuth, requirePermission("bots.view"), as
     clientOrderId: o.clientOrderId ?? null,
     createdAt: null
   }));
+
+  const missingIds = normalized.filter((o) => !o.clientOrderId && o.id).map((o) => o.id);
+  if (missingIds.length > 0) {
+    const manual = await prisma.manualTradeLog.findMany({
+      where: { botId: bot.id, exchangeOrderId: { in: missingIds } },
+      select: { exchangeOrderId: true, clientOrderId: true }
+    });
+    if (manual.length > 0) {
+      const map = new Map<string, string>();
+      for (const row of manual) {
+        if (row.exchangeOrderId && row.clientOrderId) {
+          map.set(row.exchangeOrderId, row.clientOrderId);
+        }
+      }
+      normalized = normalized.map((o) => ({
+        ...o,
+        clientOrderId: o.clientOrderId ?? map.get(o.id) ?? null
+      }));
+    }
+  }
 
   const isMm = (cid?: string | null) => {
     const c = cid ?? "";
