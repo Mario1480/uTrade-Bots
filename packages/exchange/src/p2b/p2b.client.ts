@@ -295,24 +295,15 @@ export class P2BRestClient {
         method: "POST",
         path: "/api/v2/orders",
         auth: "SIGNED",
-        body: known ? { market: exSymbol } : {}
+        body: { market: exSymbol }
       });
       rows = this.extractOrderRows(json, exSymbol);
     } catch (err) {
       const msg = String((err as Error)?.message ?? err);
-      if (!msg.includes("Unknown market")) {
-        throw err;
+      if (msg.includes("Unknown market")) {
+        return [];
       }
-    }
-
-    if (rows.length === 0) {
-      const jsonAll = await this.request<any>({
-        method: "POST",
-        path: "/api/v2/orders",
-        auth: "SIGNED",
-        body: {}
-      });
-      rows = this.extractOrderRows(jsonAll, exSymbol);
+      throw err;
     }
 
     if (rows.length > 0) {
