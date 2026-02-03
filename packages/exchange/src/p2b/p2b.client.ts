@@ -247,11 +247,19 @@ export class P2BRestClient {
       auth: "SIGNED",
       body: { market: exSymbol }
     });
-    const rows = Array.isArray(json?.result?.result)
-      ? json.result.result
-      : Array.isArray(json?.result)
-        ? json.result
-        : [];
+    const result = json?.result ?? json;
+    let rows: any[] = [];
+    if (Array.isArray(result?.result)) {
+      rows = result.result;
+    } else if (Array.isArray(result)) {
+      rows = result;
+    } else if (result && typeof result === "object") {
+      const byMarket =
+        (result as any)[exSymbol] ||
+        (result as any)[exSymbol.toUpperCase()] ||
+        (result as any)[exSymbol.toLowerCase()];
+      if (Array.isArray(byMarket)) rows = byMarket;
+    }
     return rows.map((row: any) => ({
       id: String(row.id),
       symbol: fromExchangeSymbol("p2b", row.market || exSymbol),
@@ -335,11 +343,19 @@ export class P2BRestClient {
       auth: "SIGNED",
       body: { market: exSymbol, limit }
     });
-    const rows = Array.isArray(json?.result?.result)
-      ? json.result.result
-      : Array.isArray(json?.result)
-        ? json.result
-        : [];
+    const result = json?.result ?? json;
+    let rows: any[] = [];
+    if (Array.isArray(result?.result)) {
+      rows = result.result;
+    } else if (Array.isArray(result)) {
+      rows = result;
+    } else if (result && typeof result === "object") {
+      const byMarket =
+        (result as any)[exSymbol] ||
+        (result as any)[exSymbol.toUpperCase()] ||
+        (result as any)[exSymbol.toLowerCase()];
+      if (Array.isArray(byMarket)) rows = byMarket;
+    }
     return rows
       .map((row: any) => {
         const price = parseNumber(row.price);
