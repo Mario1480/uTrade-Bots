@@ -151,7 +151,8 @@ export class P2BRestClient {
         const json = await this.parseJson(res, `${method} ${path}${query ? `?${query}` : ""}`);
         if (!res.ok || json?.success === false) {
           const msg = json?.message || json?.error || res.statusText || "request_failed";
-          const err = new Error(`P2B API error ${res.status}: ${msg} (${JSON.stringify(json)})`);
+          const marketHint = body.market ? ` market=${body.market}` : "";
+          const err = new Error(`P2B API error ${res.status}: ${msg}${marketHint} (${JSON.stringify(json)})`);
           if ((res.status === 429 || res.status >= 500) && attempt < maxRetries) {
             const backoff = Math.min(30_000, 1000 * Math.pow(2, attempt));
             await sleep(withJitter(backoff));
