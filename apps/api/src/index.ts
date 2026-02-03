@@ -1880,6 +1880,9 @@ app.get("/bots/:id/open-orders", requireAuth, requirePermission("bots.view"), as
     orders = await rest.getOpenOrders(bot.symbol);
   } catch (e: any) {
     const msg = String(e?.message ?? e);
+    if (msg.includes("Unknown market")) {
+      return res.json({ mm: [], vol: [], other: [], warning: msg });
+    }
     return res.status(400).json({ error: msg, mm: [], vol: [], other: [] });
   }
 
