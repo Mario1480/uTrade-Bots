@@ -1868,7 +1868,13 @@ app.get("/bots/:id/open-orders", requireAuth, requirePermission("bots.view"), as
   if (!cex?.apiKey || !cex?.apiSecret) return res.status(400).json({ error: "cex_config_missing" });
 
   const rest = createPrivateRestClient(exchangeKey, cex);
-  const orders = await rest.getOpenOrders(bot.symbol);
+  let orders: Order[] = [];
+  try {
+    orders = await rest.getOpenOrders(bot.symbol);
+  } catch (e: any) {
+    const msg = String(e?.message ?? e);
+    return res.status(400).json({ error: msg, mm: [], vol: [], other: [] });
+  }
 
   let normalized = orders.map((o) => ({
     id: o.id,
