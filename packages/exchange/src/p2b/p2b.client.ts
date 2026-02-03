@@ -44,6 +44,11 @@ function toMs(ts: number): number {
   return ts < 1e12 ? ts * 1000 : ts;
 }
 
+function splitCanonical(symbol: string) {
+  const parts = String(symbol).toUpperCase().split(/[/_-]/);
+  return { base: parts[0] || "", quote: parts[1] || "" };
+}
+
 export function buildP2BSignature(payloadBase64: string, secret: string) {
   return crypto.createHmac("sha512", secret).update(payloadBase64).digest("hex");
 }
@@ -173,7 +178,16 @@ export class P2BRestClient {
       return cached.symbols;
     }
     const json = await this.request<any[]>({ method: "GET", path: "/api/v2/public/markets" });
-    const list = Array.isArray(json?.result) ? json.result : Array.isArray(json) ? json : [];
+    const result = json?.result ?? json;
+    let list: any[] = [];
+    if (Array.isArray(result)) {
+      list = result;
+    } else if (result && typeof result === "object") {
+      list = Object.entries(result).map(([name, row]) => ({
+        name,
+        ...(row as Record<string, any>)
+      }));
+    }
     this.symbolCache.set("markets", { symbols: list, ts: Date.now() });
     return list;
   }
@@ -184,7 +198,18 @@ export class P2BRestClient {
     if (cached && Date.now() - cached.ts < this.metaTtlMs) return cached.meta;
 
     const list = await this.listMarketsRaw();
-    const row = list.find((x) => String(x.name || x.market || x.symbol).toUpperCase() === s.toUpperCase());
+    const { base, quote } = splitCanonical(symbol);
+    const row = list.find((x) => {
+      const name = String(x.name || x.market || x.symbol || "");
+      if (name && name.toUpperCase() === s.toUpperCase()) return true;
+      const stock = String(
+        x.stock || x.base || x.baseCurrency || x.base_currency || x.baseAsset || ""
+      ).toUpperCase();
+      const money = String(
+        x.money || x.quote || x.quoteCurrency || x.quote_currency || x.quoteAsset || ""
+      ).toUpperCase();
+      return stock === base && money === quote;
+    });
     if (!row) return undefined;
 
     const meta: SymbolMeta = {
@@ -200,8 +225,30 @@ export class P2BRestClient {
     return meta;
   }
 
+  private async resolveMarketSymbol(
+    symbol: string
+  ): Promise<{ symbol: string; known: boolean }> {
+    const fallback = toExchangeSymbol("p2b", symbol);
+    const { base, quote } = splitCanonical(symbol);
+    const list = await this.listMarketsRaw();
+    const row = list.find((x) => {
+      const name = String(x.name || x.market || x.symbol || "");
+      if (name && name.toUpperCase() === fallback.toUpperCase()) return true;
+      const stock = String(
+        x.stock || x.base || x.baseCurrency || x.base_currency || x.baseAsset || ""
+      ).toUpperCase();
+      const money = String(
+        x.money || x.quote || x.quoteCurrency || x.quote_currency || x.quoteAsset || ""
+      ).toUpperCase();
+      return stock === base && money === quote;
+    });
+    const resolved = row?.name || row?.market || row?.symbol;
+    if (resolved) return { symbol: String(resolved), known: true };
+    return { symbol: fallback, known: false };
+  }
+
   async getTicker(symbol: string): Promise<MidPrice> {
-    const exSymbol = toExchangeSymbol("p2b", symbol);
+    const { symbol: exSymbol } = await this.resolveMarketSymbol(symbol);
     const json = await this.request<any>({
       method: "GET",
       path: "/api/v2/public/ticker",
@@ -240,14 +287,14 @@ export class P2BRestClient {
   }
 
   async getOpenOrders(symbol: string): Promise<Order[]> {
-    const exSymbol = toExchangeSymbol("p2b", symbol);
+    const { symbol: exSymbol, known } = await this.resolveMarketSymbol(symbol);
     let rows: any[] = [];
     try {
       const json = await this.request<any>({
         method: "POST",
         path: "/api/v2/orders",
         auth: "SIGNED",
-        body: { market: exSymbol }
+        body: known ? { market: exSymbol } : {}
       });
       rows = this.extractOrderRows(json, exSymbol);
     } catch (err) {
@@ -303,7 +350,7 @@ export class P2BRestClient {
   }
 
   async placeOrder(q: Quote): Promise<Order> {
-    const exSymbol = toExchangeSymbol("p2b", q.symbol);
+    const { symbol: exSymbol } = await this.resolveMarketSymbol(q.symbol);
     if (q.type && q.type !== "limit") {
       throw new Error("[p2b] market orders not supported");
     }
@@ -345,7 +392,7 @@ export class P2BRestClient {
   }
 
   async cancelOrder(symbol: string, orderId: string): Promise<void> {
-    const exSymbol = toExchangeSymbol("p2b", symbol);
+    const { symbol: exSymbol } = await this.resolveMarketSymbol(symbol);
     await this.request({
       method: "POST",
       path: "/api/v2/order/cancel",
@@ -366,7 +413,7 @@ export class P2BRestClient {
     symbol: string,
     params?: { startTimeMs?: number; limit?: number }
   ): Promise<MyTrade[]> {
-    const exSymbol = toExchangeSymbol("p2b", symbol);
+    const { symbol: exSymbol } = await this.resolveMarketSymbol(symbol);
     const limit = Math.min(100, Math.max(1, params?.limit ?? 100));
     const json = await this.request<any>({
       method: "POST",
