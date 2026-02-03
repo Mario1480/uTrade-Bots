@@ -19,7 +19,7 @@ If it exists:
 If it does not exist:
   - Create docs/cex/<cex>/preflight.md and fill it from official docs first.
 
-CEX Name:
+CEX Name: 
 CEX API Docs:
 Base REST URL:
 Required API prefix (e.g. /api):

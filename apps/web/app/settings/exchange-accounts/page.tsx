@@ -37,7 +37,8 @@ type SubscriptionStatus = {
 const EXCHANGES = [
   { label: "Bitmart", value: "bitmart" },
   { label: "Coinstore", value: "coinstore" },
-  { label: "Pionex", value: "pionex" }
+  { label: "Pionex", value: "pionex" },
+  { label: "P2B", value: "p2b" }
 ];
 const DEFAULT_EXCHANGE = "bitmart";
 
@@ -484,6 +485,7 @@ function exchangeIcon(exchange: string) {
   if (key === "bitmart") return "🟡";
   if (key === "coinstore") return "🟦";
   if (key === "pionex") return "🟣";
+  if (key === "p2b") return "🟩";
   return "💱";
 }
 

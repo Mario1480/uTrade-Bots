@@ -12,7 +12,7 @@ import type {
   PriceSourceMode
 } from "@mm/core";
 import { splitSymbol } from "@mm/core";
-import { BitmartRestClient, CoinstoreRestClient } from "@mm/exchange";
+import { BitmartRestClient, CoinstoreRestClient, P2BRestClient } from "@mm/exchange";
 import { buildMmQuotes, VolumeScheduler } from "@mm/strategy";
 import type { VolumeState as VolState } from "@mm/strategy";
 import { RiskEngine } from "@mm/risk";
@@ -97,13 +97,16 @@ export async function runLoop(params: {
     const key = exchangeKey.toLowerCase();
     const cached = marketDataClients.get(key);
     if (cached) return cached;
-    let rest: BitmartRestClient | CoinstoreRestClient;
+    let rest: BitmartRestClient | CoinstoreRestClient | P2BRestClient;
     if (key === "bitmart") {
       const baseUrl = process.env.BITMART_BASE_URL || "https://api-cloud.bitmart.com";
       rest = new BitmartRestClient(baseUrl, "", "", "");
     } else if (key === "coinstore") {
       const baseUrl = process.env.COINSTORE_BASE_URL || "https://api.coinstore.com";
       rest = new CoinstoreRestClient(baseUrl, "", "");
+    } else if (key === "p2b") {
+      const baseUrl = process.env.P2B_BASE_URL || "https://api.p2pb2b.io";
+      rest = new P2BRestClient(baseUrl, "", "");
     } else {
       throw new Error(`Unsupported exchange: ${exchangeKey}`);
     }
