@@ -2324,7 +2324,7 @@ app.get("/exchanges/:exchange/symbols", requireAuth, async (req, res) => {
         (exchange === "pionex"
           ? "https://api.pionex.com"
           : exchange === "p2b"
-            ? "https://api.p2pb2b.io"
+            ? "https://api.p2pb2b.com"
             : "https://api.coinstore.com");
       const rest =
         exchange === "pionex"
@@ -2376,16 +2376,20 @@ app.get("/price-feed/:exchange/:symbol", requireAuth, requirePermission("bots.vi
   if (exchange !== "bitmart" && exchange !== "coinstore" && exchange !== "pionex" && exchange !== "p2b") {
     return res.status(400).json({ error: "unsupported_exchange" });
   }
-  const rest = createPublicRestClient(exchange);
-  const mid = await rest.getTicker(symbol);
-  res.json({
-    exchange,
-    symbol,
-    mid: mid.mid,
-    bid: mid.bid ?? null,
-    ask: mid.ask ?? null,
-    ts: mid.ts
-  });
+  try {
+    const rest = createPublicRestClient(exchange);
+    const mid = await rest.getTicker(symbol);
+    res.json({
+      exchange,
+      symbol,
+      mid: mid.mid,
+      bid: mid.bid ?? null,
+      ask: mid.ask ?? null,
+      ts: mid.ts
+    });
+  } catch (e: any) {
+    return res.status(400).json({ error: String(e?.message ?? e) });
+  }
 });
 
 app.get("/settings/cex/:exchange", requireAuth, requirePermission("exchange_keys.view_present"), requireReauth, async (req, res) => {
