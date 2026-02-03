@@ -105,7 +105,7 @@ export async function runLoop(params: {
       const baseUrl = process.env.COINSTORE_BASE_URL || "https://api.coinstore.com";
       rest = new CoinstoreRestClient(baseUrl, "", "");
     } else if (key === "p2b") {
-      const baseUrl = process.env.P2B_BASE_URL || "https://api.p2pb2b.io";
+      const baseUrl = process.env.P2B_BASE_URL || "https://api.p2pb2b.com";
       rest = new P2BRestClient(baseUrl, "", "");
     } else {
       throw new Error(`Unsupported exchange: ${exchangeKey}`);

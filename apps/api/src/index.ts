@@ -65,7 +65,7 @@ function getExchangeBaseUrl(exchange: string): string | null {
   if (key === "bitmart") return process.env.BITMART_BASE_URL || "https://api-cloud.bitmart.com";
   if (key === "coinstore") return process.env.COINSTORE_BASE_URL || "https://api.coinstore.com";
   if (key === "pionex") return process.env.PIONEX_BASE_URL || "https://api.pionex.com";
-  if (key === "p2b") return process.env.P2B_BASE_URL || "https://api.p2pb2b.io";
+  if (key === "p2b") return process.env.P2B_BASE_URL || "https://api.p2pb2b.com";
   return null;
 }
 

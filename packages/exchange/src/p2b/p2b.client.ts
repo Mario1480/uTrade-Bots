@@ -104,7 +104,7 @@ export class P2BRestClient {
         if (!this.apiKey || !this.apiSecret) {
           throw new Error("[p2b] missing api credentials");
         }
-        const payload = { request: path, nonce: nowMs(), ...body };
+        const payload = { request: path, nonce: String(nowMs()), ...body };
         payloadStr = JSON.stringify(payload);
         const payloadBase64 = Buffer.from(payloadStr).toString("base64");
         headers["X-TXC-APIKEY"] = this.apiKey;
@@ -217,14 +217,26 @@ export class P2BRestClient {
 
   async getBalances(): Promise<Balance[]> {
     const json = await this.request<any>({ method: "POST", path: "/api/v2/account/balances", auth: "SIGNED" });
-    const list = Array.isArray(json?.result) ? json.result : Array.isArray(json) ? json : [];
-    return list
-      .map((b: any) => ({
-        asset: String(b.currency || b.asset || "").toUpperCase(),
-        free: parseNumber(b.available),
-        locked: parseNumber(b.freeze)
-      }))
-      .filter((b: Balance) => b.asset);
+    const result = json?.result ?? json;
+    if (Array.isArray(result)) {
+      return result
+        .map((b: any) => ({
+          asset: String(b.currency || b.asset || "").toUpperCase(),
+          free: parseNumber(b.available),
+          locked: parseNumber(b.freeze)
+        }))
+        .filter((b: Balance) => b.asset);
+    }
+
+    if (result && typeof result === "object") {
+      return Object.entries(result).map(([asset, b]: any) => ({
+        asset: String(asset).toUpperCase(),
+        free: parseNumber(b?.available),
+        locked: parseNumber(b?.freeze)
+      }));
+    }
+
+    return [];
   }
 
   async getOpenOrders(symbol: string): Promise<Order[]> {

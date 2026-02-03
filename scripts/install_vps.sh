@@ -97,6 +97,7 @@ BITMART_BASE_URL=https://api-cloud.bitmart.com
 COINSTORE_BASE_URL=https://api.coinstore.com
 PIONEX_BASE_URL=https://api.pionex.com
 DEXSCREENER_BASE_URL=https://api.dexscreener.com
+P2B_BASE_URL=https://api.p2pb2b.com
 
 SMTP_HOST=smtp.hostinger.com
 SMTP_PORT=465
