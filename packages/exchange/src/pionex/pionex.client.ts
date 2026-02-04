@@ -54,19 +54,6 @@ function sanitizeClientOrderId(input?: string): string | undefined {
   return `${cleaned.slice(0, 55)}${hash}`;
 }
 
-function isPionexSymbolEnabled(row: any): boolean {
-  const enabled = row?.enable;
-  if (typeof enabled === "boolean") return enabled;
-  if (typeof enabled === "number") return enabled !== 0;
-  if (typeof enabled === "string") {
-    const v = enabled.trim().toLowerCase();
-    return !(v === "false" || v === "0" || v === "disabled");
-  }
-  const state = String(row?.state ?? row?.status ?? "").toUpperCase();
-  if (state) return ["ONLINE", "TRADING", "ENABLED", "ACTIVE"].includes(state);
-  return true;
-}
-
 function buildQueryParams(params: Record<string, string | number | undefined>) {
   const entries = Object.entries(params).filter(([, v]) => {
     if (v === undefined || v === null || v === "") return false;
@@ -309,7 +296,6 @@ export class PionexRestClient {
         const type = String(s?.type ?? s?.symbolType ?? "").toUpperCase();
         const state = String(s?.state ?? s?.status ?? "").toUpperCase();
         if (type && type !== "SPOT") return false;
-        if (!isPionexSymbolEnabled(s)) return false;
         if (state && !["ONLINE", "TRADING", "ENABLED", "ACTIVE"].includes(state)) return false;
         return true;
       })
@@ -459,11 +445,6 @@ export class PionexRestClient {
     const symbol = normalizeSymbol(q.symbol);
     const s = toExchangeSymbol("pionex", symbol);
     const meta = await this.getSymbolMeta(symbol);
-    const symbols = await this.listSymbolsRaw();
-    const row = symbols.find((x) => String(x?.symbol ?? "").toUpperCase() === s.toUpperCase());
-    if (row && !isPionexSymbolEnabled(row)) {
-      throw new Error(`[pionex] symbol disabled: ${s}`);
-    }
 
     const clientOrderId = sanitizeClientOrderId(q.clientOrderId);
     const isMarket = q.type === "market";
