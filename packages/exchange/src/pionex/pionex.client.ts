@@ -310,18 +310,44 @@ export class PionexRestClient {
     const cached = this.tickerCache.get(s);
     if (cached && Date.now() - cached.ts < this.tickerTtlMs) return cached.mid;
     try {
-      const json = await this.request<any>({
+      // Prefer dedicated book ticker endpoint for bid/ask, then fallback to generic tickers.
+      let bid = 0;
+      let ask = 0;
+      let last = 0;
+
+      const bookJson = await this.request<any>({
         method: "GET",
-        path: "/api/v1/market/tickers",
+        path: "/api/v1/market/bookTickers",
         params: { symbol: s, type: "SPOT" },
         auth: "NONE"
       });
-      const rows: any[] = Array.isArray(json?.data?.tickers) ? json.data.tickers : [];
-      const t = rows.find((x) => String(x.symbol) === s) ?? rows[0] ?? {};
-      const last = Number(t.close ?? t.last ?? t.lastPrice ?? 0);
-      const bid = Number(t.bid ?? t.bestBid ?? 0);
-      const ask = Number(t.ask ?? t.bestAsk ?? 0);
-      const mid = last || (bid && ask ? (bid + ask) / 2 : 0);
+      const bookRows: any[] = Array.isArray(bookJson?.data?.tickers) ? bookJson.data.tickers : [];
+      const bookTicker =
+        bookRows.find((x) => String(x?.symbol ?? "").toUpperCase() === s.toUpperCase()) ??
+        bookRows[0] ??
+        {};
+      bid = Number(bookTicker.bidPrice ?? bookTicker.bid ?? bookTicker.bestBid ?? 0);
+      ask = Number(bookTicker.askPrice ?? bookTicker.ask ?? bookTicker.bestAsk ?? 0);
+
+      if (!(bid > 0 && ask > 0)) {
+        const json = await this.request<any>({
+          method: "GET",
+          path: "/api/v1/market/tickers",
+          params: { symbol: s, type: "SPOT" },
+          auth: "NONE"
+        });
+        const rows: any[] = Array.isArray(json?.data?.tickers) ? json.data.tickers : [];
+        const t =
+          rows.find((x) => String(x?.symbol ?? "").toUpperCase() === s.toUpperCase()) ??
+          rows[0] ??
+          {};
+        last = Number(t.close ?? t.last ?? t.lastPrice ?? 0);
+        if (!(bid > 0)) bid = Number(t.bid ?? t.bestBid ?? t.bidPrice ?? 0);
+        if (!(ask > 0)) ask = Number(t.ask ?? t.bestAsk ?? t.askPrice ?? 0);
+      }
+
+      const mid = bid > 0 && ask > 0 ? (bid + ask) / 2 : last;
+      if (!(last > 0) && mid > 0) last = mid;
       const out = { mid, bid, ask, last, ts: nowMs() };
       if (mid > 0) this.lastGoodTicker.set(s, out);
       this.tickerCache.set(s, { mid: out, ts: Date.now() });
