@@ -10,6 +10,10 @@ Add a new CEX integration with minimal disruption. The adapter must support:
 - fills/trades: getMyTrades for fill-based volume counter
 - clientOrderId preservation (critical for mm-/vol- prefixes)
 
+CEX: MEXC
+
+Check: /docs/cex/<cex>/integration-playbook.md
+
 PRE-FLIGHT (MUST FILL BEFORE CODING)
 Before coding, check for an existing preflight file:
 - docs/cex/<cex>/preflight.md
@@ -19,7 +23,6 @@ If it exists:
 If it does not exist:
   - Create docs/cex/<cex>/preflight.md and fill it from official docs first.
 
-CEX Name: 
 CEX API Docs:
 Base REST URL:
 Required API prefix (e.g. /api):
