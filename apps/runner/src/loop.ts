@@ -12,7 +12,7 @@ import type {
   PriceSourceMode
 } from "@mm/core";
 import { splitSymbol } from "@mm/core";
-import { BitmartRestClient, CoinstoreRestClient, P2BRestClient } from "@mm/exchange";
+import { BitmartRestClient, CoinstoreRestClient, MexcRestClient, P2BRestClient } from "@mm/exchange";
 import { buildMmQuotes, VolumeScheduler } from "@mm/strategy";
 import type { VolumeState as VolState } from "@mm/strategy";
 import { RiskEngine } from "@mm/risk";
@@ -97,7 +97,7 @@ export async function runLoop(params: {
     const key = exchangeKey.toLowerCase();
     const cached = marketDataClients.get(key);
     if (cached) return cached;
-    let rest: BitmartRestClient | CoinstoreRestClient | P2BRestClient;
+    let rest: BitmartRestClient | CoinstoreRestClient | P2BRestClient | MexcRestClient;
     if (key === "bitmart") {
       const baseUrl = process.env.BITMART_BASE_URL || "https://api-cloud.bitmart.com";
       rest = new BitmartRestClient(baseUrl, "", "", "");
@@ -107,6 +107,9 @@ export async function runLoop(params: {
     } else if (key === "p2b") {
       const baseUrl = process.env.P2B_BASE_URL || "https://api.p2pb2b.com";
       rest = new P2BRestClient(baseUrl, "", "");
+    } else if (key === "mexc") {
+      const baseUrl = process.env.MEXC_BASE_URL || "https://api.mexc.com";
+      rest = new MexcRestClient(baseUrl, "", "");
     } else {
       throw new Error(`Unsupported exchange: ${exchangeKey}`);
     }

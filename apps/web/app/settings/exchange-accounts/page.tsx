@@ -38,7 +38,8 @@ const EXCHANGES = [
   { label: "Bitmart", value: "bitmart" },
   { label: "Coinstore", value: "coinstore" },
   { label: "Pionex", value: "pionex" },
-  { label: "P2B", value: "p2b" }
+  { label: "P2B", value: "p2b" },
+  { label: "MEXC", value: "mexc" }
 ];
 const DEFAULT_EXCHANGE = "bitmart";
 
@@ -361,7 +362,7 @@ export default function ExchangeAccountsPage() {
           </div>
         </div>
 
-        <div>
+        <div style={{ display: "grid", gap: 10 }}>
           {!unlocked && (
             <Section title="Unlock to edit">
               <div style={{ fontSize: 13, opacity: 0.85, marginBottom: 10 }}>
@@ -486,6 +487,7 @@ function exchangeIcon(exchange: string) {
   if (key === "coinstore") return "🟦";
   if (key === "pionex") return "🟣";
   if (key === "p2b") return "🟩";
+  if (key === "mexc") return "🟠";
   return "💱";
 }
 

@@ -1,5 +1,5 @@
 import "dotenv/config";
-import { BitmartRestClient, CoinstoreRestClient, PionexRestClient, P2BRestClient } from "@mm/exchange";
+import { BitmartRestClient, CoinstoreRestClient, MexcRestClient, PionexRestClient, P2BRestClient } from "@mm/exchange";
 import type { Exchange } from "@mm/exchange";
 import { BotStateMachine } from "./state-machine.js";
 import { runLoop } from "./loop.js";
@@ -33,6 +33,7 @@ function getExchangeBaseUrl(exchange: string): string | null {
   if (key === "coinstore") return process.env.COINSTORE_BASE_URL || "https://api.coinstore.com";
   if (key === "pionex") return process.env.PIONEX_BASE_URL || "https://api.pionex.com";
   if (key === "p2b") return process.env.P2B_BASE_URL || "https://api.p2pb2b.com";
+  if (key === "mexc") return process.env.MEXC_BASE_URL || "https://api.mexc.com";
   return null;
 }
 
@@ -47,7 +48,13 @@ async function startBotLoop(botId: string, tickMs: number) {
       const symbol = bot.symbol;
 
       const exchangeKey = bot.exchange.toLowerCase();
-      if (exchangeKey !== "bitmart" && exchangeKey !== "coinstore" && exchangeKey !== "pionex" && exchangeKey !== "p2b") {
+      if (
+        exchangeKey !== "bitmart" &&
+        exchangeKey !== "coinstore" &&
+        exchangeKey !== "pionex" &&
+        exchangeKey !== "p2b" &&
+        exchangeKey !== "mexc"
+      ) {
         const reason = `UNSUPPORTED_EXCHANGE:${bot.exchange}`;
         await writeRuntime({
           botId,
@@ -84,6 +91,8 @@ async function startBotLoop(botId: string, tickMs: number) {
             ? new CoinstoreRestClient(baseUrl, cex.apiKey, cex.apiSecret)
             : exchangeKey === "p2b"
               ? new P2BRestClient(baseUrl, cex.apiKey, cex.apiSecret)
+              : exchangeKey === "mexc"
+                ? new MexcRestClient(baseUrl, cex.apiKey, cex.apiSecret)
               : new PionexRestClient(baseUrl, cex.apiKey, cex.apiSecret);
 
       if (exchangeKey === "pionex") {

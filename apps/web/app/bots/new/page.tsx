@@ -143,6 +143,7 @@ export default function NewBotPage() {
               <option value="coinstore">Coinstore</option>
               <option value="pionex">Pionex</option>
               <option value="p2b">P2B</option>
+              <option value="mexc">MEXC</option>
             </select>
           </label>
 

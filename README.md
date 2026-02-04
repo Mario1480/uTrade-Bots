@@ -8,7 +8,7 @@ Webbasierter Crypto Market-Maker mit Market-Making‑Strategien, Volume‑Bot, M
 
 - Market Making (Spread, Levels, Inventory Skew, Jitter)
 - Volume Bot (fill‑basiert, echte Trades)
-- Multi‑CEX Architektur (Bitmart, Coinstore, Pionex)
+- Multi‑CEX Architektur (Bitmart, Coinstore, Pionex, P2B, MEXC)
 - Web UI (Next.js App Router)
 - API (Node.js + Express + Prisma)
 - Runner Service (Trading Loops)

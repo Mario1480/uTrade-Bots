@@ -38,10 +38,13 @@ export const KucoinSymbolAdapter: SymbolAdapter = {
 export const MexcSymbolAdapter: SymbolAdapter = {
   toExchangeSymbol(canonical: string): string {
     const { base, quote } = splitSymbol(canonical);
-    return `${base}_${quote}`;
+    return `${base}${quote}`;
   },
   fromExchangeSymbol(exchangeSymbol: string): string {
-    return normalizeSymbol(exchangeSymbol.replace("_", "/"));
+    const raw = String(exchangeSymbol);
+    if (raw.includes("_")) return normalizeSymbol(raw.replace("_", "/"));
+    if (raw.includes("-")) return normalizeSymbol(raw.replace("-", "/"));
+    return normalizeSymbol(raw);
   }
 };
 
