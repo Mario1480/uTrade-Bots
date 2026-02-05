@@ -45,7 +45,7 @@ Status: draft (needs validation against live responses)
   - `/v4/open-order`: 10/s/apikey citeturn11view6
   - `/v4/open-order` (cancel): 10/s/apikey citeturn11view9
   - `/v4/order`: 20/s/apikey citeturn11view7
-  - `/spot/v4/balances`: 10/s/apikey citeturn11view10
+  - `/v4/balances`: 10/s/apikey citeturn11view10
 
 ## Symbols / Precision
 - Symbol format in examples: lowercase with underscore, e.g. `btc_usdt`. citeturn11view12turn11view11
