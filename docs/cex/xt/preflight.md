@@ -70,14 +70,14 @@ Status: draft (needs validation against live responses)
 
 ### Private
 - Balances:
-  - GET /spot/v4/balances (list of assets) citeturn11view10
+  - GET /v4/balances (list of assets) citeturn11view10
 - Open orders:
   - GET /v4/open-order citeturn11view6
 - Place order:
   - POST /v4/order citeturn11view7
   - Params: symbol, side, type, timeInForce, bizType, price, quantity, quoteQty, clientOrderId
 - Cancel order:
-  - DELETE /spot/v4/order/{orderId} citeturn8search2
+  - DELETE /v4/order/{orderId} citeturn8search2
 - Cancel all:
   - DELETE /v4/open-order (JSON body includes bizType, symbol, side) citeturn11view9
 - Trades / fills:
