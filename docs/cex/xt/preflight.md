@@ -102,4 +102,4 @@ Status: draft (needs validation against live responses)
 - [ ] Confirm order placement parameters & response
 - [ ] Confirm trade history includes order_id + timestamp
 - [ ] Confirm rate limits + ban behavior
-- [ ] Confirm correct private path prefix (`/v4` vs `/spot/v4`)
+- [ ] Confirm correct private path prefix
