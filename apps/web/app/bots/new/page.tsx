@@ -145,6 +145,7 @@ export default function NewBotPage() {
               <option value="pionex">Pionex</option>
               <option value="p2b">P2B</option>
               <option value="mexc">MEXC</option>
+              <option value="xt">XT</option>
             </select>
           </label>
 

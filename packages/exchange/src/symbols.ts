@@ -58,6 +58,16 @@ export const CoinstoreSymbolAdapter: SymbolAdapter = {
   }
 };
 
+export const XTSymbolAdapter: SymbolAdapter = {
+  toExchangeSymbol(canonical: string): string {
+    const { base, quote } = splitSymbol(canonical);
+    return `${base}_${quote}`.toLowerCase();
+  },
+  fromExchangeSymbol(exchangeSymbol: string): string {
+    return normalizeSymbol(String(exchangeSymbol).replace("_", "/"));
+  }
+};
+
 export const P2BSymbolAdapter: SymbolAdapter = {
   toExchangeSymbol(canonical: string): string {
     const { base, quote } = splitSymbol(canonical);
@@ -99,6 +109,8 @@ export function getSymbolAdapter(exchange: string): SymbolAdapter {
       return KucoinSymbolAdapter;
     case "mexc":
       return MexcSymbolAdapter;
+    case "xt":
+      return XTSymbolAdapter;
     case "coinstore":
       return CoinstoreSymbolAdapter;
     case "p2b":

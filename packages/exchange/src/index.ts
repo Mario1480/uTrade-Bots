@@ -7,4 +7,5 @@ export * from "./pionex/pionex.client.js";
 export * from "./p2b/p2b.client.js";
 export * from "./mexc/mexc.client.js";
 export * from "./binance/binance.client.js";
+export * from "./xt/xt.client.js";
 export * from "./symbols.js";

@@ -40,7 +40,8 @@ const EXCHANGES = [
   { label: "Coinstore", value: "coinstore" },
   { label: "Pionex", value: "pionex" },
   { label: "P2B", value: "p2b" },
-  { label: "MEXC", value: "mexc" }
+  { label: "MEXC", value: "mexc" },
+  { label: "XT", value: "xt" }
 ];
 const DEFAULT_EXCHANGE = "bitmart";
 
@@ -490,6 +491,7 @@ function exchangeIcon(exchange: string) {
   if (key === "pionex") return "🟣";
   if (key === "p2b") return "🟩";
   if (key === "mexc") return "🟠";
+  if (key === "xt") return "🟧";
   return "💱";
 }
 

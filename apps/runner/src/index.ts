@@ -1,5 +1,5 @@
 import "dotenv/config";
-import { BinanceRestClient, BitmartRestClient, CoinstoreRestClient, MexcRestClient, PionexRestClient, P2BRestClient } from "@mm/exchange";
+import { BinanceRestClient, BitmartRestClient, CoinstoreRestClient, MexcRestClient, XtRestClient, PionexRestClient, P2BRestClient } from "@mm/exchange";
 import type { Exchange } from "@mm/exchange";
 import { BotStateMachine } from "./state-machine.js";
 import { runLoop } from "./loop.js";
@@ -35,6 +35,7 @@ function getExchangeBaseUrl(exchange: string): string | null {
   if (key === "pionex") return process.env.PIONEX_BASE_URL || "https://api.pionex.com";
   if (key === "p2b") return process.env.P2B_BASE_URL || "https://api.p2pb2b.com";
   if (key === "mexc") return process.env.MEXC_BASE_URL || "https://api.mexc.com";
+  if (key === "xt") return process.env.XT_BASE_URL || "https://sapi.xt.com";
   return null;
 }
 
@@ -55,7 +56,8 @@ async function startBotLoop(botId: string, tickMs: number) {
         exchangeKey !== "coinstore" &&
         exchangeKey !== "pionex" &&
         exchangeKey !== "p2b" &&
-        exchangeKey !== "mexc"
+        exchangeKey !== "mexc" &&
+        exchangeKey !== "xt"
       ) {
         const reason = `UNSUPPORTED_EXCHANGE:${bot.exchange}`;
         await writeRuntime({
@@ -97,6 +99,8 @@ async function startBotLoop(botId: string, tickMs: number) {
               ? new P2BRestClient(baseUrl, cex.apiKey, cex.apiSecret)
               : exchangeKey === "mexc"
                 ? new MexcRestClient(baseUrl, cex.apiKey, cex.apiSecret)
+              : exchangeKey === "xt"
+                ? new XtRestClient(baseUrl, cex.apiKey, cex.apiSecret)
               : new PionexRestClient(baseUrl, cex.apiKey, cex.apiSecret);
 
       if (exchangeKey === "pionex") {

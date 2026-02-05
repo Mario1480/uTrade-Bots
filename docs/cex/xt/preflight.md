@@ -83,8 +83,6 @@ Status: draft (needs validation against live responses)
 - Trades / fills:
   - GET /v4/trade citeturn11view8
 
-**Path prefix note:** docs show private endpoints both as `/v4/...` and `/spot/v4/...` (e.g. balances list uses `/spot/v4/balances`, while order/open-order/trade examples use `/v4/...`). Confirm the correct prefix in live tests before coding. citeturn11view7turn11view6turn11view8turn11view10
-
 ## ClientOrderId Support
 - `clientOrderId` supported in submit order; returned in open orders. citeturn11view7turn11view6
 
@@ -102,4 +100,4 @@ Status: draft (needs validation against live responses)
 - [ ] Confirm order placement parameters & response
 - [ ] Confirm trade history includes order_id + timestamp
 - [ ] Confirm rate limits + ban behavior
-- [ ] Confirm correct private path prefix
+- [x] Confirm correct private path prefix (`/v4`)

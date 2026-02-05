@@ -96,9 +96,11 @@ CORS_ORIGINS=${WEB_ORIGIN},http://localhost:3000
 BITMART_BASE_URL=https://api-cloud.bitmart.com
 COINSTORE_BASE_URL=https://api.coinstore.com
 PIONEX_BASE_URL=https://api.pionex.com
+BINANCE_BASE_URL=https://api.binance.com
 DEXSCREENER_BASE_URL=https://api.dexscreener.com
 P2B_BASE_URL=https://api.p2pb2b.com
 MEXC_BASE_URL=https://api.mexc.com
+XT_BASE_URL=https://sapi.xt.com
 
 SMTP_HOST=smtp.hostinger.com
 SMTP_PORT=465
