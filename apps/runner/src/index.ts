@@ -1,5 +1,5 @@
 import "dotenv/config";
-import { BitmartRestClient, CoinstoreRestClient, MexcRestClient, PionexRestClient, P2BRestClient } from "@mm/exchange";
+import { BinanceRestClient, BitmartRestClient, CoinstoreRestClient, MexcRestClient, PionexRestClient, P2BRestClient } from "@mm/exchange";
 import type { Exchange } from "@mm/exchange";
 import { BotStateMachine } from "./state-machine.js";
 import { runLoop } from "./loop.js";
@@ -29,6 +29,7 @@ function sleep(ms: number): Promise<void> {
 
 function getExchangeBaseUrl(exchange: string): string | null {
   const key = exchange.toLowerCase();
+  if (key === "binance") return process.env.BINANCE_BASE_URL || "https://api.binance.com";
   if (key === "bitmart") return process.env.BITMART_BASE_URL || "https://api-cloud.bitmart.com";
   if (key === "coinstore") return process.env.COINSTORE_BASE_URL || "https://api.coinstore.com";
   if (key === "pionex") return process.env.PIONEX_BASE_URL || "https://api.pionex.com";
@@ -49,6 +50,7 @@ async function startBotLoop(botId: string, tickMs: number) {
 
       const exchangeKey = bot.exchange.toLowerCase();
       if (
+        exchangeKey !== "binance" &&
         exchangeKey !== "bitmart" &&
         exchangeKey !== "coinstore" &&
         exchangeKey !== "pionex" &&
@@ -85,7 +87,9 @@ async function startBotLoop(botId: string, tickMs: number) {
 
       const cex = await loadCexConfig(bot.exchange);
       const rest =
-        exchangeKey === "bitmart"
+        exchangeKey === "binance"
+          ? new BinanceRestClient(baseUrl, cex.apiKey, cex.apiSecret)
+          : exchangeKey === "bitmart"
           ? new BitmartRestClient(baseUrl, cex.apiKey, cex.apiSecret, cex.apiMemo ?? "")
           : exchangeKey === "coinstore"
             ? new CoinstoreRestClient(baseUrl, cex.apiKey, cex.apiSecret)

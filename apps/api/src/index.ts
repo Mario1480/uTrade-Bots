@@ -8,6 +8,7 @@ import cookieParser from "cookie-parser";
 import type { Prisma } from "@prisma/client";
 import { prisma } from "@mm/db";
 import {
+  BinanceRestClient,
   BitmartRestClient,
   CoinstoreRestClient,
   MexcRestClient,
@@ -64,6 +65,7 @@ const LICENSE_FEATURE_KEYS = ["priceSupport", "priceFollow", "aiRecommendations"
 const METRICS_RETENTION_DAYS = Math.max(1, Number(process.env.METRICS_RETENTION_DAYS ?? "7"));
 const METRICS_CLEANUP_KEY = "metrics.cleanup.lastRun";
 const METRICS_CLEANUP_INTERVAL_MS = 12 * 60 * 60_000;
+const SUPPORTED_EXCHANGES = ["binance", "bitmart", "coinstore", "pionex", "p2b", "mexc"] as const;
 
 type MetricsRangeKey = "1h" | "6h" | "24h" | "7d" | "30d";
 const METRICS_RANGES: Record<MetricsRangeKey, { lookbackMs: number; stepSec: number }> = {
@@ -74,8 +76,13 @@ const METRICS_RANGES: Record<MetricsRangeKey, { lookbackMs: number; stepSec: num
   "30d": { lookbackMs: 30 * 24 * 60 * 60_000, stepSec: 900 }
 };
 
+function isSupportedExchange(exchange: string) {
+  return SUPPORTED_EXCHANGES.includes(exchange.toLowerCase() as (typeof SUPPORTED_EXCHANGES)[number]);
+}
+
 function getExchangeBaseUrl(exchange: string): string | null {
   const key = exchange.toLowerCase();
+  if (key === "binance") return process.env.BINANCE_BASE_URL || "https://api.binance.com";
   if (key === "bitmart") return process.env.BITMART_BASE_URL || "https://api-cloud.bitmart.com";
   if (key === "coinstore") return process.env.COINSTORE_BASE_URL || "https://api.coinstore.com";
   if (key === "pionex") return process.env.PIONEX_BASE_URL || "https://api.pionex.com";
@@ -91,6 +98,9 @@ function createPrivateRestClient(exchange: string, cex: { apiKey?: string | null
   if (!cex?.apiKey || !cex?.apiSecret) throw new Error("cex_config_missing");
   if (key === "bitmart") {
     return new BitmartRestClient(baseUrl, cex.apiKey, cex.apiSecret, cex.apiMemo ?? "");
+  }
+  if (key === "binance") {
+    return new BinanceRestClient(baseUrl, cex.apiKey, cex.apiSecret);
   }
   if (key === "coinstore") {
     return new CoinstoreRestClient(baseUrl, cex.apiKey, cex.apiSecret);
@@ -111,6 +121,7 @@ function createPublicRestClient(exchange: string) {
   const key = exchange.toLowerCase();
   const baseUrl = getExchangeBaseUrl(key);
   if (!baseUrl) throw new Error("unsupported_exchange");
+  if (key === "binance") return new BinanceRestClient(baseUrl, "", "");
   if (key === "bitmart") return new BitmartRestClient(baseUrl, "", "", "");
   if (key === "coinstore") return new CoinstoreRestClient(baseUrl, "", "");
   if (key === "pionex") return new PionexRestClient(baseUrl, "", "");
@@ -1879,13 +1890,7 @@ app.get("/bots/:id/open-orders", requireAuth, requirePermission("bots.view"), as
   const bot = await prisma.bot.findFirst({ where: { id: req.params.id, workspaceId } });
   if (!bot) return res.status(404).json({ error: "not_found" });
   const exchangeKey = bot.exchange.toLowerCase();
-  if (
-    exchangeKey !== "bitmart" &&
-    exchangeKey !== "coinstore" &&
-    exchangeKey !== "pionex" &&
-    exchangeKey !== "p2b" &&
-    exchangeKey !== "mexc"
-  ) {
+  if (!isSupportedExchange(exchangeKey)) {
     return res.status(400).json({ error: "unsupported_exchange" });
   }
 
@@ -1955,13 +1960,7 @@ app.post("/bots/:id/manual/limit", requireAuth, requirePermission("trading.manua
   const bot = await prisma.bot.findFirst({ where: { id: req.params.id, workspaceId } });
   if (!bot) return res.status(404).json({ error: "not_found" });
   const exchangeKey = bot.exchange.toLowerCase();
-  if (
-    exchangeKey !== "bitmart" &&
-    exchangeKey !== "coinstore" &&
-    exchangeKey !== "pionex" &&
-    exchangeKey !== "p2b" &&
-    exchangeKey !== "mexc"
-  ) {
+  if (!isSupportedExchange(exchangeKey)) {
     return res.status(400).json({ error: "unsupported_exchange" });
   }
 
@@ -2064,13 +2063,7 @@ app.post("/bots/:id/manual/market", requireAuth, requirePermission("trading.manu
   const bot = await prisma.bot.findFirst({ where: { id: req.params.id, workspaceId } });
   if (!bot) return res.status(404).json({ error: "not_found" });
   const exchangeKey = bot.exchange.toLowerCase();
-  if (
-    exchangeKey !== "bitmart" &&
-    exchangeKey !== "coinstore" &&
-    exchangeKey !== "pionex" &&
-    exchangeKey !== "p2b" &&
-    exchangeKey !== "mexc"
-  ) {
+  if (!isSupportedExchange(exchangeKey)) {
     return res.status(400).json({ error: "unsupported_exchange" });
   }
 
@@ -2165,13 +2158,7 @@ app.post("/bots/:id/manual/cancel", requireAuth, requirePermission("trading.manu
   const bot = await prisma.bot.findFirst({ where: { id: req.params.id, workspaceId } });
   if (!bot) return res.status(404).json({ error: "not_found" });
   const exchangeKey = bot.exchange.toLowerCase();
-  if (
-    exchangeKey !== "bitmart" &&
-    exchangeKey !== "coinstore" &&
-    exchangeKey !== "pionex" &&
-    exchangeKey !== "p2b" &&
-    exchangeKey !== "mexc"
-  ) {
+  if (!isSupportedExchange(exchangeKey)) {
     return res.status(400).json({ error: "unsupported_exchange" });
   }
 
@@ -2332,13 +2319,7 @@ app.post("/bots/:id/preview/mm", requireAuth, requirePermission("bots.edit_confi
 
 app.get("/exchanges/:exchange/symbols", requireAuth, async (req, res) => {
   const exchange = req.params.exchange.toLowerCase();
-  if (
-    exchange !== "bitmart" &&
-    exchange !== "coinstore" &&
-    exchange !== "pionex" &&
-    exchange !== "p2b" &&
-    exchange !== "mexc"
-  ) {
+  if (!isSupportedExchange(exchange)) {
     return res.status(400).json({ error: "unsupported_exchange" });
   }
 
@@ -2366,21 +2347,25 @@ app.get("/exchanges/:exchange/symbols", requireAuth, async (req, res) => {
     try {
       const baseUrl =
         getExchangeBaseUrl(exchange) ||
-        (exchange === "pionex"
-          ? "https://api.pionex.com"
-          : exchange === "p2b"
-            ? "https://api.p2pb2b.com"
-            : exchange === "mexc"
-              ? "https://api.mexc.com"
-              : "https://api.coinstore.com");
+        (exchange === "binance"
+          ? "https://api.binance.com"
+          : exchange === "pionex"
+            ? "https://api.pionex.com"
+            : exchange === "p2b"
+              ? "https://api.p2pb2b.com"
+              : exchange === "mexc"
+                ? "https://api.mexc.com"
+                : "https://api.coinstore.com");
       const rest =
-        exchange === "pionex"
-          ? new PionexRestClient(baseUrl, "", "")
-          : exchange === "p2b"
-            ? new P2BRestClient(baseUrl, "", "")
-            : exchange === "mexc"
-              ? new MexcRestClient(baseUrl, "", "")
-            : new CoinstoreRestClient(baseUrl, "", "");
+        exchange === "binance"
+          ? new BinanceRestClient(baseUrl, "", "")
+          : exchange === "pionex"
+            ? new PionexRestClient(baseUrl, "", "")
+            : exchange === "p2b"
+              ? new P2BRestClient(baseUrl, "", "")
+              : exchange === "mexc"
+                ? new MexcRestClient(baseUrl, "", "")
+                : new CoinstoreRestClient(baseUrl, "", "");
       const list = await rest.listSymbols();
       symbols = list.map((s) => ({ symbol: s }));
     } catch (e: any) {
@@ -2422,13 +2407,7 @@ app.get("/exchanges/:exchange/symbols", requireAuth, async (req, res) => {
 app.get("/price-feed/:exchange/:symbol", requireAuth, requirePermission("bots.view"), async (req, res) => {
   const exchange = req.params.exchange.toLowerCase();
   const symbol = req.params.symbol;
-  if (
-    exchange !== "bitmart" &&
-    exchange !== "coinstore" &&
-    exchange !== "pionex" &&
-    exchange !== "p2b" &&
-    exchange !== "mexc"
-  ) {
+  if (!isSupportedExchange(exchange)) {
     return res.status(400).json({ error: "unsupported_exchange" });
   }
   try {
@@ -3235,13 +3214,7 @@ app.post("/settings/cex/verify", requireAuth, requirePermission("exchange_keys.e
   const data = CexConfig.parse(req.body);
 
   const exchange = data.exchange.toLowerCase();
-  if (
-    exchange !== "bitmart" &&
-    exchange !== "coinstore" &&
-    exchange !== "pionex" &&
-    exchange !== "p2b" &&
-    exchange !== "mexc"
-  ) {
+  if (!isSupportedExchange(exchange)) {
     return res.status(400).json({ ok: false, error: "unsupported_exchange" });
   }
 

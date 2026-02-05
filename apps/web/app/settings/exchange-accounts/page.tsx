@@ -35,6 +35,7 @@ type SubscriptionStatus = {
 };
 
 const EXCHANGES = [
+  { label: "Binance", value: "binance" },
   { label: "Bitmart", value: "bitmart" },
   { label: "Coinstore", value: "coinstore" },
   { label: "Pionex", value: "pionex" },
@@ -483,6 +484,7 @@ function isConfigured(cfg: CexConfig) {
 
 function exchangeIcon(exchange: string) {
   const key = exchange.toLowerCase();
+  if (key === "binance") return "🟨";
   if (key === "bitmart") return "🟡";
   if (key === "coinstore") return "🟦";
   if (key === "pionex") return "🟣";

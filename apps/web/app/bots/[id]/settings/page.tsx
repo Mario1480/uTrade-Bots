@@ -274,7 +274,7 @@ export default function BotPage() {
   const dexControlsDisabled = !dexFeatureEnabled || !canEditConfig;
   const aiFeatureEnabled = Boolean(me?.features?.aiRecommendations);
   const exchangeOptions = useMemo(() => {
-    const list = [bot?.exchange, priceFollow?.priceSourceExchange, "bitmart", "coinstore", "pionex", "p2b", "mexc"]
+    const list = [bot?.exchange, priceFollow?.priceSourceExchange, "binance", "bitmart", "coinstore", "pionex", "p2b", "mexc"]
       .filter(Boolean)
       .map((v) => String(v));
     return Array.from(new Set(list));

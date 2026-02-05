@@ -12,7 +12,7 @@ import type {
   PriceSourceMode
 } from "@mm/core";
 import { splitSymbol } from "@mm/core";
-import { BitmartRestClient, CoinstoreRestClient, MexcRestClient, P2BRestClient } from "@mm/exchange";
+import { BinanceRestClient, BitmartRestClient, CoinstoreRestClient, MexcRestClient, P2BRestClient } from "@mm/exchange";
 import { buildMmQuotes, VolumeScheduler } from "@mm/strategy";
 import type { VolumeState as VolState } from "@mm/strategy";
 import { RiskEngine } from "@mm/risk";
@@ -97,8 +97,11 @@ export async function runLoop(params: {
     const key = exchangeKey.toLowerCase();
     const cached = marketDataClients.get(key);
     if (cached) return cached;
-    let rest: BitmartRestClient | CoinstoreRestClient | P2BRestClient | MexcRestClient;
-    if (key === "bitmart") {
+    let rest: BinanceRestClient | BitmartRestClient | CoinstoreRestClient | P2BRestClient | MexcRestClient;
+    if (key === "binance") {
+      const baseUrl = process.env.BINANCE_BASE_URL || "https://api.binance.com";
+      rest = new BinanceRestClient(baseUrl, "", "");
+    } else if (key === "bitmart") {
       const baseUrl = process.env.BITMART_BASE_URL || "https://api-cloud.bitmart.com";
       rest = new BitmartRestClient(baseUrl, "", "", "");
     } else if (key === "coinstore") {
