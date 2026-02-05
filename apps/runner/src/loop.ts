@@ -12,7 +12,7 @@ import type {
   PriceSourceMode
 } from "@mm/core";
 import { splitSymbol } from "@mm/core";
-import { BinanceRestClient, BitmartRestClient, CoinstoreRestClient, MexcRestClient, XtRestClient, P2BRestClient } from "@mm/exchange";
+import { BinanceRestClient, BitmartRestClient, CoinstoreRestClient, MexcRestClient, XtRestClient, BingxRestClient, P2BRestClient } from "@mm/exchange";
 import { buildMmQuotes, VolumeScheduler } from "@mm/strategy";
 import type { VolumeState as VolState } from "@mm/strategy";
 import { RiskEngine } from "@mm/risk";
@@ -97,7 +97,7 @@ export async function runLoop(params: {
     const key = exchangeKey.toLowerCase();
     const cached = marketDataClients.get(key);
     if (cached) return cached;
-    let rest: BinanceRestClient | BitmartRestClient | CoinstoreRestClient | P2BRestClient | MexcRestClient | XtRestClient;
+    let rest: BinanceRestClient | BitmartRestClient | CoinstoreRestClient | P2BRestClient | MexcRestClient | XtRestClient | BingxRestClient;
     if (key === "binance") {
       const baseUrl = process.env.BINANCE_BASE_URL || "https://api.binance.com";
       rest = new BinanceRestClient(baseUrl, "", "");
@@ -116,6 +116,9 @@ export async function runLoop(params: {
     } else if (key === "xt") {
       const baseUrl = process.env.XT_BASE_URL || "https://sapi.xt.com";
       rest = new XtRestClient(baseUrl, "", "");
+    } else if (key === "bingx") {
+      const baseUrl = process.env.BINGX_BASE_URL || "https://open-api.bingx.com";
+      rest = new BingxRestClient(baseUrl, "", "");
     } else {
       throw new Error(`Unsupported exchange: ${exchangeKey}`);
     }

@@ -13,6 +13,7 @@ import {
   CoinstoreRestClient,
   MexcRestClient,
   XtRestClient,
+  BingxRestClient,
   PionexRestClient,
   P2BRestClient,
   fromExchangeSymbol
@@ -66,7 +67,7 @@ const LICENSE_FEATURE_KEYS = ["priceSupport", "priceFollow", "aiRecommendations"
 const METRICS_RETENTION_DAYS = Math.max(1, Number(process.env.METRICS_RETENTION_DAYS ?? "7"));
 const METRICS_CLEANUP_KEY = "metrics.cleanup.lastRun";
 const METRICS_CLEANUP_INTERVAL_MS = 12 * 60 * 60_000;
-const SUPPORTED_EXCHANGES = ["binance", "bitmart", "coinstore", "pionex", "p2b", "mexc", "xt"] as const;
+const SUPPORTED_EXCHANGES = ["binance", "bitmart", "coinstore", "pionex", "p2b", "mexc", "xt", "bingx"] as const;
 
 type MetricsRangeKey = "1h" | "6h" | "24h" | "7d" | "30d";
 const METRICS_RANGES: Record<MetricsRangeKey, { lookbackMs: number; stepSec: number }> = {
@@ -90,6 +91,7 @@ function getExchangeBaseUrl(exchange: string): string | null {
   if (key === "p2b") return process.env.P2B_BASE_URL || "https://api.p2pb2b.com";
   if (key === "mexc") return process.env.MEXC_BASE_URL || "https://api.mexc.com";
   if (key === "xt") return process.env.XT_BASE_URL || "https://sapi.xt.com";
+  if (key === "bingx") return process.env.BINGX_BASE_URL || "https://open-api.bingx.com";
   return null;
 }
 
@@ -119,6 +121,9 @@ function createPrivateRestClient(exchange: string, cex: { apiKey?: string | null
   if (key === "xt") {
     return new XtRestClient(baseUrl, cex.apiKey, cex.apiSecret);
   }
+  if (key === "bingx") {
+    return new BingxRestClient(baseUrl, cex.apiKey, cex.apiSecret);
+  }
   throw new Error("unsupported_exchange");
 }
 
@@ -133,6 +138,7 @@ function createPublicRestClient(exchange: string) {
   if (key === "p2b") return new P2BRestClient(baseUrl, "", "");
   if (key === "mexc") return new MexcRestClient(baseUrl, "", "");
   if (key === "xt") return new XtRestClient(baseUrl, "", "");
+  if (key === "bingx") return new BingxRestClient(baseUrl, "", "");
   throw new Error("unsupported_exchange");
 }
 
@@ -2361,7 +2367,11 @@ app.get("/exchanges/:exchange/symbols", requireAuth, async (req, res) => {
               ? "https://api.p2pb2b.com"
               : exchange === "mexc"
                 ? "https://api.mexc.com"
-                : "https://api.coinstore.com");
+                : exchange === "xt"
+                  ? "https://sapi.xt.com"
+                  : exchange === "bingx"
+                    ? "https://open-api.bingx.com"
+                    : "https://api.coinstore.com");
       const rest =
         exchange === "binance"
           ? new BinanceRestClient(baseUrl, "", "")
@@ -2371,7 +2381,11 @@ app.get("/exchanges/:exchange/symbols", requireAuth, async (req, res) => {
               ? new P2BRestClient(baseUrl, "", "")
               : exchange === "mexc"
                 ? new MexcRestClient(baseUrl, "", "")
-                : new CoinstoreRestClient(baseUrl, "", "");
+                : exchange === "xt"
+                  ? new XtRestClient(baseUrl, "", "")
+                  : exchange === "bingx"
+                    ? new BingxRestClient(baseUrl, "", "")
+                    : new CoinstoreRestClient(baseUrl, "", "");
       const list = await rest.listSymbols();
       symbols = list.map((s) => ({ symbol: s }));
     } catch (e: any) {

@@ -283,7 +283,8 @@ export default function BotPage() {
       "pionex",
       "p2b",
       "mexc",
-      "xt"
+      "xt",
+      "bingx"
     ]
       .filter(Boolean)
       .map((v) => String(v));

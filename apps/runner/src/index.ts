@@ -1,5 +1,5 @@
 import "dotenv/config";
-import { BinanceRestClient, BitmartRestClient, CoinstoreRestClient, MexcRestClient, XtRestClient, PionexRestClient, P2BRestClient } from "@mm/exchange";
+import { BinanceRestClient, BitmartRestClient, CoinstoreRestClient, MexcRestClient, XtRestClient, BingxRestClient, PionexRestClient, P2BRestClient } from "@mm/exchange";
 import type { Exchange } from "@mm/exchange";
 import { BotStateMachine } from "./state-machine.js";
 import { runLoop } from "./loop.js";
@@ -36,6 +36,7 @@ function getExchangeBaseUrl(exchange: string): string | null {
   if (key === "p2b") return process.env.P2B_BASE_URL || "https://api.p2pb2b.com";
   if (key === "mexc") return process.env.MEXC_BASE_URL || "https://api.mexc.com";
   if (key === "xt") return process.env.XT_BASE_URL || "https://sapi.xt.com";
+  if (key === "bingx") return process.env.BINGX_BASE_URL || "https://open-api.bingx.com";
   return null;
 }
 
@@ -57,7 +58,8 @@ async function startBotLoop(botId: string, tickMs: number) {
         exchangeKey !== "pionex" &&
         exchangeKey !== "p2b" &&
         exchangeKey !== "mexc" &&
-        exchangeKey !== "xt"
+        exchangeKey !== "xt" &&
+        exchangeKey !== "bingx"
       ) {
         const reason = `UNSUPPORTED_EXCHANGE:${bot.exchange}`;
         await writeRuntime({
@@ -98,10 +100,12 @@ async function startBotLoop(botId: string, tickMs: number) {
             : exchangeKey === "p2b"
               ? new P2BRestClient(baseUrl, cex.apiKey, cex.apiSecret)
               : exchangeKey === "mexc"
-                ? new MexcRestClient(baseUrl, cex.apiKey, cex.apiSecret)
+              ? new MexcRestClient(baseUrl, cex.apiKey, cex.apiSecret)
               : exchangeKey === "xt"
                 ? new XtRestClient(baseUrl, cex.apiKey, cex.apiSecret)
-              : new PionexRestClient(baseUrl, cex.apiKey, cex.apiSecret);
+              : exchangeKey === "bingx"
+                ? new BingxRestClient(baseUrl, cex.apiKey, cex.apiSecret)
+                : new PionexRestClient(baseUrl, cex.apiKey, cex.apiSecret);
 
       if (exchangeKey === "pionex") {
         await (rest as PionexRestClient).sanityCheck();

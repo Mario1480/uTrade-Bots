@@ -101,6 +101,7 @@ DEXSCREENER_BASE_URL=https://api.dexscreener.com
 P2B_BASE_URL=https://api.p2pb2b.com
 MEXC_BASE_URL=https://api.mexc.com
 XT_BASE_URL=https://sapi.xt.com
+BINGX_BASE_URL=https://open-api.bingx.com
 
 SMTP_HOST=smtp.hostinger.com
 SMTP_PORT=465

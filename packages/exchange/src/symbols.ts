@@ -48,6 +48,16 @@ export const MexcSymbolAdapter: SymbolAdapter = {
   }
 };
 
+export const BingxSymbolAdapter: SymbolAdapter = {
+  toExchangeSymbol(canonical: string): string {
+    const { base, quote } = splitSymbol(canonical);
+    return `${base}-${quote}`;
+  },
+  fromExchangeSymbol(exchangeSymbol: string): string {
+    return normalizeSymbol(String(exchangeSymbol).replace("-", "/"));
+  }
+};
+
 export const CoinstoreSymbolAdapter: SymbolAdapter = {
   toExchangeSymbol(canonical: string): string {
     const { base, quote } = splitSymbol(canonical);
@@ -109,6 +119,8 @@ export function getSymbolAdapter(exchange: string): SymbolAdapter {
       return KucoinSymbolAdapter;
     case "mexc":
       return MexcSymbolAdapter;
+    case "bingx":
+      return BingxSymbolAdapter;
     case "xt":
       return XTSymbolAdapter;
     case "coinstore":
