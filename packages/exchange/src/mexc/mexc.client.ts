@@ -202,7 +202,13 @@ export class MexcRestClient {
     const info = await this.getExchangeInfo();
     const list = Array.isArray(info?.symbols) ? info.symbols : [];
     const symbols = list
-      .filter((x: any) => String(x?.status || "").toUpperCase() === "TRADING")
+      .filter((x: any) => {
+        const statusRaw = String(x?.status ?? "").trim();
+        if (!statusRaw) return true;
+        const status = statusRaw.toUpperCase();
+        // MEXC commonly returns status "1" for tradable spot symbols.
+        return status === "TRADING" || status === "ENABLED" || status === "1";
+      })
       .map((x: any) => fromExchangeSymbol("mexc", String(x.symbol || "")))
       .filter(Boolean);
 
