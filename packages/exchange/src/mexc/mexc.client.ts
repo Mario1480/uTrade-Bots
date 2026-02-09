@@ -44,6 +44,16 @@ function sideFromValue(value: unknown): "buy" | "sell" {
   return String(value || "").toUpperCase() === "SELL" ? "sell" : "buy";
 }
 
+function sanitizeMexcClientOrderId(input?: string): string | undefined {
+  if (!input) return undefined;
+  const cleaned = String(input).replace(/[^0-9a-zA-Z_-]/g, "");
+  if (!cleaned) return undefined;
+  if (cleaned.length <= 32) return cleaned;
+  const hash = crypto.createHash("sha256").update(cleaned).digest("hex").slice(0, 8);
+  // MEXC allows max 32 chars; keep prefix (mm-/vol/man_) and add hash suffix for uniqueness.
+  return `${cleaned.slice(0, 23)}_${hash}`;
+}
+
 export function buildMexcSignature(query: string, secret: string) {
   return crypto.createHmac("sha256", secret).update(query).digest("hex");
 }
@@ -298,7 +308,7 @@ export class MexcRestClient {
     const params: Record<string, string | number | undefined> = {
       symbol: exSymbol,
       side: q.side.toUpperCase(),
-      newClientOrderId: q.clientOrderId
+      newClientOrderId: sanitizeMexcClientOrderId(q.clientOrderId)
     };
 
     let normalizedPrice = 0;
