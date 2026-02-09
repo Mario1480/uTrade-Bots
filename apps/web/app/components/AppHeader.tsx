@@ -7,16 +7,16 @@ import LogoutButton from "./LogoutButton";
 
 export default function AppHeader() {
   const pathname = usePathname();
-  if (pathname === "/login") return null;
+  if (pathname === "/login" || pathname === "/register") return null;
   const [menuOpen, setMenuOpen] = useState(false);
 
   return (
     <header className="appHeader">
       <div className="container appHeaderInner">
         <div className="appHeaderTop">
-          <Link href="/" className="appLogo" aria-label="Market Maker">
-            <img src="/images/logo.png" alt="uLiquid logo" className="appLogoMark" />
-            <span className="appLogoText">uLiquid</span>
+          <Link href="/" className="appLogo" aria-label="uTrade Futures">
+            <img src="/images/logo.png" alt="uTrade logo" className="appLogoMark" />
+            <span className="appLogoText">Panel Beta v0.0.1</span>
           </Link>
           <button
             className="appBurger"
@@ -32,8 +32,11 @@ export default function AppHeader() {
           </button>
         </div>
         <nav id="appNav" className={`appNav ${menuOpen ? "appNavOpen" : ""}`}>
-          <Link href="/" className="btn">Dashboard</Link>
-          <Link href="/settings" className="btn btnPrimary">Settings</Link>
+          <Link href="/dashboard" className="btn">Dashboard</Link>
+          <Link href="/trade" className="btn">Manual Trading</Link>
+          <Link href="/bots" className="btn">Bots</Link>
+          <Link href="/bots/new" className="btn btnPrimary">New Bot</Link>
+          <Link href="/settings" className="btn">Settings</Link>
           <Link href="/help" className="btn">Help</Link>
           <LogoutButton />
         </nav>

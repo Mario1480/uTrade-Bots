@@ -1,0 +1,15 @@
+{
+  "name": "@mm/strategies",
+  "version": "0.0.1",
+  "type": "module",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "dependencies": {
+    "@mm/futures-core": "0.0.1"
+  },
+  "scripts": {
+    "verify:architecture": "node ./scripts/enforce-architecture.mjs",
+    "build": "npm run verify:architecture && tsc -p tsconfig.json",
+    "typecheck": "npm run verify:architecture && tsc -p tsconfig.json --noEmit"
+  }
+}

@@ -1,32 +1,27 @@
 import crypto from "node:crypto";
-import type { Request, Response, NextFunction } from "express";
-import bcrypt from "bcryptjs";
+import type { NextFunction, Request, Response } from "express";
+import argon2 from "argon2";
 import { prisma } from "@mm/db";
-import { ensureDefaultRoles } from "./rbac.js";
 
-const SESSION_TTL_DAYS = Number(process.env.SESSION_TTL_DAYS ?? "30");
-const REAUTH_TTL_MIN = Number(process.env.REAUTH_TTL_MIN ?? "10");
+const db = prisma as any;
+
 const SESSION_COOKIE = "mm_session";
-const REAUTH_COOKIE = "mm_reauth";
-const CSRF_COOKIE = "mm_csrf";
+const SESSION_TTL_DAYS = Number(process.env.SESSION_TTL_DAYS ?? "30");
 
 function hashToken(token: string): string {
   return crypto.createHash("sha256").update(token).digest("hex");
 }
 
-export function isSuperadmin(user?: { email?: string | null }) {
-  return (user?.email ?? "").toLowerCase() === "admin@uliquid.vip";
-}
-
-function cookieOptions(maxAgeMs: number, httpOnly = true) {
-  const domain = process.env.COOKIE_DOMAIN;
-  const secureEnv = process.env.COOKIE_SECURE;
+function cookieOptions(maxAgeMs: number) {
+  const secureEnv = (process.env.COOKIE_SECURE ?? "").toLowerCase();
   const secure =
-    secureEnv != null
-      ? secureEnv === "true" || secureEnv === "1"
-      : process.env.NODE_ENV === "production";
+    secureEnv === "1" ||
+    secureEnv === "true" ||
+    (secureEnv === "" && process.env.NODE_ENV === "production");
+  const domain = process.env.COOKIE_DOMAIN?.trim();
+
   return {
-    httpOnly,
+    httpOnly: true,
     sameSite: "lax" as const,
     secure,
     maxAge: maxAgeMs,
@@ -35,104 +30,54 @@ function cookieOptions(maxAgeMs: number, httpOnly = true) {
   };
 }
 
-function setCsrfCookie(res: Response) {
-  const token = crypto.randomBytes(32).toString("base64url");
-  const maxAgeMs = SESSION_TTL_DAYS * 24 * 60 * 60 * 1000;
-  res.cookie(CSRF_COOKIE, token, cookieOptions(maxAgeMs, false));
-  return token;
-}
-
-export function refreshCsrfCookie(res: Response) {
-  return setCsrfCookie(res);
-}
-
 export async function hashPassword(password: string): Promise<string> {
-  return bcrypt.hash(password, 10);
+  return argon2.hash(password, {
+    type: argon2.argon2id,
+    memoryCost: 19_456,
+    timeCost: 2,
+    parallelism: 1
+  });
 }
 
-export async function verifyPassword(password: string, hash: string): Promise<boolean> {
-  return bcrypt.compare(password, hash);
+export async function verifyPassword(password: string, passwordHash: string): Promise<boolean> {
+  return argon2.verify(passwordHash, password);
 }
 
 export async function createSession(res: Response, userId: string) {
   const token = crypto.randomBytes(32).toString("hex");
   const tokenHash = hashToken(token);
   const expiresAt = new Date(Date.now() + SESSION_TTL_DAYS * 24 * 60 * 60 * 1000);
+  const now = new Date();
 
-  await prisma.session.create({
+  await db.session.create({
     data: {
       userId,
       tokenHash,
-      expiresAt
+      expiresAt,
+      lastActiveAt: now
     }
   });
 
   res.cookie(SESSION_COOKIE, token, cookieOptions(SESSION_TTL_DAYS * 24 * 60 * 60 * 1000));
-  setCsrfCookie(res);
-  return { expiresAt };
 }
 
 export async function destroySession(res: Response, token?: string | null) {
   if (token) {
-    await prisma.session.deleteMany({
+    await db.session.deleteMany({
       where: { tokenHash: hashToken(token) }
     });
   }
-  const domain = process.env.COOKIE_DOMAIN;
+
+  const domain = process.env.COOKIE_DOMAIN?.trim();
   const opts = domain ? { path: "/", domain } : { path: "/" };
   res.clearCookie(SESSION_COOKIE, opts);
-  res.clearCookie(REAUTH_COOKIE, opts);
-  res.clearCookie(CSRF_COOKIE, opts);
-}
-
-export async function createReauth(res: Response, userId: string) {
-  const token = crypto.randomBytes(32).toString("hex");
-  const tokenHash = hashToken(token);
-  const expiresAt = new Date(Date.now() + REAUTH_TTL_MIN * 60 * 1000);
-
-  await prisma.reauthSession.create({
-    data: {
-      userId,
-      tokenHash,
-      expiresAt
-    }
-  });
-
-  res.cookie(REAUTH_COOKIE, token, cookieOptions(REAUTH_TTL_MIN * 60 * 1000));
-  return { expiresAt };
-}
-
-async function ensureWorkspaceForUser(userId: string) {
-  const membership = await prisma.workspaceMember.findFirst({
-    where: { userId },
-    include: { workspace: true }
-  });
-  if (membership) return membership.workspace;
-
-  const workspace = await prisma.workspace.create({
-    data: {
-      name: "Default"
-    }
-  });
-
-  const { adminRoleId } = await ensureDefaultRoles(workspace.id);
-  await prisma.workspaceMember.create({
-    data: { userId, workspaceId: workspace.id, roleId: adminRoleId }
-  });
-
-  await prisma.bot.updateMany({
-    where: { workspaceId: null },
-    data: { workspaceId: workspace.id }
-  });
-
-  return workspace;
 }
 
 export async function requireAuth(req: Request, res: Response, next: NextFunction) {
   const token = req.cookies?.[SESSION_COOKIE];
   if (!token) return res.status(401).json({ error: "unauthorized" });
 
-  const session = await prisma.session.findUnique({
+  const session = await db.session.findUnique({
     where: { tokenHash: hashToken(token) },
     include: { user: true }
   });
@@ -142,93 +87,18 @@ export async function requireAuth(req: Request, res: Response, next: NextFunctio
     return res.status(401).json({ error: "unauthorized" });
   }
 
-  if (!req.cookies?.[CSRF_COOKIE]) {
-    setCsrfCookie(res);
-  }
-
-  const now = Date.now();
-  if (session.user.autoLogoutEnabled) {
-    const idleMs = session.user.autoLogoutMinutes * 60 * 1000;
-    const lastActiveAt = session.lastActiveAt?.getTime?.() ?? session.createdAt.getTime();
-    if (now - lastActiveAt > idleMs) {
-      await destroySession(res, token);
-      return res.status(401).json({ error: "session_expired" });
-    }
-  }
-
-  if (now - session.lastActiveAt.getTime() > 60_000) {
-    await prisma.session.update({
-      where: { id: session.id },
-      data: { lastActiveAt: new Date(now) }
-    });
-  }
-
-  const requestedWorkspaceId = req.header("x-workspace-id") ?? null;
-  let workspaceId = requestedWorkspaceId ?? null;
-  if (workspaceId) {
-    const w = await prisma.workspace.findUnique({ where: { id: workspaceId } });
-    if (!w && !isSuperadmin(session.user)) {
-      return res.status(403).json({ error: "forbidden" });
-    }
-  } else {
-    const workspace = await ensureWorkspaceForUser(session.userId);
-    workspaceId = workspace.id;
-  }
-
-  let member = null as any;
-  if (workspaceId) {
-    member = await prisma.workspaceMember.findFirst({
-      where: { workspaceId, userId: session.userId },
-      include: { role: true }
-    });
-  }
-
-  if (!isSuperadmin(session.user) && !member) {
-    return res.status(403).json({ error: "forbidden" });
-  }
-
-  res.locals.user = session.user;
-  res.locals.workspaceId = workspaceId;
-  res.locals.member = member;
-  res.locals.role = member?.role ?? null;
-  next();
-}
-
-export async function requireReauth(req: Request, res: Response, next: NextFunction) {
-  if (isSuperadmin(res.locals.user)) return next();
-  const token = req.cookies?.[REAUTH_COOKIE];
-  if (!token) return res.status(401).json({ error: "REAUTH_REQUIRED" });
-
-  const session = await prisma.reauthSession.findUnique({
-    where: { tokenHash: hashToken(token) }
+  await db.session.update({
+    where: { id: session.id },
+    data: { lastActiveAt: new Date() }
   });
 
-  if (!session || session.expiresAt.getTime() < Date.now()) {
-    const domain = process.env.COOKIE_DOMAIN;
-    const opts = domain ? { path: "/", domain } : { path: "/" };
-    res.clearCookie(REAUTH_COOKIE, opts);
-    return res.status(401).json({ error: "REAUTH_REQUIRED" });
-  }
-
-  if (res.locals.user?.id && session.userId !== res.locals.user.id) {
-    return res.status(401).json({ error: "REAUTH_REQUIRED" });
-  }
-
+  res.locals.user = {
+    id: session.user.id,
+    email: session.user.email
+  };
   next();
 }
 
-export function getUserFromLocals(res: Response) {
+export function getUserFromLocals(res: Response): { id: string; email: string } {
   return res.locals.user as { id: string; email: string };
-}
-
-export function getWorkspaceId(res: Response) {
-  return res.locals.workspaceId as string;
-}
-
-export function getRoleFromLocals(res: Response) {
-  return res.locals.role as { id: string; name: string; permissions: any } | null;
-}
-
-export function getMemberFromLocals(res: Response) {
-  return res.locals.member as any;
 }

@@ -5,87 +5,75 @@ import { useRouter } from "next/navigation";
 import { useEffect, useMemo, useState } from "react";
 import { ApiError, apiGet, apiPost } from "../../../lib/api";
 
-type SymbolOption = { symbol: string; base: string; quote: string };
+type ExchangeAccount = {
+  id: string;
+  exchange: string;
+  label: string;
+  apiKeyMasked: string;
+};
+
+function errMsg(e: unknown): string {
+  if (e instanceof ApiError) return `${e.message} (HTTP ${e.status})`;
+  if (e && typeof e === "object" && "message" in e) return String((e as any).message);
+  return String(e);
+}
 
 export default function NewBotPage() {
   const router = useRouter();
+  const [accounts, setAccounts] = useState<ExchangeAccount[]>([]);
   const [name, setName] = useState("");
-  const [exchange, setExchange] = useState("bitmart");
-  const [symbols, setSymbols] = useState<SymbolOption[]>([]);
-  const [symbolOptions, setSymbolOptions] = useState<string[]>([]);
-  const [symbolQuery, setSymbolQuery] = useState("");
-  const [symbol, setSymbol] = useState("");
-  const [loadingSymbols, setLoadingSymbols] = useState(false);
+  const [symbol, setSymbol] = useState("BTCUSDT");
+  const [exchangeAccountId, setExchangeAccountId] = useState("");
+  const [strategyKey, setStrategyKey] = useState("dummy");
+  const [marginMode, setMarginMode] = useState<"isolated" | "cross">("isolated");
+  const [leverage, setLeverage] = useState(1);
+  const [tickMs, setTickMs] = useState(1000);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  function errMsg(e: any): string {
-    if (e instanceof ApiError) return `${e.message} (HTTP ${e.status})`;
-    return e?.message ? String(e.message) : String(e);
-  }
-
   useEffect(() => {
     let mounted = true;
-    async function loadSymbols() {
-      setLoadingSymbols(true);
-      setError(null);
+    async function loadAccounts() {
       try {
-        const data = await apiGet<SymbolOption[]>(`/exchanges/${exchange}/symbols`);
+        const response = await apiGet<{ items: ExchangeAccount[] }>("/exchange-accounts");
         if (!mounted) return;
-        const unique = Array.from(
-          new Set((data ?? []).map((s) => s.symbol).filter(Boolean))
-        );
-        setSymbols(data);
-        setSymbolOptions(unique);
-        setSymbol(unique[0] ?? "");
+        const items = response.items ?? [];
+        setAccounts(items);
+        if (!exchangeAccountId && items.length > 0) {
+          setExchangeAccountId(items[0].id);
+        }
       } catch (e) {
         if (!mounted) return;
         setError(errMsg(e));
-        setSymbols([]);
-        setSymbolOptions([]);
-        setSymbol("");
-      } finally {
-        if (mounted) setLoadingSymbols(false);
       }
     }
-    loadSymbols();
+    void loadAccounts();
     return () => {
       mounted = false;
     };
-  }, [exchange]);
-
-  const filteredOptions = useMemo(() => {
-    const q = symbolQuery.trim().toLowerCase();
-    if (!q) return symbolOptions;
-    return symbolOptions.filter((s) => s.toLowerCase().includes(q));
-  }, [symbolOptions, symbolQuery]);
-
-  useEffect(() => {
-    if (filteredOptions.length === 0) {
-      if (symbol) setSymbol("");
-      return;
-    }
-    if (!filteredOptions.includes(symbol)) {
-      setSymbol(filteredOptions[0]);
-    }
-  }, [filteredOptions, symbol]);
+  }, []);
 
   const canCreate = useMemo(() => {
-    return name.trim().length > 0 && !!exchange && !!symbol && !saving;
-  }, [name, exchange, symbol, saving]);
+    return Boolean(name.trim() && symbol.trim() && exchangeAccountId && !saving);
+  }, [name, symbol, exchangeAccountId, saving]);
 
-  async function createBot(e: React.FormEvent) {
+  async function onSubmit(e: React.FormEvent) {
     e.preventDefault();
     if (!canCreate) return;
     setSaving(true);
     setError(null);
     try {
-      const bot = await apiPost<{ id: string }>("/bots", {
+      const created = await apiPost<{ id: string }>("/bots", {
         name: name.trim(),
-        exchange,
-        symbol
+        symbol: symbol.trim(),
+        exchangeAccountId,
+        strategyKey,
+        marginMode,
+        leverage,
+        tickMs,
+        paramsJson: {}
       });
-      router.push(`/bots/${bot.id}`);
+      router.push(`/bots/${created.id}`);
     } catch (e) {
       setError(errMsg(e));
     } finally {
@@ -94,120 +82,74 @@ export default function NewBotPage() {
   }
 
   return (
-    <div className="container" style={{ maxWidth: 820 }}>
+    <div className="container" style={{ maxWidth: 760 }}>
       <div style={{ marginBottom: 12 }}>
-        <Link href="/" className="btn">
-          ← Back to dashboard
-        </Link>
+        <Link href="/" className="btn">Back</Link>
       </div>
 
       <div className="card" style={{ padding: 18 }}>
-        <div style={{ marginBottom: 12 }}>
-          <h2 style={{ margin: 0 }}>New Bot</h2>
-          <div style={{ fontSize: 13, color: "var(--muted)" }}>
-            Create a fresh bot with exchange and trading pair. Existing bots stay immutable.
-          </div>
+        <h2 style={{ marginTop: 0 }}>Create Bot</h2>
+        <div style={{ fontSize: 13, color: "var(--muted)", marginBottom: 10 }}>
+          Bot is bound to one exchange account.
         </div>
 
-        {error ? (
-          <div
-            style={{
-              marginBottom: 12,
-              padding: "10px 12px",
-              borderRadius: 8,
-              border: "1px solid #ef4444",
-              background: "rgba(239,68,68,0.12)",
-              color: "#e8eef7",
-              fontSize: 13
-            }}
-          >
-            {error}
+        {error ? <div style={{ marginBottom: 10, color: "#ef4444", fontSize: 13 }}>{error}</div> : null}
+
+        {accounts.length === 0 ? (
+          <div className="card" style={{ padding: 10 }}>
+            <div style={{ marginBottom: 8 }}>No exchange account found.</div>
+            <Link href="/settings" className="btn btnPrimary">Add exchange account</Link>
           </div>
-        ) : null}
+        ) : (
+          <form onSubmit={onSubmit} style={{ display: "grid", gap: 10 }}>
+            <label style={{ display: "grid", gap: 6 }}>
+              <span style={{ fontSize: 12, color: "var(--muted)" }}>Name</span>
+              <input className="input" value={name} onChange={(e) => setName(e.target.value)} required />
+            </label>
 
-        <form onSubmit={createBot} style={{ display: "grid", gap: 12 }}>
-          <label style={{ display: "grid", gap: 6 }}>
-            <span style={{ fontSize: 12, color: "var(--muted)" }}>Name</span>
-            <input
-              className="input"
-              placeholder="e.g. Bot name"
-              value={name}
-              onChange={(e) => setName(e.target.value)}
-            />
-          </label>
+            <label style={{ display: "grid", gap: 6 }}>
+              <span style={{ fontSize: 12, color: "var(--muted)" }}>Symbol</span>
+              <input className="input" value={symbol} onChange={(e) => setSymbol(e.target.value)} required />
+            </label>
 
-          <label style={{ display: "grid", gap: 6 }}>
-            <span style={{ fontSize: 12, color: "var(--muted)" }}>Exchange</span>
-            <select className="input" value={exchange} onChange={(e) => setExchange(e.target.value)}>
-              <option value="binance">Binance</option>
-              <option value="bitmart">Bitmart</option>
-              <option value="coinstore">Coinstore</option>
-              <option value="pionex">Pionex</option>
-              <option value="p2b">P2B</option>
-              <option value="mexc">MEXC</option>
-              <option value="xt">XT</option>
-              <option value="bingx">BingX</option>
-            </select>
-          </label>
-
-          <label style={{ display: "grid", gap: 6 }}>
-            <span style={{ fontSize: 12, color: "var(--muted)" }}>Trading Pair</span>
-            <div style={{ position: "relative" }}>
-              <input
-                className="input"
-                placeholder="Search pair (e.g. BTC)"
-                value={symbolQuery}
-                onChange={(e) => setSymbolQuery(e.target.value)}
-                disabled={loadingSymbols || symbolOptions.length === 0}
-              />
-              {symbolQuery ? (
-                <button
-                  type="button"
-                  className="btn"
-                  onClick={() => setSymbolQuery("")}
-                  style={{
-                    position: "absolute",
-                    right: 6,
-                    top: "50%",
-                    transform: "translateY(-50%)",
-                    padding: "4px 8px",
-                    borderRadius: 8,
-                    fontSize: 12
-                  }}
-                >
-                  ✕
-                </button>
-              ) : null}
-            </div>
-            <select
-              className="input"
-              value={symbol}
-              onChange={(e) => setSymbol(e.target.value)}
-              disabled={loadingSymbols || symbolOptions.length === 0}
-            >
-              {filteredOptions.length === 0 ? [
-                <option key={loadingSymbols ? "loading" : "empty"} value="">
-                  {loadingSymbols ? "Loading symbols..." : "No matching symbols"}
-                </option>
-              ] : (
-                filteredOptions.map((s) => (
-                  <option key={s} value={s}>
-                    {s}
+            <label style={{ display: "grid", gap: 6 }}>
+              <span style={{ fontSize: 12, color: "var(--muted)" }}>Exchange Account</span>
+              <select className="input" value={exchangeAccountId} onChange={(e) => setExchangeAccountId(e.target.value)}>
+                {accounts.map((account) => (
+                  <option key={account.id} value={account.id}>
+                    {account.label} ({account.exchange})
                   </option>
-                ))
-              )}
-            </select>
-          </label>
+                ))}
+              </select>
+            </label>
 
-          <div style={{ display: "flex", gap: 10, flexWrap: "wrap", marginTop: 4 }}>
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(2, minmax(0, 1fr))", gap: 10 }}>
+              <label style={{ display: "grid", gap: 6 }}>
+                <span style={{ fontSize: 12, color: "var(--muted)" }}>Strategy</span>
+                <input className="input" value={strategyKey} onChange={(e) => setStrategyKey(e.target.value)} />
+              </label>
+              <label style={{ display: "grid", gap: 6 }}>
+                <span style={{ fontSize: 12, color: "var(--muted)" }}>Margin Mode</span>
+                <select className="input" value={marginMode} onChange={(e) => setMarginMode(e.target.value as "isolated" | "cross")}>
+                  <option value="isolated">isolated</option>
+                  <option value="cross">cross</option>
+                </select>
+              </label>
+              <label style={{ display: "grid", gap: 6 }}>
+                <span style={{ fontSize: 12, color: "var(--muted)" }}>Leverage</span>
+                <input className="input" type="number" min={1} max={125} value={leverage} onChange={(e) => setLeverage(Number(e.target.value || 1))} />
+              </label>
+              <label style={{ display: "grid", gap: 6 }}>
+                <span style={{ fontSize: 12, color: "var(--muted)" }}>Tick (ms)</span>
+                <input className="input" type="number" min={100} max={60_000} value={tickMs} onChange={(e) => setTickMs(Number(e.target.value || 1000))} />
+              </label>
+            </div>
+
             <button className="btn btnPrimary" type="submit" disabled={!canCreate}>
               {saving ? "Creating..." : "Create Bot"}
             </button>
-            <Link href="/" className="btn">
-              Cancel
-            </Link>
-          </div>
-        </form>
+          </form>
+        )}
       </div>
     </div>
   );

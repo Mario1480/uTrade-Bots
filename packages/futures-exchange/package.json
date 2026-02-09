@@ -1,0 +1,18 @@
+{
+  "name": "@mm/futures-exchange",
+  "version": "0.0.1",
+  "type": "module",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "dependencies": {
+    "@mm/futures-core": "0.0.1",
+    "ws": "^8.18.3"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "npm run build && node --test dist/mexc/mexc.signing.test.js dist/bitget/bitget.signing.test.js dist/bitget/bitget.contract-cache.test.js",
+    "smoke:mexc": "npm run build && node ./scripts/mexc-smoke.mjs",
+    "smoke:bitget": "npm run build && node ./scripts/bitget-smoke.mjs"
+  }
+}

@@ -7,41 +7,98 @@ datasource db {
   url      = env("DATABASE_URL")
 }
 
-model Bot {
-  id        String   @id @default(uuid())
-  name      String
-  symbol    String
-  exchange  String
-  status    String
-  mmEnabled Boolean  @default(true)
-  volEnabled Boolean @default(true)
-  priceFollowEnabled Boolean @default(false)
-  priceSourceExchange String?
-  priceSourceSymbol String?
-  priceSourceType String @default("TICKER")
-  priceSourceMode String @default("CEX")
-  dexPriceFeedEnabled Boolean @default(false)
-  dexChain String @default("ethereum")
-  dexTokenAddress String?
-  dexCacheTtlMs Int @default(3000)
-  dexStaleAfterMs Int @default(15000)
-  dexDeviationEnabled Boolean @default(false)
-  dexMaxDeviationBps Int @default(0)
-  dexDeviationPolicy String @default("alertOnly")
-  dexNotifyCooldownSec Int @default(300)
-  createdAt DateTime @default(now())
-  workspaceId String?
-  workspace   Workspace? @relation(fields: [workspaceId], references: [id])
+enum BotStatus {
+  stopped
+  running
+  error
+}
 
-  mmConfig   MarketMakingConfig?
-  volConfig  VolumeConfig?
-  riskConfig RiskConfig?
+enum FuturesMarginMode {
+  isolated
+  cross
+}
+
+model Bot {
+  id                   String           @id @default(uuid())
+  name                 String
+  symbol               String
+  exchange             String
+  status               BotStatus        @default(stopped)
+  userId               String?
+  exchangeAccountId    String?
+  lastError            String?
+  mmEnabled            Boolean          @default(true)
+  volEnabled           Boolean          @default(true)
+  priceFollowEnabled   Boolean          @default(false)
+  priceSourceExchange  String?
+  priceSourceSymbol    String?
+  priceSourceType      String           @default("TICKER")
+  priceSourceMode      String           @default("CEX")
+  dexPriceFeedEnabled  Boolean          @default(false)
+  dexChain             String           @default("ethereum")
+  dexTokenAddress      String?
+  dexCacheTtlMs        Int              @default(3000)
+  dexStaleAfterMs      Int              @default(15000)
+  dexDeviationEnabled  Boolean          @default(false)
+  dexMaxDeviationBps   Int              @default(0)
+  dexDeviationPolicy   String           @default("alertOnly")
+  dexNotifyCooldownSec Int              @default(300)
+  createdAt            DateTime         @default(now())
+  updatedAt            DateTime         @updatedAt
+  workspaceId          String?
+  workspace            Workspace?       @relation(fields: [workspaceId], references: [id])
+  user                 User?            @relation(fields: [userId], references: [id])
+  exchangeAccount      ExchangeAccount? @relation(fields: [exchangeAccountId], references: [id])
+
+  mmConfig           MarketMakingConfig?
+  futuresConfig      FuturesBotConfig?
+  volConfig          VolumeConfig?
+  riskConfig         RiskConfig?
   notificationConfig BotNotificationConfig?
   priceSupportConfig BotPriceSupportConfig?
-  runtime    BotRuntime?
-  alerts     BotAlert[]
-  manualTrades ManualTradeLog[]
-  metrics    BotMetric[]
+  runtime            BotRuntime?
+  riskEvents         RiskEvent[]
+  alerts             BotAlert[]
+  manualTrades       ManualTradeLog[]
+  metrics            BotMetric[]
+}
+
+model FuturesBotConfig {
+  id          String            @id @default(uuid())
+  botId       String            @unique
+  bot         Bot               @relation(fields: [botId], references: [id])
+  strategyKey String            @default("dummy")
+  marginMode  FuturesMarginMode @default(isolated)
+  leverage    Int               @default(1)
+  paramsJson  Json              @default("{}")
+  tickMs      Int               @default(1000)
+  testnet     Boolean           @default(true)
+  createdAt   DateTime          @default(now())
+  updatedAt   DateTime          @updatedAt
+}
+
+model ExchangeAccount {
+  id                           String    @id @default(cuid())
+  userId                       String
+  user                         User      @relation(fields: [userId], references: [id])
+  exchange                     String
+  label                        String
+  apiKeyEnc                    String
+  apiSecretEnc                 String
+  passphraseEnc                String?
+  createdAt                    DateTime  @default(now())
+  updatedAt                    DateTime  @updatedAt
+  lastUsedAt                   DateTime?
+  spotBudgetTotal              Float?
+  spotBudgetAvailable          Float?
+  futuresBudgetEquity          Float?
+  futuresBudgetAvailableMargin Float?
+  pnlTodayUsd                  Float?
+  lastSyncErrorAt              DateTime?
+  lastSyncErrorMessage         String?
+  bots                         Bot[]
+
+  @@index([userId, exchange])
 }
 
 model MarketMakingConfig {
@@ -49,46 +106,46 @@ model MarketMakingConfig {
   botId           String @unique
   bot             Bot    @relation(fields: [botId], references: [id])
   spreadPct       Float
-  maxSpreadPct    Float @default(0.0015)
+  maxSpreadPct    Float  @default(0.0015)
   levelsUp        Int
   levelsDown      Int
   budgetQuoteUsdt Float
   budgetBaseToken Float
-  minOrderUsdt    Float @default(5)
-  maxOrderUsdt    Float @default(0)
+  minOrderUsdt    Float  @default(5)
+  maxOrderUsdt    Float  @default(0)
   distribution    String
   jitterPct       Float
   skewFactor      Float
   maxSkew         Float
-  mmRepriceMs     Int   @default(15000)
-  mmRepricePct    Float @default(0.01)
-  mmPriceEpsPct   Float @default(0.005)
-  mmQtyEpsPct     Float @default(0.02)
-  mmInvAlpha      Float @default(0.1)
+  mmRepriceMs     Int    @default(15000)
+  mmRepricePct    Float  @default(0.01)
+  mmPriceEpsPct   Float  @default(0.005)
+  mmQtyEpsPct     Float  @default(0.02)
+  mmInvAlpha      Float  @default(0.1)
 }
 
 model VolumeConfig {
-  id                String @id @default(uuid())
-  botId             String @unique
-  bot               Bot    @relation(fields: [botId], references: [id])
-  dailyNotionalUsdt Float
-  minTradeUsdt      Float
-  maxTradeUsdt      Float
-  activeFrom        String
-  activeTo          String
-  mode              String
-  buyPct            Float  @default(0.5)
-  buyBumpTicks      Float  @default(0)
-  sellBumpTicks     Float  @default(0)
-  volCooldownMs     Int    @default(60000)
-  volActiveTtlMs    Int    @default(20000)
-  volMmSafetyMult   Float  @default(1.5)
-  volLastBandPct    Float  @default(0.0001)
-  volInsideSpreadPct Float @default(0.00005)
-  volLastMinBumpAbs Float  @default(0.00000001)
-  volLastMinBumpPct Float  @default(0)
-  volBuyTicks       Int    @default(2)
-  volSellTicks      Int    @default(2)
+  id                 String @id @default(uuid())
+  botId              String @unique
+  bot                Bot    @relation(fields: [botId], references: [id])
+  dailyNotionalUsdt  Float
+  minTradeUsdt       Float
+  maxTradeUsdt       Float
+  activeFrom         String
+  activeTo           String
+  mode               String
+  buyPct             Float  @default(0.5)
+  buyBumpTicks       Float  @default(0)
+  sellBumpTicks      Float  @default(0)
+  volCooldownMs      Int    @default(60000)
+  volActiveTtlMs     Int    @default(20000)
+  volMmSafetyMult    Float  @default(1.5)
+  volLastBandPct     Float  @default(0.0001)
+  volInsideSpreadPct Float  @default(0.00005)
+  volLastMinBumpAbs  Float  @default(0.00000001)
+  volLastMinBumpPct  Float  @default(0)
+  volBuyTicks        Int    @default(2)
+  volSellTicks       Int    @default(2)
 }
 
 model RiskConfig {
@@ -102,24 +159,33 @@ model RiskConfig {
 }
 
 model BotNotificationConfig {
-  id               String @id @default(uuid())
-  botId            String @unique
-  bot              Bot    @relation(fields: [botId], references: [id])
+  id               String  @id @default(uuid())
+  botId            String  @unique
+  bot              Bot     @relation(fields: [botId], references: [id])
   fundsWarnEnabled Boolean @default(true)
   fundsWarnPct     Float   @default(0.1)
 }
 
 model BotRuntime {
-  botId     String  @id
-  bot       Bot     @relation(fields: [botId], references: [id])
-  updatedAt DateTime @updatedAt
-  status    String
-  reason    String?
-  lastHealthyAt DateTime?
+  botId              String    @id
+  bot                Bot       @relation(fields: [botId], references: [id])
+  updatedAt          DateTime  @updatedAt
+  status             String
+  reason             String?
+  workerId           String?
+  lastHeartbeatAt    DateTime?
+  lastTickAt         DateTime?
+  stateJson          Json?
+  lastError          String?
+  consecutiveErrors  Int       @default(0)
+  errorWindowStartAt DateTime?
+  lastErrorAt        DateTime?
+  lastErrorMessage   String?
+  lastHealthyAt      DateTime?
 
-  mid        Float?
-  bid        Float?
-  ask        Float?
+  mid Float?
+  bid Float?
+  ask Float?
 
   // total open orders (all types)
   openOrders Int?
@@ -136,11 +202,24 @@ model BotRuntime {
 
   tradedNotionalToday Float?
 
-  midCex Float?
-  midDex Float?
-  dexStatus String?
-  dexDiffBps Float?
+  midCex        Float?
+  midDex        Float?
+  dexStatus     String?
+  dexDiffBps    Float?
   dexLastUpdate DateTime?
+}
+
+model RiskEvent {
+  id        String   @id @default(cuid())
+  botId     String
+  type      String
+  message   String?
+  meta      Json?
+  createdAt DateTime @default(now())
+  bot       Bot      @relation(fields: [botId], references: [id])
+
+  @@index([botId, createdAt])
+  @@index([type, createdAt])
 }
 
 model BotMetric {
@@ -177,11 +256,11 @@ model CexConfig {
 }
 
 model AlertConfig {
-  key               String   @id @default("default")
-  telegramBotToken  String?
-  telegramChatId    String?
-  createdAt         DateTime @default(now())
-  updatedAt         DateTime @updatedAt
+  key              String   @id @default("default")
+  telegramBotToken String?
+  telegramChatId   String?
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
 }
 
 model BotAlert {
@@ -260,14 +339,18 @@ model BotOrderMap {
 }
 
 model User {
-  id                 String   @id @default(cuid())
-  email              String   @unique
-  passwordHash       String
-  autoLogoutEnabled  Boolean  @default(true)
-  autoLogoutMinutes  Int      @default(60)
-  allowManualTrading Boolean  @default(false)
-  createdAt          DateTime @default(now())
+  id                 String            @id @default(cuid())
+  email              String            @unique
+  passwordHash       String?
+  emailVerifiedAt    DateTime?
+  autoLogoutEnabled  Boolean           @default(true)
+  autoLogoutMinutes  Int               @default(60)
+  allowManualTrading Boolean           @default(false)
+  createdAt          DateTime          @default(now())
+  updatedAt          DateTime          @updatedAt
   sessions           Session[]
+  bots               Bot[]
+  exchangeAccounts   ExchangeAccount[]
   reauths            ReauthSession[]
   reauthOtps         ReauthOtp[]
   workspaces         WorkspaceMember[]
@@ -312,33 +395,33 @@ model ReauthOtp {
 }
 
 model Workspace {
-  id        String @id @default(cuid())
-  name      String
-  features  Json? @default("{}")
-  createdAt DateTime @default(now())
-  members   WorkspaceMember[]
-  bots      Bot[]
-  manualTrades ManualTradeLog[]
-  roles     Role[]
+  id            String            @id @default(cuid())
+  name          String
+  features      Json?             @default("{}")
+  createdAt     DateTime          @default(now())
+  members       WorkspaceMember[]
+  bots          Bot[]
+  manualTrades  ManualTradeLog[]
+  roles         Role[]
   configPresets BotConfigPreset[]
-  auditEvents AuditEvent[]
+  auditEvents   AuditEvent[]
 }
 
 model BotPriceSupportConfig {
-  id        String  @id @default(uuid())
-  botId     String  @unique
-  bot       Bot     @relation(fields: [botId], references: [id])
-  enabled   Boolean @default(false)
-  active    Boolean @default(true)
-  floorPrice Float?
-  budgetUsdt Float  @default(0)
-  spentUsdt  Float  @default(0)
-  maxOrderUsdt Float @default(50)
-  cooldownMs Int    @default(2000)
-  mode       String @default("PASSIVE")
-  lastActionAt BigInt @default(0)
-  stoppedReason String?
-  notifiedBudgetExhaustedAt BigInt @default(0)
+  id                        String  @id @default(uuid())
+  botId                     String  @unique
+  bot                       Bot     @relation(fields: [botId], references: [id])
+  enabled                   Boolean @default(false)
+  active                    Boolean @default(true)
+  floorPrice                Float?
+  budgetUsdt                Float   @default(0)
+  spentUsdt                 Float   @default(0)
+  maxOrderUsdt              Float   @default(50)
+  cooldownMs                Int     @default(2000)
+  mode                      String  @default("PASSIVE")
+  lastActionAt              BigInt  @default(0)
+  stoppedReason             String?
+  notifiedBudgetExhaustedAt BigInt  @default(0)
 }
 
 model BotConfigPreset {
@@ -362,11 +445,11 @@ model BotConfigPreset {
 }
 
 model WorkspaceMember {
-  id          String @id @default(cuid())
+  id          String   @id @default(cuid())
   workspaceId String
   userId      String
   roleId      String
-  status      String @default("ACTIVE")
+  status      String   @default("ACTIVE")
   createdAt   DateTime @default(now())
 
   workspace Workspace @relation(fields: [workspaceId], references: [id])
@@ -383,10 +466,10 @@ model Role {
   workspaceId String
   name        String
   isSystem    Boolean  @default(false)
-  permissions Json    @default("{}")
+  permissions Json     @default("{}")
   createdAt   DateTime @default(now())
 
-  workspace Workspace @relation(fields: [workspaceId], references: [id])
+  workspace Workspace         @relation(fields: [workspaceId], references: [id])
   members   WorkspaceMember[]
 
   @@unique([workspaceId, name])
@@ -422,4 +505,27 @@ model RunnerStatus {
   botsRunning Int
   botsErrored Int
   version     String?
+}
+
+model Prediction {
+  id               String   @id @default(cuid())
+  userId           String?
+  botId            String?
+  symbol           String
+  marketType       String
+  timeframe        String
+  tsCreated        DateTime
+  signal           String
+  expectedMovePct  Float
+  confidence       Float
+  explanation      String
+  tags             Json
+  featuresSnapshot Json
+  modelVersion     String
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+
+  @@index([symbol, timeframe, tsCreated])
+  @@index([userId, createdAt])
+  @@index([botId, createdAt])
 }

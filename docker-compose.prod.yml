@@ -1,4 +1,20 @@
 services:
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "5"
+
   postgres:
     image: postgres:16-alpine
     restart: unless-stopped
@@ -34,11 +50,15 @@ services:
       NODE_ENV: "production"
       API_PORT: "8080"
       DATABASE_URL: postgresql://mm:mm@postgres:5432/marketmaker?schema=public
+      ORCHESTRATION_MODE: "queue"
+      REDIS_URL: redis://redis:6379
       MANUAL_TRADE_DEBUG: "1"
     ports:
       - "8080:8080"
     depends_on:
       postgres:
+        condition: service_healthy
+      redis:
         condition: service_healthy
     healthcheck:
       test: ["CMD-SHELL", "node -e \"fetch('http://localhost:8080/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))\""]
@@ -95,6 +115,8 @@ services:
       NODE_ENV: "production"
       LOG_LEVEL: "info"
       DATABASE_URL: postgresql://mm:mm@postgres:5432/marketmaker?schema=public
+      ORCHESTRATION_MODE: "queue"
+      REDIS_URL: redis://redis:6379
       RUNNER_BOT_ID: ""
       RUNNER_TICK_MS: "15000"
       RUNNER_SCAN_MS: "45000"
@@ -109,6 +131,8 @@ services:
       COINSTORE_ORDER_DEBUG: "1"
     depends_on:
       api:
+        condition: service_healthy
+      redis:
         condition: service_healthy
     healthcheck:
       test: ["CMD-SHELL", "node -e \"fetch('http://localhost:8091/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))\""]

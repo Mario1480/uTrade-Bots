@@ -6,7 +6,8 @@
   "scripts": {
     "dev": "next dev -p 3000",
     "build": "next build",
-    "start": "next start -p 3000"
+    "start": "next start -p 3000",
+    "typecheck": "next typegen && tsc --noEmit --incremental false -p tsconfig.json"
   },
   "dependencies": {
     "next": "^15.0.0",

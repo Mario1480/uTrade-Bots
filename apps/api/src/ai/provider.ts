@@ -1,110 +1,108 @@
 import { logger } from "../logger.js";
 
-type Provider = "none" | "openai";
-
-export type AiCallResult = {
-  ok: boolean;
-  data?: any;
-  error?: string;
-  status?: number;
-  requestId?: string;
-  durationMs?: number;
+type ChatCompletionResponse = {
+  choices?: Array<{
+    message?: {
+      content?: string | Array<{ type?: string; text?: string }>;
+    };
+  }>;
+  error?: {
+    message?: string;
+  };
 };
 
-function getProvider(): Provider {
-  const raw = String(process.env.AI_PROVIDER ?? "none").toLowerCase();
-  if (raw === "openai") return "openai";
-  return "none";
+export type CallAiOptions = {
+  systemMessage?: string;
+  model?: string;
+  timeoutMs?: number;
+  temperature?: number;
+  maxTokens?: number;
+};
+
+const OPENAI_ENDPOINT = "https://api.openai.com/v1/chat/completions";
+
+function resolveProvider(value: string | undefined): "openai" | "disabled" {
+  const normalized = (value ?? "openai").trim().toLowerCase();
+  if (normalized === "off" || normalized === "disabled" || normalized === "none") {
+    return "disabled";
+  }
+  return "openai";
 }
 
-function extractJson(content: string): any | null {
-  if (!content) return null;
-  try {
-    return JSON.parse(content);
-  } catch {
-    // continue
+function readContent(payload: ChatCompletionResponse): string {
+  const content = payload.choices?.[0]?.message?.content;
+  if (typeof content === "string") return content;
+  if (Array.isArray(content)) {
+    const text = content
+      .map((part) => (typeof part?.text === "string" ? part.text : ""))
+      .join("")
+      .trim();
+    if (text.length > 0) return text;
   }
-  const fenced = content.match(/```json\s*([\s\S]*?)```/i);
-  if (fenced?.[1]) {
-    try {
-      return JSON.parse(fenced[1]);
-    } catch {
-      // continue
-    }
-  }
-  const start = content.search(/[\[{]/);
-  if (start >= 0) {
-    const end = Math.max(content.lastIndexOf("}"), content.lastIndexOf("]"));
-    if (end > start) {
-      try {
-        return JSON.parse(content.slice(start, end + 1));
-      } catch {
-        return null;
-      }
-    }
-  }
-  return null;
+  throw new Error("ai_empty_response");
 }
 
-export async function callAi(prompt: string): Promise<AiCallResult> {
-  const provider = getProvider();
-  if (provider === "none") {
-    return { ok: false, error: "disabled" };
-  }
+export function getAiModel(): string {
+  return process.env.AI_MODEL?.trim() || "gpt-4o-mini";
+}
 
-  const baseUrl = process.env.AI_BASE_URL ?? "https://api.openai.com/v1";
-  const apiKey = process.env.AI_API_KEY ?? "";
-  const model = process.env.AI_MODEL ?? "gpt-4o-mini";
-  const timeoutMs = Number(process.env.AI_TIMEOUT_MS ?? "10000") || 10_000;
+export async function callAi(prompt: string, options: CallAiOptions = {}): Promise<string> {
+  const provider = resolveProvider(process.env.AI_PROVIDER);
+  if (provider === "disabled") throw new Error("ai_provider_disabled");
 
-  const requestId = `ai_${Math.random().toString(36).slice(2, 10)}`;
-  const startedAt = Date.now();
+  const apiKey = process.env.AI_API_KEY?.trim();
+  if (!apiKey) throw new Error("ai_api_key_missing");
+
+  const model = options.model ?? getAiModel();
+  const timeoutMs = Number(options.timeoutMs ?? process.env.AI_TIMEOUT_MS ?? "8000");
   const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), timeoutMs);
+  const timeout = setTimeout(() => controller.abort(), Math.max(1000, timeoutMs));
+  const startedAt = Date.now();
 
   try {
-    const resp = await fetch(`${baseUrl.replace(/\/$/, "")}/chat/completions`, {
+    const response = await fetch(OPENAI_ENDPOINT, {
       method: "POST",
-      signal: controller.signal,
       headers: {
         "Content-Type": "application/json",
-        ...(apiKey ? { Authorization: `Bearer ${apiKey}` } : {})
+        Authorization: `Bearer ${apiKey}`
       },
       body: JSON.stringify({
         model,
-        temperature: 0.2,
+        temperature: options.temperature ?? 0.1,
+        max_tokens: options.maxTokens ?? 220,
         messages: [
-          { role: "system", content: "You are a read-only market-making telemetry analyst. Return strict JSON only." },
+          ...(options.systemMessage
+            ? [{ role: "system", content: options.systemMessage }]
+            : []),
           { role: "user", content: prompt }
         ]
-      })
+      }),
+      signal: controller.signal
     });
 
-    const durationMs = Date.now() - startedAt;
-    const status = resp.status;
-    const text = await resp.text();
-    let data: any = null;
-
+    let payload: ChatCompletionResponse | null = null;
     try {
-      const parsed = JSON.parse(text);
-      const content = parsed?.choices?.[0]?.message?.content ?? "";
-      data = extractJson(content) ?? extractJson(text);
+      payload = (await response.json()) as ChatCompletionResponse;
     } catch {
-      data = extractJson(text);
+      payload = null;
     }
 
-    if (!resp.ok || !data) {
-      logger.warn("ai request failed", { requestId, status, durationMs });
-      return { ok: false, error: "ai_failed", status, requestId, durationMs };
+    if (!response.ok) {
+      const errMessage = payload?.error?.message ?? `openai_http_${response.status}`;
+      throw new Error(errMessage);
     }
 
-    logger.info("ai request ok", { requestId, status, durationMs });
-    return { ok: true, data, status, requestId, durationMs };
-  } catch (e) {
-    const durationMs = Date.now() - startedAt;
-    logger.warn("ai request error", { requestId, durationMs });
-    return { ok: false, error: "ai_error", requestId, durationMs };
+    return readContent(payload ?? {});
+  } catch (error) {
+    const isAbort = error instanceof Error && error.name === "AbortError";
+    logger.warn("ai_provider_call_failed", {
+      ai_model: model,
+      ai_call_ms: Date.now() - startedAt,
+      reason: isAbort ? "timeout" : String(error)
+    });
+    throw error;
   } finally {
     clearTimeout(timeout);
   }
 }
+

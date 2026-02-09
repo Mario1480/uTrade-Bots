@@ -1,3453 +1,1919 @@
 import "dotenv/config";
 import crypto from "node:crypto";
+import http from "node:http";
 import express from "express";
-import type { NextFunction, Request, Response } from "express";
 import cors from "cors";
-import rateLimit from "express-rate-limit";
 import cookieParser from "cookie-parser";
-import type { Prisma } from "@prisma/client";
-import { prisma } from "@mm/db";
-import {
-  BinanceRestClient,
-  BitmartRestClient,
-  CoinstoreRestClient,
-  MexcRestClient,
-  XtRestClient,
-  BingxRestClient,
-  PionexRestClient,
-  P2BRestClient,
-  fromExchangeSymbol
-} from "@mm/exchange";
-import { buildMmQuotes } from "@mm/strategy";
-import {
-  clamp,
-  normalizeSymbol,
-  signLicenseBody,
-  mapLicenseErrorFromStatus,
-  type LicenseVerifyResponse,
-  type Order
-} from "@mm/core";
+import WebSocket, { WebSocketServer } from "ws";
 import { z } from "zod";
+import { prisma } from "@mm/db";
+import { BitgetFuturesAdapter } from "@mm/futures-exchange";
 import {
-  createReauth,
   createSession,
   destroySession,
   getUserFromLocals,
-  getRoleFromLocals,
-  getWorkspaceId,
   hashPassword,
-  isSuperadmin,
   requireAuth,
-  requireReauth,
   verifyPassword
 } from "./auth.js";
-import { seedAdmin } from "./seed-admin.js";
-import { logger } from "./logger.js";
-import { ensureDefaultRoles } from "./rbac.js";
-import { refreshCsrfCookie } from "./auth.js";
-import { analyzeBotMetrics } from "./ai/analyzer.js";
-import { sendInviteEmail, sendReauthOtpEmail } from "./email.js";
+import { decryptSecret, encryptSecret } from "./secret-crypto.js";
+import {
+  enforceBotStartLicense,
+  getStubEntitlements,
+  isLicenseEnforcementEnabled,
+  isLicenseStubEnabled
+} from "./license.js";
+import {
+  closeOrchestration,
+  cancelBotRun,
+  enqueueBotRun,
+  getQueueMetrics,
+  getRuntimeOrchestrationMode
+} from "./orchestration.js";
+import { ExchangeSyncError, syncExchangeAccount } from "./exchange-sync.js";
+import {
+  ManualTradingError,
+  cancelAllOrders,
+  closePositionsMarket,
+  createBitgetAdapter,
+  extractWsDataArray,
+  getTradingSettings,
+  listOpenOrders,
+  listPositions,
+  listSymbols,
+  normalizeOrderBookPayload,
+  normalizeSymbolInput,
+  normalizeTickerPayload,
+  normalizeTradesPayload,
+  resolveTradingAccount,
+  saveTradingSettings
+} from "./trading.js";
+import { generateAndPersistPrediction } from "./ai/predictionPipeline.js";
+
+const db = prisma as any;
 
 const app = express();
 app.set("trust proxy", 1);
 
-const origins = (process.env.CORS_ORIGINS ?? "http://localhost:3000,https://marketmaker.uliquid.vip,https://www.marketmaker.uliquid.vip")
+const origins = (process.env.CORS_ORIGINS ?? "http://localhost:3000,http://127.0.0.1:3000")
   .split(",")
-  .map(s => s.trim())
+  .map((value) => value.trim())
   .filter(Boolean);
-const REAUTH_OTP_TTL_MIN = Number(process.env.REAUTH_OTP_TTL_MIN ?? "10");
-const RUNNER_STALE_MS = Number(process.env.RUNNER_STALE_MS ?? "60000");
-const RUNNER_ALERT_COOLDOWN_MS = Number(process.env.RUNNER_ALERT_COOLDOWN_MS ?? "900000");
-const LICENSE_CONFIG_KEY = "license.config";
-const LICENSE_TIMEOUT_MS = Number(process.env.LICENSE_VERIFY_TIMEOUT_MS ?? "8000");
-const LICENSE_BASE_URL = process.env.LICENSE_SERVER_URL ?? "https://license-server.uliquid.vip";
-const LICENSE_SECRET = process.env.LICENSE_SERVER_SECRET ?? "";
-const LICENSE_VERSION = process.env.APP_VERSION ?? undefined;
-const LICENSE_FEATURE_KEYS = ["priceSupport", "priceFollow", "aiRecommendations", "dexPriceFeed"];
-const METRICS_RETENTION_DAYS = Math.max(1, Number(process.env.METRICS_RETENTION_DAYS ?? "7"));
-const METRICS_CLEANUP_KEY = "metrics.cleanup.lastRun";
-const METRICS_CLEANUP_INTERVAL_MS = 12 * 60 * 60_000;
-const SUPPORTED_EXCHANGES = ["binance", "bitmart", "coinstore", "pionex", "p2b", "mexc", "xt", "bingx"] as const;
 
-type MetricsRangeKey = "1h" | "6h" | "24h" | "7d" | "30d";
-const METRICS_RANGES: Record<MetricsRangeKey, { lookbackMs: number; stepSec: number }> = {
-  "1h": { lookbackMs: 60 * 60_000, stepSec: 10 },
-  "6h": { lookbackMs: 6 * 60 * 60_000, stepSec: 30 },
-  "24h": { lookbackMs: 24 * 60 * 60_000, stepSec: 60 },
-  "7d": { lookbackMs: 7 * 24 * 60 * 60_000, stepSec: 300 },
-  "30d": { lookbackMs: 30 * 24 * 60 * 60_000, stepSec: 900 }
+if (origins.includes("http://localhost:3000") && !origins.includes("http://127.0.0.1:3000")) {
+  origins.push("http://127.0.0.1:3000");
+}
+if (origins.includes("http://127.0.0.1:3000") && !origins.includes("http://localhost:3000")) {
+  origins.push("http://localhost:3000");
+}
+
+app.use(
+  cors({
+    origin(origin, callback) {
+      if (!origin) return callback(null, true);
+      if (origins.includes("*") || origins.includes(origin)) return callback(null, true);
+      return callback(new Error("not_allowed_by_cors"));
+    },
+    credentials: true
+  })
+);
+app.use(cookieParser());
+app.use(express.json());
+
+const registerSchema = z.object({
+  email: z.string().trim().email(),
+  password: z.string().min(8)
+});
+
+const loginSchema = z.object({
+  email: z.string().trim().email(),
+  password: z.string().min(1)
+});
+
+const exchangeCreateSchema = z.object({
+  exchange: z.string().trim().min(1),
+  label: z.string().trim().min(1),
+  apiKey: z.string().trim().min(1),
+  apiSecret: z.string().trim().min(1),
+  passphrase: z.string().trim().optional()
+}).superRefine((value, ctx) => {
+  if (value.exchange.toLowerCase() === "bitget" && !value.passphrase) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ["passphrase"],
+      message: "passphrase is required for bitget"
+    });
+  }
+});
+
+const botCreateSchema = z.object({
+  name: z.string().trim().min(1),
+  symbol: z.string().trim().min(1),
+  exchangeAccountId: z.string().trim().min(1),
+  strategyKey: z.string().trim().min(1).default("dummy"),
+  marginMode: z.enum(["isolated", "cross"]).default("isolated"),
+  leverage: z.number().int().min(1).max(125).default(1),
+  tickMs: z.number().int().min(100).max(60_000).default(1000),
+  paramsJson: z.record(z.any()).default({})
+});
+
+const tradingSettingsSchema = z.object({
+  exchangeAccountId: z.string().trim().min(1).nullable().optional(),
+  symbol: z.string().trim().min(1).nullable().optional(),
+  timeframe: z.string().trim().min(1).nullable().optional()
+});
+
+const placeOrderSchema = z.object({
+  exchangeAccountId: z.string().trim().min(1).optional(),
+  symbol: z.string().trim().min(1),
+  type: z.enum(["market", "limit"]),
+  side: z.enum(["long", "short"]),
+  qty: z.number().positive(),
+  price: z.number().positive().optional(),
+  takeProfitPrice: z.number().positive().optional(),
+  stopLossPrice: z.number().positive().optional(),
+  reduceOnly: z.boolean().optional(),
+  leverage: z.number().int().min(1).max(125).optional(),
+  marginMode: z.enum(["isolated", "cross"]).optional()
+}).superRefine((value, ctx) => {
+  if (value.type === "limit" && value.price === undefined) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ["price"],
+      message: "price is required for limit orders"
+    });
+  }
+});
+
+const adjustLeverageSchema = z.object({
+  exchangeAccountId: z.string().trim().min(1).optional(),
+  symbol: z.string().trim().min(1),
+  leverage: z.number().int().min(1).max(125),
+  marginMode: z.enum(["isolated", "cross"]).default("cross")
+});
+
+const cancelOrderSchema = z.object({
+  exchangeAccountId: z.string().trim().min(1).optional(),
+  orderId: z.string().trim().min(1),
+  symbol: z.string().trim().min(1).optional()
+});
+
+const closePositionSchema = z.object({
+  exchangeAccountId: z.string().trim().min(1).optional(),
+  symbol: z.string().trim().min(1),
+  side: z.enum(["long", "short"]).optional()
+});
+
+const predictionGenerateSchema = z.object({
+  symbol: z.string().trim().min(1),
+  marketType: z.enum(["spot", "perp"]),
+  timeframe: z.enum(["5m", "15m", "1h", "4h", "1d"]),
+  tsCreated: z.string().datetime().optional(),
+  prediction: z.object({
+    signal: z.enum(["up", "down", "neutral"]),
+    expectedMovePct: z.number(),
+    confidence: z.number()
+  }),
+  featureSnapshot: z.record(z.any()),
+  botId: z.string().trim().min(1).optional(),
+  modelVersionBase: z.string().trim().min(1).optional()
+});
+
+type DashboardConnectionStatus = "connected" | "degraded" | "disconnected";
+
+type ExchangeAccountOverview = {
+  exchangeAccountId: string;
+  exchange: string;
+  label: string;
+  status: DashboardConnectionStatus;
+  lastSyncAt: string | null;
+  spotBudget: { total?: number | null; available?: number | null } | null;
+  futuresBudget: { equity?: number | null; availableMargin?: number | null } | null;
+  pnlTodayUsd: number | null;
+  lastSyncError: { at: string | null; message: string | null } | null;
+  bots: { running: number; stopped: number; error: number };
+  alerts: { hasErrors: boolean; message?: string | null };
 };
 
-function isSupportedExchange(exchange: string) {
-  return SUPPORTED_EXCHANGES.includes(exchange.toLowerCase() as (typeof SUPPORTED_EXCHANGES)[number]);
+const DASHBOARD_CONNECTED_WINDOW_MS =
+  Number(process.env.DASHBOARD_STATUS_CONNECTED_SECONDS ?? "120") * 1000;
+const DASHBOARD_DEGRADED_WINDOW_MS =
+  Number(process.env.DASHBOARD_STATUS_DEGRADED_SECONDS ?? "600") * 1000;
+const EXCHANGE_AUTO_SYNC_INTERVAL_MS =
+  Math.max(15, Number(process.env.EXCHANGE_AUTO_SYNC_INTERVAL_SECONDS ?? "60")) * 1000;
+const EXCHANGE_AUTO_SYNC_ENABLED = !["0", "false", "off", "no"].includes(
+  String(process.env.EXCHANGE_AUTO_SYNC_ENABLED ?? "1").trim().toLowerCase()
+);
+
+function toIso(value: Date | null | undefined): string | null {
+  if (!value) return null;
+  return value.toISOString();
 }
 
-function getExchangeBaseUrl(exchange: string): string | null {
-  const key = exchange.toLowerCase();
-  if (key === "binance") return process.env.BINANCE_BASE_URL || "https://api.binance.com";
-  if (key === "bitmart") return process.env.BITMART_BASE_URL || "https://api-cloud.bitmart.com";
-  if (key === "coinstore") return process.env.COINSTORE_BASE_URL || "https://api.coinstore.com";
-  if (key === "pionex") return process.env.PIONEX_BASE_URL || "https://api.pionex.com";
-  if (key === "p2b") return process.env.P2B_BASE_URL || "https://api.p2pb2b.com";
-  if (key === "mexc") return process.env.MEXC_BASE_URL || "https://api.mexc.com";
-  if (key === "xt") return process.env.XT_BASE_URL || "https://sapi.xt.com";
-  if (key === "bingx") return process.env.BINGX_BASE_URL || "https://open-api.bingx.com";
-  return null;
+function resolveLastSyncAt(runtime: {
+  lastHeartbeatAt?: Date | null;
+  lastTickAt?: Date | null;
+  updatedAt?: Date | null;
+} | null | undefined): Date | null {
+  if (!runtime) return null;
+  const values = [runtime.lastHeartbeatAt, runtime.lastTickAt, runtime.updatedAt]
+    .filter((value): value is Date => Boolean(value))
+    .sort((a, b) => b.getTime() - a.getTime());
+  return values[0] ?? null;
 }
 
-function createPrivateRestClient(exchange: string, cex: { apiKey?: string | null; apiSecret?: string | null; apiMemo?: string | null }) {
-  const key = exchange.toLowerCase();
-  const baseUrl = getExchangeBaseUrl(key);
-  if (!baseUrl) throw new Error("unsupported_exchange");
-  if (!cex?.apiKey || !cex?.apiSecret) throw new Error("cex_config_missing");
-  if (key === "bitmart") {
-    return new BitmartRestClient(baseUrl, cex.apiKey, cex.apiSecret, cex.apiMemo ?? "");
-  }
-  if (key === "binance") {
-    return new BinanceRestClient(baseUrl, cex.apiKey, cex.apiSecret);
-  }
-  if (key === "coinstore") {
-    return new CoinstoreRestClient(baseUrl, cex.apiKey, cex.apiSecret);
-  }
-  if (key === "pionex") {
-    return new PionexRestClient(baseUrl, cex.apiKey, cex.apiSecret);
-  }
-  if (key === "p2b") {
-    return new P2BRestClient(baseUrl, cex.apiKey, cex.apiSecret);
-  }
-  if (key === "mexc") {
-    return new MexcRestClient(baseUrl, cex.apiKey, cex.apiSecret);
-  }
-  if (key === "xt") {
-    return new XtRestClient(baseUrl, cex.apiKey, cex.apiSecret);
-  }
-  if (key === "bingx") {
-    return new BingxRestClient(baseUrl, cex.apiKey, cex.apiSecret);
-  }
-  throw new Error("unsupported_exchange");
+function computeConnectionStatus(
+  lastSyncAt: Date | null,
+  hasBotActivity: boolean
+): DashboardConnectionStatus {
+  if (!lastSyncAt) return hasBotActivity ? "disconnected" : "degraded";
+  const ageMs = Date.now() - lastSyncAt.getTime();
+  if (ageMs <= DASHBOARD_CONNECTED_WINDOW_MS) return "connected";
+  if (ageMs <= DASHBOARD_DEGRADED_WINDOW_MS) return "degraded";
+  return "disconnected";
 }
 
-function createPublicRestClient(exchange: string) {
-  const key = exchange.toLowerCase();
-  const baseUrl = getExchangeBaseUrl(key);
-  if (!baseUrl) throw new Error("unsupported_exchange");
-  if (key === "binance") return new BinanceRestClient(baseUrl, "", "");
-  if (key === "bitmart") return new BitmartRestClient(baseUrl, "", "", "");
-  if (key === "coinstore") return new CoinstoreRestClient(baseUrl, "", "");
-  if (key === "pionex") return new PionexRestClient(baseUrl, "", "");
-  if (key === "p2b") return new P2BRestClient(baseUrl, "", "");
-  if (key === "mexc") return new MexcRestClient(baseUrl, "", "");
-  if (key === "xt") return new XtRestClient(baseUrl, "", "");
-  if (key === "bingx") return new BingxRestClient(baseUrl, "", "");
-  throw new Error("unsupported_exchange");
+function toSafeUser(user: { id: string; email: string }) {
+  return { id: user.id, email: user.email };
 }
 
-function isAllowedOrigin(origin?: string | null) {
-  if (!origin) return false;
-  if (origins.includes("*")) return true;
-  return origins.includes(origin);
+function toSafeBot(bot: any) {
+  return {
+    id: bot.id,
+    userId: bot.userId,
+    exchangeAccountId: bot.exchangeAccountId ?? null,
+    name: bot.name,
+    exchange: bot.exchange,
+    symbol: bot.symbol,
+    status: bot.status,
+    lastError: bot.lastError ?? null,
+    createdAt: bot.createdAt,
+    updatedAt: bot.updatedAt,
+    exchangeAccount: bot.exchangeAccount
+      ? {
+          id: bot.exchangeAccount.id,
+          exchange: bot.exchangeAccount.exchange,
+          label: bot.exchangeAccount.label
+        }
+      : null,
+    futuresConfig: bot.futuresConfig
+      ? {
+          strategyKey: bot.futuresConfig.strategyKey,
+          marginMode: bot.futuresConfig.marginMode,
+          leverage: bot.futuresConfig.leverage,
+          tickMs: bot.futuresConfig.tickMs,
+          paramsJson: bot.futuresConfig.paramsJson
+        }
+      : null,
+    runtime: bot.runtime
+      ? {
+          status: bot.runtime.status,
+          reason: bot.runtime.reason,
+          updatedAt: bot.runtime.updatedAt,
+          workerId: bot.runtime.workerId ?? null,
+          lastHeartbeatAt: bot.runtime.lastHeartbeatAt ?? null,
+          lastTickAt: bot.runtime.lastTickAt ?? null,
+          lastError: bot.runtime.lastError ?? null,
+          consecutiveErrors: bot.runtime.consecutiveErrors ?? 0,
+          errorWindowStartAt: bot.runtime.errorWindowStartAt ?? null,
+          lastErrorAt: bot.runtime.lastErrorAt ?? null,
+          lastErrorMessage: bot.runtime.lastErrorMessage ?? null
+        }
+      : null
+  };
 }
 
-function hashOtp(code: string) {
-  return crypto.createHash("sha256").update(code).digest("hex");
-}
-
-function maskLicenseKey(key?: string | null) {
-  if (!key) return null;
-  const trimmed = key.trim();
+function maskSecret(value: string): string {
+  const trimmed = value.trim();
   if (trimmed.length <= 4) return "****";
   return `****${trimmed.slice(-4)}`;
 }
 
-function resolveLicenseFeatures(data: LicenseVerifyResponse) {
-  if (data.status !== "ACTIVE") {
-    return {
-      priceSupport: false,
-      priceFollow: false,
-      aiRecommendations: false,
-      dexPriceFeed: false
-    };
-  }
-  const features = data.features ?? {};
-  return {
-    priceSupport: features.priceSupport ?? false,
-    priceFollow: features.priceFollow ?? false,
-    aiRecommendations: features.aiRecommendations ?? false,
-    dexPriceFeed: features.dexPriceFeed ?? false
-  };
+type ExchangeAccountSecrets = {
+  id: string;
+  exchange: string;
+  apiKeyEnc: string;
+  apiSecretEnc: string;
+  passphraseEnc: string | null;
+};
+
+function normalizeSyncErrorMessage(message: string): string {
+  const compact = message.replace(/\s+/g, " ").trim();
+  return compact.slice(0, 500);
 }
 
-async function fetchWithTimeout(url: string, init: RequestInit, timeoutMs: number) {
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), timeoutMs);
-  try {
-    return await fetch(url, { ...init, signal: controller.signal });
-  } finally {
-    clearTimeout(timer);
-  }
-}
-
-async function getLicenseConfig() {
-  const row = await prisma.globalSetting.findUnique({ where: { key: LICENSE_CONFIG_KEY } });
-  const raw = (row?.value as Record<string, any>) ?? {};
-  const licenseKey = raw.licenseKey ?? process.env.LICENSE_KEY ?? null;
-  const instanceId = raw.instanceId ?? process.env.LICENSE_INSTANCE_ID ?? null;
-  const source = raw.licenseKey || raw.instanceId ? "db" : licenseKey || instanceId ? "env" : "none";
-  return { licenseKey, instanceId, source };
-}
-
-async function getLicenseUsage() {
-  const [bots, cex] = await Promise.all([
-    prisma.bot.count(),
-    prisma.cexConfig.count()
-  ]);
-  return { bots, cex };
-}
-
-async function syncWorkspaceFeatures(features: Partial<{ priceSupport: boolean; priceFollow: boolean; aiRecommendations: boolean; dexPriceFeed: boolean }>) {
-  const normalized = {
-    priceSupport: features.priceSupport ?? false,
-    priceFollow: features.priceFollow ?? false,
-    aiRecommendations: features.aiRecommendations ?? false,
-    dexPriceFeed: features.dexPriceFeed ?? false
-  };
-  const workspaces = await prisma.workspace.findMany({
-    select: { id: true, features: true }
-  });
-
-  await Promise.all(
-    workspaces.map((ws) => {
-      const current = (ws.features as Record<string, any>) ?? {};
-      const next = { ...current };
-      for (const key of LICENSE_FEATURE_KEYS) {
-        next[key] = normalized[key as keyof typeof normalized];
-      }
-      return prisma.workspace.update({
-        where: { id: ws.id },
-        data: { features: next }
-      });
-    })
-  );
-}
-
-async function runMetricsCleanupIfDue() {
-  const now = new Date();
-  const cutoff = new Date(now.getTime() - METRICS_RETENTION_DAYS * 24 * 60 * 60_000);
-  try {
-    const row = await prisma.globalSetting.findUnique({ where: { key: METRICS_CLEANUP_KEY } });
-    const lastRunRaw = (row?.value as Record<string, any> | undefined)?.lastRunAt;
-    const lastRunAt = lastRunRaw ? new Date(lastRunRaw) : null;
-    if (lastRunAt && now.getTime() - lastRunAt.getTime() < METRICS_CLEANUP_INTERVAL_MS) {
-      return;
+async function persistExchangeSyncSuccess(accountId: string, synced: Awaited<ReturnType<typeof syncExchangeAccount>>) {
+  await db.exchangeAccount.update({
+    where: { id: accountId },
+    data: {
+      lastUsedAt: synced.syncedAt,
+      spotBudgetTotal: synced.spotBudget?.total ?? null,
+      spotBudgetAvailable: synced.spotBudget?.available ?? null,
+      futuresBudgetEquity: synced.futuresBudget.equity,
+      futuresBudgetAvailableMargin: synced.futuresBudget.availableMargin,
+      pnlTodayUsd: synced.pnlTodayUsd,
+      lastSyncErrorAt: null,
+      lastSyncErrorMessage: null
     }
+  });
+}
 
-    const deleted = await prisma.botMetric.deleteMany({
-      where: { ts: { lt: cutoff } }
-    });
+async function persistExchangeSyncFailure(accountId: string, errorMessage: string) {
+  await db.exchangeAccount.update({
+    where: { id: accountId },
+    data: {
+      lastSyncErrorAt: new Date(),
+      lastSyncErrorMessage: normalizeSyncErrorMessage(errorMessage)
+    }
+  });
+}
 
-    await prisma.globalSetting.upsert({
-      where: { key: METRICS_CLEANUP_KEY },
-      create: {
-        key: METRICS_CLEANUP_KEY,
-        value: { lastRunAt: now.toISOString(), deleted: deleted.count } as Prisma.InputJsonValue
-      },
-      update: {
-        value: { lastRunAt: now.toISOString(), deleted: deleted.count } as Prisma.InputJsonValue
-      }
-    });
-  } catch (e) {
-    console.warn("[metrics] cleanup failed", e);
+function decodeExchangeSecrets(account: ExchangeAccountSecrets): {
+  apiKey: string;
+  apiSecret: string;
+  passphrase: string | null;
+} {
+  try {
+    const apiKey = decryptSecret(account.apiKeyEnc);
+    const apiSecret = decryptSecret(account.apiSecretEnc);
+    const passphrase = account.passphraseEnc ? decryptSecret(account.passphraseEnc) : null;
+    return { apiKey, apiSecret, passphrase };
+  } catch {
+    throw new ExchangeSyncError(
+      "Failed to decrypt exchange credentials.",
+      500,
+      "exchange_secret_decrypt_failed"
+    );
   }
 }
 
-async function verifyLicenseServer(params: { licenseKey: string; instanceId: string }) {
-  const base = LICENSE_BASE_URL.endsWith("/api/license/verify")
-    ? LICENSE_BASE_URL
-    : `${LICENSE_BASE_URL.replace(/\/$/, "")}/api/license/verify`;
-
-  const body = JSON.stringify({
-    licenseKey: params.licenseKey,
-    instanceId: params.instanceId,
-    ...(LICENSE_VERSION ? { version: LICENSE_VERSION } : {})
+async function executeExchangeSync(account: ExchangeAccountSecrets) {
+  const secrets = decodeExchangeSecrets(account);
+  return syncExchangeAccount({
+    exchange: account.exchange,
+    apiKey: secrets.apiKey,
+    apiSecret: secrets.apiSecret,
+    passphrase: secrets.passphrase
   });
+}
 
-  const headers: Record<string, string> = {
-    "content-type": "application/json"
-  };
-  if (LICENSE_SECRET) {
-    headers["x-uliquid-signature"] = await signLicenseBody(body, LICENSE_SECRET);
-  }
+let exchangeAutoSyncTimer: NodeJS.Timeout | null = null;
+let exchangeAutoSyncRunning = false;
 
+async function runExchangeAutoSyncCycle() {
+  if (exchangeAutoSyncRunning) return;
+  exchangeAutoSyncRunning = true;
   try {
-    const resp = await fetchWithTimeout(base, { method: "POST", headers, body }, LICENSE_TIMEOUT_MS);
-    if (!resp.ok) {
-      const code = mapLicenseErrorFromStatus(resp.status);
-      let message: string | undefined;
+    const accounts: ExchangeAccountSecrets[] = await db.exchangeAccount.findMany({
+      where: { exchange: "bitget" },
+      select: {
+        id: true,
+        exchange: true,
+        apiKeyEnc: true,
+        apiSecretEnc: true,
+        passphraseEnc: true
+      }
+    });
+
+    for (const account of accounts) {
       try {
-        const json = (await resp.json()) as { error?: string };
-        if (json?.error) message = json.error;
-      } catch {}
-      return { ok: false as const, error: { code, status: resp.status, message } };
+        const synced = await executeExchangeSync(account);
+        await persistExchangeSyncSuccess(account.id, synced);
+      } catch (error) {
+        const message =
+          error instanceof ExchangeSyncError
+            ? error.message
+            : "Auto sync failed due to unexpected error.";
+        await persistExchangeSyncFailure(account.id, message);
+      }
     }
-    const data = (await resp.json()) as LicenseVerifyResponse;
-    return { ok: true as const, data };
-  } catch (err) {
-    return { ok: false as const, error: { code: "NETWORK_ERROR", message: String(err) } };
+  } finally {
+    exchangeAutoSyncRunning = false;
   }
 }
 
-async function getReauthOtpEnabled(): Promise<boolean> {
-  const row = await prisma.globalSetting.findUnique({ where: { key: "security.reauth_otp_enabled" } });
-  if (row?.value === undefined || row?.value === null) return true;
-  return Boolean(row.value);
+function startExchangeAutoSyncScheduler() {
+  if (!EXCHANGE_AUTO_SYNC_ENABLED) return;
+  exchangeAutoSyncTimer = setInterval(() => {
+    void runExchangeAutoSyncCycle();
+  }, EXCHANGE_AUTO_SYNC_INTERVAL_MS);
+  void runExchangeAutoSyncCycle();
 }
 
-app.use(cors({
-  origin: (origin, cb) => {
-    if (!origin) return cb(null, false);
-    if (isAllowedOrigin(origin)) return cb(null, true);
-    return cb(null, false);
-  },
-  credentials: true,
-  methods: ["GET", "HEAD", "PUT", "PATCH", "POST", "DELETE", "OPTIONS"],
-  allowedHeaders: ["Content-Type", "x-csrf-token"]
-}));
-app.use(express.json());
-app.use(cookieParser());
+function stopExchangeAutoSyncScheduler() {
+  if (!exchangeAutoSyncTimer) return;
+  clearInterval(exchangeAutoSyncTimer);
+  exchangeAutoSyncTimer = null;
+}
 
-// Metrics retention cleanup (guarded by a DB-backed timestamp lock).
-void runMetricsCleanupIfDue();
-setInterval(() => {
-  void runMetricsCleanupIfDue();
-}, METRICS_CLEANUP_INTERVAL_MS);
+type WsAuthUser = {
+  id: string;
+  email: string;
+};
 
-app.use((req, res, next) => {
-  const origin = req.header("origin");
-  if (!origin) {
-    if (req.path === "/health" && ["GET", "HEAD", "OPTIONS"].includes(req.method)) {
-      return next();
+type MarketWsContext = {
+  adapter: BitgetFuturesAdapter;
+  stop: () => Promise<void>;
+};
+
+function readCookieValue(header: string | undefined, name: string): string | null {
+  if (!header) return null;
+  const entries = header.split(";");
+  for (const entry of entries) {
+    const [rawName, ...rest] = entry.trim().split("=");
+    if (rawName !== name) continue;
+    const value = rest.join("=");
+    if (!value) return null;
+    try {
+      return decodeURIComponent(value);
+    } catch {
+      return value;
     }
-    return res.status(403).json({ error: "origin_required" });
   }
-  return next();
-});
-
-const loginIpLimiter = rateLimit({
-  windowMs: 60_000,
-  max: 5,
-  standardHeaders: true,
-  legacyHeaders: false,
-  message: { error: "rate_limited" }
-});
-
-const loginUserLimiter = rateLimit({
-  windowMs: 60_000,
-  max: 5,
-  standardHeaders: true,
-  legacyHeaders: false,
-  keyGenerator: (req) => {
-    const email = String((req.body as any)?.email ?? "").toLowerCase();
-    return email ? `email:${email}` : `ip:${req.ip}`;
-  },
-  message: { error: "rate_limited" }
-});
-
-const reauthOtpLimiter = rateLimit({
-  windowMs: 10 * 60_000,
-  max: 5,
-  standardHeaders: true,
-  legacyHeaders: false,
-  message: { error: "rate_limited" }
-});
-
-app.use((req, res, next) => {
-  if (req.method === "GET" || req.method === "HEAD" || req.method === "OPTIONS") {
-    return next();
-  }
-  if (req.path === "/auth/login" || req.path === "/auth/register") {
-    return next();
-  }
-  const origin = req.header("origin");
-  if (!origin || !isAllowedOrigin(origin)) {
-    return res.status(403).json({ error: "origin_forbidden" });
-  }
-  const csrfCookie = req.cookies?.mm_csrf;
-  const csrfHeader = req.header("x-csrf-token");
-  if (!csrfCookie || !csrfHeader || csrfCookie !== csrfHeader) {
-    return res.status(403).json({ error: "csrf" });
-  }
-  return next();
-});
-
-const BotCreate = z.object({
-  name: z.string(),
-  symbol: z.string(),
-  exchange: z.string()
-});
-
-const MMConfig = z.object({
-  spreadPct: z.number(),
-  maxSpreadPct: z.number(),
-  levelsUp: z.number().int(),
-  levelsDown: z.number().int(),
-  budgetQuoteUsdt: z.number(),
-  budgetBaseToken: z.number(),
-  minOrderUsdt: z.number(),
-  maxOrderUsdt: z.number(),
-  distribution: z.enum(["LINEAR", "VALLEY", "RANDOM"]),
-  jitterPct: z.number(),
-  skewFactor: z.number(),
-  maxSkew: z.number(),
-  mmRepriceMs: z.number().int().optional(),
-  mmRepricePct: z.number().optional(),
-  mmPriceEpsPct: z.number().optional(),
-  mmQtyEpsPct: z.number().optional(),
-  mmInvAlpha: z.number().optional()
-});
-
-const VolConfig = z.object({
-  dailyNotionalUsdt: z.number(),
-  minTradeUsdt: z.number(),
-  maxTradeUsdt: z.number(),
-  activeFrom: z.string(),
-  activeTo: z.string(),
-  mode: z.enum(["PASSIVE", "MIXED", "ACTIVE"]),
-  buyPct: z.number().min(0).max(1),
-  buyBumpTicks: z.number().optional(),
-  sellBumpTicks: z.number().optional(),
-  volCooldownMs: z.number().int().optional(),
-  volActiveTtlMs: z.number().int().optional(),
-  volMmSafetyMult: z.number().optional(),
-  volLastBandPct: z.number().optional(),
-  volInsideSpreadPct: z.number().optional(),
-  volLastMinBumpAbs: z.number().optional(),
-  volLastMinBumpPct: z.number().optional(),
-  volBuyTicks: z.number().int().optional(),
-  volSellTicks: z.number().int().optional()
-});
-
-const RiskConfig = z.object({
-  minUsdt: z.number(),
-  maxDeviationPct: z.number(),
-  maxOpenOrders: z.number().int(),
-  maxDailyLoss: z.number()
-});
-
-const NotificationConfig = z.object({
-  fundsWarnEnabled: z.boolean(),
-  fundsWarnPct: z.number().min(0).max(1)
-});
-
-const PriceSupportConfig = z.object({
-  enabled: z.boolean(),
-  floorPrice: z.number().nullable(),
-  budgetUsdt: z.number(),
-  maxOrderUsdt: z.number(),
-  cooldownMs: z.number().int(),
-  mode: z.enum(["PASSIVE", "MIXED", "ACTIVE"])
-});
-
-const PriceFollowConfig = z.object({
-  enabled: z.boolean(),
-  priceSourceExchange: z.string().optional().nullable(),
-  priceSourceSymbol: z.string().optional().nullable(),
-  priceSourceType: z.enum(["TICKER", "ORDERBOOK_MID"]).optional()
-});
-
-const DexPriceFeedConfig = z.object({
-  enabled: z.boolean(),
-  chain: z.string().optional(),
-  tokenAddress: z.string().optional().nullable(),
-  cacheTtlMs: z.number().int().optional(),
-  staleAfterMs: z.number().int().optional()
-});
-
-const DexDeviationConfig = z.object({
-  enabled: z.boolean(),
-  maxDeviationBps: z.number().int(),
-  policy: z.enum(["alertOnly", "freeze"]),
-  notifyCooldownSec: z.number().int()
-});
-
-const PriceSourceModeConfig = z.enum(["CEX", "DEXTOOLS", "HYBRID"]);
-
-const PresetPayload = z.object({
-  mm: MMConfig,
-  vol: VolConfig,
-  risk: RiskConfig,
-  priceSupport: z.union([PriceSupportConfig, z.null()]).optional()
-}).passthrough();
-
-const PresetCreatePayload = z.object({
-  name: z.string().min(2).max(60),
-  description: z.string().max(240).optional(),
-  exchange: z.string().optional(),
-  symbol: z.string().optional(),
-  payload: PresetPayload
-});
-
-const CexConfig = z.object({
-  exchange: z.string(),
-  apiKey: z.string(),
-  apiSecret: z.string(),
-  apiMemo: z.string().optional()
-});
-
-function maskCex(cfg: any) {
-  if (!cfg) return cfg;
-  return {
-    ...cfg,
-    apiKey: cfg.apiKey ? `${cfg.apiKey.slice(0, 4)}...${cfg.apiKey.slice(-4)}` : "",
-    apiSecret: cfg.apiSecret ? "********" : "",
-    apiMemo: cfg.apiMemo ?? null
-  };
+  return null;
 }
 
-const AlertConfig = z.object({
-  telegramBotToken: z.string().optional(),
-  telegramChatId: z.string().optional()
-});
+function hashSessionToken(token: string): string {
+  return crypto.createHash("sha256").update(token).digest("hex");
+}
 
-const AuthPayload = z.object({
-  email: z.string().email(),
-  password: z.string().min(6)
-});
-const ReauthPayload = z.object({
-  password: z.string().min(6)
-});
-const PasswordChange = z.object({
-  currentPassword: z.string().min(6),
-  newPassword: z.string().min(6)
-});
-const SecuritySettings = z.object({
-  autoLogoutEnabled: z.boolean(),
-  autoLogoutMinutes: z.number().int().min(1).max(1440),
-  reauthOtpEnabled: z.boolean().optional()
-});
+async function authenticateWsUser(req: http.IncomingMessage): Promise<WsAuthUser | null> {
+  const token = readCookieValue(req.headers.cookie, "mm_session");
+  if (!token) return null;
 
-const ManualLimitOrder = z.object({
-  side: z.enum(["BUY", "SELL", "buy", "sell"]),
-  price: z.union([z.number(), z.string()]),
-  quantity: z.union([z.number(), z.string()]),
-  postOnly: z.boolean().optional(),
-  timeInForce: z.enum(["GTC", "IOC"]).optional(),
-  clientTag: z.string().optional()
-});
-
-const ManualMarketOrder = z.object({
-  side: z.enum(["BUY", "SELL", "buy", "sell"]),
-  quoteNotionalUsdt: z.union([z.number(), z.string()]).optional(),
-  quantity: z.union([z.number(), z.string()]).optional()
-});
-
-const ManualCancelOrder = z.object({
-  orderId: z.string().min(1)
-});
-
-const SystemSettingsPayload = z.object({
-  tradingEnabled: z.boolean().optional(),
-  readOnlyMode: z.boolean().optional()
-});
-
-const SYSTEM_SETTINGS_KEY = "system";
-const DEFAULT_SYSTEM_SETTINGS = { tradingEnabled: true, readOnlyMode: false };
-
-async function createBotAlert(params: {
-  botId: string;
-  level: "info" | "warn" | "error";
-  title: string;
-  message?: string | null;
-}) {
-  await prisma.botAlert.create({
-    data: {
-      botId: params.botId,
-      level: params.level,
-      title: params.title,
-      message: params.message ?? null
+  const session = await db.session.findUnique({
+    where: {
+      tokenHash: hashSessionToken(token)
+    },
+    include: {
+      user: {
+        select: {
+          id: true,
+          email: true
+        }
+      }
     }
   });
-}
 
-function parseNumber(v: unknown): number {
-  if (typeof v === "number") return v;
-  if (typeof v === "string") return Number(v);
-  return NaN;
-}
+  if (!session) return null;
+  if (session.expiresAt.getTime() < Date.now()) return null;
 
-function normalizePriceSupportConfig(raw: any) {
-  if (!raw) return raw;
-  return {
-    ...raw,
-    lastActionAt: raw.lastActionAt ? Number(raw.lastActionAt) : 0,
-    notifiedBudgetExhaustedAt: raw.notifiedBudgetExhaustedAt ? Number(raw.notifiedBudgetExhaustedAt) : 0
-  };
-}
-
-function roleAllows(res: Response, key: string): boolean {
-  const role = getRoleFromLocals(res);
-  const perms = role?.permissions ?? {};
-  return Boolean(perms?.[key]);
-}
-
-async function getWorkspaceFeatures(workspaceId: string): Promise<Record<string, any>> {
-  const ws = await prisma.workspace.findUnique({
-    where: { id: workspaceId },
-    select: { features: true }
+  await db.session.update({
+    where: { id: session.id },
+    data: { lastActiveAt: new Date() }
   });
+
   return {
-    priceSupport: false,
-    priceFollow: false,
-    aiRecommendations: false,
-    dexPriceFeed: false,
-    ...((ws?.features as Record<string, any>) ?? {})
+    id: session.user.id,
+    email: session.user.email
   };
 }
 
-async function getSystemSettings() {
-  const row = await prisma.globalSetting.findUnique({ where: { key: SYSTEM_SETTINGS_KEY } });
-  const raw = (row?.value as Record<string, any>) ?? {};
+function wsReject(socket: any, statusCode: number, reason: string) {
+  socket.write(`HTTP/1.1 ${statusCode} ${reason}\r\nConnection: close\r\n\r\n`);
+  socket.destroy();
+}
+
+async function createMarketWsContext(
+  userId: string,
+  exchangeAccountId?: string | null
+): Promise<{ accountId: string; ctx: MarketWsContext }> {
+  const account = await resolveTradingAccount(userId, exchangeAccountId);
+  const adapter = createBitgetAdapter(account);
+  await adapter.contractCache.warmup();
+
+  let closed = false;
+  const stop = async () => {
+    if (closed) return;
+    closed = true;
+    await adapter.close();
+  };
+
   return {
-    tradingEnabled: raw.tradingEnabled ?? DEFAULT_SYSTEM_SETTINGS.tradingEnabled,
-    readOnlyMode: raw.readOnlyMode ?? DEFAULT_SYSTEM_SETTINGS.readOnlyMode
+    accountId: account.id,
+    ctx: {
+      adapter,
+      stop
+    }
   };
 }
 
-function requirePermission(key: string) {
-  return (req: Request, res: Response, next: NextFunction) => {
-    const user = getUserFromLocals(res);
-    if (isSuperadmin(user)) return next();
-    if (roleAllows(res, key)) return next();
-    return res.status(403).json({ error: "forbidden" });
-  };
+function pickWsSymbol(
+  preferred: string | null | undefined,
+  contracts: Array<{ canonicalSymbol: string; apiAllowed: boolean }>
+): string | null {
+  const normalizedPreferred = normalizeSymbolInput(preferred);
+  if (normalizedPreferred && contracts.some((row) => row.canonicalSymbol === normalizedPreferred)) {
+    return normalizedPreferred;
+  }
+  return contracts.find((row) => row.apiAllowed)?.canonicalSymbol ?? contracts[0]?.canonicalSymbol ?? null;
 }
 
-function requireAnyPermission(keys: string[]) {
-  return (req: Request, res: Response, next: NextFunction) => {
-    const user = getUserFromLocals(res);
-    if (isSuperadmin(user)) return next();
-    const allowed = keys.some((k) => roleAllows(res, k));
-    if (allowed) return next();
-    return res.status(403).json({ error: "forbidden" });
-  };
-}
-
-function requireWorkspaceAccess() {
-  return async (req: Request, res: Response, next: NextFunction) => {
-    const user = getUserFromLocals(res);
-    const workspaceId = req.params.id;
-    if (!workspaceId) return res.status(400).json({ error: "workspace_missing" });
-
-    res.locals.workspaceId = workspaceId;
-    if (isSuperadmin(user)) return next();
-
-    const member = await prisma.workspaceMember.findFirst({
-      where: { workspaceId, userId: user.id },
-      include: { role: true }
+function sendManualTradingError(res: express.Response, error: unknown) {
+  if (error instanceof ManualTradingError) {
+    return res.status(error.status).json({
+      error: error.message,
+      code: error.code,
+      message: error.message
     });
-    if (!member) return res.status(403).json({ error: "forbidden" });
-    res.locals.member = member;
-    res.locals.role = member.role;
-    next();
+  }
+
+  const unknown = error as {
+    status?: unknown;
+    code?: unknown;
+    message?: unknown;
+    options?: {
+      status?: unknown;
+      code?: unknown;
+      message?: unknown;
+    };
   };
-}
 
-async function writeAudit(params: {
-  workspaceId: string;
-  actorUserId: string;
-  action: string;
-  entityType: string;
-  entityId?: string | null;
-  meta?: any;
-  ip?: string | null;
-}) {
-  await prisma.auditEvent.create({
-    data: {
-      workspaceId: params.workspaceId,
-      actorUserId: params.actorUserId,
-      action: params.action,
-      entityType: params.entityType,
-      entityId: params.entityId ?? null,
-      meta: params.meta ?? undefined,
-      ip: params.ip ?? undefined
-    }
+  const rawStatus = Number(unknown?.status ?? unknown?.options?.status);
+  const status = Number.isFinite(rawStatus) && rawStatus >= 400 && rawStatus < 600
+    ? rawStatus
+    : 500;
+
+  const code =
+    typeof unknown?.code === "string" && unknown.code.trim()
+      ? unknown.code
+      : typeof unknown?.options?.code === "string" && unknown.options.code.trim()
+        ? unknown.options.code
+        : "manual_trading_unexpected_error";
+
+  const message =
+    error instanceof Error
+      ? error.message
+      : typeof unknown?.options?.message === "string" && unknown.options.message.trim()
+        ? unknown.options.message
+        : "Unexpected manual trading failure.";
+
+  // eslint-disable-next-line no-console
+  console.error("[manual-trading]", message, { status, code });
+
+  return res.status(status).json({
+    error: code,
+    message
   });
 }
 
-async function sendTelegramAlert(text: string) {
-  const token = process.env.TELEGRAM_BOT_TOKEN;
-  const chatId = process.env.TELEGRAM_CHAT_ID;
-  if (!token || !chatId) return false;
-
-  return (await sendTelegramWithResult(token, chatId, text)).ok;
-}
-
-async function sendTelegramWithResult(token: string, chatId: string, text: string) {
-  const url = `https://api.telegram.org/bot${token}/sendMessage`;
-  try {
-    const resp = await fetch(url, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        chat_id: chatId,
-        text,
-        disable_web_page_preview: true
-      })
-    });
-    const data = (await resp.json().catch(() => ({}))) as Record<string, any>;
-    if (!resp.ok || data?.ok === false) {
-      const err = data?.description || data?.error || "telegram_error";
-      return { ok: false, error: err, status: resp.status };
-    }
-    return { ok: true };
-  } catch (e) {
-    return { ok: false, error: String(e) };
-  }
-}
-
-async function sendTelegramWithFallback(text: string) {
-  const envToken = process.env.TELEGRAM_BOT_TOKEN;
-  const envChatId = process.env.TELEGRAM_CHAT_ID;
-  if (envToken && envChatId) {
-    return await sendTelegramWithResult(envToken, envChatId, text);
-  }
-
-  const cfg = await prisma.alertConfig.findUnique({ where: { key: "default" } });
-  if (cfg?.telegramBotToken && cfg?.telegramChatId) {
-    return await sendTelegramWithResult(cfg.telegramBotToken, cfg.telegramChatId, text);
-  }
-
-  return { ok: false, error: "telegram_not_configured" };
-}
-
-async function getRunnerAlertAt() {
-  const row = await prisma.globalSetting.findUnique({ where: { key: "runner.alert" } });
-  const raw = (row?.value as Record<string, any>) ?? {};
-  const last = Number(raw.lastAlertAt ?? 0);
-  return Number.isFinite(last) ? last : 0;
-}
-
-async function setRunnerAlertAt(ts: number) {
-  await prisma.globalSetting.upsert({
-    where: { key: "runner.alert" },
-    create: { key: "runner.alert", value: { lastAlertAt: ts } },
-    update: { value: { lastAlertAt: ts } }
-  });
-}
-
-app.get("/health", (_req, res) => res.json({ ok: true }));
-
-app.get("/ready", async (_req, res) => {
-  const requiredEnv = ["DATABASE_URL"];
-  const missingEnv = requiredEnv.filter((key) => !process.env[key]);
-  const envOk = missingEnv.length === 0;
-
-  let dbOk = false;
-  let dbError: string | null = null;
-  try {
-    await prisma.$queryRaw`SELECT 1`;
-    dbOk = true;
-  } catch (e) {
-    dbOk = false;
-    dbError = String(e);
-  }
-
-  let migrationsOk = false;
-  let migrationsError: string | null = null;
-  try {
-    const rows = (await prisma.$queryRawUnsafe(
-      "SELECT COUNT(*)::int AS count FROM _prisma_migrations WHERE finished_at IS NULL AND rolled_back_at IS NULL"
-    )) as Array<{ count: number }>;
-    const count = Number(rows?.[0]?.count ?? 0);
-    migrationsOk = Number.isFinite(count) && count === 0;
-    if (!migrationsOk) migrationsError = "pending_or_failed_migrations";
-  } catch (e) {
-    migrationsOk = false;
-    migrationsError = String(e);
-  }
-
-  const ok = envOk && dbOk && migrationsOk;
-  res.status(ok ? 200 : 503).json({
-    ok,
-    checks: {
-      env: { ok: envOk, missing: missingEnv },
-      db: { ok: dbOk, error: dbError },
-      migrations: { ok: migrationsOk, error: migrationsError }
-    }
-  });
+app.get("/health", (_req, res) => {
+  res.json({ ok: true, service: "api" });
 });
 
-app.get("/runner/status", requireAuth, async (_req, res) => {
-  const status = await prisma.runnerStatus.findUnique({ where: { id: "main" } });
-  if (!status) {
-    return res.json({ ok: false, stale: true, status: null });
-  }
-  const lastTickAt = status.lastTickAt?.getTime?.() ?? 0;
-  const stale = lastTickAt > 0 ? Date.now() - lastTickAt > RUNNER_STALE_MS : true;
+app.get("/system/settings", (_req, res) => {
   res.json({
-    ok: !stale,
-    stale,
-    status
+    tradingEnabled: true,
+    readOnlyMode: false,
+    orchestrationMode: getRuntimeOrchestrationMode()
   });
+});
+
+app.get("/license/state", (_req, res) => {
+  res.json({
+    enforcement: isLicenseEnforcementEnabled() ? "on" : "off",
+    stubEnabled: isLicenseStubEnabled() ? "on" : "off"
+  });
+});
+
+app.get("/license-server-stub/entitlements", (req, res) => {
+  if (!isLicenseStubEnabled()) {
+    return res.status(404).json({ error: "stub_disabled" });
+  }
+
+  const userId = typeof req.query.userId === "string" ? req.query.userId : "";
+  return res.json({
+    userId,
+    ...getStubEntitlements()
+  });
+});
+
+app.get("/admin/queue/metrics", requireAuth, async (_req, res) => {
+  try {
+    const metrics = await getQueueMetrics();
+    return res.json(metrics);
+  } catch (error) {
+    return res.status(503).json({
+      error: "queue_unavailable",
+      reason: String(error)
+    });
+  }
 });
 
 app.post("/auth/register", async (req, res) => {
-  const allowRegister = (process.env.ALLOW_REGISTER ?? "false").toLowerCase() === "true";
-  if (!allowRegister) return res.status(403).json({ error: "registration_disabled" });
+  const parsed = registerSchema.safeParse(req.body);
+  if (!parsed.success) {
+    return res.status(400).json({ error: "invalid_payload", details: parsed.error.flatten() });
+  }
 
-  const data = AuthPayload.parse(req.body);
-  const existing = await prisma.user.findUnique({ where: { email: data.email } });
-  if (existing) return res.status(400).json({ error: "email_taken" });
+  const email = parsed.data.email.toLowerCase();
+  const existing = await db.user.findUnique({ where: { email } });
+  if (existing) return res.status(409).json({ error: "email_already_exists" });
 
-  const passwordHash = await hashPassword(data.password);
-  const user = await prisma.user.create({
-    data: { email: data.email, passwordHash }
-  });
-  const workspace = await prisma.workspace.create({
-    data: { name: "Default" }
-  });
-  const { adminRoleId } = await ensureDefaultRoles(workspace.id);
-  await prisma.workspaceMember.create({
-    data: { userId: user.id, workspaceId: workspace.id, roleId: adminRoleId }
-  });
-
-  await createSession(res, user.id);
-  res.json({ ok: true });
-});
-
-app.post("/auth/login", loginIpLimiter, loginUserLimiter, async (req, res) => {
-  const data = AuthPayload.parse(req.body);
-  const user = await prisma.user.findUnique({ where: { email: data.email } });
-  if (!user) return res.status(401).json({ error: "invalid_credentials" });
-
-  const ok = await verifyPassword(data.password, user.passwordHash);
-  if (!ok) return res.status(401).json({ error: "invalid_credentials" });
-
-  await createSession(res, user.id);
-  res.json({ ok: true });
-});
-
-app.get("/auth/csrf", requireAuth, async (_req, res) => {
-  refreshCsrfCookie(res);
-  res.status(204).end();
-});
-
-app.post("/auth/reauth/request-otp", requireAuth, reauthOtpLimiter, async (_req, res) => {
-  const user = getUserFromLocals(res);
-  const otpEnabled = await getReauthOtpEnabled();
-  if (!otpEnabled) return res.status(400).json({ error: "otp_disabled" });
-  const code = String(Math.floor(100000 + Math.random() * 900000));
-  const expiresAt = new Date(Date.now() + REAUTH_OTP_TTL_MIN * 60 * 1000);
-
-  await prisma.reauthOtp.deleteMany({
-    where: { userId: user.id, purpose: "REAUTH" }
-  });
-
-  await prisma.reauthOtp.create({
+  const passwordHash = await hashPassword(parsed.data.password);
+  const user = await db.user.create({
     data: {
-      userId: user.id,
-      purpose: "REAUTH",
-      codeHash: hashOtp(code),
-      expiresAt
+      email,
+      passwordHash
+    },
+    select: {
+      id: true,
+      email: true
     }
   });
 
-  const emailResult = await sendReauthOtpEmail({
-    to: user.email,
-    code,
-    expiresAt
-  });
-
-  if (!emailResult.ok) {
-    await prisma.reauthOtp.deleteMany({
-      where: { userId: user.id, purpose: "REAUTH" }
-    });
-    return res.status(400).json({ error: "email_failed", details: emailResult.error ?? null });
-  }
-
-  res.json({ ok: true, expiresAt });
+  await createSession(res, user.id);
+  return res.status(201).json({ user: toSafeUser(user) });
 });
 
-app.post("/auth/reauth/verify-otp", requireAuth, reauthOtpLimiter, async (req, res) => {
-  const user = getUserFromLocals(res);
-  const otpEnabled = await getReauthOtpEnabled();
-  if (!otpEnabled) return res.status(400).json({ error: "otp_disabled" });
-  const payload = z.object({ code: z.string() }).parse(req.body);
-  const code = payload.code.trim();
-  if (!/^\d{6}$/.test(code)) {
-    return res.status(400).json({ error: "invalid_otp" });
+app.post("/auth/login", async (req, res) => {
+  const parsed = loginSchema.safeParse(req.body);
+  if (!parsed.success) {
+    return res.status(400).json({ error: "invalid_payload", details: parsed.error.flatten() });
   }
 
-  const otp = await prisma.reauthOtp.findFirst({
-    where: {
-      userId: user.id,
-      purpose: "REAUTH",
-      expiresAt: { gt: new Date() }
-    },
-    orderBy: { createdAt: "desc" }
+  const email = parsed.data.email.toLowerCase();
+  const user = await db.user.findUnique({
+    where: { email },
+    select: {
+      id: true,
+      email: true,
+      passwordHash: true
+    }
   });
+  if (!user?.passwordHash) return res.status(401).json({ error: "invalid_credentials" });
 
-  if (!otp) return res.status(401).json({ error: "otp_expired" });
-  if (otp.codeHash !== hashOtp(code)) {
-    return res.status(401).json({ error: "invalid_otp" });
-  }
+  const passwordOk = await verifyPassword(parsed.data.password, user.passwordHash);
+  if (!passwordOk) return res.status(401).json({ error: "invalid_credentials" });
 
-  await prisma.reauthOtp.deleteMany({
-    where: { userId: user.id, purpose: "REAUTH" }
-  });
-
-  const session = await createReauth(res, user.id);
-  res.json({ ok: true, expiresAt: session.expiresAt });
+  await createSession(res, user.id);
+  return res.json({ user: toSafeUser(user) });
 });
 
-app.post("/auth/logout", requireAuth, async (req, res) => {
+app.post("/auth/logout", async (req, res) => {
   const token = req.cookies?.mm_session ?? null;
   await destroySession(res, token);
-  res.json({ ok: true });
+  return res.json({ ok: true });
 });
 
 app.get("/auth/me", requireAuth, async (_req, res) => {
-  const user = getUserFromLocals(res) as any;
-  const workspaceId = getWorkspaceId(res);
-  const role = getRoleFromLocals(res);
-  const features = await getWorkspaceFeatures(workspaceId);
-  res.json({
-    id: user.id,
-    email: user.email,
-    workspaceId,
-    role: role?.name ?? "member",
-    permissions: role?.permissions ?? {},
-    isSuperadmin: isSuperadmin(user),
-    features
-  });
+  return res.json({ user: getUserFromLocals(res) });
 });
 
-app.get("/me", requireAuth, async (_req, res) => {
-  const user = getUserFromLocals(res) as any;
-  const workspaceId = getWorkspaceId(res);
-  const role = getRoleFromLocals(res);
-  const features = await getWorkspaceFeatures(workspaceId);
-  res.json({
-    id: user.id,
-    email: user.email,
-    workspaceId,
-    role: role?.name ?? "member",
-    permissions: role?.permissions ?? {},
-    isSuperadmin: isSuperadmin(user),
-    features
-  });
-});
-
-app.post("/auth/reauth", requireAuth, async (req, res) => {
-  const data = ReauthPayload.parse(req.body);
+app.get("/api/trading/settings", requireAuth, async (_req, res) => {
   const user = getUserFromLocals(res);
-  const dbUser = await prisma.user.findUnique({ where: { id: user.id } });
-  if (!dbUser) return res.status(401).json({ error: "unauthorized" });
-
-  const ok = await verifyPassword(data.password, dbUser.passwordHash);
-  if (!ok) return res.status(401).json({ error: "invalid_credentials" });
-
-  const session = await createReauth(res, user.id);
-  res.json({ ok: true, expiresAt: session.expiresAt });
+  const settings = await getTradingSettings(user.id);
+  return res.json(settings);
 });
 
-app.post("/auth/change-password", requireAuth, async (req, res) => {
-  const data = PasswordChange.parse(req.body);
+app.post("/api/trading/settings", requireAuth, async (req, res) => {
   const user = getUserFromLocals(res);
-  const dbUser = await prisma.user.findUnique({ where: { id: user.id } });
-  if (!dbUser) return res.status(401).json({ error: "unauthorized" });
-
-  const ok = await verifyPassword(data.currentPassword, dbUser.passwordHash);
-  if (!ok) return res.status(400).json({ error: "invalid_password" });
-
-  const nextHash = await hashPassword(data.newPassword);
-  await prisma.user.update({
-    where: { id: user.id },
-    data: { passwordHash: nextHash }
-  });
-
-  res.json({ ok: true });
-});
-
-app.get("/workspaces/:id/members", requireAuth, requireWorkspaceAccess(), requirePermission("users.manage_members"), async (req, res) => {
-  const workspaceId = req.params.id;
-  await ensureDefaultRoles(workspaceId);
-  const members = await prisma.workspaceMember.findMany({
-    where: { workspaceId },
-    include: { user: true, role: true }
-  });
-  res.json(
-    members.map((m) => ({
-      id: m.id,
-      userId: m.userId,
-      email: m.user.email,
-      roleId: m.roleId,
-      roleName: m.role?.name ?? "",
-      status: m.status
-    }))
-  );
-});
-
-app.post("/workspaces/:id/members/invite", requireAuth, requireWorkspaceAccess(), requirePermission("users.manage_members"), requireReauth, async (req, res) => {
-  const workspaceId = req.params.id;
-  const actor = getUserFromLocals(res);
-  const payload = z.object({
-    email: z.string().email(),
-    roleId: z.string(),
-    resetPassword: z.boolean().optional()
-  }).parse(req.body);
-
-  const role = await prisma.role.findFirst({ where: { id: payload.roleId, workspaceId } });
-  if (!role) return res.status(400).json({ error: "invalid_role" });
-
-  let tempPassword: string | null = null;
-  let user = await prisma.user.findUnique({ where: { email: payload.email } });
-  if (!user) {
-    tempPassword = crypto.randomBytes(8).toString("hex");
-    const tempHash = await hashPassword(tempPassword);
-    user = await prisma.user.create({
-      data: { email: payload.email, passwordHash: tempHash }
-    });
-  } else if (payload.resetPassword) {
-    tempPassword = crypto.randomBytes(8).toString("hex");
-    const tempHash = await hashPassword(tempPassword);
-    await prisma.user.update({
-      where: { id: user.id },
-      data: { passwordHash: tempHash }
-    });
-  }
-
-  const exists = await prisma.workspaceMember.findFirst({
-    where: { workspaceId, userId: user.id }
-  });
-  if (exists) return res.status(400).json({ error: "member_exists" });
-
-  const member = await prisma.workspaceMember.create({
-    data: {
-      workspaceId,
-      userId: user.id,
-      roleId: payload.roleId,
-      status: "INVITED"
-    }
-  });
-
-  await writeAudit({
-    workspaceId,
-    actorUserId: actor.id,
-    action: "members.invite",
-    entityType: "WorkspaceMember",
-    entityId: member.id,
-    meta: { email: payload.email, roleId: payload.roleId }
-  });
-
-  const workspace = await prisma.workspace.findUnique({ where: { id: workspaceId } });
-  const baseUrl = process.env.INVITE_BASE_URL || "https://test.uliquid.vip";
-  const emailResult = await sendInviteEmail({
-    to: payload.email,
-    workspaceName: workspace?.name ?? "Workspace",
-    invitedByEmail: actor.email,
-    tempPassword,
-    baseUrl
-  });
-
-  res.json({ ok: true, memberId: member.id, emailSent: emailResult.ok, emailError: emailResult.error ?? null });
-});
-
-app.put("/workspaces/:id/members/:memberId", requireAuth, requireWorkspaceAccess(), requirePermission("users.manage_members"), requireReauth, async (req, res) => {
-  const workspaceId = req.params.id;
-  const actor = getUserFromLocals(res);
-  const payload = z.object({ roleId: z.string().optional(), status: z.string().optional() }).parse(req.body);
-
-  const member = await prisma.workspaceMember.findFirst({
-    where: { id: req.params.memberId, workspaceId }
-  });
-  if (!member) return res.status(404).json({ error: "not_found" });
-
-  if (payload.roleId) {
-    const role = await prisma.role.findFirst({ where: { id: payload.roleId, workspaceId } });
-    if (!role) return res.status(400).json({ error: "invalid_role" });
-  }
-
-  const updated = await prisma.workspaceMember.update({
-    where: { id: member.id },
-    data: {
-      roleId: payload.roleId ?? member.roleId,
-      status: payload.status ?? member.status
-    }
-  });
-
-  await writeAudit({
-    workspaceId,
-    actorUserId: actor.id,
-    action: "members.update",
-    entityType: "WorkspaceMember",
-    entityId: updated.id,
-    meta: payload
-  });
-
-  res.json({ ok: true });
-});
-
-app.delete("/workspaces/:id/members/:memberId", requireAuth, requireWorkspaceAccess(), requirePermission("users.manage_members"), requireReauth, async (req, res) => {
-  const workspaceId = req.params.id;
-  const actor = getUserFromLocals(res);
-  const member = await prisma.workspaceMember.findFirst({
-    where: { id: req.params.memberId, workspaceId }
-  });
-  if (!member) return res.status(404).json({ error: "not_found" });
-
-  await prisma.workspaceMember.delete({ where: { id: member.id } });
-  await writeAudit({
-    workspaceId,
-    actorUserId: actor.id,
-    action: "members.delete",
-    entityType: "WorkspaceMember",
-    entityId: member.id
-  });
-  res.json({ ok: true });
-});
-
-app.get("/workspaces/:id/roles", requireAuth, requireWorkspaceAccess(), requireAnyPermission(["users.manage_roles", "users.manage_members"]), async (req, res) => {
-  const workspaceId = req.params.id;
-  await ensureDefaultRoles(workspaceId);
-  const roles = await prisma.role.findMany({ where: { workspaceId }, orderBy: { createdAt: "asc" } });
-  res.json(roles);
-});
-
-app.post("/workspaces/:id/roles", requireAuth, requireWorkspaceAccess(), requirePermission("users.manage_roles"), requireReauth, async (req, res) => {
-  const workspaceId = req.params.id;
-  const actor = getUserFromLocals(res);
-  const payload = z.object({
-    name: z.string().min(2),
-    permissions: z.record(z.boolean()).optional()
-  }).parse(req.body);
-
-  const role = await prisma.role.create({
-    data: {
-      workspaceId,
-      name: payload.name,
-      permissions: payload.permissions ?? {}
-    }
-  });
-
-  await writeAudit({
-    workspaceId,
-    actorUserId: actor.id,
-    action: "roles.create",
-    entityType: "Role",
-    entityId: role.id
-  });
-
-  res.json(role);
-});
-
-app.put("/workspaces/:id/roles/:roleId", requireAuth, requireWorkspaceAccess(), requirePermission("users.manage_roles"), requireReauth, async (req, res) => {
-  const workspaceId = req.params.id;
-  const actor = getUserFromLocals(res);
-  const payload = z.object({
-    name: z.string().min(2).optional(),
-    permissions: z.record(z.boolean()).optional()
-  }).parse(req.body);
-
-  const role = await prisma.role.findFirst({ where: { id: req.params.roleId, workspaceId } });
-  if (!role) return res.status(404).json({ error: "not_found" });
-  if (role.isSystem && payload.name && payload.name !== role.name) {
-    return res.status(400).json({ error: "system_role_rename_forbidden" });
-  }
-
-  const updated = await prisma.role.update({
-    where: { id: role.id },
-    data: {
-      name: payload.name ?? role.name,
-      permissions: (payload.permissions ?? role.permissions) as Prisma.InputJsonValue
-    }
-  });
-
-  await writeAudit({
-    workspaceId,
-    actorUserId: actor.id,
-    action: "roles.update",
-    entityType: "Role",
-    entityId: updated.id
-  });
-
-  res.json(updated);
-});
-
-app.delete("/workspaces/:id/roles/:roleId", requireAuth, requireWorkspaceAccess(), requirePermission("users.manage_roles"), requireReauth, async (req, res) => {
-  const workspaceId = req.params.id;
-  const actor = getUserFromLocals(res);
-  const role = await prisma.role.findFirst({ where: { id: req.params.roleId, workspaceId } });
-  if (!role) return res.status(404).json({ error: "not_found" });
-  if (role.isSystem && !isSuperadmin(actor)) {
-    return res.status(400).json({ error: "system_role_delete_forbidden" });
-  }
-
-  const assigned = await prisma.workspaceMember.count({ where: { workspaceId, roleId: role.id } });
-  if (assigned > 0) return res.status(400).json({ error: "role_in_use" });
-
-  await prisma.role.delete({ where: { id: role.id } });
-  await writeAudit({
-    workspaceId,
-    actorUserId: actor.id,
-    action: "roles.delete",
-    entityType: "Role",
-    entityId: role.id
-  });
-
-  res.json({ ok: true });
-});
-
-app.get("/workspaces/:id/audit", requireAuth, requireWorkspaceAccess(), requirePermission("audit.view"), async (req, res) => {
-  const workspaceId = req.params.id;
-  const limit = Math.min(Number(req.query.limit || "50"), 200);
-  const items = await prisma.auditEvent.findMany({
-    where: { workspaceId },
-    orderBy: { createdAt: "desc" },
-    take: limit
-  });
-  res.json(items);
-});
-
-app.get("/presets", requireAuth, requirePermission("presets.view"), async (req, res) => {
-  const workspaceId = getWorkspaceId(res);
-  const exchange = typeof req.query.exchange === "string" ? req.query.exchange : undefined;
-  const symbol = typeof req.query.symbol === "string" ? req.query.symbol : undefined;
-  const presets = await prisma.botConfigPreset.findMany({
-    where: {
-      workspaceId,
-      ...(exchange ? { exchange } : {}),
-      ...(symbol ? { symbol } : {})
-    },
-    include: {
-      createdBy: { select: { id: true, email: true } }
-    },
-    orderBy: { createdAt: "desc" }
-  });
-  res.json(presets);
-});
-
-app.get("/presets/:id/export", requireAuth, requirePermission("presets.view"), async (req, res) => {
-  const workspaceId = getWorkspaceId(res);
-  const preset = await prisma.botConfigPreset.findFirst({
-    where: { id: req.params.id, workspaceId }
-  });
-  if (!preset) return res.status(404).json({ error: "not_found" });
-
-  const safeName = preset.name.replace(/[^a-z0-9._-]+/gi, "_").slice(0, 80) || "preset";
-  res.setHeader("Content-Type", "application/json");
-  res.setHeader("Content-Disposition", `attachment; filename="${safeName}.json"`);
-
-  const payload = PresetPayload.parse(preset.payload);
-  res.json({
-    version: 1,
-    kind: "BotConfigPreset",
-    name: preset.name,
-    description: preset.description ?? null,
-    exchange: preset.exchange ?? null,
-    symbol: preset.symbol ?? null,
-    createdAt: preset.createdAt.toISOString(),
-    payload
-  });
-});
-
-app.get("/bots/:id/config/export", requireAuth, requirePermission("bots.view"), async (req, res) => {
-  const workspaceId = getWorkspaceId(res);
-  const features = await getWorkspaceFeatures(workspaceId);
-  const priceSupportFeature = Boolean(features?.priceSupport);
-  const bot = await prisma.bot.findFirst({
-    where: { id: req.params.id, workspaceId },
-    include: {
-      mmConfig: true,
-      volConfig: true,
-      riskConfig: true,
-      priceSupportConfig: true
-    } as any
-  });
-  if (!bot || !bot.mmConfig || !bot.volConfig || !bot.riskConfig) {
-    return res.status(404).json({ error: "not_found" });
-  }
-
-  const stamp = new Date().toISOString().replace(/[:.]/g, "-");
-  const exportName = `${bot.name}-${stamp}`;
-  const safeName = exportName.replace(/[^a-z0-9._-]+/gi, "_").slice(0, 80) || "bot-config";
-
-  const payload: any = {
-    mm: bot.mmConfig,
-    vol: bot.volConfig,
-    risk: bot.riskConfig
-  };
-  if (priceSupportFeature && bot.priceSupportConfig) {
-    payload.priceSupport = normalizePriceSupportConfig(bot.priceSupportConfig);
-  }
-
-  res.setHeader("Content-Type", "application/json");
-  res.setHeader("Content-Disposition", `attachment; filename="${safeName}.json"`);
-  res.json({
-    version: 1,
-    kind: "BotConfigPreset",
-    name: exportName,
-    description: null,
-    exchange: bot.exchange,
-    symbol: bot.symbol,
-    createdAt: new Date().toISOString(),
-    payload
-  });
-});
-
-app.post("/presets", requireAuth, requirePermission("presets.create"), async (req, res) => {
-  const workspaceId = getWorkspaceId(res);
-  const actor = getUserFromLocals(res);
-  const payload = PresetCreatePayload.parse(req.body);
-
-  const presetPayload = payload.payload as Prisma.InputJsonValue;
-  const preset = await prisma.botConfigPreset.create({
-    data: {
-      workspaceId,
-      name: payload.name,
-      description: payload.description,
-      exchange: payload.exchange,
-      symbol: payload.symbol,
-      payload: presetPayload,
-      createdByUserId: actor.id
-    }
-  });
-
-  await writeAudit({
-    workspaceId,
-    actorUserId: actor.id,
-    action: "presets.create",
-    entityType: "BotConfigPreset",
-    entityId: preset.id,
-    meta: { name: preset.name, exchange: preset.exchange, symbol: preset.symbol }
-  });
-
-  res.json(preset);
-});
-
-app.post("/presets/import", requireAuth, requirePermission("presets.create"), async (req, res) => {
-  const workspaceId = getWorkspaceId(res);
-  const actor = getUserFromLocals(res);
-  const body = req.body ?? {};
-  const raw = body.file ?? body;
-  const overwrite = Boolean(body.overwrite);
-  const overrideName = typeof body.overrideName === "string" ? body.overrideName.trim() : "";
-
-  if (!raw || raw.kind !== "BotConfigPreset") {
-    return res.status(400).json({ error: "invalid_format" });
-  }
-  if (raw.version !== 1) {
-    return res.status(400).json({ error: "unsupported_version" });
-  }
-
-  const name = overrideName || String(raw.name || "").trim();
-  if (!name || name.length < 2 || name.length > 60) {
-    return res.status(400).json({ error: "invalid_name" });
-  }
-
-  const payload = PresetPayload.parse(raw.payload ?? {});
-  const payloadJson = payload as Prisma.InputJsonValue;
-  const existing = await prisma.botConfigPreset.findFirst({
-    where: { workspaceId, name }
-  });
-
-  if (existing && !overwrite) {
-    return res.status(409).json({ error: "PRESET_NAME_EXISTS" });
-  }
-
-  if (existing && overwrite && !isSuperadmin(actor) && !roleAllows(res, "presets.delete")) {
-    return res.status(403).json({ error: "forbidden" });
-  }
-
-  const data = {
-    description: typeof raw.description === "string" ? raw.description : null,
-    exchange: typeof raw.exchange === "string" ? raw.exchange : null,
-    symbol: typeof raw.symbol === "string" ? raw.symbol : null,
-    payload: payloadJson
-  };
-
-  const preset = existing
-    ? await prisma.botConfigPreset.update({
-        where: { id: existing.id },
-        data
-      })
-    : await prisma.botConfigPreset.create({
-        data: {
-          workspaceId,
-          name,
-          ...data,
-          createdByUserId: actor.id
-        }
-      });
-
-  await writeAudit({
-    workspaceId,
-    actorUserId: actor.id,
-    action: existing ? "presets.overwrite" : "presets.import",
-    entityType: "BotConfigPreset",
-    entityId: preset.id,
-    meta: { name: preset.name, overwrite: Boolean(existing) }
-  });
-
-  res.json(preset);
-});
-
-app.post("/bots/:id/presets/:presetId/apply", requireAuth, requirePermission("presets.apply"), async (req, res) => {
-  const workspaceId = getWorkspaceId(res);
-  const user = getUserFromLocals(res);
-  const botId = req.params.id;
-  const presetId = req.params.presetId;
-
-  const preset = await prisma.botConfigPreset.findFirst({
-    where: { id: presetId, workspaceId }
-  });
-  if (!preset) return res.status(404).json({ error: "not_found" });
-
-  const parsed = PresetPayload.parse(preset.payload);
-
-  if (!isSuperadmin(user) && !roleAllows(res, "risk.edit")) {
-    return res.status(403).json({ error: "forbidden" });
-  }
-
-  const bot = await prisma.bot.findFirst({
-    where: { id: botId, workspaceId },
-    include: { notificationConfig: true } as any
-  });
-  if (!bot) return res.status(404).json({ error: "not_found" });
-  const rt = await prisma.botRuntime.findUnique({ where: { botId } });
-  const mid = rt?.mid ?? null;
-
-  const errors: Record<string, string> = {};
-  const minQuoteUsdt = 100;
-  if (parsed.mm.budgetQuoteUsdt < minQuoteUsdt) {
-    errors.budgetQuoteUsdt = `Minimum ${minQuoteUsdt} USDT`;
-  }
-
-  if (mid && mid > 0) {
-    const minBaseToken = minQuoteUsdt / mid;
-    if (parsed.mm.budgetBaseToken < minBaseToken) {
-      const base = bot?.symbol?.split("/")[0] || "Token";
-      errors.budgetBaseToken = `Minimum ~${minBaseToken.toFixed(6)} ${base}`;
-    }
-  }
-
-  const features = await getWorkspaceFeatures(workspaceId);
-  const priceSupportFeature = Boolean(features?.priceSupport);
-  if (parsed.priceSupport && !priceSupportFeature) {
-    return res.status(403).json({ error: "feature_disabled" });
-  }
-
-  if (parsed.priceSupport?.enabled) {
-    if (!parsed.priceSupport.floorPrice || parsed.priceSupport.floorPrice <= 0) {
-      errors.floorPrice = "Floor price required";
-    }
-    if (parsed.priceSupport.budgetUsdt <= 0) {
-      errors.budgetUsdt = "Budget must be > 0";
-    }
-    if (parsed.priceSupport.maxOrderUsdt <= 0) {
-      errors.maxOrderUsdt = "Max order must be > 0";
-    }
-    if (parsed.priceSupport.cooldownMs < 0) {
-      errors.cooldownMs = "Cooldown must be >= 0";
-    }
-  }
-
-  if (Object.keys(errors).length > 0) {
-    return res.status(400).json({ error: "min_budget", details: { errors } });
-  }
-
-  if (!isSuperadmin(user)) {
-    delete (parsed.vol as any).buyBumpTicks;
-    delete (parsed.vol as any).sellBumpTicks;
-  }
-
-  await prisma.marketMakingConfig.update({
-    where: { botId },
-    data: parsed.mm
-  });
-
-  await prisma.volumeConfig.update({
-    where: { botId },
-    data: parsed.vol
-  });
-
-  await prisma.riskConfig.update({
-    where: { botId },
-    data: parsed.risk
-  });
-
-  const notify = (bot.notificationConfig as any) ?? { fundsWarnEnabled: true, fundsWarnPct: 0.1 };
-  const notifyUpdate = {
-    fundsWarnEnabled: notify.fundsWarnEnabled,
-    fundsWarnPct: notify.fundsWarnPct
-  };
-  await prisma.botNotificationConfig.upsert({
-    where: { botId },
-    update: notifyUpdate,
-    create: { botId, ...notifyUpdate }
-  });
-
-  if (parsed.priceSupport) {
-    const existing = await prisma.botPriceSupportConfig.findUnique({ where: { botId } });
-    const updateData: any = {
-      enabled: parsed.priceSupport.enabled,
-      floorPrice: parsed.priceSupport.floorPrice,
-      budgetUsdt: parsed.priceSupport.budgetUsdt,
-      maxOrderUsdt: parsed.priceSupport.maxOrderUsdt,
-      cooldownMs: parsed.priceSupport.cooldownMs,
-      mode: parsed.priceSupport.mode
-    };
-    if (!existing) {
-      await prisma.botPriceSupportConfig.create({
-        data: {
-          botId,
-          active: true,
-          spentUsdt: 0,
-          lastActionAt: BigInt(0),
-          stoppedReason: null,
-          notifiedBudgetExhaustedAt: BigInt(0),
-          ...updateData
-        }
-      });
-    } else {
-      await prisma.botPriceSupportConfig.update({
-        where: { botId },
-        data: updateData
-      });
-    }
-  }
-
-  await writeAudit({
-    workspaceId,
-    actorUserId: user.id,
-    action: "presets.apply",
-    entityType: "Bot",
-    entityId: botId,
-    meta: { presetId }
-  });
-
-  res.json({ ok: true });
-});
-
-app.delete("/presets/:id", requireAuth, requirePermission("presets.delete"), async (req, res) => {
-  const workspaceId = getWorkspaceId(res);
-  const actor = getUserFromLocals(res);
-  const preset = await prisma.botConfigPreset.findFirst({ where: { id: req.params.id, workspaceId } });
-  if (!preset) return res.status(404).json({ error: "not_found" });
-
-  await prisma.botConfigPreset.delete({ where: { id: preset.id } });
-  await writeAudit({
-    workspaceId,
-    actorUserId: actor.id,
-    action: "presets.delete",
-    entityType: "BotConfigPreset",
-    entityId: preset.id,
-    meta: { name: preset.name }
-  });
-  res.json({ ok: true });
-});
-
-app.get("/global-settings", requireAuth, async (_req, res) => {
-  const user = getUserFromLocals(res);
-  if (!isSuperadmin(user)) return res.status(403).json({ error: "forbidden" });
-  const settings = await prisma.globalSetting.findMany({ orderBy: { key: "asc" } });
-  res.json(settings);
-});
-
-app.put("/global-settings/:key", requireAuth, async (req, res) => {
-  const user = getUserFromLocals(res);
-  if (!isSuperadmin(user)) return res.status(403).json({ error: "forbidden" });
-  const payload = z.object({ value: z.any() }).parse(req.body);
-  const setting = await prisma.globalSetting.upsert({
-    where: { key: req.params.key },
-    update: { value: payload.value },
-    create: { key: req.params.key, value: payload.value }
-  });
-  res.json(setting);
-});
-
-
-app.get("/auth/reauth/status", requireAuth, async (req, res) => {
-  const token = req.cookies?.mm_reauth;
-  if (!token) return res.json({ ok: false });
-
-  const hash = crypto.createHash("sha256").update(token).digest("hex");
-  const session = await prisma.reauthSession.findUnique({ where: { tokenHash: hash } });
-  if (!session || session.expiresAt.getTime() < Date.now()) {
-    res.clearCookie("mm_reauth", { path: "/" });
-    return res.json({ ok: false });
-  }
-  res.json({ ok: true, expiresAt: session.expiresAt });
-});
-
-app.post("/alerts/test", requireAuth, async (_req, res) => {
-  const text = `Test alert ✅ ${new Date().toLocaleString()}`;
-  const result = await sendTelegramWithFallback(text);
-
-  if (!result || !result.ok) {
-    return res.status(400).json({
-      error: "telegram_not_configured_or_unreachable",
-      details: result?.error ?? "unknown"
-    });
-  }
-
-  res.json({ ok: true });
-});
-
-app.get("/bots", requireAuth, requirePermission("bots.view"), async (_req, res) => {
-  const workspaceId = getWorkspaceId(res);
-  const features = await getWorkspaceFeatures(workspaceId);
-  const priceSupportFeature = Boolean(features?.priceSupport);
-  const bots = await prisma.bot.findMany({
-    where: { workspaceId },
-    include: { priceSupportConfig: true },
-    orderBy: { createdAt: "desc" }
-  });
-  const mapped = bots.map((b) => {
-    const ps = priceSupportFeature ? normalizePriceSupportConfig(b.priceSupportConfig) : null;
-    const remaining = ps ? Math.max(0, ps.budgetUsdt - ps.spentUsdt) : null;
-    const status = !ps?.enabled ? "OFF" : ps.active ? "ON" : "STOPPED";
-    return {
-      ...b,
-      priceSupportConfig: ps,
-      priceSupportEnabled: Boolean(ps?.enabled),
-      priceSupportActive: Boolean(ps?.active),
-      priceSupportFloorPrice: ps?.floorPrice ?? null,
-      priceSupportRemainingUsdt: remaining,
-      priceSupportStatus: status
-    };
-  });
-  res.json(mapped);
-});
-
-app.get("/bots/:id", requireAuth, requirePermission("bots.view"), async (req, res) => {
-  const workspaceId = getWorkspaceId(res);
-  const user = getUserFromLocals(res);
-  const features = await getWorkspaceFeatures(workspaceId);
-  const priceSupportFeature = Boolean(features?.priceSupport);
-  const bot = await prisma.bot.findFirst({
-    where: { id: req.params.id, workspaceId },
-    include: {
-      mmConfig: true,
-      volConfig: true,
-      riskConfig: true,
-      notificationConfig: true,
-      priceSupportConfig: true,
-      runtime: true
-    } as any
-  });
-  if (!bot) return res.status(404).json({ error: "not_found" });
-  if (!isSuperadmin(user) && bot.volConfig) {
-    const volConfig = bot.volConfig as any;
-    delete volConfig.buyBumpTicks;
-    delete volConfig.sellBumpTicks;
-  }
-  if (!priceSupportFeature) {
-    bot.priceSupportConfig = null as any;
-  } else if (bot.priceSupportConfig) {
-    bot.priceSupportConfig = normalizePriceSupportConfig(bot.priceSupportConfig) as any;
-  }
-  res.json(bot);
-});
-
-app.get("/bots/:id/runtime", requireAuth, requirePermission("bots.view"), async (req, res) => {
-  const workspaceId = getWorkspaceId(res);
-  const bot = await prisma.bot.findFirst({ where: { id: req.params.id, workspaceId } });
-  if (!bot) return res.status(404).json({ error: "not_found" });
-  const rt = await prisma.botRuntime.findUnique({ where: { botId: req.params.id } });
-  res.json(rt ?? null);
-});
-
-app.get("/bots/:id/metrics", requireAuth, requirePermission("bots.view"), async (req, res) => {
-  const workspaceId = getWorkspaceId(res);
-  const bot = await prisma.bot.findFirst({ where: { id: req.params.id, workspaceId } });
-  if (!bot) return res.status(404).json({ error: "not_found" });
-
-  const rangeKey = String(req.query.range ?? "24h") as MetricsRangeKey;
-  const cfg = METRICS_RANGES[rangeKey] ?? METRICS_RANGES["24h"];
-  const to = new Date();
-  const from = new Date(to.getTime() - cfg.lookbackMs);
-  const stepSec = cfg.stepSec;
-  const stepMs = stepSec * 1_000;
-
-  const rows = await prisma.botMetric.findMany({
-    where: {
-      botId: bot.id,
-      ts: { gte: from, lte: to }
-    },
-    orderBy: { ts: "asc" }
-  });
-
-  type Bucket = {
-    ts: number;
-    midSum: number;
-    midCount: number;
-    spreadSum: number;
-    spreadCount: number;
-    freeQuote: number | null;
-    freeBase: number | null;
-    openOrders: number | null;
-    tradedNotionalToday: number | null;
-    status: string | null;
-    reason: string | null;
-  };
-
-  const buckets = new Map<number, Bucket>();
-
-  for (const row of rows) {
-    const tsMs = row.ts.getTime();
-    const bucketTs = Math.floor(tsMs / stepMs) * stepMs;
-    let bucket = buckets.get(bucketTs);
-    if (!bucket) {
-      bucket = {
-        ts: bucketTs,
-        midSum: 0,
-        midCount: 0,
-        spreadSum: 0,
-        spreadCount: 0,
-        freeQuote: null,
-        freeBase: null,
-        openOrders: null,
-        tradedNotionalToday: null,
-        status: null,
-        reason: null
-      };
-      buckets.set(bucketTs, bucket);
-    }
-
-    const mid = row.mid ?? null;
-    if (mid !== null && Number.isFinite(mid)) {
-      bucket.midSum += mid;
-      bucket.midCount += 1;
-    }
-
-    const spreadPct = row.spreadPct ?? null;
-    if (spreadPct !== null && Number.isFinite(spreadPct)) {
-      bucket.spreadSum += spreadPct;
-      bucket.spreadCount += 1;
-    }
-
-    bucket.freeQuote = row.freeQuote ?? bucket.freeQuote;
-    bucket.freeBase = row.freeBase ?? bucket.freeBase;
-    bucket.openOrders = row.openOrders ?? bucket.openOrders;
-    bucket.status = row.status ?? bucket.status;
-    bucket.reason = row.reason ?? bucket.reason;
-
-    const traded = row.tradedNotionalToday ?? null;
-    if (traded !== null && Number.isFinite(traded)) {
-      bucket.tradedNotionalToday = Math.max(bucket.tradedNotionalToday ?? 0, traded);
-    }
-  }
-
-  const points = Array.from(buckets.values())
-    .sort((a, b) => a.ts - b.ts)
-    .map((b) => ({
-      ts: new Date(b.ts).toISOString(),
-      mid: b.midCount > 0 ? b.midSum / b.midCount : null,
-      spreadPct: b.spreadCount > 0 ? b.spreadSum / b.spreadCount : null,
-      freeQuote: b.freeQuote,
-      freeBase: b.freeBase,
-      openOrders: b.openOrders,
-      tradedNotionalToday: b.tradedNotionalToday,
-      status: b.status,
-      reason: b.reason
-    }));
-
-  res.json({
-    range: rangeKey in METRICS_RANGES ? rangeKey : "24h",
-    from: from.toISOString(),
-    to: to.toISOString(),
-    stepSec,
-    points
-  });
-});
-
-app.get("/bots/:id/ai/insights", requireAuth, requirePermission("bots.view"), async (req, res) => {
-  const workspaceId = getWorkspaceId(res);
-  const bot = await prisma.bot.findFirst({
-    where: { id: req.params.id, workspaceId },
-    include: { mmConfig: true, volConfig: true, riskConfig: true } as any
-  });
-  if (!bot) return res.status(404).json({ error: "not_found" });
-
-  const rangeKey = String(req.query.range ?? "24h");
-  const rangeCfg = rangeKey === "7d" ? METRICS_RANGES["7d"] : METRICS_RANGES["24h"];
-  const to = new Date();
-  const from = new Date(to.getTime() - rangeCfg.lookbackMs);
-  const features = await getWorkspaceFeatures(workspaceId);
-  const provider = String(process.env.AI_PROVIDER ?? "none").toLowerCase();
-  const aiEnabled = Boolean(features?.aiRecommendations) && provider !== "none";
-
-  try {
-    const rows = await prisma.botMetric.findMany({
-      where: {
-        botId: bot.id,
-        ts: { gte: from, lte: to }
-      },
-      orderBy: { ts: "asc" }
-    });
-    const analysis = await analyzeBotMetrics({
-      bot,
-      points: rows,
-      range: rangeKey === "7d" ? "7d" : "24h",
-      aiEnabled,
-      workspaceId,
-      now: to
-    });
-    res.json({
-      range: rangeKey === "7d" ? "7d" : "24h",
-      generatedAt: to.toISOString(),
-      healthScore: analysis.healthScore,
-      aiEnabled: analysis.aiEnabled,
-      insights: analysis.insights,
-      warning: analysis.warning
-    });
-  } catch (e) {
-    res.json({
-      range: rangeKey === "7d" ? "7d" : "24h",
-      generatedAt: to.toISOString(),
-      healthScore: 100,
-      aiEnabled,
-      insights: [],
-      warning: "analysis_failed"
-    });
-  }
-});
-
-app.get("/bots/:id/ai/suggestions", requireAuth, requirePermission("bots.view"), async (req, res) => {
-  const workspaceId = getWorkspaceId(res);
-  const bot = await prisma.bot.findFirst({
-    where: { id: req.params.id, workspaceId },
-    include: { mmConfig: true, volConfig: true, riskConfig: true } as any
-  });
-  if (!bot) return res.status(404).json({ error: "not_found" });
-
-  const rangeKey = String(req.query.range ?? "24h");
-  const rangeCfg = rangeKey === "7d" ? METRICS_RANGES["7d"] : METRICS_RANGES["24h"];
-  const to = new Date();
-  const from = new Date(to.getTime() - rangeCfg.lookbackMs);
-  const features = await getWorkspaceFeatures(workspaceId);
-  const provider = String(process.env.AI_PROVIDER ?? "none").toLowerCase();
-  const aiEnabled = Boolean(features?.aiRecommendations) && provider !== "none";
-
-  try {
-    const rows = await prisma.botMetric.findMany({
-      where: {
-        botId: bot.id,
-        ts: { gte: from, lte: to }
-      },
-      orderBy: { ts: "asc" }
-    });
-    const analysis = await analyzeBotMetrics({
-      bot,
-      points: rows,
-      range: rangeKey === "7d" ? "7d" : "24h",
-      aiEnabled,
-      workspaceId,
-      now: to
-    });
-    res.json({
-      range: rangeKey === "7d" ? "7d" : "24h",
-      generatedAt: to.toISOString(),
-      healthScore: analysis.healthScore,
-      aiEnabled: analysis.aiEnabled,
-      suggestions: analysis.insights.filter((ins) => Boolean(ins.suggestedConfig)),
-      warning: analysis.warning
-    });
-  } catch (e) {
-    res.json({
-      range: rangeKey === "7d" ? "7d" : "24h",
-      generatedAt: to.toISOString(),
-      healthScore: 100,
-      aiEnabled,
-      suggestions: [],
-      warning: "analysis_failed"
-    });
-  }
-});
-
-app.delete("/bots/:id", requireAuth, requirePermission("bots.delete"), async (req, res) => {
-  const workspaceId = getWorkspaceId(res);
-  const user = getUserFromLocals(res);
-  const botId = req.params.id;
-  const bot = await prisma.bot.findFirst({ where: { id: botId, workspaceId } });
-  if (!bot) return res.status(404).json({ error: "not_found" });
-
-  await prisma.$transaction([
-    prisma.botAlert.deleteMany({ where: { botId } }),
-    prisma.botRuntime.deleteMany({ where: { botId } }),
-    prisma.botMetric.deleteMany({ where: { botId } }),
-    prisma.marketMakingConfig.deleteMany({ where: { botId } }),
-    prisma.volumeConfig.deleteMany({ where: { botId } }),
-    prisma.riskConfig.deleteMany({ where: { botId } }),
-    prisma.botNotificationConfig.deleteMany({ where: { botId } }),
-    prisma.botPriceSupportConfig.deleteMany({ where: { botId } }),
-    prisma.manualTradeLog.deleteMany({ where: { botId } }),
-    prisma.bot.delete({ where: { id: botId } })
-  ]);
-
-  await writeAudit({
-    workspaceId,
-    actorUserId: user.id,
-    action: "bots.delete",
-    entityType: "Bot",
-    entityId: botId,
-    meta: { name: bot.name, symbol: bot.symbol }
-  });
-
-  res.json({ ok: true });
-});
-
-app.get("/bots/:id/open-orders", requireAuth, requirePermission("bots.view"), async (req, res) => {
-  const workspaceId = getWorkspaceId(res);
-  const bot = await prisma.bot.findFirst({ where: { id: req.params.id, workspaceId } });
-  if (!bot) return res.status(404).json({ error: "not_found" });
-  const exchangeKey = bot.exchange.toLowerCase();
-  if (!isSupportedExchange(exchangeKey)) {
-    return res.status(400).json({ error: "unsupported_exchange" });
-  }
-
-  const cex = await prisma.cexConfig.findUnique({ where: { exchange: bot.exchange } });
-  if (!cex?.apiKey || !cex?.apiSecret) return res.status(400).json({ error: "cex_config_missing" });
-
-  const rest = createPrivateRestClient(exchangeKey, cex);
-  let orders: Order[] = [];
-  try {
-    orders = await rest.getOpenOrders(bot.symbol);
-  } catch (e: any) {
-    const msg = String(e?.message ?? e);
-    if (msg.includes("Unknown market")) {
-      return res.json({ mm: [], vol: [], other: [], warning: msg });
-    }
-    return res.status(400).json({ error: msg, mm: [], vol: [], other: [] });
-  }
-
-  let normalized = orders.map((o) => ({
-    id: o.id,
-    side: o.side,
-    price: o.price,
-    qty: o.qty,
-    clientOrderId: o.clientOrderId ?? null,
-    createdAt: null
-  }));
-
-  const missingIds = normalized.filter((o) => !o.clientOrderId && o.id).map((o) => o.id);
-  if (missingIds.length > 0) {
-    const manual = await prisma.manualTradeLog.findMany({
-      where: { botId: bot.id, exchangeOrderId: { in: missingIds } },
-      select: { exchangeOrderId: true, clientOrderId: true }
-    });
-    if (manual.length > 0) {
-      const map = new Map<string, string>();
-      for (const row of manual) {
-        if (row.exchangeOrderId && row.clientOrderId) {
-          map.set(row.exchangeOrderId, row.clientOrderId);
-        }
-      }
-      normalized = normalized.map((o) => ({
-        ...o,
-        clientOrderId: o.clientOrderId ?? map.get(o.id) ?? null
-      }));
-    }
-  }
-
-  const isMm = (cid?: string | null) => {
-    const c = cid ?? "";
-    return c.startsWith("mm-") || c.startsWith("mmb") || c.startsWith("mms");
-  };
-  const isVol = (cid?: string | null) => {
-    const c = cid ?? "";
-    return c.startsWith("vol-") || c.startsWith("vol");
-  };
-
-  res.json({
-    mm: normalized.filter((o) => isMm(o.clientOrderId)),
-    vol: normalized.filter((o) => isVol(o.clientOrderId)),
-    other: normalized.filter((o) => !isMm(o.clientOrderId) && !isVol(o.clientOrderId))
-  });
-});
-
-app.post("/bots/:id/manual/limit", requireAuth, requirePermission("trading.manual_limit"), requireReauth, async (req, res) => {
-  const workspaceId = getWorkspaceId(res);
-  const user = getUserFromLocals(res);
-  const bot = await prisma.bot.findFirst({ where: { id: req.params.id, workspaceId } });
-  if (!bot) return res.status(404).json({ error: "not_found" });
-  const exchangeKey = bot.exchange.toLowerCase();
-  if (!isSupportedExchange(exchangeKey)) {
-    return res.status(400).json({ error: "unsupported_exchange" });
-  }
-
-  const data = ManualLimitOrder.parse(req.body);
-  const side = data.side.toLowerCase() as "buy" | "sell";
-  const price = parseNumber(data.price);
-  const qty = parseNumber(data.quantity);
-  const postOnly = data.postOnly ?? true;
-
-  if (!Number.isFinite(price) || price <= 0 || !Number.isFinite(qty) || qty <= 0) {
-    return res.status(400).json({ error: "invalid_order" });
-  }
-
-  const cex = await prisma.cexConfig.findUnique({ where: { exchange: bot.exchange } });
-  if (!cex?.apiKey || !cex?.apiSecret) return res.status(400).json({ error: "cex_config_missing" });
-
-  const tag = data.clientTag ? `_${data.clientTag.replace(/[^a-zA-Z0-9_-]/g, "").slice(0, 12)}` : "";
-  const clientOrderId = `man_${bot.id}_${Date.now().toString(36)}${tag}`;
-  const rest = createPrivateRestClient(exchangeKey, cex);
-  if (process.env.MANUAL_TRADE_DEBUG === "1") {
-    console.info("[manual] limit request", {
-      botId: bot.id,
-      exchange: bot.exchange,
-      symbol: bot.symbol,
-      side,
-      price,
-      qty,
-      postOnly,
-      clientOrderId
-    });
-  }
-
-  try {
-    const order = await rest.placeOrder({
-      symbol: bot.symbol,
-      side,
-      type: "limit",
-      price,
-      qty,
-      postOnly,
-      clientOrderId
-    });
-
-    await prisma.manualTradeLog.create({
-      data: {
-        workspaceId,
-        userId: user.id,
-        botId: bot.id,
-        symbol: bot.symbol,
-        type: "LIMIT",
-        side: side.toUpperCase(),
-        qty,
-        price,
-        notional: price * qty,
-        postOnly,
-        timeInForce: data.timeInForce ?? "GTC",
-        clientOrderId,
-        exchangeOrderId: order.id,
-        status: "SUBMITTED"
-      }
-    });
-
-    await writeAudit({
-      workspaceId,
-      actorUserId: user.id,
-      action: "manual.limit.submit",
-      entityType: "Bot",
-      entityId: bot.id,
-      meta: { side, price, qty, clientOrderId }
-    });
-
-    res.json({ exchangeOrderId: order.id, clientOrderId, status: order.status });
-  } catch (e: any) {
-    const errMsg = e?.message ? String(e.message) : String(e);
-    await prisma.manualTradeLog.create({
-      data: {
-        workspaceId,
-        userId: user.id,
-        botId: bot.id,
-        symbol: bot.symbol,
-        type: "LIMIT",
-        side: side.toUpperCase(),
-        qty,
-        price,
-        notional: price * qty,
-        postOnly,
-        timeInForce: data.timeInForce ?? "GTC",
-        clientOrderId,
-        status: "REJECTED",
-        error: errMsg
-      }
-    }).catch(() => {});
-    res.status(400).json({ error: errMsg });
-  }
-});
-
-app.post("/bots/:id/manual/market", requireAuth, requirePermission("trading.manual_market"), requireReauth, async (req, res) => {
-  const workspaceId = getWorkspaceId(res);
-  const user = getUserFromLocals(res);
-  const bot = await prisma.bot.findFirst({ where: { id: req.params.id, workspaceId } });
-  if (!bot) return res.status(404).json({ error: "not_found" });
-  const exchangeKey = bot.exchange.toLowerCase();
-  if (!isSupportedExchange(exchangeKey)) {
-    return res.status(400).json({ error: "unsupported_exchange" });
-  }
-
-  const data = ManualMarketOrder.parse(req.body);
-  const side = data.side.toLowerCase() as "buy" | "sell";
-  const qty = parseNumber(data.quantity);
-  const notional = parseNumber(data.quoteNotionalUsdt);
-
-  if (side === "buy" && (!Number.isFinite(notional) || notional <= 0)) {
-    return res.status(400).json({ error: "invalid_buy_notional" });
-  }
-  if (side === "sell" && (!Number.isFinite(qty) || qty <= 0)) {
-    return res.status(400).json({ error: "invalid_sell_quantity" });
-  }
-
-  const cex = await prisma.cexConfig.findUnique({ where: { exchange: bot.exchange } });
-  if (!cex?.apiKey || !cex?.apiSecret) return res.status(400).json({ error: "cex_config_missing" });
-
-  const clientOrderId = `man_${bot.id}_${Date.now().toString(36)}`;
-  const rest = createPrivateRestClient(exchangeKey, cex);
-  if (process.env.MANUAL_TRADE_DEBUG === "1") {
-    console.info("[manual] market request", {
-      botId: bot.id,
-      exchange: bot.exchange,
-      symbol: bot.symbol,
-      side,
-      qty: side === "sell" ? qty : undefined,
-      notional: side === "buy" ? notional : undefined,
-      clientOrderId
-    });
-  }
-
-  try {
-    const order = await rest.placeOrder({
-      symbol: bot.symbol,
-      side,
-      type: "market",
-      qty: side === "sell" ? qty : 0,
-      quoteQty: side === "buy" ? notional : undefined,
-      clientOrderId
-    });
-
-    await prisma.manualTradeLog.create({
-      data: {
-        workspaceId,
-        userId: user.id,
-        botId: bot.id,
-        symbol: bot.symbol,
-        type: "MARKET",
-        side: side.toUpperCase(),
-        qty: side === "sell" ? qty : undefined,
-        notional: side === "buy" ? notional : undefined,
-        clientOrderId,
-        exchangeOrderId: order.id,
-        status: "SUBMITTED"
-      }
-    });
-
-    await writeAudit({
-      workspaceId,
-      actorUserId: user.id,
-      action: "manual.market.submit",
-      entityType: "Bot",
-      entityId: bot.id,
-      meta: { side, qty: side === "sell" ? qty : undefined, notional: side === "buy" ? notional : undefined, clientOrderId }
-    });
-
-    res.json({ exchangeOrderId: order.id, clientOrderId, status: order.status });
-  } catch (e: any) {
-    const errMsg = e?.message ? String(e.message) : String(e);
-    await prisma.manualTradeLog.create({
-      data: {
-        workspaceId,
-        userId: user.id,
-        botId: bot.id,
-        symbol: bot.symbol,
-        type: "MARKET",
-        side: side.toUpperCase(),
-        qty: side === "sell" ? qty : undefined,
-        notional: side === "buy" ? notional : undefined,
-        clientOrderId,
-        status: "REJECTED",
-        error: errMsg
-      }
-    }).catch(() => {});
-    res.status(400).json({ error: errMsg });
-  }
-});
-
-app.post("/bots/:id/manual/cancel", requireAuth, requirePermission("trading.manual_limit"), requireReauth, async (req, res) => {
-  const workspaceId = getWorkspaceId(res);
-  const bot = await prisma.bot.findFirst({ where: { id: req.params.id, workspaceId } });
-  if (!bot) return res.status(404).json({ error: "not_found" });
-  const exchangeKey = bot.exchange.toLowerCase();
-  if (!isSupportedExchange(exchangeKey)) {
-    return res.status(400).json({ error: "unsupported_exchange" });
-  }
-
-  const data = ManualCancelOrder.parse(req.body);
-  const cex = await prisma.cexConfig.findUnique({ where: { exchange: bot.exchange } });
-  if (!cex?.apiKey || !cex?.apiSecret) return res.status(400).json({ error: "cex_config_missing" });
-
-  const rest = createPrivateRestClient(exchangeKey, cex);
-  await rest.cancelOrder(bot.symbol, data.orderId);
-  const user = getUserFromLocals(res);
-  await writeAudit({
-    workspaceId,
-    actorUserId: user.id,
-    action: "manual.cancel",
-    entityType: "Bot",
-    entityId: bot.id,
-    meta: { orderId: data.orderId }
-  });
-  res.json({ ok: true });
-});
-
-app.get("/bots/:id/alerts", requireAuth, requirePermission("bots.view"), async (req, res) => {
-  const workspaceId = getWorkspaceId(res);
-  const bot = await prisma.bot.findFirst({ where: { id: req.params.id, workspaceId } });
-  if (!bot) return res.status(404).json({ error: "not_found" });
-  const limit = Math.min(Number(req.query.limit || "10"), 50);
-  const items = await prisma.botAlert.findMany({
-    where: { botId: req.params.id },
-    orderBy: { createdAt: "desc" },
-    take: limit
-  });
-  res.json(items);
-});
-
-app.delete("/bots/:id/alerts", requireAuth, requirePermission("bots.edit_config"), async (req, res) => {
-  const workspaceId = getWorkspaceId(res);
-  const bot = await prisma.bot.findFirst({ where: { id: req.params.id, workspaceId } });
-  if (!bot) return res.status(404).json({ error: "not_found" });
-  const id = req.params.id;
-  const r = await prisma.botAlert.deleteMany({ where: { botId: id } });
-  res.json({ ok: true, deleted: r.count });
-});
-
-app.get("/bots/:id/exchange-keys", requireAuth, requirePermission("exchange_keys.view_present"), requireReauth, async (req, res) => {
-  const workspaceId = getWorkspaceId(res);
-  const bot = await prisma.bot.findFirst({ where: { id: req.params.id, workspaceId } });
-  if (!bot) return res.status(404).json({ error: "not_found" });
-
-  const cfg = await prisma.cexConfig.findUnique({ where: { exchange: bot.exchange } });
-  res.json(cfg ? maskCex(cfg) : null);
-});
-
-app.put("/bots/:id/exchange-keys", requireAuth, requirePermission("exchange_keys.edit"), requireReauth, async (req, res) => {
-  const workspaceId = getWorkspaceId(res);
-  const bot = await prisma.bot.findFirst({ where: { id: req.params.id, workspaceId } });
-  if (!bot) return res.status(404).json({ error: "not_found" });
-
-  const data = CexConfig.parse(req.body);
-  if (data.exchange !== bot.exchange) {
-    return res.status(400).json({ error: "exchange_mismatch" });
-  }
-
-  const cfg = await prisma.cexConfig.upsert({
-    where: { exchange: data.exchange },
-    update: {
-      apiKey: data.apiKey,
-      apiSecret: data.apiSecret,
-      apiMemo: data.apiMemo
-    },
-    create: {
-      exchange: data.exchange,
-      apiKey: data.apiKey,
-      apiSecret: data.apiSecret,
-      apiMemo: data.apiMemo
-    }
-  });
-  const user = getUserFromLocals(res);
-  await writeAudit({
-    workspaceId,
-    actorUserId: user.id,
-    action: "exchange_keys.update",
-    entityType: "CexConfig",
-    entityId: cfg.id,
-    meta: { exchange: data.exchange }
-  });
-  res.json(maskCex(cfg));
-});
-
-app.post("/bots/:id/preview/mm", requireAuth, requirePermission("bots.edit_config"), async (req, res) => {
-  const workspaceId = getWorkspaceId(res);
-  const bot = await prisma.bot.findFirst({ where: { id: req.params.id, workspaceId } });
-  if (!bot) return res.status(404).json({ error: "not_found" });
-  const payload = z.object({
-    mm: MMConfig,
-    runtime: z
-      .object({
-        mid: z.number(),
-        freeUsdt: z.number().optional(),
-        freeBase: z.number().optional()
-      })
-      .optional(),
-    options: z
-      .object({
-        includeJitter: z.boolean().optional(),
-        seed: z.number().optional()
-      })
-      .optional()
-  }).parse(req.body);
-
-  const mmPreviewConfig = {
-    ...payload.mm,
-    mmRepriceMs: payload.mm.mmRepriceMs ?? 15000,
-    mmRepricePct: payload.mm.mmRepricePct ?? 0.01,
-    mmPriceEpsPct: payload.mm.mmPriceEpsPct ?? 0.005,
-    mmQtyEpsPct: payload.mm.mmQtyEpsPct ?? 0.02,
-    mmInvAlpha: payload.mm.mmInvAlpha ?? 0.1
-  };
-
-  const mid = payload.runtime?.mid;
-  if (!Number.isFinite(mid) || (mid as number) <= 0) {
-    return res.status(400).json({ error: "mid_missing" });
-  }
-
-  const freeBase = payload.runtime?.freeBase ?? 0;
-  const targetBase = payload.mm.budgetBaseToken;
-  const inventoryRatio = targetBase > 0 ? freeBase / targetBase : 1;
-  const skew = clamp((inventoryRatio - 1) * payload.mm.skewFactor, -payload.mm.maxSkew, payload.mm.maxSkew);
-
-  const quotes = buildMmQuotes({
-    symbol: "PREVIEW",
-    mid: mid as number,
-    cfg: mmPreviewConfig,
-    inventoryRatio,
-    includeJitter: payload.options?.includeJitter ?? false,
-    seed: payload.options?.seed
-  });
-
-  const bids = quotes
-    .filter((q) => q.side === "buy")
-    .map((q) => {
-      const price = q.price ?? 0;
-      const qty = q.qty ?? 0;
-      return { price, qty, notional: price * qty };
-    })
-    .sort((a, b) => a.price - b.price)
-    .reverse();
-  const asks = quotes
-    .filter((q) => q.side === "sell")
-    .map((q) => {
-      const price = q.price ?? 0;
-      const qty = q.qty ?? 0;
-      return { price, qty, notional: price * qty };
-    })
-    .sort((a, b) => a.price - b.price);
-
-  res.json({ mid, bids, asks, inventoryRatio, skewPct: skew * 100, skewedMid: (mid as number) * (1 + skew) });
-});
-
-app.get("/exchanges/:exchange/symbols", requireAuth, async (req, res) => {
-  const exchange = req.params.exchange.toLowerCase();
-  if (!isSupportedExchange(exchange)) {
-    return res.status(400).json({ error: "unsupported_exchange" });
-  }
-
-  let symbols: any[] = [];
-  let rawDetails: any = null;
-  if (exchange === "bitmart") {
-    const baseUrl = process.env.BITMART_BASE_URL || "https://api-cloud.bitmart.com";
-    const url = new URL("/spot/v1/symbols", baseUrl);
-
-    const resp = await fetch(url, { method: "GET" });
-    const json = (await resp.json().catch(() => ({}))) as Record<string, any>;
-    rawDetails = json;
-
-    if (!resp.ok || (json?.code && json.code !== 1000)) {
-      const msg = json?.msg || json?.message || "symbols fetch failed";
-      return res.status(400).json({ error: msg, details: json });
-    }
-
-    symbols = Array.isArray(json?.data?.symbols)
-      ? json.data.symbols
-      : Array.isArray(json?.data)
-        ? json.data
-        : [];
-  } else {
-    try {
-      const baseUrl =
-        getExchangeBaseUrl(exchange) ||
-        (exchange === "binance"
-          ? "https://api.binance.com"
-          : exchange === "pionex"
-            ? "https://api.pionex.com"
-            : exchange === "p2b"
-              ? "https://api.p2pb2b.com"
-              : exchange === "mexc"
-                ? "https://api.mexc.com"
-                : exchange === "xt"
-                  ? "https://sapi.xt.com"
-                  : exchange === "bingx"
-                    ? "https://open-api.bingx.com"
-                    : "https://api.coinstore.com");
-      const rest =
-        exchange === "binance"
-          ? new BinanceRestClient(baseUrl, "", "")
-          : exchange === "pionex"
-            ? new PionexRestClient(baseUrl, "", "")
-            : exchange === "p2b"
-              ? new P2BRestClient(baseUrl, "", "")
-              : exchange === "mexc"
-                ? new MexcRestClient(baseUrl, "", "")
-                : exchange === "xt"
-                  ? new XtRestClient(baseUrl, "", "")
-                  : exchange === "bingx"
-                    ? new BingxRestClient(baseUrl, "", "")
-                    : new CoinstoreRestClient(baseUrl, "", "");
-      const list = await rest.listSymbols();
-      symbols = list.map((s) => ({ symbol: s }));
-    } catch (e: any) {
-      return res.status(400).json({ error: String(e?.message ?? e), details: rawDetails });
-    }
-  }
-
-  const mapped = symbols
-    .map((s: any) => {
-      const rawSymbol =
-        typeof s === "string"
-          ? s
-          : s?.symbol ||
-            s?.symbol_id ||
-            s?.symbolId ||
-            s?.trade_symbol ||
-            s?.trading_pair;
-      const symbol = rawSymbol ? String(rawSymbol) : "";
-      if (!symbol) return null;
-      try {
-        const canonical = fromExchangeSymbol(exchange, symbol);
-        const parts = canonical.split("/");
-        return { symbol: canonical, base: parts[0], quote: parts[1] };
-      } catch {
-        return null;
-      }
-    })
-    .filter(Boolean);
-
-  if (mapped.length === 0) {
-    return res.status(502).json({ error: "symbols_unavailable", details: rawDetails });
-  }
-
-  const unique = Array.from(new Map(mapped.map((s: any) => [s.symbol, s])).values());
-  const usdtOnly = unique.filter((s: any) => String(s.quote || "").toUpperCase() === "USDT");
-  res.json(usdtOnly.length > 0 ? usdtOnly : unique);
-});
-
-app.get("/price-feed/:exchange/:symbol", requireAuth, requirePermission("bots.view"), async (req, res) => {
-  const exchange = req.params.exchange.toLowerCase();
-  const symbol = req.params.symbol;
-  if (!isSupportedExchange(exchange)) {
-    return res.status(400).json({ error: "unsupported_exchange" });
-  }
-  try {
-    const rest = createPublicRestClient(exchange);
-    const mid = await rest.getTicker(symbol);
-    res.json({
-      exchange,
-      symbol,
-      mid: mid.mid,
-      bid: mid.bid ?? null,
-      ask: mid.ask ?? null,
-      ts: mid.ts
-    });
-  } catch (e: any) {
-    return res.status(400).json({ error: String(e?.message ?? e) });
-  }
-});
-
-app.get("/settings/cex/:exchange", requireAuth, requirePermission("exchange_keys.view_present"), requireReauth, async (req, res) => {
-  const exchange = req.params.exchange;
-  const cfg = await prisma.cexConfig.findUnique({ where: { exchange } });
-  res.json(cfg ? maskCex(cfg) : null);
-});
-
-app.get("/settings/cex", requireAuth, requirePermission("exchange_keys.view_present"), requireReauth, async (_req, res) => {
-  const items = await prisma.cexConfig.findMany({ orderBy: { updatedAt: "desc" } });
-  const masked = items.map((cfg) => ({
-    exchange: cfg.exchange,
-    apiKey: cfg.apiKey ? `${cfg.apiKey.slice(0, 4)}...${cfg.apiKey.slice(-4)}` : "",
-    apiSecret: cfg.apiSecret ? "********" : "",
-    apiMemo: cfg.apiMemo ?? null,
-    updatedAt: cfg.updatedAt
-  }));
-  res.json(masked);
-});
-
-app.get("/settings/alerts", requireAuth, async (_req, res) => {
-  const cfg = await prisma.alertConfig.findUnique({ where: { key: "default" } });
-  res.json(cfg ?? { telegramBotToken: null, telegramChatId: null });
-});
-
-app.get("/system/settings", requireAuth, async (_req, res) => {
-  res.json(await getSystemSettings());
-});
-
-app.put("/system/settings", requireAuth, async (req, res) => {
-  const user = getUserFromLocals(res);
-  if (!isSuperadmin(user)) return res.status(403).json({ error: "forbidden" });
-  const data = SystemSettingsPayload.parse(req.body);
-  const current = await getSystemSettings();
-  const next = { ...current, ...data };
-  await prisma.globalSetting.upsert({
-    where: { key: SYSTEM_SETTINGS_KEY },
-    create: { key: SYSTEM_SETTINGS_KEY, value: next },
-    update: { value: next }
-  });
-  res.json(next);
-});
-
-app.get("/settings/security", requireAuth, async (_req, res) => {
-  const user = getUserFromLocals(res);
-  const dbUser = await prisma.user.findUnique({
-    where: { id: user.id },
-    select: { autoLogoutEnabled: true, autoLogoutMinutes: true }
-  });
-  const otpEnabled = await getReauthOtpEnabled();
-  res.json({
-    autoLogoutEnabled: dbUser?.autoLogoutEnabled ?? true,
-    autoLogoutMinutes: dbUser?.autoLogoutMinutes ?? 60,
-    reauthOtpEnabled: otpEnabled,
-    isSuperadmin: isSuperadmin(user)
-  });
-});
-
-app.delete("/settings/cex/:exchange", requireAuth, requirePermission("exchange_keys.edit"), requireReauth, async (req, res) => {
-  const exchange = req.params.exchange;
-  await prisma.cexConfig.delete({ where: { exchange } });
-  res.json({ ok: true });
-});
-
-app.post("/bots", requireAuth, requirePermission("bots.create"), async (req, res) => {
-  const workspaceId = getWorkspaceId(res);
-  const user = getUserFromLocals(res);
-  const data = BotCreate.parse(req.body);
-  const id = crypto.randomUUID();
-  let canonicalSymbol: string;
-  try {
-    canonicalSymbol = normalizeSymbol(data.symbol);
-  } catch (e) {
-    return res.status(400).json({ error: "symbol_invalid", details: String(e) });
-  }
-
-  const bot = await prisma.bot.create({
-    data: {
-      id,
-      workspaceId,
-      name: data.name,
-      symbol: canonicalSymbol,
-      exchange: data.exchange,
-      status: "STOPPED",
-      mmEnabled: false,
-      volEnabled: false,
-      mmConfig: {
-        create: {
-          spreadPct: 0.05,
-          maxSpreadPct: 0.2,
-          levelsUp: 10,
-          levelsDown: 10,
-          budgetQuoteUsdt: 500,
-          budgetBaseToken: 500,
-          minOrderUsdt: 5,
-          maxOrderUsdt: 0,
-          distribution: "LINEAR",
-          jitterPct: 0.0,
-          skewFactor: 0.0,
-          maxSkew: 0.0,
-          mmRepriceMs: 15000,
-          mmRepricePct: 0.01,
-          mmPriceEpsPct: 0.005,
-          mmQtyEpsPct: 0.02,
-          mmInvAlpha: 0.1
-        }
-      },
-      volConfig: {
-        create: {
-          dailyNotionalUsdt: 5000,
-          minTradeUsdt: 10,
-          maxTradeUsdt: 40,
-          activeFrom: "00:00",
-          activeTo: "23:59",
-          mode: "MIXED",
-          buyPct: 0.5,
-          buyBumpTicks: 0,
-          sellBumpTicks: 0,
-          volCooldownMs: 60000,
-          volActiveTtlMs: 20000,
-          volMmSafetyMult: 1.5,
-          volLastBandPct: 0.0001,
-          volInsideSpreadPct: 0.00005,
-          volLastMinBumpAbs: 0.00000001,
-          volLastMinBumpPct: 0,
-          volBuyTicks: 2,
-          volSellTicks: 2
-        }
-      },
-      riskConfig: {
-        create: {
-          minUsdt: 0,
-          maxDeviationPct: 0,
-          maxOpenOrders: 0,
-          maxDailyLoss: 0
-        }
-      },
-      notificationConfig: {
-        create: {
-          fundsWarnEnabled: true,
-          fundsWarnPct: 0.1
-        }
-      },
-      priceSupportConfig: {
-        create: {
-          enabled: false,
-          active: true,
-          floorPrice: null,
-          budgetUsdt: 0,
-          spentUsdt: 0,
-          maxOrderUsdt: 50,
-          cooldownMs: 2000,
-          mode: "PASSIVE",
-          lastActionAt: BigInt(0),
-          stoppedReason: null,
-          notifiedBudgetExhaustedAt: BigInt(0)
-        }
-      }
-    }
-  });
-
-  await prisma.botRuntime.upsert({
-    where: { botId: bot.id },
-    create: {
-      botId: bot.id,
-      status: "STOPPED",
-      reason: "Created"
-    },
-    update: {
-      status: "STOPPED",
-      reason: "Created"
-    }
-  });
-
-  await writeAudit({
-    workspaceId,
-    actorUserId: user.id,
-    action: "bots.create",
-    entityType: "Bot",
-    entityId: bot.id,
-    meta: { name: bot.name, symbol: bot.symbol }
-  });
-
-  res.json(bot);
-});
-
-app.put("/bots/:id/config", requireAuth, requirePermission("bots.edit_config"), async (req, res) => {
-  const workspaceId = getWorkspaceId(res);
-  const user = getUserFromLocals(res);
-  const botId = req.params.id;
-
-  const payload = z.object({
-    mm: MMConfig,
-    vol: VolConfig,
-    risk: RiskConfig,
-    notify: NotificationConfig,
-    priceSupport: PriceSupportConfig.optional(),
-    priceFollow: PriceFollowConfig.optional(),
-    dexPriceFeed: DexPriceFeedConfig.optional(),
-    dexDeviation: DexDeviationConfig.optional(),
-    priceSourceMode: PriceSourceModeConfig.optional()
-  }).parse(req.body);
-
-  if (!isSuperadmin(user) && !roleAllows(res, "risk.edit")) {
-    return res.status(403).json({ error: "forbidden" });
-  }
-
-  const errors: Record<string, string> = {};
-  const minQuoteUsdt = 100;
-
-  if (payload.mm.budgetQuoteUsdt < minQuoteUsdt) {
-    errors.budgetQuoteUsdt = `Minimum ${minQuoteUsdt} USDT`;
-  }
-
-  const bot = await prisma.bot.findFirst({ where: { id: botId, workspaceId } });
-  if (!bot) return res.status(404).json({ error: "not_found" });
-  const rt = await prisma.botRuntime.findUnique({ where: { botId } });
-  const mid = rt?.mid ?? null;
-
-  if (mid && mid > 0) {
-    const minBaseToken = minQuoteUsdt / mid;
-    if (payload.mm.budgetBaseToken < minBaseToken) {
-      const base = bot?.symbol?.split(/[/_-]/)[0] || "Token";
-      errors.budgetBaseToken = `Minimum ~${minBaseToken.toFixed(6)} ${base}`;
-    }
-  }
-
-  const features = await getWorkspaceFeatures(workspaceId);
-  const priceSupportFeature = Boolean(features?.priceSupport);
-  const dexPriceFeedFeature = Boolean(features?.dexPriceFeed);
-  if (payload.priceSupport && !priceSupportFeature) {
-    return res.status(403).json({ error: "feature_disabled" });
-  }
-  if (
-    (payload.dexPriceFeed?.enabled ||
-      payload.dexDeviation?.enabled ||
-      (payload.priceSourceMode && payload.priceSourceMode !== "CEX")) &&
-    !dexPriceFeedFeature
-  ) {
-    return res.status(403).json({ error: "feature_disabled" });
-  }
-
-  if (payload.priceSupport?.enabled) {
-    if (!payload.priceSupport.floorPrice || payload.priceSupport.floorPrice <= 0) {
-      errors.floorPrice = "Floor price required";
-    }
-    if (payload.priceSupport.budgetUsdt <= 0) {
-      errors.budgetUsdt = "Budget must be > 0";
-    }
-    if (payload.priceSupport.maxOrderUsdt <= 0) {
-      errors.maxOrderUsdt = "Max order must be > 0";
-    }
-    if (payload.priceSupport.cooldownMs < 0) {
-      errors.cooldownMs = "Cooldown must be >= 0";
-    }
-  }
-
-  if (payload.priceFollow?.enabled) {
-    if (!payload.priceFollow.priceSourceExchange || payload.priceFollow.priceSourceExchange.trim().length === 0) {
-      errors.priceSourceExchange = "Master exchange required";
-    }
-  }
-
-  if (payload.dexPriceFeed?.enabled) {
-    if (!payload.dexPriceFeed.tokenAddress || payload.dexPriceFeed.tokenAddress.trim().length === 0) {
-      errors.dexTokenAddress = "Token address required";
-    } else if (!/^0x[a-fA-F0-9]{40}$/.test(payload.dexPriceFeed.tokenAddress.trim())) {
-      errors.dexTokenAddress = "Invalid token address";
-    }
-  }
-
-  if (payload.priceSourceMode && payload.priceSourceMode !== "CEX") {
-    if (!payload.dexPriceFeed?.enabled) {
-      errors.priceSourceMode = "DEX price feed must be enabled for this mode";
-    }
-  }
-
-  if (payload.dexDeviation?.enabled && payload.dexDeviation.maxDeviationBps <= 0) {
-    errors.dexMaxDeviationBps = "Max deviation must be > 0";
-  }
-
-  if (Object.keys(errors).length > 0) {
-    return res.status(400).json({ error: "min_budget", details: { errors } });
-  }
-
-  if (!isSuperadmin(user)) {
-    delete (payload.vol as any).buyBumpTicks;
-    delete (payload.vol as any).sellBumpTicks;
-    delete (payload.mm as any).mmRepriceMs;
-    delete (payload.mm as any).mmRepricePct;
-    delete (payload.mm as any).mmPriceEpsPct;
-    delete (payload.mm as any).mmQtyEpsPct;
-    delete (payload.mm as any).mmInvAlpha;
-    delete (payload.vol as any).volCooldownMs;
-    delete (payload.vol as any).volActiveTtlMs;
-    delete (payload.vol as any).volMmSafetyMult;
-    delete (payload.vol as any).volLastBandPct;
-    delete (payload.vol as any).volInsideSpreadPct;
-    delete (payload.vol as any).volLastMinBumpAbs;
-    delete (payload.vol as any).volLastMinBumpPct;
-    delete (payload.vol as any).volBuyTicks;
-    delete (payload.vol as any).volSellTicks;
-  }
-
-  await prisma.marketMakingConfig.update({
-    where: { botId },
-    data: payload.mm
-  });
-
-  await prisma.volumeConfig.update({
-    where: { botId },
-    data: payload.vol
-  });
-
-  await prisma.riskConfig.update({
-    where: { botId },
-    data: payload.risk
-  });
-
-  await prisma.botNotificationConfig.upsert({
-    where: { botId },
-    update: payload.notify,
-    create: { botId, ...payload.notify }
-  });
-
-  if (payload.priceSupport) {
-    const existing = await prisma.botPriceSupportConfig.findUnique({ where: { botId } });
-    const updateData: any = {
-      enabled: payload.priceSupport.enabled,
-      floorPrice: payload.priceSupport.floorPrice,
-      budgetUsdt: payload.priceSupport.budgetUsdt,
-      maxOrderUsdt: payload.priceSupport.maxOrderUsdt,
-      cooldownMs: payload.priceSupport.cooldownMs,
-      mode: payload.priceSupport.mode
-    };
-    if (!existing) {
-      await prisma.botPriceSupportConfig.create({
-        data: {
-          botId,
-          active: true,
-          spentUsdt: 0,
-          lastActionAt: BigInt(0),
-          stoppedReason: null,
-          notifiedBudgetExhaustedAt: BigInt(0),
-          ...updateData
-        }
-      });
-    } else {
-      await prisma.botPriceSupportConfig.update({
-        where: { botId },
-        data: updateData
-      });
-    }
-  }
-
-  if (payload.priceFollow) {
-    const sourceExchange = payload.priceFollow.priceSourceExchange?.trim() || bot.exchange;
-    const sourceSymbolRaw = payload.priceFollow.priceSourceSymbol?.trim() || bot.symbol;
-    let sourceSymbol: string;
-    try {
-      sourceSymbol = normalizeSymbol(sourceSymbolRaw);
-    } catch (e) {
-      return res.status(400).json({ error: "symbol_invalid", details: String(e) });
-    }
-    await prisma.bot.update({
-      where: { id: botId },
-      data: {
-        priceFollowEnabled: payload.priceFollow.enabled,
-        priceSourceExchange: sourceExchange,
-        priceSourceSymbol: sourceSymbol,
-        priceSourceType: payload.priceFollow.priceSourceType ?? bot.priceSourceType ?? "TICKER"
-      }
-    });
-  }
-
-  if (payload.dexPriceFeed || payload.dexDeviation || payload.priceSourceMode) {
-    await prisma.bot.update({
-      where: { id: botId },
-      data: {
-        priceSourceMode: payload.priceSourceMode ?? bot.priceSourceMode ?? "CEX",
-        dexPriceFeedEnabled: payload.dexPriceFeed?.enabled ?? bot.dexPriceFeedEnabled ?? false,
-        dexChain: payload.dexPriceFeed?.chain ?? bot.dexChain ?? "ethereum",
-        dexTokenAddress: payload.dexPriceFeed?.tokenAddress?.trim() ?? bot.dexTokenAddress ?? null,
-        dexCacheTtlMs: payload.dexPriceFeed?.cacheTtlMs ?? bot.dexCacheTtlMs ?? 3000,
-        dexStaleAfterMs: payload.dexPriceFeed?.staleAfterMs ?? bot.dexStaleAfterMs ?? 15000,
-        dexDeviationEnabled: payload.dexDeviation?.enabled ?? bot.dexDeviationEnabled ?? false,
-        dexMaxDeviationBps: payload.dexDeviation?.maxDeviationBps ?? bot.dexMaxDeviationBps ?? 0,
-        dexDeviationPolicy: payload.dexDeviation?.policy ?? bot.dexDeviationPolicy ?? "alertOnly",
-        dexNotifyCooldownSec: payload.dexDeviation?.notifyCooldownSec ?? bot.dexNotifyCooldownSec ?? 300
-      }
-    });
-  }
-
-  await writeAudit({
-    workspaceId,
-    actorUserId: user.id,
-    action: "bots.update_config",
-    entityType: "Bot",
-    entityId: botId
-  });
-
-  res.json({ ok: true });
-});
-
-app.post("/bots/:id/price-support/restart", requireAuth, requirePermission("trading.price_support"), async (req, res) => {
-  const workspaceId = getWorkspaceId(res);
-  const user = getUserFromLocals(res);
-  const botId = req.params.id;
-  const features = await getWorkspaceFeatures(workspaceId);
-  if (!features?.priceSupport) {
-    return res.status(403).json({ error: "feature_disabled" });
-  }
-
-  const bot = await prisma.bot.findFirst({ where: { id: botId, workspaceId } });
-  if (!bot) return res.status(404).json({ error: "not_found" });
-
-  await prisma.botPriceSupportConfig.upsert({
-    where: { botId },
-    create: {
-      botId,
-      enabled: false,
-      active: true,
-      floorPrice: null,
-      budgetUsdt: 0,
-      spentUsdt: 0,
-      maxOrderUsdt: 50,
-      cooldownMs: 2000,
-      mode: "PASSIVE",
-      lastActionAt: BigInt(0),
-      stoppedReason: null,
-      notifiedBudgetExhaustedAt: BigInt(0)
-    },
-    update: {
-      active: true,
-      stoppedReason: null,
-      notifiedBudgetExhaustedAt: BigInt(0)
-    }
-  });
-
-  await writeAudit({
-    workspaceId,
-    actorUserId: user.id,
-    action: "bots.price_support.restart",
-    entityType: "Bot",
-    entityId: botId
-  });
-
-  res.json({ ok: true });
-});
-
-app.post("/bots/:id/mm/start", requireAuth, requirePermission("bots.start_pause_stop"), async (req, res) => {
-  const workspaceId = getWorkspaceId(res);
-  const user = getUserFromLocals(res);
-  const botId = req.params.id;
-  const bot = await prisma.bot.findFirst({ where: { id: botId, workspaceId } });
-  if (!bot) return res.status(404).json({ error: "bot_not_found" });
-  await prisma.bot.update({ where: { id: botId }, data: { mmEnabled: true } });
-  await writeAudit({
-    workspaceId,
-    actorUserId: user.id,
-    action: "bots.mm.start",
-    entityType: "Bot",
-    entityId: botId
-  });
-  await sendTelegramWithFallback(`✅ MM started\n${bot.name} (${bot.symbol})`);
-  res.json({ ok: true });
-});
-
-app.post("/bots/:id/mm/stop", requireAuth, requirePermission("bots.start_pause_stop"), async (req, res) => {
-  const workspaceId = getWorkspaceId(res);
-  const user = getUserFromLocals(res);
-  const botId = req.params.id;
-  const bot = await prisma.bot.findFirst({ where: { id: botId, workspaceId } });
-  if (!bot) return res.status(404).json({ error: "bot_not_found" });
-  await prisma.bot.update({ where: { id: botId }, data: { mmEnabled: false } });
-  await writeAudit({
-    workspaceId,
-    actorUserId: user.id,
-    action: "bots.mm.stop",
-    entityType: "Bot",
-    entityId: botId
-  });
-  await sendTelegramWithFallback(`🛑 MM stopped\n${bot.name} (${bot.symbol})`);
-  res.json({ ok: true });
-});
-
-app.post("/bots/:id/vol/start", requireAuth, requirePermission("bots.start_pause_stop"), async (req, res) => {
-  const workspaceId = getWorkspaceId(res);
-  const user = getUserFromLocals(res);
-  const botId = req.params.id;
-  const bot = await prisma.bot.findFirst({ where: { id: botId, workspaceId } });
-  if (!bot) return res.status(404).json({ error: "bot_not_found" });
-  await prisma.bot.update({ where: { id: botId }, data: { volEnabled: true } });
-  await writeAudit({
-    workspaceId,
-    actorUserId: user.id,
-    action: "bots.vol.start",
-    entityType: "Bot",
-    entityId: botId
-  });
-  await sendTelegramWithFallback(`✅ Volume bot started\n${bot.name} (${bot.symbol})`);
-  res.json({ ok: true });
-});
-
-app.post("/bots/:id/vol/stop", requireAuth, requirePermission("bots.start_pause_stop"), async (req, res) => {
-  const workspaceId = getWorkspaceId(res);
-  const user = getUserFromLocals(res);
-  const botId = req.params.id;
-  const bot = await prisma.bot.findFirst({ where: { id: botId, workspaceId } });
-  if (!bot) return res.status(404).json({ error: "bot_not_found" });
-  await prisma.bot.update({ where: { id: botId }, data: { volEnabled: false } });
-  await writeAudit({
-    workspaceId,
-    actorUserId: user.id,
-    action: "bots.vol.stop",
-    entityType: "Bot",
-    entityId: botId
-  });
-  await sendTelegramWithFallback(`🛑 Volume bot stopped\n${bot.name} (${bot.symbol})`);
-  res.json({ ok: true });
-});
-
-app.put("/settings/cex", requireAuth, requirePermission("exchange_keys.edit"), requireReauth, async (req, res) => {
-  const data = CexConfig.parse(req.body);
-  const existing = await prisma.cexConfig.findUnique({ where: { exchange: data.exchange } });
-
-  if (!existing) {
-    const cfg = await getLicenseConfig();
-    if (!cfg.licenseKey || !cfg.instanceId) {
-      return res.status(403).json({ error: "license_missing" });
-    }
-    const verified = await verifyLicenseServer({
-      licenseKey: cfg.licenseKey,
-      instanceId: cfg.instanceId
-    });
-    if (!verified.ok) {
-      return res.status(403).json({ error: "license_unverified", details: verified.error });
-    }
-    if (verified.data.status !== "ACTIVE") {
-      return res.status(403).json({ error: "license_inactive", status: verified.data.status });
-    }
-    const limits = verified.data.limits;
-    const overrides = verified.data.overrides;
-    if (!overrides?.unlimited) {
-      const maxCex = (limits?.includedCex ?? 0) + (limits?.addOnCex ?? 0);
-      const used = await prisma.cexConfig.count();
-      if (used >= maxCex) {
-        return res.status(409).json({ error: "cex_limit_reached", limit: maxCex, used });
-      }
-    }
-  }
-
-  const cfg = await prisma.cexConfig.upsert({
-    where: { exchange: data.exchange },
-    update: {
-      apiKey: data.apiKey,
-      apiSecret: data.apiSecret,
-      apiMemo: data.apiMemo
-    },
-    create: {
-      exchange: data.exchange,
-      apiKey: data.apiKey,
-      apiSecret: data.apiSecret,
-      apiMemo: data.apiMemo
-    }
-  });
-  res.json(cfg);
-});
-
-app.put("/settings/alerts", requireAuth, async (req, res) => {
-  const data = AlertConfig.parse(req.body);
-  const cfg = await prisma.alertConfig.upsert({
-    where: { key: "default" },
-    update: {
-      telegramBotToken: data.telegramBotToken ?? null,
-      telegramChatId: data.telegramChatId ?? null
-    },
-    create: {
-      key: "default",
-      telegramBotToken: data.telegramBotToken ?? null,
-      telegramChatId: data.telegramChatId ?? null
-    }
-  });
-  res.json(cfg);
-});
-
-app.get("/settings/subscription", requireAuth, async (req, res) => {
-  const user = getUserFromLocals(res);
-  if (!isSuperadmin(user)) return res.status(403).json({ error: "forbidden" });
-
-  const cfg = await getLicenseConfig();
-  const workspaceId = getWorkspaceId(res);
-  const usage = await getLicenseUsage();
-  const effectiveInstanceId = cfg.instanceId ?? workspaceId ?? null;
-  if (!cfg.licenseKey || !effectiveInstanceId) {
-    return res.json({
-      configured: false,
-      licenseKeyMasked: maskLicenseKey(cfg.licenseKey),
-      instanceId: effectiveInstanceId,
-      status: null,
-      validUntil: null,
-      limits: null,
-      features: null,
-      overrides: null,
-      checkedAt: null,
-      error: null,
-      source: cfg.source,
-      usage
-    });
-  }
-
-  const verified = await verifyLicenseServer({
-    licenseKey: cfg.licenseKey,
-    instanceId: effectiveInstanceId
-  });
-
-  if (!verified.ok) {
-    return res.json({
-      configured: true,
-      licenseKeyMasked: maskLicenseKey(cfg.licenseKey),
-      instanceId: effectiveInstanceId,
-      status: null,
-      validUntil: null,
-      limits: null,
-      features: null,
-      overrides: null,
-      checkedAt: new Date().toISOString(),
-      error: verified.error,
-      source: cfg.source,
-      usage
-    });
-  }
-
-  await syncWorkspaceFeatures(resolveLicenseFeatures(verified.data));
-
-  return res.json({
-    configured: true,
-    licenseKeyMasked: maskLicenseKey(cfg.licenseKey),
-    instanceId: cfg.instanceId,
-    status: verified.data.status,
-    validUntil: verified.data.validUntil,
-    limits: verified.data.limits,
-    features: verified.data.features,
-    overrides: verified.data.overrides,
-    checkedAt: new Date().toISOString(),
-    error: null,
-    source: cfg.source,
-    usage
-  });
-});
-
-app.put("/settings/subscription", requireAuth, async (req, res) => {
-  const user = getUserFromLocals(res);
-  if (!isSuperadmin(user)) return res.status(403).json({ error: "forbidden" });
-
-  const parsed = z
-    .object({
-      licenseKey: z.string().trim().min(1)
-    })
-    .safeParse(req.body);
+  const parsed = tradingSettingsSchema.safeParse(req.body);
   if (!parsed.success) {
-    return res.status(400).json({ error: "invalid_request", details: parsed.error.errors });
-  }
-  const body = parsed.data;
-  const workspaceId = getWorkspaceId(res);
-  if (!workspaceId) return res.status(400).json({ error: "workspace_missing" });
-
-  await prisma.globalSetting.upsert({
-    where: { key: LICENSE_CONFIG_KEY },
-    update: { value: { licenseKey: body.licenseKey, instanceId: workspaceId } },
-    create: { key: LICENSE_CONFIG_KEY, value: { licenseKey: body.licenseKey, instanceId: workspaceId } }
-  });
-
-  const verified = await verifyLicenseServer({
-    licenseKey: body.licenseKey,
-    instanceId: workspaceId
-  });
-  const usage = await getLicenseUsage();
-
-  if (!verified.ok) {
-    return res.json({
-      configured: true,
-      licenseKeyMasked: maskLicenseKey(body.licenseKey),
-      instanceId: workspaceId,
-      status: null,
-      validUntil: null,
-      limits: null,
-      features: null,
-      overrides: null,
-      checkedAt: new Date().toISOString(),
-      error: verified.error,
-      source: "db",
-      usage
-    });
+    return res.status(400).json({ error: "invalid_payload", details: parsed.error.flatten() });
   }
 
-  await syncWorkspaceFeatures(resolveLicenseFeatures(verified.data));
-
-  return res.json({
-    configured: true,
-    licenseKeyMasked: maskLicenseKey(body.licenseKey),
-    instanceId: workspaceId,
-    status: verified.data.status,
-    validUntil: verified.data.validUntil,
-    limits: verified.data.limits,
-    features: verified.data.features,
-    overrides: verified.data.overrides,
-    checkedAt: new Date().toISOString(),
-    error: null,
-    source: "db",
-    usage
-  });
+  const settings = await saveTradingSettings(user.id, parsed.data);
+  return res.json(settings);
 });
 
-app.delete("/settings/subscription", requireAuth, async (req, res) => {
+app.post("/api/predictions/generate", requireAuth, async (req, res) => {
   const user = getUserFromLocals(res);
-  if (!isSuperadmin(user)) return res.status(403).json({ error: "forbidden" });
+  const parsed = predictionGenerateSchema.safeParse(req.body);
+  if (!parsed.success) {
+    return res.status(400).json({ error: "invalid_payload", details: parsed.error.flatten() });
+  }
 
-  await prisma.globalSetting.deleteMany({ where: { key: LICENSE_CONFIG_KEY } });
-  await syncWorkspaceFeatures({
-    priceSupport: false,
-    priceFollow: false,
-    aiRecommendations: false,
-    dexPriceFeed: false
+  const payload = parsed.data;
+  const tsCreated = payload.tsCreated ?? new Date().toISOString();
+
+  const created = await generateAndPersistPrediction({
+    symbol: payload.symbol,
+    marketType: payload.marketType,
+    timeframe: payload.timeframe,
+    tsCreated,
+    prediction: payload.prediction,
+    featureSnapshot: payload.featureSnapshot,
+    userId: user.id,
+    botId: payload.botId ?? null,
+    modelVersionBase: payload.modelVersionBase
   });
 
-  return res.json({
-    configured: false,
-    licenseKeyMasked: null,
-    instanceId: null,
-    status: null,
-    validUntil: null,
-    limits: null,
-    features: null,
-    overrides: null,
-    checkedAt: new Date().toISOString(),
-    error: null,
-    source: "none",
-    usage: await getLicenseUsage()
+  return res.status(created.persisted ? 201 : 202).json({
+    persisted: created.persisted,
+    prediction: {
+      symbol: payload.symbol,
+      marketType: payload.marketType,
+      timeframe: payload.timeframe,
+      tsCreated,
+      ...payload.prediction
+    },
+    explanation: created.explanation,
+    modelVersion: created.modelVersion,
+    predictionId: created.rowId
   });
 });
 
-app.put("/settings/security", requireAuth, async (req, res) => {
-  const data = SecuritySettings.parse(req.body);
+app.get("/api/symbols", requireAuth, async (req, res) => {
   const user = getUserFromLocals(res);
-  if (data.reauthOtpEnabled !== undefined && !isSuperadmin(user)) {
-    return res.status(403).json({ error: "forbidden" });
-  }
+  try {
+    const exchangeAccountId = typeof req.query.exchangeAccountId === "string"
+      ? req.query.exchangeAccountId
+      : undefined;
+    const account = await resolveTradingAccount(user.id, exchangeAccountId);
+    const adapter = createBitgetAdapter(account);
 
-  let otpEnabled = await getReauthOtpEnabled();
-  if (data.reauthOtpEnabled !== undefined) {
-    otpEnabled = Boolean(data.reauthOtpEnabled);
-    await prisma.globalSetting.upsert({
-      where: { key: "security.reauth_otp_enabled" },
-      update: { value: otpEnabled },
-      create: { key: "security.reauth_otp_enabled", value: otpEnabled }
-    });
+    try {
+      const symbols = await listSymbols(adapter);
+      return res.json({
+        exchangeAccountId: account.id,
+        exchange: account.exchange,
+        ...symbols
+      });
+    } finally {
+      await adapter.close();
+    }
+  } catch (error) {
+    return sendManualTradingError(res, error);
   }
-
-  const updated = await prisma.user.update({
-    where: { id: user.id },
-    data: {
-      autoLogoutEnabled: data.autoLogoutEnabled,
-      autoLogoutMinutes: data.autoLogoutMinutes
-    }
-  });
-  await writeAudit({
-    workspaceId: getWorkspaceId(res),
-    actorUserId: user.id,
-    action: "settings.security.update",
-    entityType: "User",
-    entityId: user.id,
-    meta: {
-      autoLogoutEnabled: updated.autoLogoutEnabled,
-      autoLogoutMinutes: updated.autoLogoutMinutes,
-      reauthOtpEnabled: otpEnabled
-    }
-  });
-  res.json({
-    autoLogoutEnabled: updated.autoLogoutEnabled,
-    autoLogoutMinutes: updated.autoLogoutMinutes,
-    reauthOtpEnabled: otpEnabled,
-    isSuperadmin: isSuperadmin(user)
-  });
 });
 
-app.post("/settings/cex/verify", requireAuth, requirePermission("exchange_keys.edit"), requireReauth, async (req, res) => {
-  const data = CexConfig.parse(req.body);
+app.get("/api/account/summary", requireAuth, async (req, res) => {
+  const user = getUserFromLocals(res);
+  try {
+    const exchangeAccountId = typeof req.query.exchangeAccountId === "string"
+      ? req.query.exchangeAccountId
+      : undefined;
+    const account = await resolveTradingAccount(user.id, exchangeAccountId);
+    const adapter = createBitgetAdapter(account);
 
-  const exchange = data.exchange.toLowerCase();
-  if (!isSupportedExchange(exchange)) {
-    return res.status(400).json({ ok: false, error: "unsupported_exchange" });
+    try {
+      const [summary, positions] = await Promise.all([
+        adapter.getAccountState(),
+        adapter.getPositions()
+      ]);
+
+      return res.json({
+        exchangeAccountId: account.id,
+        exchange: account.exchange,
+        equity: summary.equity ?? null,
+        availableMargin: summary.availableMargin ?? null,
+        marginMode: summary.marginMode ?? null,
+        positionsCount: positions.length,
+        updatedAt: new Date().toISOString()
+      });
+    } finally {
+      await adapter.close();
+    }
+  } catch (error) {
+    return sendManualTradingError(res, error);
+  }
+});
+
+app.post("/api/account/leverage", requireAuth, async (req, res) => {
+  const user = getUserFromLocals(res);
+  const parsed = adjustLeverageSchema.safeParse(req.body);
+  if (!parsed.success) {
+    return res.status(400).json({ error: "invalid_payload", details: parsed.error.flatten() });
   }
 
   try {
-    if (exchange === "bitmart") {
-      // Minimal auth-protected call: balances requires signed headers.
-      const baseUrl = process.env.BITMART_BASE_URL || "https://api-cloud.bitmart.com";
-      const url = new URL("/spot/v1/wallet", baseUrl);
-      const timestamp = Date.now().toString();
-      const body = "{}";
-      const payload = `${timestamp}#${data.apiMemo ?? ""}#${body}`;
-      const sign = crypto
-        .createHmac("sha256", data.apiSecret)
-        .update(payload)
-        .digest("hex");
+    const account = await resolveTradingAccount(user.id, parsed.data.exchangeAccountId);
+    const adapter = createBitgetAdapter(account);
+    try {
+      const symbol = normalizeSymbolInput(parsed.data.symbol);
+      if (!symbol) {
+        return res.status(400).json({ error: "symbol_required" });
+      }
 
-      const resp = await fetch(url, {
-        method: "GET",
-        headers: {
-          "X-BM-KEY": data.apiKey,
-          "X-BM-SIGN": sign,
-          "X-BM-TIMESTAMP": timestamp,
-          "Content-Type": "application/json"
-        }
+      await adapter.setLeverage(
+        symbol,
+        parsed.data.leverage,
+        parsed.data.marginMode
+      );
+
+      return res.json({
+        ok: true,
+        exchangeAccountId: account.id,
+        symbol,
+        leverage: parsed.data.leverage,
+        marginMode: parsed.data.marginMode
+      });
+    } finally {
+      await adapter.close();
+    }
+  } catch (error) {
+    return sendManualTradingError(res, error);
+  }
+});
+
+app.get("/api/positions", requireAuth, async (req, res) => {
+  const user = getUserFromLocals(res);
+  try {
+    const exchangeAccountId = typeof req.query.exchangeAccountId === "string"
+      ? req.query.exchangeAccountId
+      : undefined;
+    const symbol = normalizeSymbolInput(typeof req.query.symbol === "string" ? req.query.symbol : null);
+
+    const account = await resolveTradingAccount(user.id, exchangeAccountId);
+    const adapter = createBitgetAdapter(account);
+    try {
+      const items = await listPositions(adapter, symbol ?? undefined);
+      return res.json({
+        exchangeAccountId: account.id,
+        items
+      });
+    } finally {
+      await adapter.close();
+    }
+  } catch (error) {
+    return sendManualTradingError(res, error);
+  }
+});
+
+app.get("/api/orders/open", requireAuth, async (req, res) => {
+  const user = getUserFromLocals(res);
+  try {
+    const exchangeAccountId = typeof req.query.exchangeAccountId === "string"
+      ? req.query.exchangeAccountId
+      : undefined;
+    const symbol = normalizeSymbolInput(typeof req.query.symbol === "string" ? req.query.symbol : null);
+
+    const account = await resolveTradingAccount(user.id, exchangeAccountId);
+    const adapter = createBitgetAdapter(account);
+    try {
+      const items = await listOpenOrders(adapter, symbol ?? undefined);
+      return res.json({
+        exchangeAccountId: account.id,
+        items
+      });
+    } finally {
+      await adapter.close();
+    }
+  } catch (error) {
+    return sendManualTradingError(res, error);
+  }
+});
+
+app.post("/api/orders", requireAuth, async (req, res) => {
+  const user = getUserFromLocals(res);
+  const parsed = placeOrderSchema.safeParse(req.body);
+  if (!parsed.success) {
+    return res.status(400).json({ error: "invalid_payload", details: parsed.error.flatten() });
+  }
+
+  try {
+    const account = await resolveTradingAccount(user.id, parsed.data.exchangeAccountId);
+    const adapter = createBitgetAdapter(account);
+
+    try {
+      const symbol = normalizeSymbolInput(parsed.data.symbol);
+      if (!symbol) {
+        return res.status(400).json({ error: "symbol_required" });
+      }
+
+      if (parsed.data.leverage !== undefined) {
+        await adapter.setLeverage(
+          symbol,
+          parsed.data.leverage,
+          parsed.data.marginMode ?? "cross"
+        );
+      }
+
+      const side = parsed.data.side === "long" ? "buy" : "sell";
+      const placed = await adapter.placeOrder({
+        symbol,
+        side,
+        type: parsed.data.type,
+        qty: parsed.data.qty,
+        price: parsed.data.price,
+        takeProfitPrice: parsed.data.takeProfitPrice,
+        stopLossPrice: parsed.data.stopLossPrice,
+        reduceOnly: parsed.data.reduceOnly
       });
 
-      const json = (await resp.json().catch(() => ({}))) as Record<string, any>;
-      if (!resp.ok || (json?.code && json.code !== 1000)) {
-        const msg = json?.msg || json?.message || "verify failed";
-        return res.status(400).json({ ok: false, error: msg, details: json });
+      return res.status(201).json({
+        exchangeAccountId: account.id,
+        orderId: placed.orderId,
+        status: "accepted"
+      });
+    } finally {
+      await adapter.close();
+    }
+  } catch (error) {
+    return sendManualTradingError(res, error);
+  }
+});
+
+app.post("/api/orders/cancel", requireAuth, async (req, res) => {
+  const user = getUserFromLocals(res);
+  const parsed = cancelOrderSchema.safeParse(req.body);
+  if (!parsed.success) {
+    return res.status(400).json({ error: "invalid_payload", details: parsed.error.flatten() });
+  }
+
+  try {
+    const account = await resolveTradingAccount(user.id, parsed.data.exchangeAccountId);
+    const adapter = createBitgetAdapter(account);
+    try {
+      const symbol = normalizeSymbolInput(parsed.data.symbol);
+      if (symbol) {
+        await adapter.tradeApi.cancelOrder({
+          symbol: await adapter.toExchangeSymbol(symbol),
+          orderId: parsed.data.orderId,
+          productType: adapter.productType
+        });
+      } else {
+        await adapter.cancelOrder(parsed.data.orderId);
       }
       return res.json({ ok: true });
+    } finally {
+      await adapter.close();
     }
-
-    const rest = createPrivateRestClient(exchange, data);
-    await rest.getBalances();
-    return res.json({ ok: true });
-  } catch (e: any) {
-    return res.status(400).json({ ok: false, error: String(e?.message ?? e) });
+  } catch (error) {
+    return sendManualTradingError(res, error);
   }
 });
 
-app.post("/bots/:id/start", requireAuth, requirePermission("bots.start_pause_stop"), async (req, res) => {
-  const workspaceId = getWorkspaceId(res);
+app.post("/api/orders/cancel-all", requireAuth, async (req, res) => {
   const user = getUserFromLocals(res);
-  const id = req.params.id;
+  try {
+    const exchangeAccountId = typeof req.query.exchangeAccountId === "string"
+      ? req.query.exchangeAccountId
+      : typeof req.body?.exchangeAccountId === "string"
+        ? req.body.exchangeAccountId
+        : undefined;
+    const symbol = normalizeSymbolInput(
+      typeof req.query.symbol === "string"
+        ? req.query.symbol
+        : typeof req.body?.symbol === "string"
+          ? req.body.symbol
+          : null
+    );
+    const account = await resolveTradingAccount(user.id, exchangeAccountId);
+    const adapter = createBitgetAdapter(account);
 
-  const bot = await prisma.bot.findFirst({ where: { id, workspaceId } });
-  if (!bot) return res.status(404).json({ error: "bot_not_found" });
-
-  await prisma.bot.update({
-    where: { id },
-    data: { status: "RUNNING" }
-  });
-
-  await prisma.botRuntime.upsert({
-    where: { botId: id },
-    create: {
-      botId: id,
-      status: "RUNNING",
-      reason: null
-    },
-    update: {
-      status: "RUNNING",
-      reason: null
-    }
-  });
-
-  await createBotAlert({
-    botId: id,
-    level: "info",
-    title: "Bot started",
-    message: "Start command received"
-  });
-
-  await sendTelegramWithFallback(`✅ Bot started\n${bot.name} (${bot.symbol})`);
-
-  await writeAudit({
-    workspaceId,
-    actorUserId: user.id,
-    action: "runner.start",
-    entityType: "Bot",
-    entityId: id
-  });
-
-  res.json({ ok: true });
-});
-
-app.post("/bots/:id/pause", requireAuth, requirePermission("bots.start_pause_stop"), async (req, res) => {
-  const workspaceId = getWorkspaceId(res);
-  const user = getUserFromLocals(res);
-  const id = req.params.id;
-
-  const bot = await prisma.bot.findFirst({ where: { id, workspaceId } });
-  if (!bot) return res.status(404).json({ error: "bot_not_found" });
-
-  await prisma.bot.update({
-    where: { id },
-    data: { status: "PAUSED" }
-  });
-
-  await prisma.botRuntime.upsert({
-    where: { botId: id },
-    create: {
-      botId: id,
-      status: "PAUSED",
-      reason: "Paused from UI"
-    },
-    update: {
-      status: "PAUSED",
-      reason: "Paused from UI"
-    }
-  });
-
-  await createBotAlert({
-    botId: id,
-    level: "warn",
-    title: "Bot paused",
-    message: "Pause command received"
-  });
-
-  await writeAudit({
-    workspaceId,
-    actorUserId: user.id,
-    action: "runner.pause",
-    entityType: "Bot",
-    entityId: id
-  });
-
-  res.json({ ok: true });
-});
-
-app.post("/bots/:id/stop", requireAuth, requirePermission("bots.start_pause_stop"), async (req, res) => {
-  const workspaceId = getWorkspaceId(res);
-  const user = getUserFromLocals(res);
-  const id = req.params.id;
-
-  const bot = await prisma.bot.findFirst({ where: { id, workspaceId } });
-  if (!bot) return res.status(404).json({ error: "bot_not_found" });
-
-  await prisma.bot.update({
-    where: { id },
-    data: { status: "STOPPED" }
-  });
-
-  await prisma.botRuntime.upsert({
-    where: { botId: id },
-    create: {
-      botId: id,
-      status: "STOPPED",
-      reason: "Stopped from UI"
-    },
-    update: {
-      status: "STOPPED",
-      reason: "Stopped from UI"
-    }
-  });
-
-  await createBotAlert({
-    botId: id,
-    level: "warn",
-    title: "Bot stopped",
-    message: "Stop command received"
-  });
-
-  await sendTelegramWithFallback(`🛑 Bot stopped\n${bot.name} (${bot.symbol})`);
-
-  await writeAudit({
-    workspaceId,
-    actorUserId: user.id,
-    action: "runner.stop",
-    entityType: "Bot",
-    entityId: id
-  });
-
-  res.json({ ok: true });
-});
-
-const port = Number(process.env.API_PORT || "8080");
-
-function startRunnerMonitor() {
-  const intervalMs = Number(process.env.RUNNER_MONITOR_INTERVAL_MS ?? "30000");
-  setInterval(async () => {
     try {
-      const status = await prisma.runnerStatus.findUnique({ where: { id: "main" } });
-      if (!status) return;
-      const lastTickAt = status.lastTickAt?.getTime?.() ?? 0;
-      if (lastTickAt <= 0) return;
-      const stale = Date.now() - lastTickAt > RUNNER_STALE_MS;
-      if (!stale) return;
-
-      const lastAlertAt = await getRunnerAlertAt();
-      if (Date.now() - lastAlertAt < RUNNER_ALERT_COOLDOWN_MS) return;
-
-      const msg = `[ALERT] Runner heartbeat stale (>60s).\nlastTickAt=${new Date(lastTickAt).toISOString()}\nbotsRunning=${status.botsRunning}\nbotsErrored=${status.botsErrored}`;
-      await sendTelegramWithFallback(msg);
-      await setRunnerAlertAt(Date.now());
-    } catch (e) {
-      logger.warn("runner monitor failed", { err: String(e) });
+      const result = await cancelAllOrders(adapter, symbol ?? undefined);
+      return res.json({
+        exchangeAccountId: account.id,
+        ...result
+      });
+    } finally {
+      await adapter.close();
     }
-  }, intervalMs).unref();
-}
-
-async function start() {
-  const seed = await seedAdmin();
-  if (!seed.seeded) {
-    logger.info("admin not created", { scope: "seed", reason: seed.reason });
+  } catch (error) {
+    return sendManualTradingError(res, error);
   }
-  startRunnerMonitor();
-  app.listen(port, () => logger.info("API listening", { port }));
+});
+
+app.post("/api/positions/close", requireAuth, async (req, res) => {
+  const user = getUserFromLocals(res);
+  const parsed = closePositionSchema.safeParse(req.body);
+  if (!parsed.success) {
+    return res.status(400).json({ error: "invalid_payload", details: parsed.error.flatten() });
+  }
+
+  try {
+    const account = await resolveTradingAccount(user.id, parsed.data.exchangeAccountId);
+    const adapter = createBitgetAdapter(account);
+    try {
+      const symbol = normalizeSymbolInput(parsed.data.symbol);
+      if (!symbol) {
+        return res.status(400).json({ error: "symbol_required" });
+      }
+      const orderIds = await closePositionsMarket(adapter, symbol, parsed.data.side);
+      return res.json({
+        exchangeAccountId: account.id,
+        closedCount: orderIds.length,
+        orderIds
+      });
+    } finally {
+      await adapter.close();
+    }
+  } catch (error) {
+    return sendManualTradingError(res, error);
+  }
+});
+
+app.get("/exchange-accounts", requireAuth, async (_req, res) => {
+  const user = getUserFromLocals(res);
+  const rows = await db.exchangeAccount.findMany({
+    where: { userId: user.id },
+    orderBy: { createdAt: "desc" }
+  });
+
+  const items = rows.map((row: any) => {
+    let apiKeyMasked = "****";
+    try {
+      apiKeyMasked = maskSecret(decryptSecret(row.apiKeyEnc));
+    } catch {
+      apiKeyMasked = "****";
+    }
+    return {
+      id: row.id,
+      exchange: row.exchange,
+      label: row.label,
+      apiKeyMasked,
+      createdAt: row.createdAt,
+      updatedAt: row.updatedAt,
+      lastUsedAt: row.lastUsedAt
+    };
+  });
+
+  return res.json({ items });
+});
+
+app.get("/dashboard/overview", requireAuth, async (_req, res) => {
+  const user = getUserFromLocals(res);
+  const [accounts, bots] = await Promise.all([
+    db.exchangeAccount.findMany({
+      where: { userId: user.id },
+      orderBy: { createdAt: "desc" },
+      select: {
+        id: true,
+        exchange: true,
+        label: true,
+        lastUsedAt: true,
+        spotBudgetTotal: true,
+        spotBudgetAvailable: true,
+        futuresBudgetEquity: true,
+        futuresBudgetAvailableMargin: true,
+        pnlTodayUsd: true,
+        lastSyncErrorAt: true,
+        lastSyncErrorMessage: true
+      }
+    }),
+    db.bot.findMany({
+      where: {
+        userId: user.id,
+        exchangeAccountId: { not: null }
+      },
+      select: {
+        id: true,
+        exchangeAccountId: true,
+        status: true,
+        lastError: true,
+        runtime: {
+          select: {
+            updatedAt: true,
+            lastHeartbeatAt: true,
+            lastTickAt: true,
+            lastError: true,
+            freeUsdt: true
+          }
+        }
+      }
+    })
+  ]);
+
+  const aggregate = new Map<string, {
+    running: number;
+    stopped: number;
+    error: number;
+    latestSyncAt: Date | null;
+    latestRuntimeAt: Date | null;
+    latestRuntimeFreeUsdt: number | null;
+    lastErrorMessage: string | null;
+  }>();
+
+  for (const account of accounts) {
+    aggregate.set(account.id, {
+      running: 0,
+      stopped: 0,
+      error: 0,
+      latestSyncAt: null,
+      latestRuntimeAt: null,
+      latestRuntimeFreeUsdt: null,
+      lastErrorMessage: null
+    });
+  }
+
+  for (const bot of bots) {
+    const exchangeAccountId = bot.exchangeAccountId as string | null;
+    if (!exchangeAccountId) continue;
+    const current = aggregate.get(exchangeAccountId);
+    if (!current) continue;
+
+    if (bot.status === "running") current.running += 1;
+    else if (bot.status === "error") current.error += 1;
+    else current.stopped += 1;
+
+    if (!current.lastErrorMessage) {
+      current.lastErrorMessage = bot.lastError ?? bot.runtime?.lastError ?? null;
+    }
+
+    const lastSyncAt = resolveLastSyncAt(bot.runtime);
+    if (lastSyncAt && (!current.latestSyncAt || lastSyncAt.getTime() > current.latestSyncAt.getTime())) {
+      current.latestSyncAt = lastSyncAt;
+    }
+
+    const runtimeUpdatedAt = bot.runtime?.updatedAt ?? null;
+    if (runtimeUpdatedAt && (!current.latestRuntimeAt || runtimeUpdatedAt.getTime() > current.latestRuntimeAt.getTime())) {
+      current.latestRuntimeAt = runtimeUpdatedAt;
+      current.latestRuntimeFreeUsdt =
+        typeof bot.runtime?.freeUsdt === "number" ? bot.runtime.freeUsdt : null;
+    }
+  }
+
+  const overview: ExchangeAccountOverview[] = accounts.map((account) => {
+    const row = aggregate.get(account.id);
+    const lastSyncAt = row?.latestSyncAt ?? account.lastUsedAt ?? null;
+    const hasBotActivity =
+      ((row?.running ?? 0) + (row?.stopped ?? 0) + (row?.error ?? 0)) > 0;
+    const status = computeConnectionStatus(lastSyncAt, hasBotActivity);
+
+    return {
+      exchangeAccountId: account.id,
+      exchange: account.exchange,
+      label: account.label,
+      status,
+      lastSyncAt: toIso(lastSyncAt),
+      spotBudget:
+        account.spotBudgetTotal !== null || account.spotBudgetAvailable !== null
+          ? {
+              total: account.spotBudgetTotal,
+              available: account.spotBudgetAvailable
+            }
+          : null,
+      futuresBudget: (() => {
+        const availableMargin =
+          row?.latestRuntimeFreeUsdt !== null && row?.latestRuntimeFreeUsdt !== undefined
+            ? row.latestRuntimeFreeUsdt
+            : account.futuresBudgetAvailableMargin;
+        const equity = account.futuresBudgetEquity;
+        if (equity === null && availableMargin === null) return null;
+        return {
+          equity,
+          availableMargin
+        };
+      })(),
+      pnlTodayUsd: account.pnlTodayUsd ?? null,
+      lastSyncError:
+        account.lastSyncErrorAt || account.lastSyncErrorMessage
+          ? {
+              at: toIso(account.lastSyncErrorAt),
+              message: account.lastSyncErrorMessage ?? null
+            }
+          : null,
+      bots: {
+        running: row?.running ?? 0,
+        stopped: row?.stopped ?? 0,
+        error: row?.error ?? 0
+      },
+      alerts: {
+        hasErrors: (row?.error ?? 0) > 0,
+        message: row?.lastErrorMessage ?? null
+      }
+    };
+  });
+
+  return res.json(overview);
+});
+
+app.post("/exchange-accounts", requireAuth, async (req, res) => {
+  const user = getUserFromLocals(res);
+  const parsed = exchangeCreateSchema.safeParse(req.body);
+  if (!parsed.success) {
+    return res.status(400).json({ error: "invalid_payload", details: parsed.error.flatten() });
+  }
+
+  const created = await db.exchangeAccount.create({
+    data: {
+      userId: user.id,
+      exchange: parsed.data.exchange.toLowerCase(),
+      label: parsed.data.label,
+      apiKeyEnc: encryptSecret(parsed.data.apiKey),
+      apiSecretEnc: encryptSecret(parsed.data.apiSecret),
+      passphraseEnc: parsed.data.passphrase ? encryptSecret(parsed.data.passphrase) : null
+    }
+  });
+
+  return res.status(201).json({
+    id: created.id,
+    exchange: created.exchange,
+    label: created.label,
+    apiKeyMasked: maskSecret(parsed.data.apiKey)
+  });
+});
+
+app.delete("/exchange-accounts/:id", requireAuth, async (req, res) => {
+  const user = getUserFromLocals(res);
+  const id = req.params.id;
+  const account = await db.exchangeAccount.findFirst({
+    where: { id, userId: user.id }
+  });
+  if (!account) return res.status(404).json({ error: "exchange_account_not_found" });
+
+  const linkedBots = await db.bot.count({
+    where: { userId: user.id, exchangeAccountId: id }
+  });
+  if (linkedBots > 0) {
+    return res.status(409).json({ error: "exchange_account_in_use" });
+  }
+
+  await db.exchangeAccount.delete({ where: { id } });
+  return res.json({ ok: true });
+});
+
+app.post("/exchange-accounts/:id/test-connection", requireAuth, async (req, res) => {
+  const user = getUserFromLocals(res);
+  const id = req.params.id;
+  const account: ExchangeAccountSecrets | null = await db.exchangeAccount.findFirst({
+    where: { id, userId: user.id },
+    select: {
+      id: true,
+      exchange: true,
+      apiKeyEnc: true,
+      apiSecretEnc: true,
+      passphraseEnc: true
+    }
+  });
+  if (!account) return res.status(404).json({ error: "exchange_account_not_found" });
+
+  try {
+    const synced = await executeExchangeSync(account);
+    await persistExchangeSyncSuccess(account.id, synced);
+
+    return res.json({
+      ok: true,
+      message: "sync_ok",
+      syncedAt: synced.syncedAt.toISOString(),
+      spotBudget: synced.spotBudget,
+      futuresBudget: synced.futuresBudget,
+      pnlTodayUsd: synced.pnlTodayUsd,
+      details: synced.details
+    });
+  } catch (error) {
+    await persistExchangeSyncFailure(
+      account.id,
+      error instanceof ExchangeSyncError
+        ? error.message
+        : "Manual sync failed due to unexpected error."
+    );
+
+    if (error instanceof ExchangeSyncError) {
+      return res.status(error.status).json({
+        error: error.message,
+        code: error.code
+      });
+    }
+    return res.status(500).json({
+      error: "exchange_sync_failed",
+      message: "Unexpected exchange sync failure."
+    });
+  }
+});
+
+app.get("/bots", requireAuth, async (_req, res) => {
+  const user = getUserFromLocals(res);
+  const bots = await db.bot.findMany({
+    where: { userId: user.id },
+    orderBy: { createdAt: "desc" },
+    include: {
+      futuresConfig: true,
+      exchangeAccount: {
+        select: {
+          id: true,
+          exchange: true,
+          label: true
+        }
+      },
+      runtime: {
+        select: {
+          status: true,
+          reason: true,
+          updatedAt: true,
+          workerId: true,
+          lastHeartbeatAt: true,
+          lastTickAt: true,
+          lastError: true,
+          consecutiveErrors: true,
+          errorWindowStartAt: true,
+          lastErrorAt: true,
+          lastErrorMessage: true
+        }
+      }
+    }
+  });
+  return res.json(bots.map(toSafeBot));
+});
+
+app.get("/bots/:id", requireAuth, async (req, res) => {
+  const user = getUserFromLocals(res);
+  const bot = await db.bot.findFirst({
+    where: {
+      id: req.params.id,
+      userId: user.id
+    },
+    include: {
+      futuresConfig: true,
+      exchangeAccount: {
+        select: {
+          id: true,
+          exchange: true,
+          label: true
+        }
+      },
+      runtime: {
+        select: {
+          status: true,
+          reason: true,
+          updatedAt: true,
+          workerId: true,
+          lastHeartbeatAt: true,
+          lastTickAt: true,
+          lastError: true,
+          consecutiveErrors: true,
+          errorWindowStartAt: true,
+          lastErrorAt: true,
+          lastErrorMessage: true
+        }
+      }
+    }
+  });
+
+  if (!bot) return res.status(404).json({ error: "bot_not_found" });
+  return res.json(toSafeBot(bot));
+});
+
+app.get("/bots/:id/runtime", requireAuth, async (req, res) => {
+  const user = getUserFromLocals(res);
+  const bot = await db.bot.findFirst({
+    where: { id: req.params.id, userId: user.id },
+    select: { id: true }
+  });
+  if (!bot) return res.status(404).json({ error: "bot_not_found" });
+
+  const runtime = await db.botRuntime.findUnique({
+    where: { botId: req.params.id },
+    select: {
+      botId: true,
+      status: true,
+      reason: true,
+      updatedAt: true,
+      workerId: true,
+      lastHeartbeatAt: true,
+      lastTickAt: true,
+      lastError: true,
+      consecutiveErrors: true,
+      errorWindowStartAt: true,
+      lastErrorAt: true,
+      lastErrorMessage: true
+    }
+  });
+  if (!runtime) return res.status(404).json({ error: "runtime_not_found" });
+  return res.json(runtime);
+});
+
+app.get("/bots/:id/risk-events", requireAuth, async (req, res) => {
+  const user = getUserFromLocals(res);
+  const bot = await db.bot.findFirst({
+    where: { id: req.params.id, userId: user.id },
+    select: { id: true }
+  });
+  if (!bot) return res.status(404).json({ error: "bot_not_found" });
+
+  const items = await db.riskEvent.findMany({
+    where: { botId: bot.id },
+    orderBy: { createdAt: "desc" },
+    take: 100
+  });
+  return res.json({ items });
+});
+
+app.post("/bots", requireAuth, async (req, res) => {
+  const user = getUserFromLocals(res);
+  const parsed = botCreateSchema.safeParse(req.body);
+  if (!parsed.success) {
+    return res.status(400).json({ error: "invalid_payload", details: parsed.error.flatten() });
+  }
+
+  const account = await db.exchangeAccount.findFirst({
+    where: {
+      id: parsed.data.exchangeAccountId,
+      userId: user.id
+    }
+  });
+  if (!account) return res.status(400).json({ error: "exchange_account_not_found" });
+
+  const created = await db.bot.create({
+    data: {
+      userId: user.id,
+      exchangeAccountId: account.id,
+      name: parsed.data.name,
+      symbol: parsed.data.symbol,
+      exchange: account.exchange,
+      status: "stopped",
+      lastError: null,
+      futuresConfig: {
+        create: {
+          strategyKey: parsed.data.strategyKey,
+          marginMode: parsed.data.marginMode,
+          leverage: parsed.data.leverage,
+          tickMs: parsed.data.tickMs,
+          paramsJson: parsed.data.paramsJson
+        }
+      }
+    },
+    include: {
+      futuresConfig: true,
+      exchangeAccount: {
+        select: {
+          id: true,
+          exchange: true,
+          label: true
+        }
+      }
+    }
+  });
+
+  return res.status(201).json(toSafeBot(created));
+});
+
+app.post("/bots/:id/start", requireAuth, async (req, res) => {
+  const user = getUserFromLocals(res);
+  const bot = await db.bot.findFirst({
+    where: { id: req.params.id, userId: user.id },
+    include: { futuresConfig: true }
+  });
+  if (!bot) return res.status(404).json({ error: "bot_not_found" });
+  if (!bot.futuresConfig) return res.status(409).json({ error: "futures_config_missing" });
+
+  const [totalBots, runningBots] = await Promise.all([
+    db.bot.count({ where: { userId: user.id } }),
+    db.bot.count({ where: { userId: user.id, status: "running" } })
+  ]);
+
+  const decision = await enforceBotStartLicense({
+    userId: user.id,
+    exchange: bot.exchange,
+    totalBots,
+    runningBots,
+    isAlreadyRunning: bot.status === "running"
+  });
+  if (!decision.allowed) {
+    return res.status(403).json({
+      error: "license_blocked",
+      reason: decision.reason
+    });
+  }
+
+  const updated = await db.bot.update({
+    where: { id: bot.id },
+    data: {
+      status: "running",
+      lastError: null
+    }
+  });
+
+  await db.botRuntime.upsert({
+    where: { botId: bot.id },
+    update: {
+      status: "running",
+      reason: "start_requested",
+      lastError: null,
+      lastHeartbeatAt: new Date()
+    },
+    create: {
+      botId: bot.id,
+      status: "running",
+      reason: "start_requested",
+      lastError: null,
+      lastHeartbeatAt: new Date()
+    }
+  });
+
+  try {
+    await enqueueBotRun(bot.id);
+  } catch (error) {
+    const reason = `queue_enqueue_failed:${String(error)}`;
+    await Promise.allSettled([
+      db.bot.update({
+        where: { id: bot.id },
+        data: {
+          status: "error",
+          lastError: reason
+        }
+      }),
+      db.botRuntime.upsert({
+        where: { botId: bot.id },
+        update: {
+          status: "error",
+          reason,
+          lastError: reason,
+          lastHeartbeatAt: new Date()
+        },
+        create: {
+          botId: bot.id,
+          status: "error",
+          reason,
+          lastError: reason,
+          lastHeartbeatAt: new Date()
+        }
+      })
+    ]);
+
+    return res.status(503).json({
+      error: "queue_enqueue_failed",
+      reason: String(error)
+    });
+  }
+
+  return res.json({ id: updated.id, status: updated.status });
+});
+
+app.post("/bots/:id/stop", requireAuth, async (req, res) => {
+  const user = getUserFromLocals(res);
+  const bot = await db.bot.findFirst({
+    where: { id: req.params.id, userId: user.id }
+  });
+  if (!bot) return res.status(404).json({ error: "bot_not_found" });
+
+  const updated = await db.bot.update({
+    where: { id: bot.id },
+    data: {
+      status: "stopped"
+    }
+  });
+
+  await db.botRuntime.upsert({
+    where: { botId: bot.id },
+    update: {
+      status: "stopped",
+      reason: "stopped_by_user",
+      lastHeartbeatAt: new Date()
+    },
+    create: {
+      botId: bot.id,
+      status: "stopped",
+      reason: "stopped_by_user",
+      lastHeartbeatAt: new Date()
+    }
+  });
+
+  try {
+    await cancelBotRun(bot.id);
+  } catch {
+    // Worker loop also exits on DB status check even if queue cleanup is unavailable.
+  }
+
+  return res.json({ id: updated.id, status: updated.status });
+});
+
+function wsSend(socket: WebSocket, payload: unknown) {
+  if (socket.readyState !== WebSocket.OPEN) return;
+  socket.send(JSON.stringify(payload));
 }
 
-start().catch((err) => {
-  console.error("API startup failed", err);
-  process.exit(1);
+function coerceFirstItem(payload: unknown): unknown {
+  if (Array.isArray(payload)) return payload[0] ?? null;
+  if (payload && typeof payload === "object") {
+    const list = (payload as Record<string, unknown>).list;
+    if (Array.isArray(list)) return list[0] ?? null;
+  }
+  return payload;
+}
+
+async function handleMarketWsConnection(
+  socket: WebSocket,
+  user: WsAuthUser,
+  url: URL
+) {
+  const exchangeAccountId = url.searchParams.get("exchangeAccountId");
+  const requestedSymbol = url.searchParams.get("symbol");
+
+  let context: MarketWsContext | null = null;
+  let cleaned = false;
+  const unsubs: Array<() => void> = [];
+
+  const cleanup = async () => {
+    if (cleaned) return;
+    cleaned = true;
+    for (const unsub of unsubs) unsub();
+    if (context) await context.stop();
+    context = null;
+  };
+
+  try {
+    const settings = await getTradingSettings(user.id);
+    const resolved = await createMarketWsContext(
+      user.id,
+      exchangeAccountId ?? settings.exchangeAccountId
+    );
+    context = resolved.ctx;
+
+    const contracts = context.adapter.contractCache.snapshot();
+    const symbol = pickWsSymbol(
+      requestedSymbol ?? settings.symbol,
+      contracts.map((row) => ({
+        canonicalSymbol: row.canonicalSymbol,
+        apiAllowed: row.apiAllowed
+      }))
+    );
+    if (!symbol) {
+      throw new ManualTradingError("no_symbols_available", 404, "no_symbols_available");
+    }
+
+    await saveTradingSettings(user.id, {
+      exchangeAccountId: resolved.accountId,
+      symbol
+    });
+
+    unsubs.push(
+      context.adapter.onTicker((payload) => {
+        const row = coerceFirstItem(extractWsDataArray(payload));
+        const normalized = normalizeTickerPayload(row);
+        wsSend(socket, {
+          type: "ticker",
+          symbol,
+          data: {
+            ...normalized,
+            symbol
+          }
+        });
+      })
+    );
+    unsubs.push(
+      context.adapter.onDepth((payload) => {
+        const row = coerceFirstItem(extractWsDataArray(payload));
+        const normalized = normalizeOrderBookPayload(row);
+        wsSend(socket, {
+          type: "orderbook",
+          symbol,
+          data: normalized
+        });
+      })
+    );
+    unsubs.push(
+      (context.adapter as any).onTrades((payload: unknown) => {
+        const rows = extractWsDataArray(payload);
+        const normalized = normalizeTradesPayload(rows).map((trade) => ({
+          ...trade,
+          symbol: symbol
+        }));
+        wsSend(socket, {
+          type: "trades",
+          symbol,
+          data: normalized
+        });
+      })
+    );
+
+    await Promise.all([
+      context.adapter.subscribeTicker(symbol),
+      context.adapter.subscribeDepth(symbol),
+      (context.adapter as any).subscribeTrades(symbol)
+    ]);
+
+    const exchangeSymbol = await context.adapter.toExchangeSymbol(symbol);
+
+    const [tickerSnapshot, depthSnapshot, tradesSnapshot] = await Promise.allSettled([
+      context.adapter.marketApi.getTicker(exchangeSymbol, context.adapter.productType),
+      context.adapter.marketApi.getDepth(exchangeSymbol, 50, context.adapter.productType),
+      context.adapter.marketApi.getTrades(exchangeSymbol, 60, context.adapter.productType)
+    ]);
+
+    if (tickerSnapshot.status === "fulfilled") {
+      wsSend(socket, {
+        type: "snapshot:ticker",
+        symbol,
+        data: {
+          ...normalizeTickerPayload(coerceFirstItem(tickerSnapshot.value)),
+          symbol
+        }
+      });
+    }
+
+    if (depthSnapshot.status === "fulfilled") {
+      wsSend(socket, {
+        type: "snapshot:orderbook",
+        symbol,
+        data: normalizeOrderBookPayload(depthSnapshot.value)
+      });
+    }
+
+    if (tradesSnapshot.status === "fulfilled") {
+      wsSend(socket, {
+        type: "snapshot:trades",
+        symbol,
+        data: normalizeTradesPayload(tradesSnapshot.value).map((trade) => ({
+          ...trade,
+          symbol
+        }))
+      });
+    }
+
+    wsSend(socket, {
+      type: "ready",
+      exchangeAccountId: resolved.accountId,
+      symbol
+    });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "market_ws_failed";
+    wsSend(socket, {
+      type: "error",
+      message
+    });
+    await cleanup();
+    socket.close();
+    return;
+  }
+
+  socket.on("message", (raw) => {
+    try {
+      const text = String(raw);
+      const parsed = JSON.parse(text) as { type?: string };
+      if (parsed.type === "ping") {
+        wsSend(socket, { type: "pong" });
+      }
+    } catch {
+      // ignore malformed payloads
+    }
+  });
+
+  socket.on("close", () => {
+    void cleanup();
+  });
+  socket.on("error", () => {
+    void cleanup();
+  });
+}
+
+async function handleUserWsConnection(
+  socket: WebSocket,
+  user: WsAuthUser,
+  url: URL
+) {
+  const exchangeAccountId = url.searchParams.get("exchangeAccountId");
+
+  let context: MarketWsContext | null = null;
+  let cleaned = false;
+  let balanceTimer: NodeJS.Timeout | null = null;
+  const unsubs: Array<() => void> = [];
+
+  const cleanup = async () => {
+    if (cleaned) return;
+    cleaned = true;
+    for (const unsub of unsubs) unsub();
+    if (balanceTimer) clearInterval(balanceTimer);
+    if (context) await context.stop();
+    balanceTimer = null;
+    context = null;
+  };
+
+  try {
+    const settings = await getTradingSettings(user.id);
+    const resolved = await createMarketWsContext(
+      user.id,
+      exchangeAccountId ?? settings.exchangeAccountId
+    );
+    context = resolved.ctx;
+
+    await saveTradingSettings(user.id, {
+      exchangeAccountId: resolved.accountId
+    });
+
+    unsubs.push(
+      context.adapter.onFill((event) => {
+        wsSend(socket, {
+          type: "fill",
+          data: event
+        });
+      })
+    );
+    unsubs.push(
+      context.adapter.onOrderUpdate((event) => {
+        wsSend(socket, {
+          type: "order",
+          data: event
+        });
+      })
+    );
+    unsubs.push(
+      context.adapter.onPositionUpdate((event) => {
+        wsSend(socket, {
+          type: "position",
+          data: event
+        });
+      })
+    );
+
+    const sendSummary = async () => {
+      if (!context) return;
+      const [accountSummary, positions, openOrders] = await Promise.all([
+        context.adapter.getAccountState(),
+        listPositions(context.adapter),
+        listOpenOrders(context.adapter)
+      ]);
+      wsSend(socket, {
+        type: "account",
+        data: {
+          exchangeAccountId: resolved.accountId,
+          equity: accountSummary.equity ?? null,
+          availableMargin: accountSummary.availableMargin ?? null,
+          positions,
+          openOrders
+        }
+      });
+    };
+
+    await sendSummary();
+    balanceTimer = setInterval(() => {
+      void sendSummary().catch(() => {
+        // ignore timer errors
+      });
+    }, 10_000);
+
+    wsSend(socket, {
+      type: "ready",
+      exchangeAccountId: resolved.accountId
+    });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "user_ws_failed";
+    wsSend(socket, {
+      type: "error",
+      message
+    });
+    await cleanup();
+    socket.close();
+    return;
+  }
+
+  socket.on("message", (raw) => {
+    try {
+      const text = String(raw);
+      const parsed = JSON.parse(text) as { type?: string };
+      if (parsed.type === "ping") {
+        wsSend(socket, { type: "pong" });
+      }
+    } catch {
+      // ignore malformed payloads
+    }
+  });
+  socket.on("close", () => {
+    void cleanup();
+  });
+  socket.on("error", () => {
+    void cleanup();
+  });
+}
+
+const marketWss = new WebSocketServer({ noServer: true });
+const userWss = new WebSocketServer({ noServer: true });
+
+const port = Number(process.env.API_PORT ?? "4000");
+const server = http.createServer(app);
+
+server.on("upgrade", (req, socket, head) => {
+  const host = req.headers.host ?? "localhost";
+  const url = new URL(req.url ?? "/", `http://${host}`);
+
+  if (url.pathname !== "/ws/market" && url.pathname !== "/ws/user") {
+    wsReject(socket, 404, "Not Found");
+    return;
+  }
+
+  void (async () => {
+    const user = await authenticateWsUser(req);
+    if (!user) {
+      wsReject(socket, 401, "Unauthorized");
+      return;
+    }
+
+    if (url.pathname === "/ws/market") {
+      marketWss.handleUpgrade(req, socket, head, (ws) => {
+        void handleMarketWsConnection(ws, user, url);
+      });
+      return;
+    }
+
+    userWss.handleUpgrade(req, socket, head, (ws) => {
+      void handleUserWsConnection(ws, user, url);
+    });
+  })().catch(() => {
+    wsReject(socket, 500, "Internal Server Error");
+  });
+});
+
+server.listen(port, () => {
+  // eslint-disable-next-line no-console
+  console.log(`[api] listening on :${port}`);
+  startExchangeAutoSyncScheduler();
+});
+
+process.on("SIGTERM", () => {
+  stopExchangeAutoSyncScheduler();
+  marketWss.close();
+  userWss.close();
+  server.close();
+  void closeOrchestration();
+});
+
+process.on("SIGINT", () => {
+  stopExchangeAutoSyncScheduler();
+  marketWss.close();
+  userWss.close();
+  server.close();
+  void closeOrchestration();
 });

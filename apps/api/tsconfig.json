@@ -6,5 +6,12 @@
     "noImplicitAny": false,
     "types": ["node"]
   },
-  "include": ["src/**/*.ts", "src/**/*.d.ts"]
+  "include": [
+    "src/index.ts",
+    "src/auth.ts",
+    "src/license.ts",
+    "src/license.test.ts",
+    "src/secret-crypto.ts",
+    "src/orchestration.ts"
+  ]
 }

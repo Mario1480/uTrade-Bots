@@ -1,180 +1,140 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useState } from "react";
-import { apiGet } from "../lib/api";
+import { useEffect, useMemo, useState } from "react";
+import ExchangeAccountOverviewCard, {
+  type ExchangeAccountOverview
+} from "./components/ExchangeAccountOverviewCard";
+import { ApiError, apiGet } from "../lib/api";
 
-type Bot = {
-  id: string;
-  name: string;
-  symbol: string;
-  exchange: string;
-  status: string;
-  mmEnabled: boolean;
-  volEnabled: boolean;
-};
+function errMsg(e: unknown): string {
+  if (e instanceof ApiError) return `${e.message} (HTTP ${e.status})`;
+  if (e && typeof e === "object" && "message" in e) return String((e as any).message);
+  return String(e);
+}
+
+function DashboardSkeletonCard() {
+  return (
+    <article className="card exchangeOverviewCard exchangeOverviewSkeleton" aria-hidden>
+      <div className="skeletonLine skeletonLineLg" />
+      <div className="skeletonLine skeletonLineMd" />
+      <div className="exchangeOverviewStats" style={{ marginTop: 10 }}>
+        <div className="exchangeOverviewStatBlock"><div className="skeletonLine skeletonLineSm" /><div className="skeletonLine skeletonLineMd" /></div>
+        <div className="exchangeOverviewStatBlock"><div className="skeletonLine skeletonLineSm" /><div className="skeletonLine skeletonLineMd" /></div>
+        <div className="exchangeOverviewStatBlock"><div className="skeletonLine skeletonLineSm" /><div className="skeletonLine skeletonLineMd" /></div>
+        <div className="exchangeOverviewStatBlock"><div className="skeletonLine skeletonLineSm" /><div className="skeletonLine skeletonLineMd" /></div>
+      </div>
+      <div className="exchangeOverviewActions" style={{ marginTop: 10 }}>
+        <div className="skeletonButton" />
+        <div className="skeletonButton" />
+      </div>
+    </article>
+  );
+}
 
 export default function Page() {
-  const [bots, setBots] = useState<Bot[]>([]);
-  const [runtimes, setRuntimes] = useState<any[]>([]);
+  const [overview, setOverview] = useState<ExchangeAccountOverview[]>([]);
+  const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
     let mounted = true;
+
     async function load() {
       setLoading(true);
+      setError(null);
       try {
-        const list = await apiGet<Bot[]>("/bots");
-        const rt = await Promise.all(list.map((b) => apiGet<any>(`/bots/${b.id}/runtime`).catch(() => null)));
+        const data = await apiGet<ExchangeAccountOverview[]>("/dashboard/overview");
         if (!mounted) return;
-        setBots(list);
-        setRuntimes(rt);
+        setOverview(Array.isArray(data) ? data : []);
+      } catch (e) {
+        if (!mounted) return;
+        setError(errMsg(e));
       } finally {
         if (mounted) setLoading(false);
       }
     }
-    load();
+
+    void load();
+    const timer = setInterval(() => {
+      void load();
+    }, 20_000);
+
     return () => {
       mounted = false;
+      clearInterval(timer);
     };
   }, []);
-  const total = bots.length;
-  const running = bots.filter((b) => b.status === "RUNNING").length;
-  const paused = bots.filter((b) => b.status === "PAUSED").length;
-  const stopped = bots.filter((b) => b.status === "STOPPED").length;
-  const errored = bots.filter((b) => b.status === "ERROR").length;
-  const now = Date.now();
-  const runnerOnline = runtimes.some((rt) => {
-    const updated = rt?.updatedAt ? new Date(rt.updatedAt).getTime() : NaN;
-    return Number.isFinite(updated) && now - updated <= 15_000;
-  });
-  const runnerOffline = bots.length > 0 && !runnerOnline;
-  const runtimeById = new Map(runtimes.map((rt, i) => [bots[i]?.id, rt]));
+
+  const totals = useMemo(() => {
+    return overview.reduce(
+      (acc, row) => {
+        acc.accounts += 1;
+        acc.running += row.bots.running;
+        acc.errors += row.bots.error;
+        return acc;
+      },
+      { accounts: 0, running: 0, errors: 0 }
+    );
+  }, [overview]);
 
   return (
     <div>
       <div className="dashboardHeader">
         <div>
           <h2 style={{ margin: 0 }}>Dashboard</h2>
-          <div style={{ fontSize: 13, color: "var(--muted)" }}>Active bots and live status overview.</div>
+          <div style={{ fontSize: 13, color: "var(--muted)" }}>
+            One overview card per exchange account.
+          </div>
         </div>
         <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-          <span className="badge badgeWarn">Beta v0.7</span>
+          <Link href="/trade" className="btn">Manual Trading</Link>
+          <Link href="/bots/new" className="btn btnPrimary">New Futures Bot</Link>
         </div>
       </div>
 
       <div className="statGrid">
         <div className="card statCard">
-          <div className="statLabel">Total bots</div>
-          <div className="statValue">{loading ? "…" : total}</div>
+          <div className="statLabel">Exchange Accounts</div>
+          <div className="statValue">{loading ? "…" : totals.accounts}</div>
         </div>
         <div className="card statCard">
-          <div className="statLabel">Running</div>
-          <div className="statValue">{loading ? "…" : running}</div>
+          <div className="statLabel">Running Bots</div>
+          <div className="statValue">{loading ? "…" : totals.running}</div>
         </div>
         <div className="card statCard">
-          <div className="statLabel">Paused</div>
-          <div className="statValue">{loading ? "…" : paused}</div>
-        </div>
-        <div className="card statCard">
-          <div className="statLabel">Stopped</div>
-          <div className="statValue">{loading ? "…" : stopped}</div>
-        </div>
-        <div className="card statCard">
-          <div className="statLabel">Errors</div>
-          <div className="statValue">{loading ? "…" : errored}</div>
-          {runnerOffline ? (
-            <div className="statNote statNoteDanger">Runner offline</div>
-          ) : null}
+          <div className="statLabel">Bots in Error</div>
+          <div className="statValue">{loading ? "…" : totals.errors}</div>
         </div>
       </div>
 
-      <div className="botGrid">
-        {bots.length === 0 ? (
-          <div className="card" style={{ padding: 16 }}>
-            <div style={{ fontWeight: 700, marginBottom: 6 }}>No bots yet</div>
-            <div style={{ fontSize: 13, color: "var(--muted)", marginBottom: 10 }}>
-              Create your first bot to start market making.
-            </div>
-            <Link href="/bots/new" className="btn btnPrimary">New Bot</Link>
-          </div>
-        ) : (
-          bots.map((b) => {
-            const rt = runtimeById.get(b.id);
-            const mid = formatNum(rt?.mid);
-            const bid = formatNum(rt?.bid);
-            const ask = formatNum(rt?.ask);
-            const freeUsdt = formatNum(rt?.freeUsdt);
-            const freeBase = formatNum(rt?.freeBase);
-            const updatedAt = formatUpdated(rt?.updatedAt);
-            return (
-            <div key={b.id} className="card botCard">
-              <div className="botCardHeader">
-                <div>
-                  <div className="botName">{b.name}</div>
-                  <div className="botMeta">{b.symbol} · {b.exchange}</div>
-                </div>
-                <span className={`badge ${statusBadge(b.status)}`}>{b.status.toLowerCase()}</span>
-              </div>
-              <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginTop: 10 }}>
-                <span className={`badge ${b.mmEnabled ? "badgeOk" : "badgeWarn"}`}>MM {b.mmEnabled ? "running" : "stopped"}</span>
-                <span className={`badge ${b.volEnabled ? "badgeOk" : "badgeWarn"}`}>Volume {b.volEnabled ? "running" : "stopped"}</span>
-              </div>
-              <div style={{ marginTop: 10, display: "grid", gap: 6, gridTemplateColumns: "repeat(2, minmax(0, 1fr))" }}>
-                <div className="card" style={{ padding: "6px 8px" }}>
-                  <div style={{ fontSize: 11, opacity: 0.7 }}>Mid</div>
-                  <div style={{ fontSize: 13 }}>{mid}</div>
-                </div>
-                <div className="card" style={{ padding: "6px 8px" }}>
-                  <div style={{ fontSize: 11, opacity: 0.7 }}>Bid / Ask</div>
-                  <div style={{ fontSize: 13 }}>{bid} / {ask}</div>
-                </div>
-                <div className="card" style={{ padding: "6px 8px" }}>
-                  <div style={{ fontSize: 11, opacity: 0.7 }}>Free USDT</div>
-                  <div style={{ fontSize: 13 }}>{freeUsdt}</div>
-                </div>
-                <div className="card" style={{ padding: "6px 8px" }}>
-                  <div style={{ fontSize: 11, opacity: 0.7 }}>Free Base</div>
-                  <div style={{ fontSize: 13 }}>{freeBase}</div>
-                </div>
-              </div>
-              <div style={{ marginTop: 8, fontSize: 11, color: "var(--muted)" }}>
-                Updated: {updatedAt}
-              </div>
-              <div style={{ marginTop: 12, display: "flex", gap: 8, flexWrap: "wrap" }}>
-                <Link href={`/bots/${b.id}`} className="btn">
-                  Bot Overview
-                </Link>
-                <Link href={`/bots/${b.id}/settings`} className="btn">
-                  Bot Settings
-                </Link>
-              </div>
-            </div>
-          )})
-        )}
-      </div>
+      {error ? (
+        <div className="card" style={{ padding: 12, borderColor: "#ef4444", marginBottom: 12 }}>
+          <strong>Load error:</strong> {error}
+        </div>
+      ) : null}
+
+      {loading ? (
+        <div className="exchangeOverviewGrid">
+          <DashboardSkeletonCard />
+          <DashboardSkeletonCard />
+          <DashboardSkeletonCard />
+        </div>
+      ) : overview.length === 0 ? (
+        <div className="card exchangeOverviewEmpty">
+          <h3 style={{ marginTop: 0 }}>No exchange accounts yet</h3>
+          <p style={{ color: "var(--muted)", marginTop: 0 }}>
+            Add your first exchange account to start manual trading and bot management.
+          </p>
+          <Link href="/settings" className="btn btnPrimary">Add Exchange Account</Link>
+        </div>
+      ) : (
+        <div className="exchangeOverviewGrid">
+          {overview.map((item) => (
+            <ExchangeAccountOverviewCard key={item.exchangeAccountId} overview={item} />
+          ))}
+        </div>
+      )}
     </div>
   );
-}
-
-function statusBadge(status: string) {
-  if (status === "RUNNING") return "badgeOk";
-  if (status === "PAUSED") return "badgeWarn";
-  if (status === "ERROR") return "badgeDanger";
-  return "";
-}
-
-function formatNum(value: any) {
-  if (value === null || value === undefined) return "—";
-  const n = Number(value);
-  if (!Number.isFinite(n)) return String(value);
-  if (Math.abs(n) >= 1) return n.toFixed(4);
-  return n.toFixed(8);
-}
-
-function formatUpdated(value: any) {
-  if (!value) return "—";
-  const d = new Date(value);
-  if (Number.isNaN(d.getTime())) return String(value);
-  return d.toLocaleString();
 }

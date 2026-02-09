@@ -4,5 +4,11 @@
     "outDir": "dist",
     "rootDir": "src"
   },
-  "include": ["src/**/*.ts"]
+  "include": [
+    "src/index.ts",
+    "src/db.ts",
+    "src/loop.ts",
+    "src/logger.ts",
+    "src/secret-crypto.ts"
+  ]
 }

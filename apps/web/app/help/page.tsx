@@ -24,7 +24,7 @@ const HELP_SECTIONS = [
     id: "bot-settings",
     title: "Bot Settings Explained",
     body: [
-      "Market Making: spread, levels, step, distribution, jitter, skew, max skew.",
+      "Futures Strategy: spread, levels, step, distribution, jitter, skew, max skew.",
       "Volume Bot: daily target, min/max trade, mode.",
       "Risk: min balance, max deviation, max open orders, daily loss."
     ]

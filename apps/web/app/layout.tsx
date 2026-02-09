@@ -2,7 +2,7 @@ import AppHeader from "./components/AppHeader";
 import SystemBanner from "./components/SystemBanner";
 import "./globals.css";
 
-export const metadata = { title: "uLiquid Market Maker" };
+export const metadata = { title: "uTrade Panel" };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
@@ -13,12 +13,12 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
         <main className="container appMain">{children}</main>
         <footer className="appFooter">
           <div className="container appFooterInner">
-            <div className="appFooterCopy">© 2026 uLiquid Market-Maker</div>
+            <div className="appFooterCopy">© 2026 uTrade Futures</div>
             <div className="appFooterLinks">
-              <a href="https://uliquid.vip" aria-label="Link 1">uliquid.vip</a>
-              <a href="https://uliquid.vip/privacy" aria-label="Privacy Policy">Privacy Policy</a>
-              <a href="https://uliquid.vip/terms" aria-label="Terms of Service">Terms of Service</a>
-              <a href="mailto:support@uliquid.vip" aria-label="Support email">support@uliquid.vip</a>
+              <a href="https://utrade.vip" aria-label="uTrade Website">utrade.vip</a>
+              <a href="https://utrade.vip/privacy" aria-label="Privacy Policy">Privacy Policy</a>
+              <a href="https://utrade.vip/terms" aria-label="Terms of Service">Terms of Service</a>
+              <a href="mailto:support@utrade.vip" aria-label="Support email">support@utrade.vip</a>
             </div>
           </div>
         </footer>

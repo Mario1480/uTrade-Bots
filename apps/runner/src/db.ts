@@ -1,518 +1,311 @@
 import { prisma } from "@mm/db";
-import type { MarketMakingConfig, RiskConfig, VolumeConfig, NotificationConfig, PriceSupportConfig } from "@mm/core";
+import type { TradeIntent } from "@mm/futures-core";
+import { decryptSecret } from "./secret-crypto.js";
 
-export async function loadBotAndConfigs(botId: string) {
-  const bot = await prisma.bot.findUnique({
+const db = prisma as any;
+
+export type BotStatusValue = "running" | "stopped" | "error";
+
+export type ActiveFuturesBot = {
+  id: string;
+  userId: string;
+  name: string;
+  symbol: string;
+  exchange: string;
+  exchangeAccountId: string;
+  strategyKey: string;
+  marginMode: "isolated" | "cross";
+  leverage: number;
+  paramsJson: Record<string, unknown>;
+  tickMs: number;
+  credentials: {
+    apiKey: string;
+    apiSecret: string;
+    passphrase: string | null;
+  };
+};
+
+export type BotRuntimeCircuitBreakerState = {
+  consecutiveErrors: number;
+  errorWindowStartAt: Date | null;
+  lastErrorAt: Date | null;
+  lastErrorMessage: string | null;
+};
+
+export type RiskEventType = "KILL_SWITCH_BLOCK" | "CIRCUIT_BREAKER_TRIPPED" | "BOT_ERROR";
+
+function mapRowToActiveBot(bot: any): ActiveFuturesBot {
+  return {
+    id: bot.id,
+    userId: bot.userId,
+    name: bot.name,
+    symbol: bot.symbol,
+    exchange: bot.exchange,
+    exchangeAccountId: bot.exchangeAccountId,
+    strategyKey: bot.futuresConfig.strategyKey,
+    marginMode: bot.futuresConfig.marginMode,
+    leverage: bot.futuresConfig.leverage,
+    paramsJson: (bot.futuresConfig.paramsJson ?? {}) as Record<string, unknown>,
+    tickMs: bot.futuresConfig?.tickMs ?? 1000,
+    credentials: {
+      apiKey: decryptSecret(bot.exchangeAccount.apiKeyEnc),
+      apiSecret: decryptSecret(bot.exchangeAccount.apiSecretEnc),
+      passphrase: bot.exchangeAccount.passphraseEnc
+        ? decryptSecret(bot.exchangeAccount.passphraseEnc)
+        : null
+    }
+  };
+}
+
+function canExecuteRow(bot: any): boolean {
+  return Boolean(bot && bot.userId && bot.exchangeAccountId && bot.futuresConfig && bot.exchangeAccount);
+}
+
+export async function getBotStatus(botId: string): Promise<BotStatusValue | null> {
+  const bot = await db.bot.findUnique({
+    where: { id: botId },
+    select: { status: true }
+  });
+  if (!bot) return null;
+  return bot.status as BotStatusValue;
+}
+
+export async function getBotRuntimeCircuitBreakerState(
+  botId: string
+): Promise<BotRuntimeCircuitBreakerState> {
+  const runtime = await db.botRuntime.findUnique({
+    where: { botId },
+    select: {
+      consecutiveErrors: true,
+      errorWindowStartAt: true,
+      lastErrorAt: true,
+      lastErrorMessage: true
+    }
+  });
+
+  return {
+    consecutiveErrors: Number(runtime?.consecutiveErrors ?? 0),
+    errorWindowStartAt: runtime?.errorWindowStartAt ?? null,
+    lastErrorAt: runtime?.lastErrorAt ?? null,
+    lastErrorMessage: runtime?.lastErrorMessage ?? null
+  };
+}
+
+export async function loadBotForExecution(botId: string): Promise<ActiveFuturesBot | null> {
+  const bot = await db.bot.findUnique({
     where: { id: botId },
     include: {
-      mmConfig: true,
-      volConfig: true,
-      riskConfig: true,
-      notificationConfig: true,
-      priceSupportConfig: true
+      futuresConfig: {
+        select: {
+          strategyKey: true,
+          marginMode: true,
+          leverage: true,
+          tickMs: true,
+          paramsJson: true
+        }
+      },
+      exchangeAccount: {
+        select: {
+          id: true,
+          apiKeyEnc: true,
+          apiSecretEnc: true,
+          passphraseEnc: true
+        }
+      }
     }
   });
 
-  if (!bot) throw new Error(`Bot not found in DB: ${botId}`);
-
-  if (!bot.mmConfig || !bot.volConfig || !bot.riskConfig) {
-    throw new Error(`Bot missing configs (mm/vol/risk): ${botId}`);
-  }
-
-  const mm: MarketMakingConfig = {
-    spreadPct: bot.mmConfig.spreadPct,
-    maxSpreadPct: bot.mmConfig.maxSpreadPct,
-    levelsUp: bot.mmConfig.levelsUp,
-    levelsDown: bot.mmConfig.levelsDown,
-    budgetQuoteUsdt: bot.mmConfig.budgetQuoteUsdt,
-    budgetBaseToken: bot.mmConfig.budgetBaseToken,
-    minOrderUsdt: bot.mmConfig.minOrderUsdt ?? 0,
-    maxOrderUsdt: bot.mmConfig.maxOrderUsdt ?? 0,
-    distribution: bot.mmConfig.distribution as any,
-    jitterPct: bot.mmConfig.jitterPct,
-    skewFactor: bot.mmConfig.skewFactor,
-    maxSkew: bot.mmConfig.maxSkew,
-    mmRepriceMs: bot.mmConfig.mmRepriceMs ?? 15000,
-    mmRepricePct: bot.mmConfig.mmRepricePct ?? 0.01,
-    mmPriceEpsPct: bot.mmConfig.mmPriceEpsPct ?? 0.005,
-    mmQtyEpsPct: bot.mmConfig.mmQtyEpsPct ?? 0.02,
-    mmInvAlpha: bot.mmConfig.mmInvAlpha ?? 0.1
-  };
-
-  const vol: VolumeConfig = {
-    dailyNotionalUsdt: bot.volConfig.dailyNotionalUsdt,
-    minTradeUsdt: bot.volConfig.minTradeUsdt,
-    maxTradeUsdt: bot.volConfig.maxTradeUsdt,
-    activeFrom: "00:00",
-    activeTo: "23:59",
-    mode: bot.volConfig.mode as any,
-    buyPct: bot.volConfig.buyPct ?? 0.5,
-    buyBumpTicks: bot.volConfig.buyBumpTicks ?? 0,
-    sellBumpTicks: bot.volConfig.sellBumpTicks ?? 0,
-    volCooldownMs: bot.volConfig.volCooldownMs ?? 60000,
-    volActiveTtlMs: bot.volConfig.volActiveTtlMs ?? 20000,
-    volMmSafetyMult: bot.volConfig.volMmSafetyMult ?? 1.5,
-    volLastBandPct: bot.volConfig.volLastBandPct ?? 0.0001,
-    volInsideSpreadPct: bot.volConfig.volInsideSpreadPct ?? 0.00005,
-    volLastMinBumpAbs: bot.volConfig.volLastMinBumpAbs ?? 0.00000001,
-    volLastMinBumpPct: bot.volConfig.volLastMinBumpPct ?? 0,
-    volBuyTicks: bot.volConfig.volBuyTicks ?? 2,
-    volSellTicks: bot.volConfig.volSellTicks ?? 2
-  };
-
-  const risk: RiskConfig = {
-    minUsdt: bot.riskConfig.minUsdt,
-    maxDeviationPct: bot.riskConfig.maxDeviationPct,
-    maxOpenOrders: bot.riskConfig.maxOpenOrders,
-    maxDailyLoss: bot.riskConfig.maxDailyLoss
-  };
-
-  let notificationConfig: NotificationConfig;
-  if (bot.notificationConfig) {
-    notificationConfig = {
-      fundsWarnEnabled: bot.notificationConfig.fundsWarnEnabled,
-      fundsWarnPct: bot.notificationConfig.fundsWarnPct
-    };
-  } else {
-    const created = await prisma.botNotificationConfig.create({
-      data: { botId }
-    });
-    notificationConfig = {
-      fundsWarnEnabled: created.fundsWarnEnabled,
-      fundsWarnPct: created.fundsWarnPct
-    };
-  }
-
-  let priceSupportConfig: PriceSupportConfig;
-  if (bot.priceSupportConfig) {
-    priceSupportConfig = {
-      enabled: bot.priceSupportConfig.enabled,
-      active: bot.priceSupportConfig.active,
-      floorPrice: bot.priceSupportConfig.floorPrice,
-      budgetUsdt: bot.priceSupportConfig.budgetUsdt,
-      spentUsdt: bot.priceSupportConfig.spentUsdt,
-      maxOrderUsdt: bot.priceSupportConfig.maxOrderUsdt,
-      cooldownMs: bot.priceSupportConfig.cooldownMs,
-      mode: bot.priceSupportConfig.mode as any,
-      lastActionAt: Number(bot.priceSupportConfig.lastActionAt ?? 0),
-      stoppedReason: bot.priceSupportConfig.stoppedReason,
-      notifiedBudgetExhaustedAt: Number(bot.priceSupportConfig.notifiedBudgetExhaustedAt ?? 0)
-    };
-  } else {
-    const created = await prisma.botPriceSupportConfig.create({
-      data: {
-        botId,
-        enabled: false,
-        active: true,
-        floorPrice: null,
-        budgetUsdt: 0,
-        spentUsdt: 0,
-        maxOrderUsdt: 50,
-        cooldownMs: 2000,
-        mode: "PASSIVE",
-        lastActionAt: BigInt(0),
-        stoppedReason: null,
-        notifiedBudgetExhaustedAt: BigInt(0)
-      }
-    });
-    priceSupportConfig = {
-      enabled: created.enabled,
-      active: created.active,
-      floorPrice: created.floorPrice,
-      budgetUsdt: created.budgetUsdt,
-      spentUsdt: created.spentUsdt,
-      maxOrderUsdt: created.maxOrderUsdt,
-      cooldownMs: created.cooldownMs,
-      mode: created.mode as any,
-      lastActionAt: Number(created.lastActionAt ?? 0),
-      stoppedReason: created.stoppedReason,
-      notifiedBudgetExhaustedAt: Number(created.notifiedBudgetExhaustedAt ?? 0)
-    };
-  }
-
-  return { bot, mm, vol, risk, notificationConfig, priceSupportConfig };
+  if (!bot || !canExecuteRow(bot)) return null;
+  return mapRowToActiveBot(bot);
 }
 
-export async function loadLatestBotAndConfigs() {
-  const bot = await prisma.bot.findFirst({
-    orderBy: { createdAt: "desc" },
+export async function loadActiveFuturesBots(): Promise<ActiveFuturesBot[]> {
+  const bots = await db.bot.findMany({
+    where: {
+      status: "running",
+      userId: { not: null },
+      exchangeAccountId: { not: null },
+      futuresConfig: { isNot: null }
+    },
     include: {
-      mmConfig: true,
-      volConfig: true,
-      riskConfig: true,
-      notificationConfig: true,
-      priceSupportConfig: true
+      futuresConfig: {
+        select: {
+          strategyKey: true,
+          marginMode: true,
+          leverage: true,
+          tickMs: true,
+          paramsJson: true
+        }
+      },
+      exchangeAccount: {
+        select: {
+          id: true,
+          apiKeyEnc: true,
+          apiSecretEnc: true,
+          passphraseEnc: true
+        }
+      }
+    },
+    orderBy: { createdAt: "asc" }
+  });
+
+  return (bots as any[]).filter(canExecuteRow).map(mapRowToActiveBot);
+}
+
+export async function upsertBotRuntime(params: {
+  botId: string;
+  status: BotStatusValue;
+  reason?: string | null;
+  workerId?: string | null;
+  lastHeartbeatAt?: Date | null;
+  lastTickAt?: Date | null;
+  stateJson?: Record<string, unknown> | null;
+  lastError?: string | null;
+  consecutiveErrors?: number;
+  errorWindowStartAt?: Date | null;
+  lastErrorAt?: Date | null;
+  lastErrorMessage?: string | null;
+}) {
+  const updateData: any = {
+    status: params.status,
+    updatedAt: new Date()
+  };
+
+  const createData: any = {
+    botId: params.botId,
+    status: params.status
+  };
+
+  if ("reason" in params) {
+    updateData.reason = params.reason ?? null;
+    createData.reason = params.reason ?? null;
+  }
+  if ("workerId" in params) {
+    updateData.workerId = params.workerId ?? null;
+    createData.workerId = params.workerId ?? null;
+  }
+  if ("lastHeartbeatAt" in params) {
+    updateData.lastHeartbeatAt = params.lastHeartbeatAt ?? null;
+    createData.lastHeartbeatAt = params.lastHeartbeatAt ?? null;
+  }
+  if ("lastTickAt" in params) {
+    updateData.lastTickAt = params.lastTickAt ?? null;
+    createData.lastTickAt = params.lastTickAt ?? null;
+  }
+  if ("stateJson" in params) {
+    updateData.stateJson = params.stateJson ?? null;
+    createData.stateJson = params.stateJson ?? null;
+  }
+  if ("lastError" in params) {
+    updateData.lastError = params.lastError ?? null;
+    createData.lastError = params.lastError ?? null;
+  }
+  if ("consecutiveErrors" in params) {
+    updateData.consecutiveErrors = params.consecutiveErrors ?? 0;
+    createData.consecutiveErrors = params.consecutiveErrors ?? 0;
+  }
+  if ("errorWindowStartAt" in params) {
+    updateData.errorWindowStartAt = params.errorWindowStartAt ?? null;
+    createData.errorWindowStartAt = params.errorWindowStartAt ?? null;
+  }
+  if ("lastErrorAt" in params) {
+    updateData.lastErrorAt = params.lastErrorAt ?? null;
+    createData.lastErrorAt = params.lastErrorAt ?? null;
+  }
+  if ("lastErrorMessage" in params) {
+    updateData.lastErrorMessage = params.lastErrorMessage ?? null;
+    createData.lastErrorMessage = params.lastErrorMessage ?? null;
+  }
+
+  await db.botRuntime.upsert({
+    where: { botId: params.botId },
+    update: updateData,
+    create: createData
+  });
+}
+
+export async function writeBotTick(params: {
+  botId: string;
+  status: "running" | "error";
+  reason: string | null;
+  intent: TradeIntent;
+  workerId?: string | null;
+}) {
+  const now = new Date();
+  await upsertBotRuntime({
+    botId: params.botId,
+    status: params.status,
+    reason: params.reason,
+    workerId: params.workerId ?? null,
+    lastHeartbeatAt: now,
+    lastTickAt: now,
+    stateJson: {
+      intentType: params.intent.type
+    },
+    ...(params.status === "error" ? { lastError: params.reason } : {})
+  });
+}
+
+export async function writeRiskEvent(params: {
+  botId: string;
+  type: RiskEventType;
+  message?: string | null;
+  meta?: Record<string, unknown> | null;
+}) {
+  await db.riskEvent.create({
+    data: {
+      botId: params.botId,
+      type: params.type,
+      message: params.message ?? null,
+      meta: params.meta ?? null
     }
   });
-
-  if (!bot) throw new Error("No bots found in DB");
-  if (!bot.mmConfig || !bot.volConfig || !bot.riskConfig) {
-    throw new Error(`Bot missing configs (mm/vol/risk): ${bot.id}`);
-  }
-
-  const mm: MarketMakingConfig = {
-    spreadPct: bot.mmConfig.spreadPct,
-    maxSpreadPct: bot.mmConfig.maxSpreadPct,
-    levelsUp: bot.mmConfig.levelsUp,
-    levelsDown: bot.mmConfig.levelsDown,
-    budgetQuoteUsdt: bot.mmConfig.budgetQuoteUsdt,
-    budgetBaseToken: bot.mmConfig.budgetBaseToken,
-    minOrderUsdt: bot.mmConfig.minOrderUsdt ?? 0,
-    maxOrderUsdt: bot.mmConfig.maxOrderUsdt ?? 0,
-    distribution: bot.mmConfig.distribution as any,
-    jitterPct: bot.mmConfig.jitterPct,
-    skewFactor: bot.mmConfig.skewFactor,
-    maxSkew: bot.mmConfig.maxSkew,
-    mmRepriceMs: bot.mmConfig.mmRepriceMs ?? 15000,
-    mmRepricePct: bot.mmConfig.mmRepricePct ?? 0.01,
-    mmPriceEpsPct: bot.mmConfig.mmPriceEpsPct ?? 0.005,
-    mmQtyEpsPct: bot.mmConfig.mmQtyEpsPct ?? 0.02,
-    mmInvAlpha: bot.mmConfig.mmInvAlpha ?? 0.1
-  };
-
-  const vol: VolumeConfig = {
-    dailyNotionalUsdt: bot.volConfig.dailyNotionalUsdt,
-    minTradeUsdt: bot.volConfig.minTradeUsdt,
-    maxTradeUsdt: bot.volConfig.maxTradeUsdt,
-    activeFrom: "00:00",
-    activeTo: "23:59",
-    mode: bot.volConfig.mode as any,
-    buyPct: bot.volConfig.buyPct ?? 0.5,
-    buyBumpTicks: bot.volConfig.buyBumpTicks ?? 0,
-    sellBumpTicks: bot.volConfig.sellBumpTicks ?? 0,
-    volCooldownMs: bot.volConfig.volCooldownMs ?? 60000,
-    volActiveTtlMs: bot.volConfig.volActiveTtlMs ?? 20000,
-    volMmSafetyMult: bot.volConfig.volMmSafetyMult ?? 1.5,
-    volLastBandPct: bot.volConfig.volLastBandPct ?? 0.0001,
-    volInsideSpreadPct: bot.volConfig.volInsideSpreadPct ?? 0.00005,
-    volLastMinBumpAbs: bot.volConfig.volLastMinBumpAbs ?? 0.00000001,
-    volLastMinBumpPct: bot.volConfig.volLastMinBumpPct ?? 0,
-    volBuyTicks: bot.volConfig.volBuyTicks ?? 2,
-    volSellTicks: bot.volConfig.volSellTicks ?? 2
-  };
-
-  const risk: RiskConfig = {
-    minUsdt: bot.riskConfig.minUsdt,
-    maxDeviationPct: bot.riskConfig.maxDeviationPct,
-    maxOpenOrders: bot.riskConfig.maxOpenOrders,
-    maxDailyLoss: bot.riskConfig.maxDailyLoss
-  };
-
-  let notificationConfig: NotificationConfig;
-  if (bot.notificationConfig) {
-    notificationConfig = {
-      fundsWarnEnabled: bot.notificationConfig.fundsWarnEnabled,
-      fundsWarnPct: bot.notificationConfig.fundsWarnPct
-    };
-  } else {
-    const created = await prisma.botNotificationConfig.create({
-      data: { botId: bot.id }
-    });
-    notificationConfig = {
-      fundsWarnEnabled: created.fundsWarnEnabled,
-      fundsWarnPct: created.fundsWarnPct
-    };
-  }
-
-  let priceSupportConfig: PriceSupportConfig;
-  if (bot.priceSupportConfig) {
-    priceSupportConfig = {
-      enabled: bot.priceSupportConfig.enabled,
-      active: bot.priceSupportConfig.active,
-      floorPrice: bot.priceSupportConfig.floorPrice,
-      budgetUsdt: bot.priceSupportConfig.budgetUsdt,
-      spentUsdt: bot.priceSupportConfig.spentUsdt,
-      maxOrderUsdt: bot.priceSupportConfig.maxOrderUsdt,
-      cooldownMs: bot.priceSupportConfig.cooldownMs,
-      mode: bot.priceSupportConfig.mode as any,
-      lastActionAt: Number(bot.priceSupportConfig.lastActionAt ?? 0),
-      stoppedReason: bot.priceSupportConfig.stoppedReason,
-      notifiedBudgetExhaustedAt: Number(bot.priceSupportConfig.notifiedBudgetExhaustedAt ?? 0)
-    };
-  } else {
-    const created = await prisma.botPriceSupportConfig.create({
-      data: {
-        botId: bot.id,
-        enabled: false,
-        active: true,
-        floorPrice: null,
-        budgetUsdt: 0,
-        spentUsdt: 0,
-        maxOrderUsdt: 50,
-        cooldownMs: 2000,
-        mode: "PASSIVE",
-        lastActionAt: BigInt(0),
-        stoppedReason: null,
-        notifiedBudgetExhaustedAt: BigInt(0)
-      }
-    });
-    priceSupportConfig = {
-      enabled: created.enabled,
-      active: created.active,
-      floorPrice: created.floorPrice,
-      budgetUsdt: created.budgetUsdt,
-      spentUsdt: created.spentUsdt,
-      maxOrderUsdt: created.maxOrderUsdt,
-      cooldownMs: created.cooldownMs,
-      mode: created.mode as any,
-      lastActionAt: Number(created.lastActionAt ?? 0),
-      stoppedReason: created.stoppedReason,
-      notifiedBudgetExhaustedAt: Number(created.notifiedBudgetExhaustedAt ?? 0)
-    };
-  }
-
-  return { bot, mm, vol, risk, notificationConfig, priceSupportConfig };
 }
 
-export async function loadCexConfig(exchange: string) {
-  const cfg = await prisma.cexConfig.findUnique({ where: { exchange } });
-
-  if (!cfg) throw new Error(`CEX config not found for exchange: ${exchange}`);
-  if (!cfg.apiKey || !cfg.apiSecret) {
-    throw new Error(`CEX config incomplete for exchange: ${exchange}`);
-  }
-
-  return cfg;
-}
-
-export async function loadRunningBotIds() {
-  const bots = await prisma.bot.findMany({
-    where: { status: "RUNNING" },
-    select: { id: true }
+export async function markExchangeAccountUsed(exchangeAccountId: string) {
+  await db.exchangeAccount.update({
+    where: { id: exchangeAccountId },
+    data: { lastUsedAt: new Date() }
   });
-  return bots.map((b) => b.id);
 }
 
-export async function getRuntimeCounts() {
-  const [botsRunning, botsErrored] = await Promise.all([
-    prisma.botRuntime.count({ where: { status: "RUNNING" } }),
-    prisma.botRuntime.count({ where: { status: "ERROR" } })
-  ]);
-  return { botsRunning, botsErrored };
+export async function markBotAsError(botId: string, reason: string) {
+  await db.bot.update({
+    where: { id: botId },
+    data: {
+      status: "error",
+      lastError: reason
+    }
+  });
 }
 
-export async function getBotCount() {
-  return prisma.bot.count();
-}
-
-export async function getCexCount() {
-  return prisma.cexConfig.count();
-}
-
-export async function upsertRunnerStatus(params: {
-  lastTickAt: Date;
+export async function markRunnerHeartbeat(params: {
   botsRunning: number;
   botsErrored: number;
-  version?: string | null;
 }) {
-  await prisma.runnerStatus.upsert({
+  await db.runnerStatus.upsert({
     where: { id: "main" },
+    update: {
+      lastTickAt: new Date(),
+      botsRunning: params.botsRunning,
+      botsErrored: params.botsErrored,
+      version: process.env.VERSION ?? null
+    },
     create: {
       id: "main",
-      lastTickAt: params.lastTickAt,
+      lastTickAt: new Date(),
       botsRunning: params.botsRunning,
       botsErrored: params.botsErrored,
-      version: params.version ?? null
-    },
-    update: {
-      lastTickAt: params.lastTickAt,
-      botsRunning: params.botsRunning,
-      botsErrored: params.botsErrored,
-      version: params.version ?? undefined
+      version: process.env.VERSION ?? null
     }
   });
 }
 
-export async function writeRuntime(params: {
-  botId: string;
-  status: string;
-  reason?: string | null;
-  lastHealthyAt?: Date | null;
-  mid?: number | null;
-  bid?: number | null;
-  ask?: number | null;
-  openOrders?: number | null;
-  openOrdersMm?: number | null;
-  openOrdersVol?: number | null;
-  lastVolClientOrderId?: string | null;
-  freeUsdt?: number | null;
-  freeBase?: number | null;
-  tradedNotionalToday?: number | null;
-  midCex?: number | null;
-  midDex?: number | null;
-  dexStatus?: string | null;
-  dexDiffBps?: number | null;
-  dexLastUpdate?: Date | null;
-}) {
-  await prisma.botRuntime.upsert({
-    where: { botId: params.botId },
-    create: {
-      botId: params.botId,
-      status: params.status,
-      reason: params.reason ?? null,
-      lastHealthyAt: params.lastHealthyAt ?? null,
-      mid: params.mid ?? null,
-      bid: params.bid ?? null,
-      ask: params.ask ?? null,
-      openOrders: params.openOrders ?? null,
-      openOrdersMm: params.openOrdersMm ?? null,
-      openOrdersVol: params.openOrdersVol ?? null,
-      lastVolClientOrderId: params.lastVolClientOrderId ?? null,
-      freeUsdt: params.freeUsdt ?? null,
-      freeBase: params.freeBase ?? null,
-      tradedNotionalToday: params.tradedNotionalToday ?? null,
-      midCex: params.midCex ?? null,
-      midDex: params.midDex ?? null,
-      dexStatus: params.dexStatus ?? null,
-      dexDiffBps: params.dexDiffBps ?? null,
-      dexLastUpdate: params.dexLastUpdate ?? null
-    },
-    update: {
-      status: params.status,
-      reason: params.reason ?? null,
-      lastHealthyAt: params.lastHealthyAt ?? undefined,
-      mid: params.mid ?? null,
-      bid: params.bid ?? null,
-      ask: params.ask ?? null,
-      openOrders: params.openOrders ?? null,
-      openOrdersMm: params.openOrdersMm ?? null,
-      openOrdersVol: params.openOrdersVol ?? null,
-      lastVolClientOrderId: params.lastVolClientOrderId ?? null,
-      freeUsdt: params.freeUsdt ?? null,
-      freeBase: params.freeBase ?? null,
-      tradedNotionalToday: params.tradedNotionalToday ?? null,
-      midCex: params.midCex ?? null,
-      midDex: params.midDex ?? null,
-      dexStatus: params.dexStatus ?? null,
-      dexDiffBps: params.dexDiffBps ?? null,
-      dexLastUpdate: params.dexLastUpdate ?? null
-    }
-  });
-}
+export async function getRunnerBotCounters(): Promise<{ botsRunning: number; botsErrored: number }> {
+  const [botsRunning, botsErrored] = await Promise.all([
+    db.bot.count({ where: { status: "running" } }),
+    db.bot.count({ where: { status: "error" } })
+  ]);
 
-export async function writeBotMetric(params: {
-  botId: string;
-  ts?: Date;
-  mid?: number | null;
-  bid?: number | null;
-  ask?: number | null;
-  spreadPct?: number | null;
-  openOrders?: number | null;
-  freeQuote?: number | null;
-  freeBase?: number | null;
-  inventoryQuoteValue?: number | null;
-  tradedNotionalToday?: number | null;
-  mmOrders?: number | null;
-  volOrders?: number | null;
-  status?: string | null;
-  reason?: string | null;
-}) {
-  await prisma.botMetric.create({
-    data: {
-      botId: params.botId,
-      ts: params.ts ?? new Date(),
-      mid: params.mid ?? null,
-      bid: params.bid ?? null,
-      ask: params.ask ?? null,
-      spreadPct: params.spreadPct ?? null,
-      openOrders: params.openOrders ?? null,
-      freeQuote: params.freeQuote ?? null,
-      freeBase: params.freeBase ?? null,
-      inventoryQuoteValue: params.inventoryQuoteValue ?? null,
-      tradedNotionalToday: params.tradedNotionalToday ?? null,
-      mmOrders: params.mmOrders ?? null,
-      volOrders: params.volOrders ?? null,
-      status: params.status ?? null,
-      reason: params.reason ?? null
-    }
-  });
-}
-
-export async function writeAlert(params: {
-  botId: string;
-  level: "info" | "warn" | "error";
-  title: string;
-  message?: string | null;
-}) {
-  await prisma.botAlert.create({
-    data: {
-      botId: params.botId,
-      level: params.level,
-      title: params.title,
-      message: params.message ?? null
-    }
-  });
-}
-
-export async function loadSystemSettings() {
-  const row = await prisma.globalSetting.findUnique({ where: { key: "system" } });
-  const raw = (row?.value as Record<string, any>) ?? {};
-  return {
-    tradingEnabled: raw.tradingEnabled ?? true,
-    readOnlyMode: raw.readOnlyMode ?? false
-  };
-}
-
-export async function loadLicenseConfig() {
-  const row = await prisma.globalSetting.findUnique({ where: { key: "license.config" } });
-  const raw = (row?.value as Record<string, any>) ?? {};
-  return {
-    licenseKey: raw.licenseKey ?? null,
-    instanceId: raw.instanceId ?? null
-  };
-}
-
-export async function updateBotFlags(params: {
-  botId: string;
-  status?: string;
-  mmEnabled?: boolean;
-  volEnabled?: boolean;
-}) {
-  const data: Record<string, any> = {};
-  if (params.status !== undefined) data.status = params.status;
-  if (params.mmEnabled !== undefined) data.mmEnabled = params.mmEnabled;
-  if (params.volEnabled !== undefined) data.volEnabled = params.volEnabled;
-  if (Object.keys(data).length === 0) return;
-  await prisma.bot.update({ where: { id: params.botId }, data });
-}
-
-export async function updatePriceSupportConfig(botId: string, data: Record<string, any>) {
-  return prisma.botPriceSupportConfig.update({
-    where: { botId },
-    data
-  });
-}
-
-export async function incrementPriceSupportSpent(botId: string, amount: number) {
-  return prisma.botPriceSupportConfig.update({
-    where: { botId },
-    data: {
-      spentUsdt: { increment: amount }
-    }
-  });
-}
-
-export async function upsertOrderMap(params: {
-  botId: string;
-  symbol: string;
-  orderId: string;
-  clientOrderId: string;
-}) {
-  if (!params.orderId || !params.clientOrderId) return;
-  await prisma.botOrderMap.upsert({
-    where: {
-      botId_symbol_orderId: {
-        botId: params.botId,
-        symbol: params.symbol,
-        orderId: params.orderId
-      }
-    },
-    update: { clientOrderId: params.clientOrderId },
-    create: {
-      botId: params.botId,
-      symbol: params.symbol,
-      orderId: params.orderId,
-      clientOrderId: params.clientOrderId
-    }
-  });
+  return { botsRunning, botsErrored };
 }
