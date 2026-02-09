@@ -49,6 +49,24 @@ function splitCanonical(symbol: string) {
   return { base: parts[0] || "", quote: parts[1] || "" };
 }
 
+function isMarketUnavailableError(err: unknown): boolean {
+  const msg = String((err as any)?.message ?? err);
+  return (
+    msg.includes("Market is not available") ||
+    msg.includes('"errorCode":2022') ||
+    msg.includes('"errorCode":"2022"')
+  );
+}
+
+function isUnknownMarketError(err: unknown): boolean {
+  const msg = String((err as any)?.message ?? err);
+  return (
+    msg.includes("Unknown market") ||
+    msg.includes('"errorCode":2021') ||
+    msg.includes('"errorCode":"2021"')
+  );
+}
+
 export function buildP2BSignature(payloadBase64: string, secret: string) {
   return crypto.createHmac("sha512", secret).update(payloadBase64).digest("hex");
 }
@@ -250,17 +268,25 @@ export class P2BRestClient {
 
   async getTicker(symbol: string): Promise<MidPrice> {
     const { symbol: exSymbol } = await this.resolveMarketSymbol(symbol);
-    const json = await this.request<any>({
-      method: "GET",
-      path: "/api/v2/public/ticker",
-      params: { market: exSymbol }
-    });
-    const row = json?.result;
-    const bid = parseNumber(row?.bid);
-    const ask = parseNumber(row?.ask);
-    const last = parseNumber(row?.last);
-    const mid = bid && ask ? (bid + ask) / 2 : last || 0;
-    return { mid, bid, ask, last, ts: Date.now() };
+    try {
+      const json = await this.request<any>({
+        method: "GET",
+        path: "/api/v2/public/ticker",
+        params: { market: exSymbol }
+      });
+      const row = json?.result;
+      const bid = parseNumber(row?.bid);
+      const ask = parseNumber(row?.ask);
+      const last = parseNumber(row?.last);
+      const mid = bid && ask ? (bid + ask) / 2 : last || 0;
+      return { mid, bid, ask, last, ts: Date.now() };
+    } catch (err) {
+      // Keep runner loop alive: treat unavailable/unknown markets as "no market data".
+      if (isMarketUnavailableError(err) || isUnknownMarketError(err)) {
+        return { mid: 0, bid: 0, ask: 0, last: 0, ts: Date.now() };
+      }
+      throw err;
+    }
   }
 
   async getBalances(): Promise<Balance[]> {
@@ -299,8 +325,7 @@ export class P2BRestClient {
       });
       rows = this.extractOrderRows(json, exSymbol);
     } catch (err) {
-      const msg = String((err as Error)?.message ?? err);
-      if (msg.includes("Unknown market")) {
+      if (isUnknownMarketError(err) || isMarketUnavailableError(err)) {
         return [];
       }
       throw err;
@@ -385,12 +410,17 @@ export class P2BRestClient {
 
   async cancelOrder(symbol: string, orderId: string): Promise<void> {
     const { symbol: exSymbol } = await this.resolveMarketSymbol(symbol);
-    await this.request({
-      method: "POST",
-      path: "/api/v2/order/cancel",
-      auth: "SIGNED",
-      body: { market: exSymbol, orderId }
-    });
+    try {
+      await this.request({
+        method: "POST",
+        path: "/api/v2/order/cancel",
+        auth: "SIGNED",
+        body: { market: exSymbol, orderId }
+      });
+    } catch (err) {
+      if (isUnknownMarketError(err) || isMarketUnavailableError(err)) return;
+      throw err;
+    }
   }
 
   async cancelAll(symbol?: string): Promise<void> {
@@ -407,12 +437,18 @@ export class P2BRestClient {
   ): Promise<MyTrade[]> {
     const { symbol: exSymbol } = await this.resolveMarketSymbol(symbol);
     const limit = Math.min(100, Math.max(1, params?.limit ?? 100));
-    const json = await this.request<any>({
-      method: "POST",
-      path: "/api/v2/account/executed_history",
-      auth: "SIGNED",
-      body: { market: exSymbol, limit }
-    });
+    let json: any;
+    try {
+      json = await this.request<any>({
+        method: "POST",
+        path: "/api/v2/account/executed_history",
+        auth: "SIGNED",
+        body: { market: exSymbol, limit }
+      });
+    } catch (err) {
+      if (isUnknownMarketError(err) || isMarketUnavailableError(err)) return [];
+      throw err;
+    }
     const result = json?.result ?? json;
     let rows: any[] = [];
     if (Array.isArray(result?.result)) {
