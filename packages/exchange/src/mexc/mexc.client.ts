@@ -1,6 +1,6 @@
 import crypto from "node:crypto";
 import type { Balance, MidPrice, MyTrade, Order, Quote } from "@mm/core";
-import { nowMs } from "@mm/core";
+import { nowMs, normalizeSymbol } from "@mm/core";
 import { fromExchangeSymbol, toExchangeSymbol } from "../symbols.js";
 import { checkMins, normalizePrice, normalizeQty, type SymbolMeta } from "./mexc.meta.js";
 
@@ -209,7 +209,22 @@ export class MexcRestClient {
         // MEXC commonly returns status "1" for tradable spot symbols.
         return status === "TRADING" || status === "ENABLED" || status === "1";
       })
-      .map((x: any) => fromExchangeSymbol("mexc", String(x.symbol || "")))
+      .map((x: any) => {
+        const base = String(x?.baseAsset || "").trim();
+        const quote = String(x?.quoteAsset || "").trim();
+        if (base && quote) {
+          try {
+            return normalizeSymbol(`${base}/${quote}`);
+          } catch {
+            return "";
+          }
+        }
+        try {
+          return fromExchangeSymbol("mexc", String(x.symbol || ""));
+        } catch {
+          return "";
+        }
+      })
       .filter(Boolean);
 
     this.symbolCache.set("symbols", { symbols, ts: Date.now() });
