@@ -20,17 +20,21 @@ function apiBaseUrl(): string {
 }
 
 async function hasValidSession(req: NextRequest, apiBase: string): Promise<boolean> {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 5000);
   try {
     const res = await fetch(`${apiBase}/auth/me`, {
       headers: {
-        cookie: req.headers.get("cookie") ?? "",
-        origin: req.nextUrl.origin
+        cookie: req.headers.get("cookie") ?? ""
       },
-      cache: "no-store"
+      cache: "no-store",
+      signal: controller.signal
     });
     return res.ok;
   } catch {
     return false;
+  } finally {
+    clearTimeout(timeout);
   }
 }
 
