@@ -7,11 +7,21 @@ COPY apps/runner/package.json apps/runner/package.json
 COPY packages/core/package.json packages/core/package.json
 COPY packages/db/package.json packages/db/package.json
 COPY packages/exchange/package.json packages/exchange/package.json
-COPY packages/pricing/package.json packages/pricing/package.json
+COPY packages/futures-core/package.json packages/futures-core/package.json
+COPY packages/futures-engine/package.json packages/futures-engine/package.json
+COPY packages/futures-exchange/package.json packages/futures-exchange/package.json
+COPY packages/orchestrator/package.json packages/orchestrator/package.json
 COPY packages/risk/package.json packages/risk/package.json
-COPY packages/strategy/package.json packages/strategy/package.json
+COPY packages/strategies/package.json packages/strategies/package.json
 COPY prisma ./prisma
-RUN npm ci --include=dev --workspaces --include-workspace-root \
+RUN ok=0; \
+  for i in 1 2 3 4 5; do \
+    npm ci --include=dev --workspaces --include-workspace-root && { ok=1; break; } || { \
+      echo "npm ci failed (${i}/5), retrying..."; \
+      sleep 3; \
+    }; \
+  done; \
+  [ "$ok" -eq 1 ] \
   && npm install --no-save @types/node
 
 FROM deps AS build
@@ -24,9 +34,12 @@ RUN npx prisma generate \
   && npm -w packages/core run build \
   && npm -w packages/db run build \
   && npm -w packages/exchange run build \
-  && npm -w packages/pricing run build \
+  && npm -w packages/futures-core run build \
+  && npm -w packages/futures-exchange run build \
+  && npm -w packages/futures-engine run build \
+  && npm -w packages/orchestrator run build \
   && npm -w packages/risk run build \
-  && npm -w packages/strategy run build \
+  && npm -w packages/strategies run build \
   && npm -w apps/api run build
 
 FROM node:20-alpine AS runner
