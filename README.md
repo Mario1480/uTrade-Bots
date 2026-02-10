@@ -70,6 +70,8 @@ Core:
 - `API_BASE_URL`
 - `CORS_ORIGINS`
 - `SECRET_MASTER_KEY` (Pflicht für Secret-Verschlüsselung)
+- `ADMIN_EMAIL`
+- `ADMIN_PASSWORD`
 
 Trading:
 - `BITGET_REST_BASE_URL`
@@ -96,6 +98,9 @@ Telegram:
 - `TELEGRAM_CHAT_ID`
 - alternativ in der UI: `/settings/notifications`
 
+SMTP:
+- alternativ per Admin-UI: `/admin` -> SMTP
+
 ## Nützliche URLs
 
 - Web: `http://localhost:3000`
@@ -104,6 +109,7 @@ Telegram:
 - Manual Trading Desk: `/trade`
 - Predictions: `/predictions`
 - Telegram Settings: `/settings/notifications`
+- Admin Backend: `/admin` (Superadmin)
 
 ## Betrieb / Logs
 

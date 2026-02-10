@@ -512,26 +512,26 @@ export default function PredictionsPage() {
   }
 
   return (
-    <div>
+    <div className="predictionsWrap">
       <div className="dashboardHeader">
         <div>
-          <h2 style={{ margin: 0 }}>Predictions</h2>
+          <h2 style={{ margin: 0 }}>Ai Predictions</h2>
           <div style={{ fontSize: 13, color: "var(--muted)" }}>
             Select a prediction and prefill the Manual Trading Desk ticket.
           </div>
         </div>
-        <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+        <div className="predictionsHeaderActions">
           <Link href="/dashboard" className="btn">Dashboard</Link>
           <Link href="/trade" className="btn">Manual Trading</Link>
         </div>
       </div>
 
-      <section className="card" style={{ padding: 12, marginBottom: 12 }}>
-        <div style={{ fontWeight: 700, marginBottom: 10 }}>Create Prediction (Local)</div>
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(170px,1fr))", gap: 10 }}>
-          <label>
-            <div style={{ fontSize: 12, marginBottom: 4 }}>Exchange account</div>
-            <div style={{ fontSize: 11, color: "var(--muted)", marginBottom: 6 }}>Welcher Account später beim Trading-Prefill genutzt wird.</div>
+      <section className="card predictionsSection">
+        <div className="predictionCreateTitle">Create Prediction (Local)</div>
+        <div className="predictionCreateGrid">
+          <label className="predictionCreateField">
+            <div className="predictionCreateLabel">Exchange account</div>
+            <div className="predictionCreateHint">Welcher Account später beim Trading-Prefill genutzt wird.</div>
             <select
               className="input"
               value={createAccountId}
@@ -550,9 +550,9 @@ export default function PredictionsPage() {
             </select>
           </label>
 
-          <label>
-            <div style={{ fontSize: 12, marginBottom: 4 }}>Pair</div>
-            <div style={{ fontSize: 11, color: "var(--muted)", marginBottom: 6 }}>Handelspaar für die Vorhersage (aus Exchange-Symbolen).</div>
+          <label className="predictionCreateField">
+            <div className="predictionCreateLabel">Pair</div>
+            <div className="predictionCreateHint">Handelspaar für die Vorhersage (aus Exchange-Symbolen).</div>
             <select
               className="input"
               value={newSymbol}
@@ -573,18 +573,18 @@ export default function PredictionsPage() {
             </select>
           </label>
 
-          <label>
-            <div style={{ fontSize: 12, marginBottom: 4 }}>Market type</div>
-            <div style={{ fontSize: 11, color: "var(--muted)", marginBottom: 6 }}>Spot oder Perpetual für die Interpretation.</div>
+          <label className="predictionCreateField">
+            <div className="predictionCreateLabel">Market type</div>
+            <div className="predictionCreateHint">Spot oder Perpetual für die Interpretation.</div>
             <select className="input" value={newMarketType} onChange={(e) => setNewMarketType(e.target.value as PredictionMarketType)}>
               <option value="perp">perp</option>
               <option value="spot">spot</option>
             </select>
           </label>
 
-          <label>
-            <div style={{ fontSize: 12, marginBottom: 4 }}>Timeframe</div>
-            <div style={{ fontSize: 11, color: "var(--muted)", marginBottom: 6 }}>Zeithorizont der Prognose.</div>
+          <label className="predictionCreateField">
+            <div className="predictionCreateLabel">Timeframe</div>
+            <div className="predictionCreateHint">Zeithorizont der Prognose.</div>
             <select className="input" value={newTimeframe} onChange={(e) => setNewTimeframe(e.target.value as PredictionTimeframe)}>
               {TIMEFRAMES.map((tf) => (
                 <option key={tf} value={tf}>{tf}</option>
@@ -592,9 +592,9 @@ export default function PredictionsPage() {
             </select>
           </label>
 
-          <label>
-            <div style={{ fontSize: 12, marginBottom: 4 }}>Direction preference</div>
-            <div style={{ fontSize: 11, color: "var(--muted)", marginBottom: 6 }}>Optional: long only, short only oder egal.</div>
+          <label className="predictionCreateField">
+            <div className="predictionCreateLabel">Direction preference</div>
+            <div className="predictionCreateHint">Optional: long only, short only oder egal.</div>
             <select className="input" value={newDirectionPreference} onChange={(e) => setNewDirectionPreference(e.target.value as DirectionPreference)}>
               <option value="either">either (egal)</option>
               <option value="long">long preferred</option>
@@ -602,9 +602,9 @@ export default function PredictionsPage() {
             </select>
           </label>
 
-          <label>
-            <div style={{ fontSize: 12, marginBottom: 4 }}>Confidence target (%)</div>
-            <div style={{ fontSize: 11, color: "var(--muted)", marginBottom: 6 }}>Mindest-Confidence für ein klares Long/Short Signal.</div>
+          <label className="predictionCreateField">
+            <div className="predictionCreateLabel">Confidence target (%)</div>
+            <div className="predictionCreateHint">Mindest-Confidence für ein klares Long/Short Signal.</div>
             <input
               className="input"
               type="number"
@@ -617,9 +617,9 @@ export default function PredictionsPage() {
             />
           </label>
 
-          <label>
-            <div style={{ fontSize: 12, marginBottom: 4 }}>Leverage (futures)</div>
-            <div style={{ fontSize: 11, color: "var(--muted)", marginBottom: 6 }}>Wird als Futures-Hinweis im Ticket übernommen.</div>
+          <label className="predictionCreateField">
+            <div className="predictionCreateLabel">Leverage (futures)</div>
+            <div className="predictionCreateHint">Wird als Futures-Hinweis im Ticket übernommen.</div>
             <input
               className="input"
               type="number"
@@ -633,21 +633,16 @@ export default function PredictionsPage() {
             />
           </label>
 
-          <label style={{ display: "flex", flexDirection: "column", justifyContent: "flex-end" }}>
-            <div style={{ fontSize: 12, marginBottom: 4 }}>Auto schedule</div>
-            <div style={{ fontSize: 11, color: "var(--muted)", marginBottom: 6 }}>
+          <label className="predictionCreateField" style={{ justifyContent: "flex-end" }}>
+            <div className="predictionCreateLabel">Auto schedule</div>
+            <div className="predictionCreateHint">
               Erstellt automatisch neue Predictions im gewählten Timeframe.
             </div>
-            <label
+            <div
               className="card"
-              style={{
-                margin: 0,
-                padding: "10px 12px",
-                display: "flex",
-                alignItems: "center",
-                gap: 8
-              }}
+              style={{ margin: 0 }}
             >
+              <label className="predictionAutoToggle">
               <input
                 type="checkbox"
                 checked={newAutoSchedule}
@@ -656,7 +651,8 @@ export default function PredictionsPage() {
               <span style={{ fontSize: 13 }}>
                 {newAutoSchedule ? "Enabled" : "Disabled"}
               </span>
-            </label>
+              </label>
+            </div>
           </label>
         </div>
 
@@ -673,8 +669,8 @@ export default function PredictionsPage() {
         </div>
       </section>
 
-      <section className="card" style={{ padding: 12, marginBottom: 12 }}>
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(170px,1fr))", gap: 8 }}>
+      <section className="card predictionsSection">
+        <div className="predictionsQualityGrid">
           <div className="card" style={{ margin: 0, padding: 10 }}>
             <div style={{ color: "var(--muted)", fontSize: 12 }}>Evaluated Signals</div>
             <div style={{ fontSize: 20, fontWeight: 800 }}>{quality?.sampleSize ?? 0}</div>
@@ -704,12 +700,12 @@ export default function PredictionsPage() {
         </div>
       </section>
 
-      <section className="card" style={{ padding: 12, marginBottom: 12 }}>
-        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8, gap: 8 }}>
+      <section className="card predictionsSection">
+        <div className="predictionsRunningHeader">
           <div style={{ fontWeight: 700 }}>
             Running Auto Predictions ({filteredRunningRows.length}/{runningRows.length})
           </div>
-          <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+          <div className="predictionsRunningActions">
             <select
               className="input"
               value={runningStatusFilter}
@@ -800,17 +796,7 @@ export default function PredictionsPage() {
           </div>
         )}
 
-        <div
-          style={{
-            marginTop: 12,
-            paddingTop: 12,
-            borderTop: "1px solid rgba(255,255,255,.08)",
-            display: "flex",
-            gap: 8,
-            alignItems: "center",
-            flexWrap: "wrap"
-          }}
-        >
+        <div className="predictionsCleanupRow">
           <label style={{ display: "flex", alignItems: "center", gap: 6 }}>
             <span style={{ color: "var(--muted)", fontSize: 12 }}>Older than (days)</span>
             <input
@@ -856,8 +842,8 @@ export default function PredictionsPage() {
         </div>
       ) : null}
 
-      <section className="card" style={{ padding: 12, marginBottom: 12 }}>
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(140px,1fr))", gap: 8 }}>
+      <section className="card predictionsSection">
+        <div className="predictionsFiltersGrid">
           <input
             className="input"
             placeholder="Filter symbol..."

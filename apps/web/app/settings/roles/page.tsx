@@ -255,7 +255,7 @@ export default function RolesPage() {
                   <div style={{ fontWeight: 600 }}>{m.email}</div>
                   <div style={{ fontSize: 12, color: "var(--muted)" }}>{m.status}</div>
                 </div>
-                {m.email?.toLowerCase() === "admin@uliquid.vip" ? (
+                {["admin@utrade.vip", "admin@uliquid.vip"].includes(String(m.email ?? "").toLowerCase()) ? (
                   <div style={{ fontSize: 12, color: "var(--muted)" }}>Superadmin</div>
                 ) : (
                   <>

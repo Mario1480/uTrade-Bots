@@ -6,6 +6,7 @@ import { ApiError, apiDelete, apiGet, apiPost } from "../../lib/api";
 
 type MeResponse = {
   user: { id: string; email: string };
+  isSuperadmin?: boolean;
 };
 
 type ExchangeAccountItem = {
@@ -35,10 +36,11 @@ type ExchangeSyncResponse = {
   };
 };
 
-const EXCHANGE_OPTIONS = [
-  { value: "bitget", label: "Bitget (Futures)" },
-  { value: "mexc", label: "MEXC (Legacy)" }
-];
+type ExchangeOption = {
+  value: string;
+  label: string;
+  enabled: boolean;
+};
 
 function errMsg(e: unknown): string {
   if (e instanceof ApiError) return `${e.message} (HTTP ${e.status})`;
@@ -48,7 +50,9 @@ function errMsg(e: unknown): string {
 
 export default function SettingsPage() {
   const [me, setMe] = useState<MeResponse["user"] | null>(null);
+  const [isSuperadmin, setIsSuperadmin] = useState(false);
   const [accounts, setAccounts] = useState<ExchangeAccountItem[]>([]);
+  const [exchangeOptions, setExchangeOptions] = useState<ExchangeOption[]>([]);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [syncingId, setSyncingId] = useState<string | null>(null);
@@ -66,12 +70,19 @@ export default function SettingsPage() {
     setLoading(true);
     setError(null);
     try {
-      const [meRes, accountRes] = await Promise.all([
+      const [meRes, accountRes, exchangesRes] = await Promise.all([
         apiGet<MeResponse>("/auth/me"),
-        apiGet<{ items: ExchangeAccountItem[] }>("/exchange-accounts")
+        apiGet<{ items: ExchangeAccountItem[] }>("/exchange-accounts"),
+        apiGet<{ options: ExchangeOption[] }>("/settings/exchange-options")
       ]);
       setMe(meRes.user);
+      setIsSuperadmin(Boolean(meRes.isSuperadmin));
       setAccounts(accountRes.items ?? []);
+      const allowedOptions = (exchangesRes.options ?? []).filter((item) => item.enabled);
+      setExchangeOptions(allowedOptions);
+      if (allowedOptions.length > 0 && !allowedOptions.some((item) => item.value === exchange)) {
+        setExchange(allowedOptions[0].value);
+      }
     } catch (e) {
       setError(errMsg(e));
     } finally {
@@ -145,7 +156,7 @@ export default function SettingsPage() {
   }
 
   return (
-    <div style={{ maxWidth: 980 }}>
+    <div className="settingsWrap">
       <h2 style={{ marginTop: 0 }}>Settings</h2>
       <div style={{ fontSize: 13, color: "var(--muted)", marginBottom: 12 }}>
         User self-service and exchange account management.
@@ -162,12 +173,38 @@ export default function SettingsPage() {
         </div>
       ) : null}
 
-      <section className="card" style={{ padding: 12, marginBottom: 12 }}>
+      {isSuperadmin ? (
+        <section className="card settingsSection" style={{ marginBottom: 12 }}>
+          <div className="settingsSectionHeader">
+            <h3 style={{ margin: 0 }}>Admin</h3>
+          </div>
+          <div style={{ fontSize: 13, color: "var(--muted)", marginBottom: 10 }}>
+            User management, global Telegram, offered CEX list and SMTP settings.
+          </div>
+          <Link href="/admin" className="btn btnPrimary">
+            Open admin backend
+          </Link>
+        </section>
+      ) : null}
+
+      <section className="card settingsSection" style={{ marginBottom: 12 }}>
         <h3 style={{ marginTop: 0 }}>Account</h3>
         {loading ? <div>Loading...</div> : <div>{me?.email ?? "-"}</div>}
       </section>
 
-      <section className="card" style={{ padding: 12, marginBottom: 12 }}>
+      <section className="card settingsSection" style={{ marginBottom: 12 }}>
+        <div className="settingsSectionHeader">
+          <h3 style={{ margin: 0 }}>Security</h3>
+        </div>
+        <div style={{ fontSize: 13, color: "var(--muted)", marginBottom: 10 }}>
+          Create or change your password and manage your session security settings.
+        </div>
+        <Link href="/settings/users" className="btn">
+          Open account security
+        </Link>
+      </section>
+
+      <section className="card settingsSection" style={{ marginBottom: 12 }}>
         <h3 style={{ marginTop: 0 }}>Notifications</h3>
         <div style={{ fontSize: 13, color: "var(--muted)", marginBottom: 10 }}>
           Configure Telegram alerts for tradable prediction signals.
@@ -177,14 +214,19 @@ export default function SettingsPage() {
         </Link>
       </section>
 
-      <section className="card" style={{ padding: 12, marginBottom: 12 }}>
+      <section className="card settingsSection" style={{ marginBottom: 12 }}>
         <h3 style={{ marginTop: 0 }}>Add Exchange Account</h3>
         <form onSubmit={createAccount} style={{ display: "grid", gap: 10 }}>
+          {exchangeOptions.length === 0 ? (
+            <div style={{ fontSize: 12, color: "var(--muted)" }}>
+              No exchange is enabled by admin yet.
+            </div>
+          ) : null}
           <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
             <label style={{ display: "grid", gap: 6 }}>
               <span style={{ fontSize: 12, color: "var(--muted)" }}>Exchange</span>
               <select className="input" value={exchange} onChange={(e) => setExchange(e.target.value)} required>
-                {EXCHANGE_OPTIONS.map((option) => (
+                {exchangeOptions.map((option) => (
                   <option key={option.value} value={option.value}>
                     {option.label}
                   </option>
@@ -218,14 +260,22 @@ export default function SettingsPage() {
           <button
             className="btn btnPrimary"
             type="submit"
-            disabled={saving || !exchange || !label || !apiKey || !apiSecret || (passphraseRequired && !passphrase)}
+            disabled={
+              saving ||
+              exchangeOptions.length === 0 ||
+              !exchange ||
+              !label ||
+              !apiKey ||
+              !apiSecret ||
+              (passphraseRequired && !passphrase)
+            }
           >
             {saving ? "Saving..." : "Add account"}
           </button>
         </form>
       </section>
 
-      <section className="card" style={{ padding: 12 }}>
+      <section className="card settingsSection">
         <h3 style={{ marginTop: 0 }}>Exchange Accounts</h3>
         {accounts.length === 0 ? (
           <div style={{ fontSize: 13, color: "var(--muted)" }}>No accounts yet.</div>

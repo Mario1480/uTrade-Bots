@@ -66,6 +66,9 @@ export default function LoginPage() {
             <Link href="/register" className="btn">
               Create account
             </Link>
+            <Link href="/reset-password" className="btn">
+              Forgot password?
+            </Link>
             <span style={{ fontSize: 12, opacity: 0.7 }}>{status}</span>
           </div>
           {error ? <div style={{ fontSize: 12, color: "#ef4444" }}>{error}</div> : null}

@@ -11,6 +11,13 @@ export default function UsersPage() {
   const [confirmPassword, setConfirmPassword] = useState("");
   const [pwdStatus, setPwdStatus] = useState("");
   const [pwdError, setPwdError] = useState("");
+  const [resetEmail, setResetEmail] = useState("");
+  const [resetCode, setResetCode] = useState("");
+  const [resetNewPassword, setResetNewPassword] = useState("");
+  const [resetConfirmPassword, setResetConfirmPassword] = useState("");
+  const [resetStatus, setResetStatus] = useState("");
+  const [resetError, setResetError] = useState("");
+  const [resetDevCode, setResetDevCode] = useState<string | null>(null);
   const [securityLoading, setSecurityLoading] = useState(true);
   const [securitySaving, setSecuritySaving] = useState(false);
   const [securityMsg, setSecurityMsg] = useState<string | null>(null);
@@ -28,11 +35,20 @@ export default function UsersPage() {
     setSecurityLoading(true);
     setSecurityMsg(null);
     try {
-      const data = await apiGet<any>("/settings/security");
+      const [data, me] = await Promise.all([
+        apiGet<any>("/settings/security"),
+        apiGet<any>("/auth/me")
+      ]);
       setAutoLogoutEnabled(Boolean(data.autoLogoutEnabled));
       setAutoLogoutMinutes(Number(data.autoLogoutMinutes) || 60);
       setOtpEnabled(data.reauthOtpEnabled !== false);
       setIsSuperadmin(Boolean(data.isSuperadmin));
+      const emailFromMe = typeof me?.email === "string"
+        ? me.email
+        : typeof me?.user?.email === "string"
+          ? me.user.email
+          : "";
+      if (emailFromMe) setResetEmail(emailFromMe);
     } catch (e) {
       setSecurityMsg(errMsg(e));
     } finally {
@@ -93,8 +109,54 @@ export default function UsersPage() {
     }
   }
 
+  async function requestResetCode() {
+    setResetStatus("sending code...");
+    setResetError("");
+    setResetDevCode(null);
+    try {
+      const payload = await apiPost<{ devCode?: string; expiresInMinutes?: number }>(
+        "/auth/password-reset/request",
+        { email: resetEmail }
+      );
+      setResetStatus(
+        `If the account exists, a reset code was sent${payload?.expiresInMinutes ? ` (valid ${payload.expiresInMinutes} min)` : ""}.`
+      );
+      if (payload?.devCode) setResetDevCode(payload.devCode);
+    } catch (e) {
+      setResetStatus("");
+      setResetError(errMsg(e));
+    }
+  }
+
+  async function confirmResetPassword() {
+    setResetStatus("updating password...");
+    setResetError("");
+    if (resetNewPassword !== resetConfirmPassword) {
+      setResetStatus("");
+      setResetError("New password and confirmation do not match.");
+      return;
+    }
+    try {
+      await apiPost("/auth/password-reset/confirm", {
+        email: resetEmail,
+        code: resetCode,
+        newPassword: resetNewPassword
+      });
+      setResetStatus("Password updated. Please sign in again if your session expires.");
+      setResetCode("");
+      setResetNewPassword("");
+      setResetConfirmPassword("");
+      setCurrentPassword("");
+      setNewPassword("");
+      setConfirmPassword("");
+    } catch (e) {
+      setResetStatus("");
+      setResetError(errMsg(e));
+    }
+  }
+
   return (
-    <div style={{ maxWidth: 720 }}>
+    <div className="settingsWrap" style={{ maxWidth: 760 }}>
       <div style={{ marginBottom: 10, display: "flex", gap: 8, flexWrap: "wrap" }}>
         <Link href="/settings" className="btn">
           ← Back to settings
@@ -104,10 +166,12 @@ export default function UsersPage() {
         </Link>
       </div>
       <h2 style={{ marginTop: 0 }}>My Account</h2>
-      <div className="card" style={{ padding: 12, marginTop: 14 }}>
-        <div style={{ fontWeight: 700, marginBottom: 6 }}>Change password</div>
+      <div className="card settingsSection" style={{ marginTop: 14 }}>
+        <div className="settingsSectionHeader">
+          <div style={{ fontWeight: 700 }}>Password</div>
+        </div>
         <div style={{ fontSize: 12, color: "var(--muted)", marginBottom: 10 }}>
-          Set a new password for your account.
+          Create a new password for your account. For security, your current password is required.
         </div>
         <div style={{ display: "grid", gap: 10 }}>
           <label style={{ fontSize: 13 }}>
@@ -139,18 +203,22 @@ export default function UsersPage() {
           </label>
           <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
             <button className="btn btnPrimary" onClick={savePassword} disabled={!currentPassword || !newPassword}>
-              Update password
+              Create new password
             </button>
             <span style={{ fontSize: 12, opacity: 0.7 }}>{pwdStatus}</span>
+          </div>
+          {pwdError ? <div style={{ fontSize: 12, color: "#ff6b6b" }}>{pwdError}</div> : null}
         </div>
-        {pwdError ? <div style={{ fontSize: 12, color: "#ff6b6b" }}>{pwdError}</div> : null}
       </div>
-      <div className="card" style={{ padding: 12, marginTop: 14 }}>
-        <div style={{ fontWeight: 700, marginBottom: 6 }}>Security</div>
+
+      <div className="card settingsSection" style={{ marginTop: 14 }}>
+        <div className="settingsSectionHeader">
+          <div style={{ fontWeight: 700 }}>Security</div>
+        </div>
         <div style={{ fontSize: 12, color: "var(--muted)", marginBottom: 10 }}>
           Session and re-authentication settings for your account.
         </div>
-        <div style={{ display: "grid", gap: 10, marginBottom: 10, maxWidth: 320 }}>
+        <div style={{ display: "grid", gap: 10, marginBottom: 10, maxWidth: 360 }}>
           <label style={{ display: "flex", gap: 8, alignItems: "center" }}>
             <input
               type="checkbox"
@@ -196,7 +264,79 @@ export default function UsersPage() {
           <div style={{ marginTop: 10, color: "var(--muted)" }}>{securityMsg}</div>
         ) : null}
       </div>
+
+      <div className="card settingsSection" style={{ marginTop: 14 }}>
+        <div className="settingsSectionHeader">
+          <div style={{ fontWeight: 700 }}>Reset via Email Code</div>
+        </div>
+        <div style={{ fontSize: 12, color: "var(--muted)", marginBottom: 10 }}>
+          Use this if you forgot your current password.
+        </div>
+        <div style={{ display: "grid", gap: 10, maxWidth: 420 }}>
+          <label style={{ fontSize: 13 }}>
+            Account email
+            <input
+              className="input"
+              type="email"
+              value={resetEmail}
+              onChange={(e) => setResetEmail(e.target.value)}
+              placeholder="you@example.com"
+            />
+          </label>
+          <div>
+            <button className="btn" onClick={() => void requestResetCode()} disabled={!resetEmail}>
+              Send reset code
+            </button>
+          </div>
+          <label style={{ fontSize: 13 }}>
+            Reset code (6 digits)
+            <input
+              className="input"
+              value={resetCode}
+              onChange={(e) => setResetCode(e.target.value)}
+              maxLength={6}
+              placeholder="123456"
+            />
+          </label>
+          <label style={{ fontSize: 13 }}>
+            New password
+            <input
+              className="input"
+              type="password"
+              value={resetNewPassword}
+              onChange={(e) => setResetNewPassword(e.target.value)}
+              minLength={8}
+            />
+          </label>
+          <label style={{ fontSize: 13 }}>
+            Confirm new password
+            <input
+              className="input"
+              type="password"
+              value={resetConfirmPassword}
+              onChange={(e) => setResetConfirmPassword(e.target.value)}
+              minLength={8}
+            />
+          </label>
+          <div>
+            <button
+              className="btn btnPrimary"
+              onClick={() => void confirmResetPassword()}
+              disabled={!resetEmail || resetCode.length !== 6 || resetNewPassword.length < 8}
+            >
+              Reset password
+            </button>
+          </div>
+          {resetStatus ? <div style={{ fontSize: 12, color: "var(--muted)" }}>{resetStatus}</div> : null}
+          {resetDevCode ? (
+            <div style={{ fontSize: 12, color: "#facc15" }}>
+              Dev reset code: <b>{resetDevCode}</b>
+            </div>
+          ) : null}
+          {resetError ? <div style={{ fontSize: 12, color: "#ff6b6b" }}>{resetError}</div> : null}
+        </div>
       </div>
+
       {error ? <div style={{ fontSize: 12, color: "#ff6b6b", marginTop: 8 }}>{error}</div> : null}
     </div>
   );

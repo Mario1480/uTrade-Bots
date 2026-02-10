@@ -7,7 +7,7 @@ import LogoutButton from "./LogoutButton";
 
 export default function AppHeader() {
   const pathname = usePathname();
-  if (pathname === "/login" || pathname === "/register") return null;
+  if (pathname === "/login" || pathname === "/register" || pathname === "/reset-password") return null;
   const [menuOpen, setMenuOpen] = useState(false);
 
   return (
@@ -33,10 +33,9 @@ export default function AppHeader() {
         </div>
         <nav id="appNav" className={`appNav ${menuOpen ? "appNavOpen" : ""}`}>
           <Link href="/dashboard" className="btn">Dashboard</Link>
-          <Link href="/predictions" className="btn">Predictions</Link>
+          <Link href="/predictions" className="btn">Ai Predictions</Link>
           <Link href="/trade" className="btn">Manual Trading</Link>
           <Link href="/bots" className="btn">Bots</Link>
-          <Link href="/bots/new" className="btn btnPrimary">New Bot</Link>
           <Link href="/settings" className="btn">Settings</Link>
           <Link href="/help" className="btn">Help</Link>
           <LogoutButton />

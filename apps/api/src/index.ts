@@ -16,6 +16,8 @@ import {
   requireAuth,
   verifyPassword
 } from "./auth.js";
+import { ensureDefaultRoles, buildPermissions, PERMISSION_KEYS } from "./rbac.js";
+import { sendReauthOtpEmail, sendSmtpTestEmail } from "./email.js";
 import { decryptSecret, encryptSecret } from "./secret-crypto.js";
 import {
   enforceBotStartLicense,
@@ -126,6 +128,41 @@ const tradingSettingsSchema = z.object({
 const alertsSettingsSchema = z.object({
   telegramBotToken: z.string().trim().nullable().optional(),
   telegramChatId: z.string().trim().nullable().optional()
+});
+
+const securitySettingsSchema = z.object({
+  autoLogoutEnabled: z.boolean().optional(),
+  autoLogoutMinutes: z.number().int().min(1).max(1440).optional(),
+  reauthOtpEnabled: z.boolean().optional()
+});
+
+const changePasswordSchema = z.object({
+  currentPassword: z.string().min(1),
+  newPassword: z.string().min(8)
+});
+
+const passwordResetRequestSchema = z.object({
+  email: z.string().trim().email()
+});
+
+const passwordResetConfirmSchema = z.object({
+  email: z.string().trim().email(),
+  code: z.string().trim().regex(/^\d{6}$/),
+  newPassword: z.string().min(8)
+});
+
+const adminUserCreateSchema = z.object({
+  email: z.string().trim().email(),
+  password: z.string().trim().min(8).optional()
+});
+
+const adminUserPasswordSchema = z.object({
+  password: z.string().trim().min(8)
+});
+
+const adminTelegramSchema = z.object({
+  telegramBotToken: z.string().trim().nullable().optional(),
+  telegramChatId: z.string().trim().nullable().optional()
 }).superRefine((value, ctx) => {
   const token = typeof value.telegramBotToken === "string" ? value.telegramBotToken.trim() : "";
   const chatId = typeof value.telegramChatId === "string" ? value.telegramChatId.trim() : "";
@@ -135,6 +172,23 @@ const alertsSettingsSchema = z.object({
       message: "telegramBotToken and telegramChatId must both be set or both be empty"
     });
   }
+});
+
+const adminExchangesSchema = z.object({
+  allowed: z.array(z.string().trim().min(1)).min(1).max(20)
+});
+
+const adminSmtpSchema = z.object({
+  host: z.string().trim().min(1),
+  port: z.number().int().min(1).max(65535),
+  user: z.string().trim().min(1),
+  from: z.string().trim().min(1),
+  secure: z.boolean().default(true),
+  password: z.string().trim().min(1).optional()
+});
+
+const adminSmtpTestSchema = z.object({
+  to: z.string().trim().email()
 });
 
 const placeOrderSchema = z.object({
@@ -279,6 +333,26 @@ const PREDICTION_OUTCOME_EVAL_POLL_MS =
 const PREDICTION_OUTCOME_EVAL_BATCH_SIZE =
   Math.max(5, Number(process.env.PREDICTION_OUTCOME_EVAL_BATCH_SIZE ?? "50"));
 
+const GLOBAL_SETTING_EXCHANGES_KEY = "admin.exchanges";
+const GLOBAL_SETTING_SMTP_KEY = "admin.smtp";
+const GLOBAL_SETTING_SECURITY_KEY = "settings.security";
+const SUPERADMIN_EMAIL = (process.env.ADMIN_EMAIL ?? "admin@utrade.vip").trim().toLowerCase();
+const DEFAULT_ADMIN_PASSWORD = process.env.ADMIN_PASSWORD?.trim() || "TempAdmin1234!";
+const PASSWORD_RESET_PURPOSE = "password_reset";
+const PASSWORD_RESET_OTP_TTL_MIN = Math.max(
+  5,
+  Number(process.env.PASSWORD_RESET_OTP_TTL_MIN ?? "15")
+);
+
+const EXCHANGE_OPTION_CATALOG = [
+  { value: "bitget", label: "Bitget (Futures)" },
+  { value: "mexc", label: "MEXC (Legacy)" }
+] as const;
+
+type ExchangeOption = (typeof EXCHANGE_OPTION_CATALOG)[number];
+
+const EXCHANGE_OPTION_VALUES = new Set(EXCHANGE_OPTION_CATALOG.map((row) => row.value));
+
 function toIso(value: Date | null | undefined): string | null {
   if (!value) return null;
   return value.toISOString();
@@ -292,6 +366,254 @@ function asRecord(value: unknown): Record<string, unknown> {
 function asStringArray(value: unknown): string[] {
   if (!Array.isArray(value)) return [];
   return value.filter((item): item is string => typeof item === "string");
+}
+
+function asBoolean(value: unknown, fallback = false): boolean {
+  if (typeof value === "boolean") return value;
+  if (typeof value === "number") return value > 0;
+  if (typeof value === "string") {
+    const normalized = value.trim().toLowerCase();
+    if (["1", "true", "yes", "on"].includes(normalized)) return true;
+    if (["0", "false", "no", "off"].includes(normalized)) return false;
+  }
+  return fallback;
+}
+
+function parseJsonObject(value: unknown): Record<string, unknown> {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return {};
+  return value as Record<string, unknown>;
+}
+
+function normalizeExchangeValue(value: string): string {
+  return value.trim().toLowerCase();
+}
+
+function isSuperadminEmail(email: string): boolean {
+  return email.trim().toLowerCase() === SUPERADMIN_EMAIL;
+}
+
+function generateTempPassword() {
+  const raw = crypto.randomBytes(9).toString("base64url");
+  return `Tmp-${raw.slice(0, 10)}!`;
+}
+
+function generateNumericCode(length = 6): string {
+  const max = 10 ** length;
+  const random = crypto.randomInt(0, max);
+  return String(random).padStart(length, "0");
+}
+
+function hashOneTimeCode(code: string): string {
+  return crypto.createHash("sha256").update(code).digest("hex");
+}
+
+async function getGlobalSettingValue(key: string): Promise<unknown> {
+  const row = await db.globalSetting.findUnique({
+    where: { key },
+    select: { value: true }
+  });
+  return row?.value;
+}
+
+async function setGlobalSettingValue(key: string, value: unknown) {
+  return db.globalSetting.upsert({
+    where: { key },
+    create: { key, value },
+    update: { value },
+    select: { key: true, value: true, updatedAt: true }
+  });
+}
+
+async function getAllowedExchangeValues(): Promise<string[]> {
+  const configured = asStringArray(await getGlobalSettingValue(GLOBAL_SETTING_EXCHANGES_KEY))
+    .map(normalizeExchangeValue)
+    .filter((value) => EXCHANGE_OPTION_VALUES.has(value as ExchangeOption["value"]));
+  if (configured.length > 0) return Array.from(new Set(configured));
+  return EXCHANGE_OPTION_CATALOG.map((row) => row.value);
+}
+
+function getExchangeOptionsResponse(allowedValues: string[]) {
+  const allowed = new Set(allowedValues.map(normalizeExchangeValue));
+  return EXCHANGE_OPTION_CATALOG.map((row) => ({
+    value: row.value,
+    label: row.label,
+    enabled: allowed.has(row.value)
+  }));
+}
+
+async function getSecurityGlobalSettings() {
+  const raw = parseJsonObject(await getGlobalSettingValue(GLOBAL_SETTING_SECURITY_KEY));
+  return {
+    reauthOtpEnabled: asBoolean(raw.reauthOtpEnabled, true)
+  };
+}
+
+async function setSecurityGlobalSettings(next: { reauthOtpEnabled: boolean }) {
+  return setGlobalSettingValue(GLOBAL_SETTING_SECURITY_KEY, {
+    reauthOtpEnabled: next.reauthOtpEnabled
+  });
+}
+
+type StoredSmtpSettings = {
+  host: string | null;
+  port: number | null;
+  user: string | null;
+  from: string | null;
+  secure: boolean | null;
+  passEnc: string | null;
+};
+
+function parseStoredSmtpSettings(value: unknown): StoredSmtpSettings {
+  const record = parseJsonObject(value);
+  const host = typeof record.host === "string" && record.host.trim() ? record.host.trim() : null;
+  const user = typeof record.user === "string" && record.user.trim() ? record.user.trim() : null;
+  const from = typeof record.from === "string" && record.from.trim() ? record.from.trim() : null;
+  const passEnc =
+    typeof record.passEnc === "string" && record.passEnc.trim() ? record.passEnc.trim() : null;
+  const portNum = Number(record.port);
+  const port = Number.isFinite(portNum) && portNum > 0 && portNum <= 65535 ? Math.floor(portNum) : null;
+  const secure =
+    typeof record.secure === "boolean"
+      ? record.secure
+      : typeof record.secure === "string"
+        ? asBoolean(record.secure, false)
+        : null;
+  return {
+    host,
+    port,
+    user,
+    from,
+    secure,
+    passEnc
+  };
+}
+
+function toPublicSmtpSettings(value: StoredSmtpSettings) {
+  return {
+    host: value.host,
+    port: value.port,
+    user: value.user,
+    from: value.from,
+    secure: value.secure ?? (value.port === 465),
+    hasPassword: Boolean(value.passEnc)
+  };
+}
+
+async function ensureWorkspaceMembership(userId: string, userEmail: string) {
+  const existing = await db.workspaceMember.findFirst({
+    where: { userId },
+    include: {
+      role: true
+    },
+    orderBy: { createdAt: "asc" }
+  });
+  if (existing) {
+    return {
+      workspaceId: existing.workspaceId as string,
+      roleId: existing.roleId as string,
+      permissions: parseJsonObject(existing.role?.permissions)
+    };
+  }
+
+  const workspaceName = `${userEmail.split("@")[0] || "Workspace"} Workspace`;
+  const workspace = await db.workspace.create({
+    data: {
+      name: workspaceName
+    }
+  });
+  const { adminRoleId } = await ensureDefaultRoles(workspace.id);
+  const member = await db.workspaceMember.create({
+    data: {
+      workspaceId: workspace.id,
+      userId,
+      roleId: adminRoleId
+    },
+    include: {
+      role: true
+    }
+  });
+
+  return {
+    workspaceId: member.workspaceId as string,
+    roleId: member.roleId as string,
+    permissions: parseJsonObject(member.role?.permissions)
+  };
+}
+
+async function resolveUserContext(user: { id: string; email: string }) {
+  const member = await ensureWorkspaceMembership(user.id, user.email);
+  const isSuperadmin = isSuperadminEmail(user.email);
+  const permissions = isSuperadmin
+    ? buildPermissions(PERMISSION_KEYS)
+    : member.permissions;
+  return {
+    workspaceId: member.workspaceId,
+    permissions,
+    isSuperadmin
+  };
+}
+
+function readUserFromLocals(res: express.Response): { id: string; email: string } {
+  return getUserFromLocals(res);
+}
+
+async function requireSuperadmin(res: express.Response): Promise<boolean> {
+  const user = readUserFromLocals(res);
+  if (!isSuperadminEmail(user.email)) {
+    res.status(403).json({ error: "forbidden", message: "superadmin_required" });
+    return false;
+  }
+  return true;
+}
+
+async function ensureAdminUserSeed() {
+  const email = SUPERADMIN_EMAIL;
+  const existing = await db.user.findUnique({
+    where: { email },
+    select: {
+      id: true,
+      email: true,
+      passwordHash: true
+    }
+  });
+
+  let user = existing;
+  if (!user) {
+    user = await db.user.create({
+      data: {
+        email,
+        passwordHash: await hashPassword(DEFAULT_ADMIN_PASSWORD)
+      },
+      select: {
+        id: true,
+        email: true,
+        passwordHash: true
+      }
+    });
+    // eslint-disable-next-line no-console
+    console.log(`[admin] created default admin user ${email}`);
+  } else if (!user.passwordHash) {
+    await db.user.update({
+      where: { id: user.id },
+      data: {
+        passwordHash: await hashPassword(DEFAULT_ADMIN_PASSWORD)
+      }
+    });
+  }
+
+  const membership = await ensureWorkspaceMembership(user.id, user.email);
+  const { adminRoleId } = await ensureDefaultRoles(membership.workspaceId);
+  if (membership.roleId !== adminRoleId) {
+    await db.workspaceMember.updateMany({
+      where: {
+        userId: user.id,
+        workspaceId: membership.workspaceId
+      },
+      data: {
+        roleId: adminRoleId
+      }
+    });
+  }
 }
 
 function pickNumber(snapshot: Record<string, unknown>, keys: string[]): number | null {
@@ -904,6 +1226,21 @@ function computeConnectionStatus(
 
 function toSafeUser(user: { id: string; email: string }) {
   return { id: user.id, email: user.email };
+}
+
+function toAuthMePayload(
+  user: { id: string; email: string },
+  ctx: { workspaceId: string; permissions: Record<string, unknown>; isSuperadmin: boolean }
+) {
+  const safeUser = toSafeUser(user);
+  return {
+    user: safeUser,
+    id: safeUser.id,
+    email: safeUser.email,
+    workspaceId: ctx.workspaceId,
+    permissions: ctx.permissions,
+    isSuperadmin: ctx.isSuperadmin
+  };
 }
 
 function toSafeBot(bot: any) {
@@ -2041,6 +2378,7 @@ app.post("/auth/register", async (req, res) => {
     }
   });
 
+  await ensureWorkspaceMembership(user.id, user.email);
   await createSession(res, user.id);
   return res.status(201).json({ user: toSafeUser(user) });
 });
@@ -2065,6 +2403,7 @@ app.post("/auth/login", async (req, res) => {
   const passwordOk = await verifyPassword(parsed.data.password, user.passwordHash);
   if (!passwordOk) return res.status(401).json({ error: "invalid_credentials" });
 
+  await ensureWorkspaceMembership(user.id, user.email);
   await createSession(res, user.id);
   return res.json({ user: toSafeUser(user) });
 });
@@ -2076,10 +2415,241 @@ app.post("/auth/logout", async (req, res) => {
 });
 
 app.get("/auth/me", requireAuth, async (_req, res) => {
-  return res.json({ user: getUserFromLocals(res) });
+  const user = getUserFromLocals(res);
+  const ctx = await resolveUserContext(user);
+  return res.json(toAuthMePayload(user, ctx));
+});
+
+app.post("/auth/change-password", requireAuth, async (req, res) => {
+  const user = getUserFromLocals(res);
+  const parsed = changePasswordSchema.safeParse(req.body ?? {});
+  if (!parsed.success) {
+    return res.status(400).json({ error: "invalid_payload", details: parsed.error.flatten() });
+  }
+
+  const row = await db.user.findUnique({
+    where: { id: user.id },
+    select: { id: true, passwordHash: true }
+  });
+  if (!row?.passwordHash) {
+    return res.status(400).json({ error: "password_not_set" });
+  }
+
+  const ok = await verifyPassword(parsed.data.currentPassword, row.passwordHash);
+  if (!ok) {
+    return res.status(401).json({ error: "invalid_credentials" });
+  }
+
+  const nextHash = await hashPassword(parsed.data.newPassword);
+  await db.user.update({
+    where: { id: user.id },
+    data: { passwordHash: nextHash }
+  });
+
+  return res.json({ ok: true });
+});
+
+app.post("/auth/password-reset/request", async (req, res) => {
+  const parsed = passwordResetRequestSchema.safeParse(req.body ?? {});
+  if (!parsed.success) {
+    return res.status(400).json({ error: "invalid_payload", details: parsed.error.flatten() });
+  }
+
+  const email = parsed.data.email.toLowerCase();
+  const user = await db.user.findUnique({
+    where: { email },
+    select: { id: true, email: true }
+  });
+
+  let devCode: string | null = null;
+  if (user) {
+    const code = generateNumericCode(6);
+    const codeHash = hashOneTimeCode(code);
+    const expiresAt = new Date(Date.now() + PASSWORD_RESET_OTP_TTL_MIN * 60_000);
+
+    await db.reauthOtp.deleteMany({
+      where: {
+        userId: user.id,
+        purpose: PASSWORD_RESET_PURPOSE
+      }
+    });
+
+    await db.reauthOtp.create({
+      data: {
+        userId: user.id,
+        purpose: PASSWORD_RESET_PURPOSE,
+        codeHash,
+        expiresAt
+      }
+    });
+
+    const sent = await sendReauthOtpEmail({
+      to: user.email,
+      code,
+      expiresAt
+    });
+
+    if (!sent.ok) {
+      // eslint-disable-next-line no-console
+      console.warn("[password-reset] email send failed", {
+        email: user.email,
+        reason: sent.error
+      });
+    }
+
+    if (process.env.NODE_ENV !== "production") {
+      devCode = code;
+    }
+  }
+
+  return res.json({
+    ok: true,
+    expiresInMinutes: PASSWORD_RESET_OTP_TTL_MIN,
+    ...(devCode ? { devCode } : {})
+  });
+});
+
+app.post("/auth/password-reset/confirm", async (req, res) => {
+  const parsed = passwordResetConfirmSchema.safeParse(req.body ?? {});
+  if (!parsed.success) {
+    return res.status(400).json({ error: "invalid_payload", details: parsed.error.flatten() });
+  }
+
+  const email = parsed.data.email.toLowerCase();
+  const user = await db.user.findUnique({
+    where: { email },
+    select: {
+      id: true
+    }
+  });
+  if (!user) {
+    return res.status(400).json({ error: "invalid_or_expired_code" });
+  }
+
+  const otp = await db.reauthOtp.findFirst({
+    where: {
+      userId: user.id,
+      purpose: PASSWORD_RESET_PURPOSE,
+      expiresAt: { gt: new Date() }
+    },
+    orderBy: { createdAt: "desc" },
+    select: {
+      id: true,
+      codeHash: true
+    }
+  });
+  if (!otp) {
+    return res.status(400).json({ error: "invalid_or_expired_code" });
+  }
+
+  if (hashOneTimeCode(parsed.data.code) !== otp.codeHash) {
+    return res.status(400).json({ error: "invalid_or_expired_code" });
+  }
+
+  await db.user.update({
+    where: { id: user.id },
+    data: {
+      passwordHash: await hashPassword(parsed.data.newPassword)
+    }
+  });
+
+  await Promise.all([
+    db.reauthOtp.deleteMany({
+      where: {
+        userId: user.id,
+        purpose: PASSWORD_RESET_PURPOSE
+      }
+    }),
+    db.session.deleteMany({
+      where: {
+        userId: user.id
+      }
+    })
+  ]);
+
+  return res.json({ ok: true });
+});
+
+app.get("/settings/security", requireAuth, async (_req, res) => {
+  const user = getUserFromLocals(res);
+  const [row, global, ctx] = await Promise.all([
+    db.user.findUnique({
+      where: { id: user.id },
+      select: {
+        autoLogoutEnabled: true,
+        autoLogoutMinutes: true
+      }
+    }),
+    getSecurityGlobalSettings(),
+    resolveUserContext(user)
+  ]);
+
+  return res.json({
+    autoLogoutEnabled: row?.autoLogoutEnabled ?? true,
+    autoLogoutMinutes: row?.autoLogoutMinutes ?? 60,
+    reauthOtpEnabled: global.reauthOtpEnabled,
+    isSuperadmin: ctx.isSuperadmin
+  });
+});
+
+app.put("/settings/security", requireAuth, async (req, res) => {
+  const user = getUserFromLocals(res);
+  const parsed = securitySettingsSchema.safeParse(req.body ?? {});
+  if (!parsed.success) {
+    return res.status(400).json({ error: "invalid_payload", details: parsed.error.flatten() });
+  }
+
+  const ctx = await resolveUserContext(user);
+  const nextUserFields: Record<string, unknown> = {};
+  if (typeof parsed.data.autoLogoutEnabled === "boolean") {
+    nextUserFields.autoLogoutEnabled = parsed.data.autoLogoutEnabled;
+  }
+  if (typeof parsed.data.autoLogoutMinutes === "number") {
+    nextUserFields.autoLogoutMinutes = parsed.data.autoLogoutMinutes;
+  }
+  if (Object.keys(nextUserFields).length > 0) {
+    await db.user.update({
+      where: { id: user.id },
+      data: nextUserFields
+    });
+  }
+
+  const global = await getSecurityGlobalSettings();
+  const nextReauthEnabled =
+    ctx.isSuperadmin && typeof parsed.data.reauthOtpEnabled === "boolean"
+      ? parsed.data.reauthOtpEnabled
+      : global.reauthOtpEnabled;
+  if (ctx.isSuperadmin && typeof parsed.data.reauthOtpEnabled === "boolean") {
+    await setSecurityGlobalSettings({ reauthOtpEnabled: parsed.data.reauthOtpEnabled });
+  }
+
+  const updated = await db.user.findUnique({
+    where: { id: user.id },
+    select: {
+      autoLogoutEnabled: true,
+      autoLogoutMinutes: true
+    }
+  });
+
+  return res.json({
+    autoLogoutEnabled: updated?.autoLogoutEnabled ?? true,
+    autoLogoutMinutes: updated?.autoLogoutMinutes ?? 60,
+    reauthOtpEnabled: nextReauthEnabled,
+    isSuperadmin: ctx.isSuperadmin
+  });
+});
+
+app.get("/settings/exchange-options", requireAuth, async (_req, res) => {
+  const allowed = await getAllowedExchangeValues();
+  return res.json({
+    allowed,
+    options: getExchangeOptionsResponse(allowed)
+  });
 });
 
 app.get("/settings/alerts", requireAuth, async (_req, res) => {
+  const user = getUserFromLocals(res);
+  const isSuperadmin = isSuperadminEmail(user.email);
   const config = await db.alertConfig.findUnique({
     where: { key: "default" },
     select: {
@@ -2089,19 +2659,34 @@ app.get("/settings/alerts", requireAuth, async (_req, res) => {
   });
 
   return res.json({
-    telegramBotToken: config?.telegramBotToken ?? null,
+    telegramBotToken: isSuperadmin ? config?.telegramBotToken ?? null : null,
+    telegramBotConfigured: Boolean(config?.telegramBotToken),
     telegramChatId: config?.telegramChatId ?? null
   });
 });
 
 app.put("/settings/alerts", requireAuth, async (req, res) => {
+  const user = getUserFromLocals(res);
+  const isSuperadmin = isSuperadminEmail(user.email);
   const parsed = alertsSettingsSchema.safeParse(req.body ?? {});
   if (!parsed.success) {
     return res.status(400).json({ error: "invalid_payload", details: parsed.error.flatten() });
   }
 
-  const token = parseTelegramConfigValue(parsed.data.telegramBotToken);
-  const chatId = parseTelegramConfigValue(parsed.data.telegramChatId);
+  const existing = await db.alertConfig.findUnique({
+    where: { key: "default" },
+    select: {
+      telegramBotToken: true,
+      telegramChatId: true
+    }
+  });
+
+  const requestedToken = parseTelegramConfigValue(parsed.data.telegramBotToken);
+  const requestedChatId = parseTelegramConfigValue(parsed.data.telegramChatId);
+  const token = isSuperadmin
+    ? requestedToken ?? parseTelegramConfigValue(existing?.telegramBotToken)
+    : parseTelegramConfigValue(existing?.telegramBotToken);
+  const chatId = requestedChatId ?? parseTelegramConfigValue(existing?.telegramChatId);
 
   const updated = await db.alertConfig.upsert({
     where: { key: "default" },
@@ -2121,7 +2706,8 @@ app.put("/settings/alerts", requireAuth, async (req, res) => {
   });
 
   return res.json({
-    telegramBotToken: updated.telegramBotToken ?? null,
+    telegramBotToken: isSuperadmin ? updated.telegramBotToken ?? null : null,
+    telegramBotConfigured: Boolean(updated.telegramBotToken),
     telegramChatId: updated.telegramChatId ?? null
   });
 });
@@ -2152,6 +2738,366 @@ app.post("/alerts/test", requireAuth, async (_req, res) => {
       details: String(error)
     });
   }
+});
+
+app.get("/admin/users", requireAuth, async (_req, res) => {
+  if (!(await requireSuperadmin(res))) return;
+
+  const users = await db.user.findMany({
+    orderBy: { createdAt: "desc" },
+    select: {
+      id: true,
+      email: true,
+      createdAt: true,
+      updatedAt: true,
+      _count: {
+        select: {
+          sessions: true,
+          exchangeAccounts: true,
+          bots: true,
+          workspaces: true
+        }
+      }
+    }
+  });
+
+  const rows = users.map((row: any) => ({
+    id: row.id,
+    email: row.email,
+    isSuperadmin: isSuperadminEmail(row.email),
+    createdAt: row.createdAt,
+    updatedAt: row.updatedAt,
+    sessions: row._count?.sessions ?? 0,
+    exchangeAccounts: row._count?.exchangeAccounts ?? 0,
+    bots: row._count?.bots ?? 0,
+    workspaceMemberships: row._count?.workspaces ?? 0
+  }));
+
+  return res.json({ items: rows });
+});
+
+app.post("/admin/users", requireAuth, async (req, res) => {
+  if (!(await requireSuperadmin(res))) return;
+  const parsed = adminUserCreateSchema.safeParse(req.body ?? {});
+  if (!parsed.success) {
+    return res.status(400).json({ error: "invalid_payload", details: parsed.error.flatten() });
+  }
+
+  const email = parsed.data.email.toLowerCase();
+  const existing = await db.user.findUnique({ where: { email } });
+  if (existing) {
+    return res.status(409).json({ error: "email_already_exists" });
+  }
+
+  const generated = !parsed.data.password;
+  const password = parsed.data.password ?? generateTempPassword();
+  const passwordHash = await hashPassword(password);
+
+  const created = await db.user.create({
+    data: {
+      email,
+      passwordHash
+    },
+    select: {
+      id: true,
+      email: true,
+      createdAt: true
+    }
+  });
+  const membership = await ensureWorkspaceMembership(created.id, created.email);
+
+  return res.status(201).json({
+    user: {
+      id: created.id,
+      email: created.email,
+      createdAt: created.createdAt,
+      workspaceId: membership.workspaceId
+    },
+    temporaryPassword: generated ? password : null
+  });
+});
+
+app.put("/admin/users/:id/password", requireAuth, async (req, res) => {
+  if (!(await requireSuperadmin(res))) return;
+  const id = req.params.id;
+  const parsed = adminUserPasswordSchema.safeParse(req.body ?? {});
+  if (!parsed.success) {
+    return res.status(400).json({ error: "invalid_payload", details: parsed.error.flatten() });
+  }
+
+  const user = await db.user.findUnique({
+    where: { id },
+    select: { id: true }
+  });
+  if (!user) return res.status(404).json({ error: "user_not_found" });
+
+  await db.user.update({
+    where: { id },
+    data: {
+      passwordHash: await hashPassword(parsed.data.password)
+    }
+  });
+
+  await db.session.deleteMany({
+    where: { userId: id }
+  });
+
+  return res.json({ ok: true, sessionsRevoked: true });
+});
+
+app.delete("/admin/users/:id", requireAuth, async (req, res) => {
+  if (!(await requireSuperadmin(res))) return;
+  const actor = getUserFromLocals(res);
+  const id = req.params.id;
+
+  const user = await db.user.findUnique({
+    where: { id },
+    select: { id: true, email: true }
+  });
+  if (!user) return res.status(404).json({ error: "user_not_found" });
+  if (isSuperadminEmail(user.email)) {
+    return res.status(400).json({ error: "cannot_delete_superadmin" });
+  }
+  if (user.id === actor.id) {
+    return res.status(400).json({ error: "cannot_delete_self" });
+  }
+
+  const bots = await db.bot.findMany({
+    where: { userId: user.id },
+    select: { id: true }
+  });
+  const botIds = bots.map((row: any) => row.id);
+
+  await db.$transaction(async (tx: any) => {
+    if (botIds.length > 0) {
+      await tx.botMetric.deleteMany({ where: { botId: { in: botIds } } });
+      await tx.botAlert.deleteMany({ where: { botId: { in: botIds } } });
+      await tx.riskEvent.deleteMany({ where: { botId: { in: botIds } } });
+      await tx.botRuntime.deleteMany({ where: { botId: { in: botIds } } });
+      await tx.futuresBotConfig.deleteMany({ where: { botId: { in: botIds } } });
+      await tx.marketMakingConfig.deleteMany({ where: { botId: { in: botIds } } });
+      await tx.volumeConfig.deleteMany({ where: { botId: { in: botIds } } });
+      await tx.riskConfig.deleteMany({ where: { botId: { in: botIds } } });
+      await tx.botNotificationConfig.deleteMany({ where: { botId: { in: botIds } } });
+      await tx.botPriceSupportConfig.deleteMany({ where: { botId: { in: botIds } } });
+      await tx.botFillCursor.deleteMany({ where: { botId: { in: botIds } } });
+      await tx.botFillSeen.deleteMany({ where: { botId: { in: botIds } } });
+      await tx.botOrderMap.deleteMany({ where: { botId: { in: botIds } } });
+      await tx.manualTradeLog.deleteMany({ where: { botId: { in: botIds } } });
+      await tx.bot.deleteMany({ where: { id: { in: botIds } } });
+    }
+
+    await tx.prediction.deleteMany({ where: { userId: user.id } });
+    await tx.manualTradeLog.deleteMany({ where: { userId: user.id } });
+    await tx.exchangeAccount.deleteMany({ where: { userId: user.id } });
+    await tx.botConfigPreset.deleteMany({ where: { createdByUserId: user.id } });
+    await tx.auditEvent.deleteMany({ where: { actorUserId: user.id } });
+    await tx.workspaceMember.deleteMany({ where: { userId: user.id } });
+    await tx.reauthOtp.deleteMany({ where: { userId: user.id } });
+    await tx.reauthSession.deleteMany({ where: { userId: user.id } });
+    await tx.session.deleteMany({ where: { userId: user.id } });
+    await tx.user.delete({ where: { id: user.id } });
+  });
+
+  return res.json({ ok: true, deletedUserId: user.id });
+});
+
+app.get("/admin/settings/telegram", requireAuth, async (_req, res) => {
+  if (!(await requireSuperadmin(res))) return;
+  const config = await db.alertConfig.findUnique({
+    where: { key: "default" },
+    select: {
+      telegramBotToken: true,
+      telegramChatId: true
+    }
+  });
+  const envToken = parseTelegramConfigValue(process.env.TELEGRAM_BOT_TOKEN);
+  const envChatId = parseTelegramConfigValue(process.env.TELEGRAM_CHAT_ID);
+
+  return res.json({
+    telegramBotTokenMasked: config?.telegramBotToken ? maskSecret(config.telegramBotToken) : null,
+    telegramChatId: config?.telegramChatId ?? null,
+    configured: Boolean(config?.telegramBotToken && config?.telegramChatId),
+    envOverride: Boolean(envToken && envChatId)
+  });
+});
+
+app.put("/admin/settings/telegram", requireAuth, async (req, res) => {
+  if (!(await requireSuperadmin(res))) return;
+  const parsed = adminTelegramSchema.safeParse(req.body ?? {});
+  if (!parsed.success) {
+    return res.status(400).json({ error: "invalid_payload", details: parsed.error.flatten() });
+  }
+
+  const token = parseTelegramConfigValue(parsed.data.telegramBotToken);
+  const chatId = parseTelegramConfigValue(parsed.data.telegramChatId);
+
+  const updated = await db.alertConfig.upsert({
+    where: { key: "default" },
+    create: {
+      key: "default",
+      telegramBotToken: token,
+      telegramChatId: chatId
+    },
+    update: {
+      telegramBotToken: token,
+      telegramChatId: chatId
+    },
+    select: {
+      telegramBotToken: true,
+      telegramChatId: true
+    }
+  });
+
+  return res.json({
+    telegramBotTokenMasked: updated.telegramBotToken ? maskSecret(updated.telegramBotToken) : null,
+    telegramChatId: updated.telegramChatId ?? null,
+    configured: Boolean(updated.telegramBotToken && updated.telegramChatId)
+  });
+});
+
+app.post("/admin/settings/telegram/test", requireAuth, async (_req, res) => {
+  if (!(await requireSuperadmin(res))) return;
+  const user = getUserFromLocals(res);
+  const config = await resolveTelegramConfig();
+  if (!config) {
+    return res.status(400).json({
+      error: "telegram_not_configured",
+      details: "No Telegram config found in ENV or DB."
+    });
+  }
+  try {
+    await sendTelegramMessage({
+      ...config,
+      text: [
+        "uTrade admin telegram test",
+        `Triggered by: ${user.email}`,
+        `Time: ${new Date().toISOString()}`
+      ].join("\n")
+    });
+    return res.json({ ok: true });
+  } catch (error) {
+    return res.status(502).json({
+      error: "telegram_send_failed",
+      details: String(error)
+    });
+  }
+});
+
+app.get("/admin/settings/exchanges", requireAuth, async (_req, res) => {
+  if (!(await requireSuperadmin(res))) return;
+  const allowed = await getAllowedExchangeValues();
+  return res.json({
+    allowed,
+    options: getExchangeOptionsResponse(allowed)
+  });
+});
+
+app.put("/admin/settings/exchanges", requireAuth, async (req, res) => {
+  if (!(await requireSuperadmin(res))) return;
+  const parsed = adminExchangesSchema.safeParse(req.body ?? {});
+  if (!parsed.success) {
+    return res.status(400).json({ error: "invalid_payload", details: parsed.error.flatten() });
+  }
+
+  const normalized = Array.from(
+    new Set(
+      parsed.data.allowed
+        .map(normalizeExchangeValue)
+        .filter((value) => EXCHANGE_OPTION_VALUES.has(value as ExchangeOption["value"]))
+    )
+  );
+
+  if (normalized.length === 0) {
+    return res.status(400).json({ error: "allowed_exchanges_empty" });
+  }
+
+  await setGlobalSettingValue(GLOBAL_SETTING_EXCHANGES_KEY, normalized);
+  return res.json({
+    allowed: normalized,
+    options: getExchangeOptionsResponse(normalized)
+  });
+});
+
+app.get("/admin/settings/smtp", requireAuth, async (_req, res) => {
+  if (!(await requireSuperadmin(res))) return;
+  const row = await db.globalSetting.findUnique({
+    where: { key: GLOBAL_SETTING_SMTP_KEY },
+    select: {
+      value: true,
+      updatedAt: true
+    }
+  });
+  const settings = parseStoredSmtpSettings(row?.value);
+  const envConfigured = Boolean(
+    process.env.SMTP_HOST &&
+      process.env.SMTP_PORT &&
+      process.env.SMTP_USER &&
+      process.env.SMTP_PASS &&
+      process.env.SMTP_FROM
+  );
+
+  return res.json({
+    ...toPublicSmtpSettings(settings),
+    updatedAt: row?.updatedAt ?? null,
+    envOverride: envConfigured
+  });
+});
+
+app.put("/admin/settings/smtp", requireAuth, async (req, res) => {
+  if (!(await requireSuperadmin(res))) return;
+  const parsed = adminSmtpSchema.safeParse(req.body ?? {});
+  if (!parsed.success) {
+    return res.status(400).json({ error: "invalid_payload", details: parsed.error.flatten() });
+  }
+
+  const existing = parseStoredSmtpSettings(await getGlobalSettingValue(GLOBAL_SETTING_SMTP_KEY));
+  const nextValue = {
+    host: parsed.data.host.trim(),
+    port: parsed.data.port,
+    user: parsed.data.user.trim(),
+    from: parsed.data.from.trim(),
+    secure: parsed.data.secure,
+    passEnc: parsed.data.password
+      ? encryptSecret(parsed.data.password)
+      : existing.passEnc
+  };
+
+  if (!nextValue.passEnc) {
+    return res.status(400).json({ error: "smtp_password_required" });
+  }
+
+  const updated = await setGlobalSettingValue(GLOBAL_SETTING_SMTP_KEY, nextValue);
+  const settings = parseStoredSmtpSettings(updated.value);
+
+  return res.json({
+    ...toPublicSmtpSettings(settings),
+    updatedAt: updated.updatedAt
+  });
+});
+
+app.post("/admin/settings/smtp/test", requireAuth, async (req, res) => {
+  if (!(await requireSuperadmin(res))) return;
+  const parsed = adminSmtpTestSchema.safeParse(req.body ?? {});
+  if (!parsed.success) {
+    return res.status(400).json({ error: "invalid_payload", details: parsed.error.flatten() });
+  }
+
+  const sent = await sendSmtpTestEmail({
+    to: parsed.data.to,
+    subject: "uTrade SMTP Test",
+    text: [
+      "uTrade SMTP test successful.",
+      `Time: ${new Date().toISOString()}`
+    ].join("\n")
+  });
+  if (!sent.ok) {
+    return res.status(502).json({
+      error: sent.error ?? "smtp_test_failed"
+    });
+  }
+
+  return res.json({ ok: true });
 });
 
 app.get("/api/trading/settings", requireAuth, async (_req, res) => {
@@ -3384,10 +4330,19 @@ app.post("/exchange-accounts", requireAuth, async (req, res) => {
     return res.status(400).json({ error: "invalid_payload", details: parsed.error.flatten() });
   }
 
+  const requestedExchange = normalizeExchangeValue(parsed.data.exchange);
+  const allowedExchanges = await getAllowedExchangeValues();
+  if (!allowedExchanges.includes(requestedExchange)) {
+    return res.status(400).json({
+      error: "exchange_not_allowed",
+      allowed: allowedExchanges
+    });
+  }
+
   const created = await db.exchangeAccount.create({
     data: {
       userId: user.id,
-      exchange: parsed.data.exchange.toLowerCase(),
+      exchange: requestedExchange,
       label: parsed.data.label,
       apiKeyEnc: encryptSecret(parsed.data.apiKey),
       apiSecretEnc: encryptSecret(parsed.data.apiSecret),
@@ -4102,13 +5057,24 @@ server.on("upgrade", (req, socket, head) => {
   });
 });
 
-server.listen(port, () => {
-  // eslint-disable-next-line no-console
-  console.log(`[api] listening on :${port}`);
-  startExchangeAutoSyncScheduler();
-  startPredictionAutoScheduler();
-  startPredictionOutcomeEvalScheduler();
-});
+async function startApiServer() {
+  try {
+    await ensureAdminUserSeed();
+  } catch (error) {
+    // eslint-disable-next-line no-console
+    console.error("[admin] seed failed", String(error));
+  }
+
+  server.listen(port, () => {
+    // eslint-disable-next-line no-console
+    console.log(`[api] listening on :${port}`);
+    startExchangeAutoSyncScheduler();
+    startPredictionAutoScheduler();
+    startPredictionOutcomeEvalScheduler();
+  });
+}
+
+void startApiServer();
 
 process.on("SIGTERM", () => {
   stopExchangeAutoSyncScheduler();

@@ -4,7 +4,7 @@
   --card: #101826;
   --text: #e8eef7;
   --muted: rgba(232,238,247,.7);
-  --border: #ffc107;
+  --border: rgba(255, 193, 7, 0.62);
 }
 
 html, body {
@@ -47,7 +47,7 @@ a { color: inherit; }
   align-items: center;
   justify-content: space-between;
   gap: 16px;
-  width: 100%;
+  min-width: 0;
 }
 
 .appLogo {
@@ -55,6 +55,7 @@ a { color: inherit; }
   align-items: center;
   justify-content: center;
   gap: 10px;
+  min-width: 0;
   font-weight: 800;
   letter-spacing: 0.02em;
   color: var(--text);
@@ -65,7 +66,8 @@ a { color: inherit; }
   width: 160px;
   height: 45px;
   border-radius: 0px;
-  object-fit: cover;
+  object-fit: contain;
+  object-position: left center;
 }
 
 .appLogoText {
@@ -78,6 +80,11 @@ a { color: inherit; }
   display: flex;
   gap: 10px;
   flex-wrap: nowrap;
+  min-width: 0;
+}
+
+.appNav .btn {
+  white-space: nowrap;
 }
 
 .appBurger {
@@ -744,6 +751,123 @@ a { color: inherit; }
   border-radius: 5px;
 }
 
+.settingsWrap {
+  width: 100%;
+  max-width: 980px;
+  margin: 0 auto;
+}
+
+.settingsSection {
+  padding: 14px;
+}
+
+.settingsSectionHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  flex-wrap: wrap;
+  padding-bottom: 10px;
+  margin-bottom: 10px;
+  border-bottom: 1px solid rgba(255, 193, 7, 0.28);
+}
+
+.predictionsWrap {
+  width: 100%;
+  max-width: 1320px;
+  margin: 0 auto;
+}
+
+.predictionsHeaderActions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  align-self: flex-end;
+}
+
+.predictionsHeaderActions .btn {
+  white-space: nowrap;
+}
+
+.predictionsSection {
+  padding: 12px;
+  margin-bottom: 12px;
+}
+
+.predictionCreateTitle {
+  font-weight: 700;
+  margin-bottom: 10px;
+}
+
+.predictionCreateGrid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 10px;
+  align-items: end;
+}
+
+.predictionCreateField {
+  display: grid;
+  gap: 4px;
+}
+
+.predictionCreateLabel {
+  font-size: 12px;
+}
+
+.predictionCreateHint {
+  min-height: 28px;
+  font-size: 11px;
+  color: var(--muted);
+  line-height: 1.25;
+}
+
+.predictionAutoToggle {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 12px;
+}
+
+.predictionsQualityGrid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
+  gap: 8px;
+}
+
+.predictionsRunningHeader {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 8px;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.predictionsRunningActions {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+.predictionsCleanupRow {
+  margin-top: 12px;
+  padding-top: 12px;
+  border-top: 1px solid rgba(255,255,255,.08);
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+.predictionsFiltersGrid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: 8px;
+}
+
 .btn {
   display: inline-flex;
   align-items: center;
@@ -756,13 +880,20 @@ a { color: inherit; }
   padding: 10px 14px;
   cursor: pointer;
   text-decoration: none;
+  transition: filter 0.18s ease, transform 0.18s ease, box-shadow 0.18s ease;
 }
 
 .btnPrimary {
-  background: var(--brand);
-  border-color: var(--brand);
+  background: linear-gradient(129deg, #1481c0 0%, #ffc107 100%);
+  border: 0;
   color: #111;
   font-weight: 700;
+}
+
+.btnPrimary:hover {
+  filter: brightness(1.06);
+  transform: translateY(-1px);
+  box-shadow: 0 6px 16px rgba(20, 129, 192, 0.25);
 }
 .btnStart {
   background: #22c55e;
@@ -974,11 +1105,12 @@ a { color: inherit; }
     width: 100%;
   }
   .appLogoMark {
-    width: 44px;
-    height: 44px;
+    width: 108px;
+    height: 30px;
   }
   .appLogoText {
-    font-size: 18px;
+    font-size: 14px;
+    white-space: nowrap;
   }
   .appBurger {
     display: inline-flex;
@@ -999,6 +1131,16 @@ a { color: inherit; }
   .dashboardHeader {
     flex-direction: column;
     align-items: flex-start;
+  }
+  .predictionsHeaderActions {
+    width: 100%;
+    justify-content: flex-start;
+  }
+  .predictionCreateGrid {
+    grid-template-columns: 1fr;
+  }
+  .predictionCreateHint {
+    min-height: 0;
   }
   .homeGrid,
   .gridTwoCol {

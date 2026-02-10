@@ -7,8 +7,8 @@ import { ApiError, apiGet, apiPost, apiPut } from "../../../lib/api";
 export default function NotificationsPage() {
   const [sending, setSending] = useState(false);
   const [msg, setMsg] = useState<string | null>(null);
-  const [token, setToken] = useState("");
   const [chatId, setChatId] = useState("");
+  const [tokenConfigured, setTokenConfigured] = useState(false);
   const [saving, setSaving] = useState(false);
 
   function errMsg(e: any): string {
@@ -35,11 +35,14 @@ export default function NotificationsPage() {
 
   async function loadConfig() {
     try {
-      const data = await apiGet<{ telegramBotToken?: string | null; telegramChatId?: string | null }>(
+      const data = await apiGet<{
+        telegramChatId?: string | null;
+        telegramBotConfigured?: boolean;
+      }>(
         "/settings/alerts"
       );
-      setToken(data.telegramBotToken ?? "");
       setChatId(data.telegramChatId ?? "");
+      setTokenConfigured(Boolean(data.telegramBotConfigured));
     } catch {
       // ignore
     }
@@ -50,7 +53,6 @@ export default function NotificationsPage() {
     setMsg(null);
     try {
       await apiPut("/settings/alerts", {
-        telegramBotToken: token.trim() || null,
         telegramChatId: chatId.trim() || null
       });
       setMsg("Saved.");
@@ -66,7 +68,7 @@ export default function NotificationsPage() {
   }, []);
 
   return (
-    <div style={{ maxWidth: 980 }}>
+    <div className="settingsWrap">
       <div style={{ marginBottom: 10, display: "flex", gap: 8, flexWrap: "wrap" }}>
         <Link href="/settings" className="btn">
           ← Back to settings
@@ -76,24 +78,30 @@ export default function NotificationsPage() {
         </Link>
       </div>
       <h2 style={{ marginTop: 0 }}>Notifications</h2>
-      <div className="card" style={{ padding: 12, fontSize: 13 }}>
-        <div style={{ fontWeight: 700, marginBottom: 6 }}>Telegram alerts</div>
-        <div style={{ color: "var(--muted)", marginBottom: 10 }}>
-          Stored in DB; runner uses these when env is not set.
+      <div className="card settingsSection" style={{ fontSize: 13 }}>
+        <div className="settingsSectionHeader">
+          <div style={{ fontWeight: 700 }}>Telegram alerts</div>
+          <a
+            className="btn"
+            href="https://t.me/utrade_ai_signals_bot"
+            target="_blank"
+            rel="noreferrer"
+          >
+            Open Bot (@utrade_ai_signals_bot)
+          </a>
         </div>
+        <div style={{ color: "var(--muted)", marginBottom: 10 }}>
+          Bot token is managed globally by admin. You only need your Chat ID here.
+        </div>
+        {!tokenConfigured ? (
+          <div style={{ color: "#fca5a5", marginBottom: 10, fontSize: 12 }}>
+            Telegram bot token is not configured by admin yet.
+          </div>
+        ) : null}
         <div style={{ color: "var(--muted)", marginBottom: 10 }}>
           Tip: For Telegram groups, the Chat ID usually starts with <b>-100</b>.
         </div>
         <div style={{ display: "grid", gap: 10, marginBottom: 10 }}>
-          <label style={{ display: "grid", gap: 6 }}>
-            <span style={{ fontSize: 12, color: "var(--muted)" }}>Bot Token</span>
-            <input
-              className="input"
-              placeholder="123456:ABC..."
-              value={token}
-              onChange={(e) => setToken(e.target.value)}
-            />
-          </label>
           <label style={{ display: "grid", gap: 6 }}>
             <span style={{ fontSize: 12, color: "var(--muted)" }}>Chat ID</span>
             <input

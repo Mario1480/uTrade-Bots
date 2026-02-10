@@ -1,7 +1,7 @@
 import type { NextRequest } from "next/server";
 import { NextResponse } from "next/server";
 
-const PUBLIC_PATHS = ["/login", "/register", "/favicon.ico"];
+const PUBLIC_PATHS = ["/login", "/register", "/reset-password", "/favicon.ico"];
 
 function isPublicPath(pathname: string): boolean {
   if (PUBLIC_PATHS.some((path) => pathname === path || pathname.startsWith(path))) return true;
@@ -52,7 +52,7 @@ export async function middleware(req: NextRequest) {
   const apiBase = apiBaseUrl();
 
   if (isPublicPath(pathname)) {
-    if ((pathname === "/login" || pathname === "/register") && session) {
+    if ((pathname === "/login" || pathname === "/register" || pathname === "/reset-password") && session) {
       const valid = await hasValidSession(req, apiBase);
       if (valid) {
         const target = req.nextUrl.clone();
