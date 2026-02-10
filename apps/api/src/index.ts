@@ -123,6 +123,20 @@ const tradingSettingsSchema = z.object({
   timeframe: z.string().trim().min(1).nullable().optional()
 });
 
+const alertsSettingsSchema = z.object({
+  telegramBotToken: z.string().trim().nullable().optional(),
+  telegramChatId: z.string().trim().nullable().optional()
+}).superRefine((value, ctx) => {
+  const token = typeof value.telegramBotToken === "string" ? value.telegramBotToken.trim() : "";
+  const chatId = typeof value.telegramChatId === "string" ? value.telegramChatId.trim() : "";
+  if ((token && !chatId) || (!token && chatId)) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: "telegramBotToken and telegramChatId must both be set or both be empty"
+    });
+  }
+});
+
 const placeOrderSchema = z.object({
   exchangeAccountId: z.string().trim().min(1).optional(),
   symbol: z.string().trim().min(1),
@@ -179,6 +193,48 @@ const predictionGenerateSchema = z.object({
   modelVersionBase: z.string().trim().min(1).optional()
 });
 
+const predictionGenerateAutoSchema = z.object({
+  exchangeAccountId: z.string().trim().min(1),
+  symbol: z.string().trim().min(1),
+  marketType: z.enum(["spot", "perp"]),
+  timeframe: z.enum(["5m", "15m", "1h", "4h", "1d"]),
+  directionPreference: z.enum(["long", "short", "either"]).default("either"),
+  confidenceTargetPct: z.number().min(0).max(100).default(55),
+  leverage: z.number().int().min(1).max(125).optional(),
+  autoSchedule: z.boolean().default(true),
+  modelVersionBase: z.string().trim().min(1).optional()
+});
+
+const predictionListQuerySchema = z.object({
+  limit: z.coerce.number().int().min(1).max(200).default(50)
+});
+
+const predictionClearOldSchema = z.object({
+  olderThanDays: z.coerce.number().int().min(1).max(3650).default(30),
+  keepRunningTemplates: z.boolean().default(true)
+});
+
+const predictionDeleteManySchema = z.object({
+  ids: z.array(z.string().trim().min(1)).min(1).max(500)
+});
+
+const predictionPauseSchema = z.object({
+  paused: z.boolean().default(true)
+});
+
+const predictionIdParamSchema = z.object({
+  id: z.string().trim().min(1)
+});
+
+type PredictionTimeframe = "5m" | "15m" | "1h" | "4h" | "1d";
+type PredictionMarketType = "spot" | "perp";
+type PredictionSignal = "up" | "down" | "neutral";
+type DirectionPreference = "long" | "short" | "either";
+
+const PREDICTION_TIMEFRAMES = new Set<PredictionTimeframe>(["5m", "15m", "1h", "4h", "1d"]);
+const PREDICTION_MARKET_TYPES = new Set<PredictionMarketType>(["spot", "perp"]);
+const PREDICTION_SIGNALS = new Set<PredictionSignal>(["up", "down", "neutral"]);
+
 type DashboardConnectionStatus = "connected" | "degraded" | "disconnected";
 
 type ExchangeAccountOverview = {
@@ -204,10 +260,623 @@ const EXCHANGE_AUTO_SYNC_INTERVAL_MS =
 const EXCHANGE_AUTO_SYNC_ENABLED = !["0", "false", "off", "no"].includes(
   String(process.env.EXCHANGE_AUTO_SYNC_ENABLED ?? "1").trim().toLowerCase()
 );
+const PREDICTION_AUTO_ENABLED = !["0", "false", "off", "no"].includes(
+  String(process.env.PREDICTION_AUTO_ENABLED ?? "1").trim().toLowerCase()
+);
+const PREDICTION_AUTO_POLL_MS =
+  Math.max(30, Number(process.env.PREDICTION_AUTO_POLL_SECONDS ?? "60")) * 1000;
+const PREDICTION_AUTO_TEMPLATE_SCAN_LIMIT =
+  Math.max(10, Number(process.env.PREDICTION_AUTO_TEMPLATE_SCAN_LIMIT ?? "300"));
+const PREDICTION_AUTO_MAX_RUNS_PER_CYCLE =
+  Math.max(1, Number(process.env.PREDICTION_AUTO_MAX_RUNS_PER_CYCLE ?? "25"));
+const PREDICTION_OUTCOME_HORIZON_BARS =
+  Math.max(2, Number(process.env.PREDICTION_OUTCOME_HORIZON_BARS ?? "12"));
+const PREDICTION_OUTCOME_EVAL_ENABLED = !["0", "false", "off", "no"].includes(
+  String(process.env.PREDICTION_OUTCOME_EVAL_ENABLED ?? "1").trim().toLowerCase()
+);
+const PREDICTION_OUTCOME_EVAL_POLL_MS =
+  Math.max(30, Number(process.env.PREDICTION_OUTCOME_EVAL_POLL_SECONDS ?? "60")) * 1000;
+const PREDICTION_OUTCOME_EVAL_BATCH_SIZE =
+  Math.max(5, Number(process.env.PREDICTION_OUTCOME_EVAL_BATCH_SIZE ?? "50"));
 
 function toIso(value: Date | null | undefined): string | null {
   if (!value) return null;
   return value.toISOString();
+}
+
+function asRecord(value: unknown): Record<string, unknown> {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return {};
+  return value as Record<string, unknown>;
+}
+
+function asStringArray(value: unknown): string[] {
+  if (!Array.isArray(value)) return [];
+  return value.filter((item): item is string => typeof item === "string");
+}
+
+function pickNumber(snapshot: Record<string, unknown>, keys: string[]): number | null {
+  for (const key of keys) {
+    const parsed = Number(snapshot[key]);
+    if (Number.isFinite(parsed)) return parsed;
+  }
+  return null;
+}
+
+function normalizePredictionTimeframe(value: unknown): PredictionTimeframe {
+  if (typeof value === "string" && PREDICTION_TIMEFRAMES.has(value as PredictionTimeframe)) {
+    return value as PredictionTimeframe;
+  }
+  return "15m";
+}
+
+function normalizePredictionMarketType(value: unknown): PredictionMarketType {
+  if (typeof value === "string" && PREDICTION_MARKET_TYPES.has(value as PredictionMarketType)) {
+    return value as PredictionMarketType;
+  }
+  return "perp";
+}
+
+function normalizePredictionSignal(value: unknown): PredictionSignal {
+  if (typeof value === "string" && PREDICTION_SIGNALS.has(value as PredictionSignal)) {
+    return value as PredictionSignal;
+  }
+  return "neutral";
+}
+
+function derivePredictionKeyDrivers(snapshot: Record<string, unknown>) {
+  const preferred = [
+    "rsi",
+    "emaSpread",
+    "emaFast",
+    "emaSlow",
+    "macd",
+    "atrPct",
+    "volatility",
+    "spreadBps",
+    "liquidityScore",
+    "fundingRate",
+    "newsRisk"
+  ];
+
+  const out: Array<{ name: string; value: unknown }> = [];
+  for (const key of preferred) {
+    if (!(key in snapshot)) continue;
+    out.push({ name: key, value: snapshot[key] });
+    if (out.length >= 5) return out;
+  }
+
+  const fallbackKeys = Object.keys(snapshot).sort().slice(0, 5);
+  for (const key of fallbackKeys) {
+    out.push({ name: key, value: snapshot[key] });
+  }
+  return out.slice(0, 5);
+}
+
+function deriveSuggestedEntry(snapshot: Record<string, unknown>) {
+  const rawType = String(
+    snapshot.suggestedEntryType ??
+      snapshot.entryType ??
+      snapshot.orderType ??
+      ""
+  )
+    .trim()
+    .toLowerCase();
+
+  const entryPrice = pickNumber(snapshot, [
+    "suggestedEntryPrice",
+    "entryPrice",
+    "limitPrice",
+    "entry"
+  ]);
+
+  const inferredType = rawType === "limit" || entryPrice !== null ? "limit" : "market";
+  if (inferredType === "limit") {
+    return {
+      type: "limit" as const,
+      price: entryPrice ?? undefined
+    };
+  }
+  return { type: "market" as const };
+}
+
+function derivePositionSizeHint(snapshot: Record<string, unknown>) {
+  const raw = snapshot.positionSizeHint;
+  if (raw && typeof raw === "object" && !Array.isArray(raw)) {
+    const modeValue = String((raw as any).mode ?? "").trim().toLowerCase();
+    const value = Number((raw as any).value);
+    if ((modeValue === "percent_balance" || modeValue === "fixed_quote") && Number.isFinite(value) && value > 0) {
+      return {
+        mode: modeValue as "percent_balance" | "fixed_quote",
+        value
+      };
+    }
+  }
+
+  const percentValue = pickNumber(snapshot, ["positionSizePercent", "sizePercent", "balancePercent"]);
+  if (percentValue !== null && percentValue > 0) {
+    return {
+      mode: "percent_balance" as const,
+      value: percentValue
+    };
+  }
+
+  const quoteValue = pickNumber(snapshot, ["positionSizeQuote", "sizeQuote", "sizeUsdt"]);
+  if (quoteValue !== null && quoteValue > 0) {
+    return {
+      mode: "fixed_quote" as const,
+      value: quoteValue
+    };
+  }
+
+  return null;
+}
+
+function derivePredictionTrackingFromSnapshot(
+  snapshot: Record<string, unknown>,
+  timeframe: PredictionTimeframe
+): {
+  entryPrice: number | null;
+  stopLossPrice: number | null;
+  takeProfitPrice: number | null;
+  horizonMs: number | null;
+} {
+  const entryPrice = pickNumber(snapshot, ["suggestedEntryPrice", "entryPrice", "entry"]);
+  const stopLossPrice = pickNumber(snapshot, ["suggestedStopLoss", "stopLoss", "slPrice", "sl"]);
+  const takeProfitPrice = pickNumber(snapshot, ["suggestedTakeProfit", "takeProfit", "tpPrice", "tp"]);
+  const customHorizonMs = pickNumber(snapshot, ["horizonMs", "predictionHorizonMs"]);
+  const horizonMs = customHorizonMs !== null
+    ? Math.max(60_000, Math.trunc(customHorizonMs))
+    : timeframeToIntervalMs(timeframe) * PREDICTION_OUTCOME_HORIZON_BARS;
+
+  return {
+    entryPrice,
+    stopLossPrice,
+    takeProfitPrice,
+    horizonMs
+  };
+}
+
+type CandleBar = {
+  ts: number | null;
+  open: number;
+  high: number;
+  low: number;
+  close: number;
+  volume: number | null;
+};
+
+function toRecordSafe(value: unknown): Record<string, unknown> | null {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  return value as Record<string, unknown>;
+}
+
+function asNumber(value: unknown): number | null {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+function parseBitgetCandles(value: unknown): CandleBar[] {
+  if (!Array.isArray(value)) return [];
+  const out: CandleBar[] = [];
+
+  for (const row of value) {
+    if (Array.isArray(row)) {
+      const ts = asNumber(row[0]);
+      const open = asNumber(row[1]);
+      const high = asNumber(row[2]);
+      const low = asNumber(row[3]);
+      const close = asNumber(row[4]);
+      const volume = asNumber(row[5]);
+      if (open === null || high === null || low === null || close === null) continue;
+      out.push({ ts, open, high, low, close, volume });
+      continue;
+    }
+
+    const rec = toRecordSafe(row);
+    if (!rec) continue;
+    const open = asNumber(rec.open ?? rec.o);
+    const high = asNumber(rec.high ?? rec.h);
+    const low = asNumber(rec.low ?? rec.l);
+    const close = asNumber(rec.close ?? rec.c);
+    if (open === null || high === null || low === null || close === null) continue;
+    out.push({
+      ts: asNumber(rec.ts ?? rec.time ?? rec.timestamp),
+      open,
+      high,
+      low,
+      close,
+      volume: asNumber(rec.volume ?? rec.v)
+    });
+  }
+
+  out.sort((a, b) => (a.ts ?? 0) - (b.ts ?? 0));
+  return out;
+}
+
+function average(values: number[]): number {
+  if (values.length === 0) return 0;
+  return values.reduce((sum, v) => sum + v, 0) / values.length;
+}
+
+function stddev(values: number[]): number {
+  if (values.length < 2) return 0;
+  const mean = average(values);
+  const variance = values.reduce((sum, v) => sum + (v - mean) ** 2, 0) / (values.length - 1);
+  return Math.sqrt(variance);
+}
+
+function clamp(value: number, min: number, max: number): number {
+  return Math.max(min, Math.min(max, value));
+}
+
+function computeRsi(closes: number[], period = 14): number | null {
+  if (closes.length <= period) return null;
+  let gains = 0;
+  let losses = 0;
+  for (let i = closes.length - period; i < closes.length; i += 1) {
+    const prev = closes[i - 1];
+    const next = closes[i];
+    if (!Number.isFinite(prev) || !Number.isFinite(next)) continue;
+    const delta = next - prev;
+    if (delta >= 0) gains += delta;
+    else losses += Math.abs(delta);
+  }
+
+  const avgGain = gains / period;
+  const avgLoss = losses / period;
+  if (avgLoss === 0) return 100;
+  const rs = avgGain / avgLoss;
+  return 100 - 100 / (1 + rs);
+}
+
+function timeframeToBitgetGranularity(timeframe: PredictionTimeframe): string {
+  if (timeframe === "1h") return "1H";
+  if (timeframe === "4h") return "4H";
+  if (timeframe === "1d") return "1D";
+  return timeframe;
+}
+
+function timeframeToIntervalMs(timeframe: PredictionTimeframe): number {
+  if (timeframe === "5m") return 5 * 60 * 1000;
+  if (timeframe === "15m") return 15 * 60 * 1000;
+  if (timeframe === "1h") return 60 * 60 * 1000;
+  if (timeframe === "4h") return 4 * 60 * 60 * 1000;
+  return 24 * 60 * 60 * 1000;
+}
+
+type PredictionQualityContext = {
+  sampleSize: number;
+  winRatePct: number | null;
+  avgOutcomePnlPct: number | null;
+  tpCount: number;
+  slCount: number;
+  expiredCount: number;
+};
+
+async function getPredictionQualityContext(
+  userId: string,
+  symbol: string,
+  timeframe: PredictionTimeframe,
+  marketType: PredictionMarketType
+): Promise<PredictionQualityContext> {
+  const rows = await db.prediction.findMany({
+    where: {
+      userId,
+      symbol,
+      timeframe,
+      marketType,
+      outcomeStatus: "closed"
+    },
+    orderBy: { tsCreated: "desc" },
+    take: 100,
+    select: {
+      outcomeResult: true,
+      outcomePnlPct: true
+    }
+  });
+
+  let tpCount = 0;
+  let slCount = 0;
+  let expiredCount = 0;
+  let pnlSum = 0;
+  let pnlCount = 0;
+
+  for (const row of rows) {
+    const result = typeof row.outcomeResult === "string" ? row.outcomeResult : "";
+    if (result === "tp_hit") tpCount += 1;
+    else if (result === "sl_hit") slCount += 1;
+    else if (result === "expired") expiredCount += 1;
+
+    const pnl = Number(row.outcomePnlPct);
+    if (Number.isFinite(pnl)) {
+      pnlSum += pnl;
+      pnlCount += 1;
+    }
+  }
+
+  const sampleSize = rows.length;
+  const winRatePct = sampleSize > 0 ? Number(((tpCount / sampleSize) * 100).toFixed(2)) : null;
+  const avgOutcomePnlPct = pnlCount > 0 ? Number((pnlSum / pnlCount).toFixed(4)) : null;
+
+  return {
+    sampleSize,
+    winRatePct,
+    avgOutcomePnlPct,
+    tpCount,
+    slCount,
+    expiredCount
+  };
+}
+
+function deriveSignalFromScore(
+  score: number,
+  threshold: number,
+  directionPreference: DirectionPreference
+): PredictionSignal {
+  let adjustedScore = score;
+  if (directionPreference === "long") adjustedScore = Math.max(0, adjustedScore);
+  if (directionPreference === "short") adjustedScore = Math.min(0, adjustedScore);
+
+  if (adjustedScore > threshold) return "up";
+  if (adjustedScore < -threshold) return "down";
+  return "neutral";
+}
+
+function inferPredictionFromMarket(params: {
+  closes: number[];
+  highs: number[];
+  lows: number[];
+  referencePrice: number;
+  timeframe: PredictionTimeframe;
+  directionPreference: DirectionPreference;
+  confidenceTargetPct: number;
+  leverage?: number;
+  marketType: PredictionMarketType;
+  exchangeAccountId: string;
+  exchange: string;
+}): {
+  prediction: { signal: PredictionSignal; expectedMovePct: number; confidence: number };
+  featureSnapshot: Record<string, unknown>;
+  tracking: {
+    entryPrice: number;
+    stopLossPrice: number;
+    takeProfitPrice: number;
+    horizonMs: number;
+  };
+} {
+  const closes = params.closes;
+  const highs = params.highs;
+  const lows = params.lows;
+  const last = closes[closes.length - 1] ?? params.referencePrice;
+  const prev5 = closes[Math.max(0, closes.length - 6)] ?? last;
+  const momentum = prev5 > 0 ? (last - prev5) / prev5 : 0;
+
+  const sma20 = average(closes.slice(-20));
+  const emaSpread = sma20 > 0 ? (last - sma20) / sma20 : 0;
+
+  const returns: number[] = [];
+  for (let i = 1; i < closes.length; i += 1) {
+    const prev = closes[i - 1];
+    const next = closes[i];
+    if (prev > 0 && next > 0) returns.push((next - prev) / prev);
+  }
+  const volatility = stddev(returns.slice(-30));
+  const atrProxy = average(
+    highs.slice(-20).map((high, idx) => {
+      const low = lows.slice(-20)[idx] ?? high;
+      if (last <= 0) return 0;
+      return Math.abs(high - low) / last;
+    })
+  );
+
+  const rawScore = emaSpread * 0.65 + momentum * 0.35;
+  const threshold = 0.0008 + volatility * 0.25;
+  let signal = deriveSignalFromScore(rawScore, threshold, params.directionPreference);
+
+  const confidenceRaw = clamp(
+    0.3 + (Math.abs(rawScore) / Math.max(0.0004, threshold + volatility)) * 0.5,
+    0.05,
+    0.95
+  );
+  const targetConfidence = clamp(params.confidenceTargetPct / 100, 0, 1);
+  const confidence = confidenceRaw >= targetConfidence ? confidenceRaw : Math.max(0.2, confidenceRaw * 0.85);
+
+  if (confidenceRaw < targetConfidence) {
+    signal = "neutral";
+  }
+
+  const expectedMovePct = clamp((Math.abs(momentum) + Math.max(volatility, atrProxy) * 1.2) * 100, 0.1, 6);
+  const referencePrice = params.referencePrice > 0 ? params.referencePrice : last;
+  const entryPrice = signal === "down"
+    ? referencePrice * (1 + 0.0005)
+    : referencePrice * (1 - 0.0005);
+  const slMultiplier = Math.max(0.004, volatility * 1.7 + 0.0025);
+  const tpMultiplier = Math.max(expectedMovePct / 100, volatility * 2.2 + 0.003);
+  const suggestedStopLoss = signal === "down"
+    ? referencePrice * (1 + slMultiplier)
+    : referencePrice * (1 - slMultiplier);
+  const suggestedTakeProfit = signal === "down"
+    ? referencePrice * (1 - tpMultiplier)
+    : referencePrice * (1 + tpMultiplier);
+
+  const rsi = computeRsi(closes);
+  const sizePercent = clamp(Math.round((confidence * 100) * 0.35), 10, 35);
+  const horizonMs = timeframeToIntervalMs(params.timeframe) * PREDICTION_OUTCOME_HORIZON_BARS;
+  const tags: string[] = [];
+  if (volatility >= 0.02) tags.push("high_vol");
+  if (volatility <= 0.0075) tags.push("low_vol");
+  if (signal === "up") tags.push("trend_up");
+  if (signal === "down") tags.push("trend_down");
+  if (signal === "neutral") tags.push("range_bound");
+  if (atrProxy >= 0.015) tags.push("breakout_risk");
+
+  return {
+    prediction: {
+      signal,
+      expectedMovePct: Number(expectedMovePct.toFixed(2)),
+      confidence: Number(confidence.toFixed(4))
+    },
+    featureSnapshot: {
+      rsi: rsi !== null ? Number(rsi.toFixed(2)) : null,
+      emaSpread: Number(emaSpread.toFixed(6)),
+      momentum: Number(momentum.toFixed(6)),
+      volatility: Number(volatility.toFixed(6)),
+      atrPct: Number(atrProxy.toFixed(6)),
+      suggestedEntryType: "limit",
+      suggestedEntryPrice: Number(entryPrice.toFixed(2)),
+      suggestedStopLoss: Number(suggestedStopLoss.toFixed(2)),
+      suggestedTakeProfit: Number(suggestedTakeProfit.toFixed(2)),
+      positionSizeHint: {
+        mode: "percent_balance",
+        value: sizePercent
+      },
+      requestedLeverage: params.marketType === "perp" ? params.leverage ?? 1 : null,
+      directionPreference: params.directionPreference,
+      confidenceTargetPct: params.confidenceTargetPct,
+      prefillExchangeAccountId: params.exchangeAccountId,
+      prefillExchange: params.exchange,
+      tags
+    },
+    tracking: {
+      entryPrice: Number(entryPrice.toFixed(2)),
+      stopLossPrice: Number(suggestedStopLoss.toFixed(2)),
+      takeProfitPrice: Number(suggestedTakeProfit.toFixed(2)),
+      horizonMs
+    }
+  };
+}
+
+type PredictionGenerateAutoInput = z.infer<typeof predictionGenerateAutoSchema>;
+
+function parseDirectionPreference(value: unknown): DirectionPreference {
+  if (value === "long" || value === "short" || value === "either") return value;
+  return "either";
+}
+
+async function generateAutoPredictionForUser(
+  userId: string,
+  payload: PredictionGenerateAutoInput
+): Promise<{
+  persisted: boolean;
+  prediction: { signal: PredictionSignal; expectedMovePct: number; confidence: number };
+  explanation: Awaited<ReturnType<typeof generateAndPersistPrediction>>["explanation"];
+  modelVersion: string;
+  predictionId: string | null;
+  tsCreated: string;
+}> {
+  const account = await resolveTradingAccount(userId, payload.exchangeAccountId);
+  const adapter = createBitgetAdapter(account);
+
+  try {
+    await adapter.contractCache.warmup();
+    const canonicalSymbol = normalizeSymbolInput(payload.symbol);
+    if (!canonicalSymbol) {
+      throw new ManualTradingError("symbol_required", 400, "symbol_required");
+    }
+
+    const exchangeSymbol = await adapter.toExchangeSymbol(canonicalSymbol);
+    const [tickerRaw, candlesRaw] = await Promise.all([
+      adapter.marketApi.getTicker(exchangeSymbol, adapter.productType),
+      adapter.marketApi.getCandles({
+        symbol: exchangeSymbol,
+        productType: adapter.productType,
+        granularity: timeframeToBitgetGranularity(payload.timeframe),
+        limit: 120
+      })
+    ]);
+
+    const candles = parseBitgetCandles(candlesRaw);
+    if (candles.length < 20) {
+      throw new ManualTradingError(
+        "Not enough candle data to generate prediction.",
+        422,
+        "insufficient_market_data"
+      );
+    }
+
+    const closes = candles.map((row) => row.close);
+    const highs = candles.map((row) => row.high);
+    const lows = candles.map((row) => row.low);
+    const ticker = normalizeTickerPayload(coerceFirstItem(tickerRaw));
+    const referencePrice = ticker.mark ?? ticker.last ?? closes[closes.length - 1];
+    if (!referencePrice || !Number.isFinite(referencePrice) || referencePrice <= 0) {
+      throw new ManualTradingError(
+        "Cannot determine reference price from market data.",
+        422,
+        "invalid_reference_price"
+      );
+    }
+
+    const inferred = inferPredictionFromMarket({
+      closes,
+      highs,
+      lows,
+      referencePrice,
+      timeframe: payload.timeframe,
+      directionPreference: payload.directionPreference,
+      confidenceTargetPct: payload.confidenceTargetPct,
+      leverage: payload.leverage,
+      marketType: payload.marketType,
+      exchangeAccountId: payload.exchangeAccountId,
+      exchange: account.exchange
+    });
+
+    const quality = await getPredictionQualityContext(
+      userId,
+      canonicalSymbol,
+      payload.timeframe,
+      payload.marketType
+    );
+
+    inferred.featureSnapshot.autoScheduleEnabled = payload.autoSchedule;
+    inferred.featureSnapshot.qualityWinRatePct = quality.winRatePct;
+    inferred.featureSnapshot.qualitySampleSize = quality.sampleSize;
+    inferred.featureSnapshot.qualityAvgOutcomePnlPct = quality.avgOutcomePnlPct;
+    inferred.featureSnapshot.qualityTpCount = quality.tpCount;
+    inferred.featureSnapshot.qualitySlCount = quality.slCount;
+    inferred.featureSnapshot.qualityExpiredCount = quality.expiredCount;
+
+    const tsCreated = new Date().toISOString();
+    const created = await generateAndPersistPrediction({
+      symbol: canonicalSymbol,
+      marketType: payload.marketType,
+      timeframe: payload.timeframe,
+      tsCreated,
+      prediction: inferred.prediction,
+      featureSnapshot: inferred.featureSnapshot,
+      tracking: inferred.tracking,
+      userId,
+      botId: null,
+      modelVersionBase: payload.modelVersionBase ?? "baseline-v1:auto-market-v1"
+    });
+
+    await notifyTradablePrediction({
+      userId,
+      exchange: account.exchange,
+      exchangeAccountLabel: account.label,
+      symbol: canonicalSymbol,
+      marketType: payload.marketType,
+      timeframe: payload.timeframe,
+      signal: inferred.prediction.signal,
+      confidence: inferred.prediction.confidence,
+      confidenceTargetPct: payload.confidenceTargetPct,
+      expectedMovePct: inferred.prediction.expectedMovePct,
+      predictionId: created.rowId,
+      explanation: created.explanation.explanation,
+      source: "auto"
+    });
+
+    return {
+      persisted: created.persisted,
+      prediction: inferred.prediction,
+      explanation: created.explanation,
+      modelVersion: created.modelVersion,
+      predictionId: created.rowId,
+      tsCreated
+    };
+  } finally {
+    await adapter.close();
+  }
 }
 
 function resolveLastSyncAt(runtime: {
@@ -404,6 +1073,756 @@ function stopExchangeAutoSyncScheduler() {
   if (!exchangeAutoSyncTimer) return;
   clearInterval(exchangeAutoSyncTimer);
   exchangeAutoSyncTimer = null;
+}
+
+function isAutoScheduleEnabled(value: unknown): boolean {
+  if (typeof value === "boolean") return value;
+  if (typeof value === "number") return value > 0;
+  if (typeof value === "string") {
+    const normalized = value.trim().toLowerCase();
+    return ["1", "true", "on", "yes"].includes(normalized);
+  }
+  return false;
+}
+
+function readConfidenceTarget(snapshot: Record<string, unknown>): number {
+  const parsed = pickNumber(snapshot, ["confidenceTargetPct", "targetConfidencePct", "confidenceTarget"]);
+  if (parsed === null) return 55;
+  return clamp(parsed, 0, 100);
+}
+
+function readConfiguredConfidenceTarget(snapshot: Record<string, unknown>): number | null {
+  const parsed = pickNumber(snapshot, ["confidenceTargetPct", "targetConfidencePct", "confidenceTarget"]);
+  if (parsed === null) return null;
+  return clamp(parsed, 0, 100);
+}
+
+function confidenceToPct(value: number): number {
+  const normalized = value <= 1 ? value * 100 : value;
+  return clamp(normalized, 0, 100);
+}
+
+function isTradableSignal(params: {
+  signal: PredictionSignal;
+  confidence: number;
+  confidenceTargetPct: number;
+}): boolean {
+  if (params.signal !== "up" && params.signal !== "down") return false;
+  if (!Number.isFinite(params.confidence)) return false;
+  const confidencePct = confidenceToPct(params.confidence);
+  return confidencePct >= clamp(params.confidenceTargetPct, 0, 100);
+}
+
+type TelegramConfig = {
+  botToken: string;
+  chatId: string;
+};
+
+function parseTelegramConfigValue(value: unknown): string | null {
+  if (typeof value !== "string") return null;
+  const trimmed = value.trim();
+  return trimmed.length > 0 ? trimmed : null;
+}
+
+async function resolveTelegramConfig(): Promise<TelegramConfig | null> {
+  const envToken = parseTelegramConfigValue(process.env.TELEGRAM_BOT_TOKEN);
+  const envChatId = parseTelegramConfigValue(process.env.TELEGRAM_CHAT_ID);
+  if (envToken && envChatId) {
+    return { botToken: envToken, chatId: envChatId };
+  }
+
+  const config = await db.alertConfig.findUnique({
+    where: { key: "default" },
+    select: {
+      telegramBotToken: true,
+      telegramChatId: true
+    }
+  });
+
+  const botToken = parseTelegramConfigValue(config?.telegramBotToken);
+  const chatId = parseTelegramConfigValue(config?.telegramChatId);
+  if (!botToken || !chatId) return null;
+
+  return { botToken, chatId };
+}
+
+async function sendTelegramMessage(params: TelegramConfig & { text: string }): Promise<void> {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 10_000);
+
+  try {
+    const response = await fetch(`https://api.telegram.org/bot${params.botToken}/sendMessage`, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json"
+      },
+      body: JSON.stringify({
+        chat_id: params.chatId,
+        text: params.text,
+        disable_web_page_preview: true
+      }),
+      signal: controller.signal
+    });
+
+    const payload = (await response.json().catch(() => ({}))) as { ok?: boolean };
+    if (!response.ok || payload.ok === false) {
+      throw new Error(`telegram_api_failed:${response.status}`);
+    }
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+async function notifyTradablePrediction(params: {
+  userId: string;
+  exchange: string;
+  exchangeAccountLabel: string;
+  symbol: string;
+  marketType: PredictionMarketType;
+  timeframe: PredictionTimeframe;
+  signal: PredictionSignal;
+  confidence: number;
+  confidenceTargetPct: number;
+  expectedMovePct: number;
+  predictionId: string | null;
+  explanation?: string | null;
+  source: "manual" | "auto";
+}): Promise<void> {
+  if (!isTradableSignal({
+    signal: params.signal,
+    confidence: params.confidence,
+    confidenceTargetPct: params.confidenceTargetPct
+  })) {
+    return;
+  }
+
+  const config = await resolveTelegramConfig();
+  if (!config) {
+    return;
+  }
+
+  const confidencePct = confidenceToPct(params.confidence);
+  const signalLabel = params.signal === "up" ? "LONG" : "SHORT";
+  const explanation = typeof params.explanation === "string" ? params.explanation.trim() : "";
+  const shortExplanation = explanation.length > 180 ? `${explanation.slice(0, 177)}...` : explanation;
+
+  const lines = [
+    "uTrade tradable signal",
+    `${params.symbol} (${params.marketType}, ${params.timeframe})`,
+    `Signal: ${signalLabel}`,
+    `Confidence: ${confidencePct.toFixed(1)}% (target ${params.confidenceTargetPct.toFixed(0)}%)`,
+    `Expected move: ${params.expectedMovePct.toFixed(2)}%`,
+    `Exchange: ${params.exchange} / ${params.exchangeAccountLabel}`,
+    `Source: ${params.source}`,
+    params.predictionId ? `Prediction ID: ${params.predictionId}` : null,
+    shortExplanation ? `Reason: ${shortExplanation}` : null
+  ].filter((line): line is string => Boolean(line));
+
+  try {
+    await sendTelegramMessage({
+      ...config,
+      text: lines.join("\n")
+    });
+  } catch (error) {
+    // eslint-disable-next-line no-console
+    console.warn("[telegram] prediction notification failed", {
+      userId: params.userId,
+      predictionId: params.predictionId ?? null,
+      reason: String(error)
+    });
+  }
+}
+
+function readRequestedLeverage(snapshot: Record<string, unknown>): number | undefined {
+  const parsed = pickNumber(snapshot, ["requestedLeverage", "leverage"]);
+  if (parsed === null) return undefined;
+  if (!Number.isFinite(parsed)) return undefined;
+  const bounded = Math.max(1, Math.min(125, Math.trunc(parsed)));
+  return bounded;
+}
+
+function computeSignalPnlPct(
+  signal: PredictionSignal,
+  entryPrice: number,
+  price: number
+): number {
+  if (!Number.isFinite(entryPrice) || entryPrice <= 0 || !Number.isFinite(price) || price <= 0) {
+    return 0;
+  }
+  if (signal === "down") {
+    return ((entryPrice - price) / entryPrice) * 100;
+  }
+  return ((price - entryPrice) / entryPrice) * 100;
+}
+
+type PredictionOutcomeEvaluation = {
+  data: Record<string, unknown>;
+  terminal: boolean;
+};
+
+function evaluatePredictionOutcomeFromCandles(params: {
+  row: {
+    signal: PredictionSignal;
+    timeframe: PredictionTimeframe;
+    tsCreated: Date;
+    entryPrice: number | null;
+    stopLossPrice: number | null;
+    takeProfitPrice: number | null;
+    horizonMs: number | null;
+    featuresSnapshot: unknown;
+  };
+  candles: CandleBar[];
+  nowMs: number;
+}): PredictionOutcomeEvaluation | null {
+  const row = params.row;
+  const signal = row.signal;
+  const snapshot = asRecord(row.featuresSnapshot);
+
+  if (signal === "neutral") {
+    return {
+      terminal: true,
+      data: {
+        outcomeStatus: "closed",
+        outcomeResult: "skipped",
+        outcomeReason: "neutral_signal",
+        outcomePnlPct: 0,
+        maxFavorablePct: 0,
+        maxAdversePct: 0,
+        outcomeEvaluatedAt: new Date(),
+        outcomeMeta: {
+          evaluatedFrom: row.tsCreated.toISOString(),
+          evaluatedTo: new Date(params.nowMs).toISOString(),
+          barsScanned: 0
+        }
+      }
+    };
+  }
+
+  const derived = derivePredictionTrackingFromSnapshot(snapshot, row.timeframe);
+  const entryPrice = row.entryPrice ?? derived.entryPrice;
+  const stopLossPrice = row.stopLossPrice ?? derived.stopLossPrice;
+  const takeProfitPrice = row.takeProfitPrice ?? derived.takeProfitPrice;
+  const horizonMs = row.horizonMs ?? derived.horizonMs ?? timeframeToIntervalMs(row.timeframe) * PREDICTION_OUTCOME_HORIZON_BARS;
+
+  if (!entryPrice || !stopLossPrice || !takeProfitPrice || !Number.isFinite(entryPrice) || entryPrice <= 0) {
+    return {
+      terminal: true,
+      data: {
+        outcomeStatus: "closed",
+        outcomeResult: "invalid",
+        outcomeReason: "missing_tracking_prices",
+        outcomeEvaluatedAt: new Date(),
+        outcomeMeta: {
+          hasEntryPrice: Boolean(entryPrice),
+          hasStopLossPrice: Boolean(stopLossPrice),
+          hasTakeProfitPrice: Boolean(takeProfitPrice)
+        }
+      }
+    };
+  }
+
+  const expireAtMs = row.tsCreated.getTime() + Math.max(60_000, horizonMs);
+  const evaluationEndMs = Math.min(params.nowMs, expireAtMs);
+
+  const bars = params.candles
+    .filter((bar) => bar.ts !== null)
+    .filter((bar) => (bar.ts as number) >= row.tsCreated.getTime() && (bar.ts as number) <= evaluationEndMs);
+
+  if (bars.length === 0) {
+    if (params.nowMs >= expireAtMs) {
+      return {
+        terminal: true,
+        data: {
+          outcomeStatus: "closed",
+          outcomeResult: "expired",
+          outcomeReason: "horizon_elapsed_no_data",
+          outcomeEvaluatedAt: new Date(),
+          outcomeMeta: {
+            evaluatedFrom: row.tsCreated.toISOString(),
+            evaluatedTo: new Date(evaluationEndMs).toISOString(),
+            barsScanned: 0
+          }
+        }
+      };
+    }
+    return null;
+  }
+
+  let maxFavorablePct = Number.NEGATIVE_INFINITY;
+  let maxAdversePct = Number.POSITIVE_INFINITY;
+
+  for (const bar of bars) {
+    const favorable =
+      signal === "down"
+        ? ((entryPrice - bar.low) / entryPrice) * 100
+        : ((bar.high - entryPrice) / entryPrice) * 100;
+    const adverse =
+      signal === "down"
+        ? ((entryPrice - bar.high) / entryPrice) * 100
+        : ((bar.low - entryPrice) / entryPrice) * 100;
+
+    maxFavorablePct = Math.max(maxFavorablePct, favorable);
+    maxAdversePct = Math.min(maxAdversePct, adverse);
+
+    const tpHit = signal === "down" ? bar.low <= takeProfitPrice : bar.high >= takeProfitPrice;
+    const slHit = signal === "down" ? bar.high >= stopLossPrice : bar.low <= stopLossPrice;
+
+    if (tpHit || slHit) {
+      const conservativeSlFirst = tpHit && slHit;
+      const result = conservativeSlFirst ? "sl_hit" : tpHit ? "tp_hit" : "sl_hit";
+      const settledPrice = result === "tp_hit" ? takeProfitPrice : stopLossPrice;
+      const pnl = computeSignalPnlPct(signal, entryPrice, settledPrice);
+      return {
+        terminal: true,
+        data: {
+          outcomeStatus: "closed",
+          outcomeResult: result,
+          outcomeReason: conservativeSlFirst ? "both_hit_same_bar_conservative_sl" : "price_touched_level",
+          outcomePnlPct: Number(pnl.toFixed(4)),
+          maxFavorablePct: Number(maxFavorablePct.toFixed(4)),
+          maxAdversePct: Number(maxAdversePct.toFixed(4)),
+          outcomeEvaluatedAt: new Date(),
+          outcomeMeta: {
+            entryPrice,
+            takeProfitPrice,
+            stopLossPrice,
+            evaluatedFrom: row.tsCreated.toISOString(),
+            evaluatedTo: new Date(evaluationEndMs).toISOString(),
+            barsScanned: bars.length
+          }
+        }
+      };
+    }
+  }
+
+  const pending = params.nowMs < expireAtMs;
+  const lastClose = bars[bars.length - 1]?.close;
+  const expiredPnl =
+    Number.isFinite(lastClose) && lastClose > 0
+      ? Number(computeSignalPnlPct(signal, entryPrice, lastClose).toFixed(4))
+      : null;
+
+  return {
+    terminal: !pending,
+    data: {
+      outcomeStatus: pending ? "pending" : "closed",
+      outcomeResult: pending ? null : "expired",
+      outcomeReason: pending ? "awaiting_levels" : "horizon_elapsed",
+      outcomePnlPct: pending ? null : expiredPnl,
+      maxFavorablePct: Number(maxFavorablePct.toFixed(4)),
+      maxAdversePct: Number(maxAdversePct.toFixed(4)),
+      outcomeEvaluatedAt: new Date(),
+      outcomeMeta: {
+        entryPrice,
+        takeProfitPrice,
+        stopLossPrice,
+        evaluatedFrom: row.tsCreated.toISOString(),
+        evaluatedTo: new Date(evaluationEndMs).toISOString(),
+        barsScanned: bars.length,
+        pending
+      }
+    }
+  };
+}
+
+function readPrefillExchangeAccountId(snapshot: Record<string, unknown>): string | null {
+  if (typeof snapshot.prefillExchangeAccountId !== "string") return null;
+  const value = snapshot.prefillExchangeAccountId.trim();
+  return value ? value : null;
+}
+
+function isAutoSchedulePaused(snapshot: Record<string, unknown>): boolean {
+  const value = snapshot.autoSchedulePaused;
+  if (typeof value === "boolean") return value;
+  if (typeof value === "number") return value > 0;
+  if (typeof value === "string") {
+    const normalized = value.trim().toLowerCase();
+    return ["1", "true", "on", "yes", "paused"].includes(normalized);
+  }
+  return false;
+}
+
+function predictionTemplateKey(parts: {
+  userId: string;
+  exchangeAccountId: string;
+  symbol: string;
+  marketType: PredictionMarketType;
+  timeframe: PredictionTimeframe;
+}): string {
+  return `${parts.userId}:${parts.exchangeAccountId}:${parts.symbol}:${parts.marketType}:${parts.timeframe}`;
+}
+
+function withAutoScheduleFlag(
+  featuresSnapshot: unknown,
+  enabled: boolean
+): Record<string, unknown> {
+  const snapshot = asRecord(featuresSnapshot);
+  return {
+    ...snapshot,
+    autoScheduleEnabled: enabled
+  };
+}
+
+async function resolvePredictionTemplateScope(userId: string, predictionId: string): Promise<{
+  rowId: string;
+  symbol: string;
+  marketType: PredictionMarketType;
+  timeframe: PredictionTimeframe;
+  exchangeAccountId: string | null;
+} | null> {
+  const row = await db.prediction.findFirst({
+    where: {
+      id: predictionId,
+      userId
+    },
+    select: {
+      id: true,
+      symbol: true,
+      marketType: true,
+      timeframe: true,
+      featuresSnapshot: true
+    }
+  });
+  if (!row) return null;
+
+  const snapshot = asRecord(row.featuresSnapshot);
+  const symbol = normalizeSymbolInput(row.symbol);
+  if (!symbol) return null;
+  return {
+    rowId: row.id,
+    symbol,
+    marketType: normalizePredictionMarketType(row.marketType),
+    timeframe: normalizePredictionTimeframe(row.timeframe),
+    exchangeAccountId: readPrefillExchangeAccountId(snapshot)
+  };
+}
+
+async function findPredictionTemplateRowIds(userId: string, scope: {
+  symbol: string;
+  marketType: PredictionMarketType;
+  timeframe: PredictionTimeframe;
+  exchangeAccountId: string | null;
+}): Promise<string[]> {
+  const rows = await db.prediction.findMany({
+    where: {
+      userId,
+      symbol: scope.symbol,
+      marketType: scope.marketType,
+      timeframe: scope.timeframe
+    },
+    select: {
+      id: true,
+      featuresSnapshot: true
+    }
+  });
+
+  return rows
+    .filter((row: any) => {
+      const snapshot = asRecord(row.featuresSnapshot);
+      return readPrefillExchangeAccountId(snapshot) === scope.exchangeAccountId;
+    })
+    .map((row: any) => row.id);
+}
+
+let predictionAutoTimer: NodeJS.Timeout | null = null;
+let predictionAutoRunning = false;
+let predictionOutcomeEvalTimer: NodeJS.Timeout | null = null;
+let predictionOutcomeEvalRunning = false;
+
+async function runPredictionOutcomeEvalCycle() {
+  if (!PREDICTION_OUTCOME_EVAL_ENABLED) return;
+  if (predictionOutcomeEvalRunning) return;
+  predictionOutcomeEvalRunning = true;
+
+  try {
+    const rows = await db.prediction.findMany({
+      where: {
+        userId: { not: null },
+        outcomeStatus: "pending"
+      },
+      orderBy: [{ tsCreated: "asc" }],
+      take: PREDICTION_OUTCOME_EVAL_BATCH_SIZE,
+      select: {
+        id: true,
+        userId: true,
+        symbol: true,
+        marketType: true,
+        timeframe: true,
+        signal: true,
+        tsCreated: true,
+        entryPrice: true,
+        stopLossPrice: true,
+        takeProfitPrice: true,
+        horizonMs: true,
+        featuresSnapshot: true
+      }
+    });
+
+    if (rows.length === 0) return;
+
+    const defaultAccountByUser = new Map<string, string | null>();
+    const grouped = new Map<string, Array<any>>();
+
+    for (const row of rows) {
+      const userId = typeof row.userId === "string" ? row.userId : null;
+      if (!userId) continue;
+
+      const snapshot = asRecord(row.featuresSnapshot);
+      let exchangeAccountId = readPrefillExchangeAccountId(snapshot);
+
+      if (!exchangeAccountId) {
+        if (!defaultAccountByUser.has(userId)) {
+          const defaultAccount = await db.exchangeAccount.findFirst({
+            where: { userId },
+            orderBy: { updatedAt: "desc" },
+            select: { id: true }
+          });
+          defaultAccountByUser.set(userId, defaultAccount?.id ?? null);
+        }
+        exchangeAccountId = defaultAccountByUser.get(userId) ?? null;
+      }
+
+      if (!exchangeAccountId) {
+        await db.prediction.update({
+          where: { id: row.id },
+          data: {
+            outcomeStatus: "closed",
+            outcomeResult: "invalid",
+            outcomeReason: "missing_exchange_account",
+            outcomeEvaluatedAt: new Date()
+          }
+        });
+        continue;
+      }
+
+      const key = `${userId}:${exchangeAccountId}`;
+      const list = grouped.get(key) ?? [];
+      list.push({
+        ...row,
+        userId,
+        exchangeAccountId
+      });
+      grouped.set(key, list);
+    }
+
+    const nowMs = Date.now();
+    for (const [key, groupRows] of grouped.entries()) {
+      const [userId, exchangeAccountId] = key.split(":");
+      let adapter: BitgetFuturesAdapter | null = null;
+      try {
+        const account = await resolveTradingAccount(userId, exchangeAccountId);
+        adapter = createBitgetAdapter(account);
+        await adapter.contractCache.warmup();
+
+        for (const row of groupRows) {
+          const timeframe = normalizePredictionTimeframe(row.timeframe);
+          const signal = normalizePredictionSignal(row.signal);
+          const symbol = normalizeSymbolInput(row.symbol);
+          if (!symbol) continue;
+
+          const exchangeSymbol = await adapter.toExchangeSymbol(symbol);
+          const horizonMs = row.horizonMs ?? timeframeToIntervalMs(timeframe) * PREDICTION_OUTCOME_HORIZON_BARS;
+          const endTime = Math.min(nowMs, row.tsCreated.getTime() + Math.max(60_000, horizonMs));
+          const candlesRaw = await adapter.marketApi.getCandles({
+            symbol: exchangeSymbol,
+            productType: adapter.productType,
+            granularity: timeframeToBitgetGranularity(timeframe),
+            startTime: row.tsCreated.getTime(),
+            endTime,
+            limit: 500
+          });
+          const candles = parseBitgetCandles(candlesRaw);
+
+          const evaluation = evaluatePredictionOutcomeFromCandles({
+            row: {
+              signal,
+              timeframe,
+              tsCreated: row.tsCreated,
+              entryPrice: Number.isFinite(Number(row.entryPrice)) ? Number(row.entryPrice) : null,
+              stopLossPrice: Number.isFinite(Number(row.stopLossPrice)) ? Number(row.stopLossPrice) : null,
+              takeProfitPrice: Number.isFinite(Number(row.takeProfitPrice)) ? Number(row.takeProfitPrice) : null,
+              horizonMs: Number.isFinite(Number(row.horizonMs)) ? Number(row.horizonMs) : null,
+              featuresSnapshot: row.featuresSnapshot
+            },
+            candles,
+            nowMs
+          });
+
+          if (!evaluation) continue;
+          await db.prediction.update({
+            where: { id: row.id },
+            data: evaluation.data
+          });
+        }
+      } catch (error) {
+        // eslint-disable-next-line no-console
+        console.warn("[predictions:outcome] cycle group failed", { key, reason: String(error) });
+      } finally {
+        if (adapter) {
+          await adapter.close();
+        }
+      }
+    }
+  } catch (error) {
+    // eslint-disable-next-line no-console
+    console.error("[predictions:outcome] scheduler cycle failed", String(error));
+  } finally {
+    predictionOutcomeEvalRunning = false;
+  }
+}
+
+async function runPredictionAutoCycle() {
+  if (!PREDICTION_AUTO_ENABLED) return;
+  if (predictionAutoRunning) return;
+
+  predictionAutoRunning = true;
+  try {
+    const rows = await db.prediction.findMany({
+      where: {
+        userId: { not: null }
+      },
+      orderBy: [{ tsCreated: "desc" }, { createdAt: "desc" }],
+      take: PREDICTION_AUTO_TEMPLATE_SCAN_LIMIT,
+      select: {
+        id: true,
+        userId: true,
+        symbol: true,
+        marketType: true,
+        timeframe: true,
+        tsCreated: true,
+        featuresSnapshot: true
+      }
+    });
+
+    const templates = new Map<string, ({
+      userId: string;
+      exchangeAccountId: string;
+      symbol: string;
+      marketType: PredictionMarketType;
+      timeframe: PredictionTimeframe;
+      directionPreference: DirectionPreference;
+      confidenceTargetPct: number;
+      leverage?: number;
+      tsCreated: Date;
+      modelVersionBase?: string;
+    }) | null>();
+
+    for (const row of rows) {
+      const userId = typeof row.userId === "string" ? row.userId : null;
+      if (!userId) continue;
+
+      const snapshot = asRecord(row.featuresSnapshot);
+      const exchangeAccountId = readPrefillExchangeAccountId(snapshot);
+      if (!exchangeAccountId) continue;
+
+      const symbol = normalizeSymbolInput(row.symbol);
+      if (!symbol) continue;
+
+      const timeframe = normalizePredictionTimeframe(row.timeframe);
+      const marketType = normalizePredictionMarketType(row.marketType);
+      const key = predictionTemplateKey({
+        userId,
+        exchangeAccountId,
+        symbol,
+        marketType,
+        timeframe
+      });
+      if (templates.has(key)) continue;
+      if (!isAutoScheduleEnabled(snapshot.autoScheduleEnabled)) {
+        templates.set(key, null);
+        continue;
+      }
+      if (isAutoSchedulePaused(snapshot)) {
+        templates.set(key, null);
+        continue;
+      }
+
+      templates.set(key, {
+        userId,
+        exchangeAccountId,
+        symbol,
+        marketType,
+        timeframe,
+        directionPreference: parseDirectionPreference(snapshot.directionPreference),
+        confidenceTargetPct: readConfidenceTarget(snapshot),
+        leverage: readRequestedLeverage(snapshot),
+        tsCreated: row.tsCreated,
+        modelVersionBase: typeof row.modelVersion === "string" ? row.modelVersion : undefined
+      });
+    }
+
+    const now = Date.now();
+    let executed = 0;
+    for (const template of templates.values()) {
+      if (!template) continue;
+      if (executed >= PREDICTION_AUTO_MAX_RUNS_PER_CYCLE) break;
+      const dueMs = timeframeToIntervalMs(template.timeframe);
+      const ageMs = now - template.tsCreated.getTime();
+      if (ageMs < dueMs) continue;
+
+      try {
+        await generateAutoPredictionForUser(template.userId, {
+          exchangeAccountId: template.exchangeAccountId,
+          symbol: template.symbol,
+          marketType: template.marketType,
+          timeframe: template.timeframe,
+          directionPreference: template.directionPreference,
+          confidenceTargetPct: template.confidenceTargetPct,
+          leverage: template.marketType === "perp" ? template.leverage : undefined,
+          autoSchedule: true,
+          modelVersionBase: "baseline-v1:auto-market-v1:scheduler"
+        });
+        executed += 1;
+      } catch (error) {
+        // eslint-disable-next-line no-console
+        console.warn("[predictions:auto] generation failed", {
+          userId: template.userId,
+          exchangeAccountId: template.exchangeAccountId,
+          symbol: template.symbol,
+          timeframe: template.timeframe,
+          reason: String(error)
+        });
+      }
+    }
+
+    if (executed > 0) {
+      // eslint-disable-next-line no-console
+      console.log(`[predictions:auto] generated ${executed} prediction(s)`);
+    }
+  } catch (error) {
+    // eslint-disable-next-line no-console
+    console.error("[predictions:auto] scheduler cycle failed", String(error));
+  } finally {
+    predictionAutoRunning = false;
+  }
+}
+
+function startPredictionAutoScheduler() {
+  if (!PREDICTION_AUTO_ENABLED) return;
+  predictionAutoTimer = setInterval(() => {
+    void runPredictionAutoCycle();
+  }, PREDICTION_AUTO_POLL_MS);
+  void runPredictionAutoCycle();
+}
+
+function stopPredictionAutoScheduler() {
+  if (!predictionAutoTimer) return;
+  clearInterval(predictionAutoTimer);
+  predictionAutoTimer = null;
+}
+
+function startPredictionOutcomeEvalScheduler() {
+  if (!PREDICTION_OUTCOME_EVAL_ENABLED) return;
+  predictionOutcomeEvalTimer = setInterval(() => {
+    void runPredictionOutcomeEvalCycle();
+  }, PREDICTION_OUTCOME_EVAL_POLL_MS);
+  void runPredictionOutcomeEvalCycle();
+}
+
+function stopPredictionOutcomeEvalScheduler() {
+  if (!predictionOutcomeEvalTimer) return;
+  clearInterval(predictionOutcomeEvalTimer);
+  predictionOutcomeEvalTimer = null;
 }
 
 type WsAuthUser = {
@@ -660,6 +2079,81 @@ app.get("/auth/me", requireAuth, async (_req, res) => {
   return res.json({ user: getUserFromLocals(res) });
 });
 
+app.get("/settings/alerts", requireAuth, async (_req, res) => {
+  const config = await db.alertConfig.findUnique({
+    where: { key: "default" },
+    select: {
+      telegramBotToken: true,
+      telegramChatId: true
+    }
+  });
+
+  return res.json({
+    telegramBotToken: config?.telegramBotToken ?? null,
+    telegramChatId: config?.telegramChatId ?? null
+  });
+});
+
+app.put("/settings/alerts", requireAuth, async (req, res) => {
+  const parsed = alertsSettingsSchema.safeParse(req.body ?? {});
+  if (!parsed.success) {
+    return res.status(400).json({ error: "invalid_payload", details: parsed.error.flatten() });
+  }
+
+  const token = parseTelegramConfigValue(parsed.data.telegramBotToken);
+  const chatId = parseTelegramConfigValue(parsed.data.telegramChatId);
+
+  const updated = await db.alertConfig.upsert({
+    where: { key: "default" },
+    create: {
+      key: "default",
+      telegramBotToken: token,
+      telegramChatId: chatId
+    },
+    update: {
+      telegramBotToken: token,
+      telegramChatId: chatId
+    },
+    select: {
+      telegramBotToken: true,
+      telegramChatId: true
+    }
+  });
+
+  return res.json({
+    telegramBotToken: updated.telegramBotToken ?? null,
+    telegramChatId: updated.telegramChatId ?? null
+  });
+});
+
+app.post("/alerts/test", requireAuth, async (_req, res) => {
+  const user = getUserFromLocals(res);
+  const config = await resolveTelegramConfig();
+  if (!config) {
+    return res.status(400).json({
+      error: "telegram_not_configured",
+      details: "Set telegramBotToken + telegramChatId in /settings/notifications"
+    });
+  }
+
+  try {
+    await sendTelegramMessage({
+      ...config,
+      text: [
+        "uTrade Telegram test",
+        `User: ${user.email}`,
+        `Time: ${new Date().toISOString()}`
+      ].join("\n")
+    });
+    return res.json({ ok: true });
+  } catch (error) {
+    return res.status(502).json({
+      error: "telegram_send_failed",
+      details: String(error)
+    });
+  }
+});
+
 app.get("/api/trading/settings", requireAuth, async (_req, res) => {
   const user = getUserFromLocals(res);
   const settings = await getTradingSettings(user.id);
@@ -686,6 +2180,7 @@ app.post("/api/predictions/generate", requireAuth, async (req, res) => {
 
   const payload = parsed.data;
   const tsCreated = payload.tsCreated ?? new Date().toISOString();
+  const tracking = derivePredictionTrackingFromSnapshot(payload.featureSnapshot, payload.timeframe);
 
   const created = await generateAndPersistPrediction({
     symbol: payload.symbol,
@@ -694,9 +2189,34 @@ app.post("/api/predictions/generate", requireAuth, async (req, res) => {
     tsCreated,
     prediction: payload.prediction,
     featureSnapshot: payload.featureSnapshot,
+    tracking,
     userId: user.id,
     botId: payload.botId ?? null,
     modelVersionBase: payload.modelVersionBase
+  });
+
+  await notifyTradablePrediction({
+    userId: user.id,
+    exchange:
+      typeof payload.featureSnapshot.prefillExchange === "string" &&
+      payload.featureSnapshot.prefillExchange.trim()
+        ? payload.featureSnapshot.prefillExchange.trim().toLowerCase()
+        : "bitget",
+    exchangeAccountLabel:
+      typeof payload.featureSnapshot.prefillExchangeAccountId === "string" &&
+      payload.featureSnapshot.prefillExchangeAccountId.trim()
+        ? payload.featureSnapshot.prefillExchangeAccountId.trim()
+        : "n/a",
+    symbol: payload.symbol,
+    marketType: payload.marketType,
+    timeframe: payload.timeframe,
+    signal: payload.prediction.signal,
+    confidence: payload.prediction.confidence,
+    confidenceTargetPct: readConfidenceTarget(payload.featureSnapshot),
+    expectedMovePct: payload.prediction.expectedMovePct,
+    predictionId: created.rowId,
+    explanation: created.explanation.explanation,
+    source: "manual"
   });
 
   return res.status(created.persisted ? 201 : 202).json({
@@ -711,6 +2231,692 @@ app.post("/api/predictions/generate", requireAuth, async (req, res) => {
     explanation: created.explanation,
     modelVersion: created.modelVersion,
     predictionId: created.rowId
+  });
+});
+
+app.post("/api/predictions/generate-auto", requireAuth, async (req, res) => {
+  const user = getUserFromLocals(res);
+  const parsed = predictionGenerateAutoSchema.safeParse(req.body);
+  if (!parsed.success) {
+    return res.status(400).json({ error: "invalid_payload", details: parsed.error.flatten() });
+  }
+
+  const payload = parsed.data;
+
+  try {
+    const created = await generateAutoPredictionForUser(user.id, payload);
+    return res.status(created.persisted ? 201 : 202).json({
+      persisted: created.persisted,
+      prediction: {
+        symbol: normalizeSymbolInput(payload.symbol),
+        marketType: payload.marketType,
+        timeframe: payload.timeframe,
+        tsCreated: created.tsCreated,
+        ...created.prediction
+      },
+      directionPreference: payload.directionPreference,
+      leverage: payload.leverage ?? null,
+      autoSchedule: payload.autoSchedule,
+      explanation: created.explanation,
+      modelVersion: created.modelVersion,
+      predictionId: created.predictionId
+    });
+  } catch (error) {
+    return sendManualTradingError(res, error);
+  }
+});
+
+app.get("/api/predictions", requireAuth, async (req, res) => {
+  const user = getUserFromLocals(res);
+  const parsed = predictionListQuerySchema.safeParse(req.query);
+  if (!parsed.success) {
+    return res.status(400).json({ error: "invalid_query", details: parsed.error.flatten() });
+  }
+
+  const rows = await db.prediction.findMany({
+    where: { userId: user.id },
+    orderBy: [{ tsCreated: "desc" }, { createdAt: "desc" }],
+    take: parsed.data.limit
+  });
+
+  const botIds = rows
+    .map((row: any) => (typeof row.botId === "string" && row.botId.trim() ? row.botId : null))
+    .filter((value: string | null): value is string => Boolean(value));
+
+  const [bots, exchangeAccounts] = await Promise.all([
+    botIds.length > 0
+      ? db.bot.findMany({
+          where: {
+            id: { in: botIds },
+            userId: user.id
+          },
+          select: {
+            id: true,
+            exchange: true,
+            exchangeAccountId: true
+          }
+        })
+      : Promise.resolve([]),
+    db.exchangeAccount.findMany({
+      where: { userId: user.id },
+      orderBy: { updatedAt: "desc" },
+      select: {
+        id: true,
+        exchange: true
+      }
+    })
+  ]);
+
+  const botMap = new Map<string, { exchange: string; exchangeAccountId: string | null }>();
+  for (const bot of bots) {
+    botMap.set(bot.id, {
+      exchange: bot.exchange,
+      exchangeAccountId: bot.exchangeAccountId ?? null
+    });
+  }
+
+  const defaultAccount = exchangeAccounts[0] ?? null;
+  const accountMap = new Map<string, { exchange: string }>();
+  for (const account of exchangeAccounts) {
+    accountMap.set(account.id, { exchange: account.exchange });
+  }
+
+  const items = rows.map((row: any) => {
+    const linkedBot = typeof row.botId === "string" ? botMap.get(row.botId) : undefined;
+    const snapshot = asRecord(row.featuresSnapshot);
+    const requestedPrefillAccountId =
+      typeof snapshot.prefillExchangeAccountId === "string"
+        ? snapshot.prefillExchangeAccountId
+        : null;
+    const requestedPrefillExchange =
+      typeof snapshot.prefillExchange === "string"
+        ? snapshot.prefillExchange
+        : null;
+
+    const prefillAccountId =
+      requestedPrefillAccountId && accountMap.has(requestedPrefillAccountId)
+        ? requestedPrefillAccountId
+        : null;
+
+    const fallbackAccountId =
+      prefillAccountId ??
+      linkedBot?.exchangeAccountId ??
+      defaultAccount?.id ??
+      null;
+
+    const accountExchange = fallbackAccountId ? accountMap.get(fallbackAccountId)?.exchange : null;
+    const fallbackExchange =
+      requestedPrefillExchange ??
+      accountExchange ??
+      linkedBot?.exchange ??
+      defaultAccount?.exchange ??
+      "bitget";
+
+    return {
+      id: row.id,
+      symbol: row.symbol,
+      marketType: normalizePredictionMarketType(row.marketType),
+      timeframe: normalizePredictionTimeframe(row.timeframe),
+      tsCreated: row.tsCreated.toISOString(),
+      signal: normalizePredictionSignal(row.signal),
+      expectedMovePct: row.expectedMovePct,
+      confidence: row.confidence,
+      explanation: typeof row.explanation === "string" ? row.explanation : "",
+      tags: asStringArray(row.tags).slice(0, 10),
+      entryPrice: Number.isFinite(Number(row.entryPrice)) ? Number(row.entryPrice) : null,
+      stopLossPrice: Number.isFinite(Number(row.stopLossPrice)) ? Number(row.stopLossPrice) : null,
+      takeProfitPrice: Number.isFinite(Number(row.takeProfitPrice)) ? Number(row.takeProfitPrice) : null,
+      horizonMs: Number.isFinite(Number(row.horizonMs)) ? Number(row.horizonMs) : null,
+      outcomeStatus: typeof row.outcomeStatus === "string" ? row.outcomeStatus : "pending",
+      outcomeResult: typeof row.outcomeResult === "string" ? row.outcomeResult : null,
+      outcomePnlPct: Number.isFinite(Number(row.outcomePnlPct)) ? Number(row.outcomePnlPct) : null,
+      maxFavorablePct: Number.isFinite(Number(row.maxFavorablePct)) ? Number(row.maxFavorablePct) : null,
+      maxAdversePct: Number.isFinite(Number(row.maxAdversePct)) ? Number(row.maxAdversePct) : null,
+      outcomeEvaluatedAt:
+        row.outcomeEvaluatedAt instanceof Date ? row.outcomeEvaluatedAt.toISOString() : null,
+      autoScheduleEnabled: isAutoScheduleEnabled(snapshot.autoScheduleEnabled),
+      confidenceTargetPct: readConfiguredConfidenceTarget(snapshot),
+      exchange: fallbackExchange,
+      accountId: fallbackAccountId
+    };
+  });
+
+  return res.json({
+    items
+  });
+});
+
+app.get("/api/predictions/quality", requireAuth, async (req, res) => {
+  const user = getUserFromLocals(res);
+  const rows = await db.prediction.findMany({
+    where: {
+      userId: user.id,
+      outcomeStatus: "closed"
+    },
+    orderBy: { tsCreated: "desc" },
+    take: 500,
+    select: {
+      outcomeResult: true,
+      outcomePnlPct: true
+    }
+  });
+
+  let tp = 0;
+  let sl = 0;
+  let expired = 0;
+  let skipped = 0;
+  let invalid = 0;
+  let pnlSum = 0;
+  let pnlCount = 0;
+
+  for (const row of rows) {
+    const result = typeof row.outcomeResult === "string" ? row.outcomeResult : "";
+    if (result === "tp_hit") tp += 1;
+    else if (result === "sl_hit") sl += 1;
+    else if (result === "expired") expired += 1;
+    else if (result === "skipped") skipped += 1;
+    else if (result === "invalid") invalid += 1;
+
+    const pnl = Number(row.outcomePnlPct);
+    if (Number.isFinite(pnl)) {
+      pnlSum += pnl;
+      pnlCount += 1;
+    }
+  }
+
+  const sampleSize = rows.length;
+  const winRatePct = sampleSize > 0 ? Number(((tp / sampleSize) * 100).toFixed(2)) : null;
+  const avgOutcomePnlPct = pnlCount > 0 ? Number((pnlSum / pnlCount).toFixed(4)) : null;
+
+  return res.json({
+    sampleSize,
+    tp,
+    sl,
+    expired,
+    skipped,
+    invalid,
+    winRatePct,
+    avgOutcomePnlPct
+  });
+});
+
+app.get("/api/predictions/running", requireAuth, async (req, res) => {
+  const user = getUserFromLocals(res);
+
+  const [rows, exchangeAccounts] = await Promise.all([
+    db.prediction.findMany({
+      where: { userId: user.id },
+      orderBy: [{ tsCreated: "desc" }, { createdAt: "desc" }],
+      take: Math.max(200, PREDICTION_AUTO_TEMPLATE_SCAN_LIMIT),
+      select: {
+        id: true,
+        symbol: true,
+        marketType: true,
+        timeframe: true,
+        tsCreated: true,
+        featuresSnapshot: true
+      }
+    }),
+    db.exchangeAccount.findMany({
+      where: { userId: user.id },
+      select: {
+        id: true,
+        exchange: true,
+        label: true
+      }
+    })
+  ]);
+
+  const accountMap = new Map<string, { exchange: string; label: string }>();
+  for (const account of exchangeAccounts) {
+    accountMap.set(account.id, {
+      exchange: account.exchange,
+      label: account.label
+    });
+  }
+
+  const templateMap = new Map<string, {
+    id: string;
+    symbol: string;
+    marketType: PredictionMarketType;
+    timeframe: PredictionTimeframe;
+    exchangeAccountId: string;
+    exchange: string;
+    label: string;
+    directionPreference: DirectionPreference;
+    confidenceTargetPct: number;
+    leverage: number | null;
+    paused: boolean;
+    tsCreated: string;
+    nextRunAt: string;
+    dueInSec: number;
+  } | null>();
+
+  const now = Date.now();
+  for (const row of rows) {
+    const snapshot = asRecord(row.featuresSnapshot);
+    const exchangeAccountId = readPrefillExchangeAccountId(snapshot);
+    if (!exchangeAccountId) continue;
+
+    const symbol = normalizeSymbolInput(row.symbol);
+    if (!symbol) continue;
+
+    const timeframe = normalizePredictionTimeframe(row.timeframe);
+    const marketType = normalizePredictionMarketType(row.marketType);
+    const key = predictionTemplateKey({
+      userId: user.id,
+      exchangeAccountId,
+      symbol,
+      marketType,
+      timeframe
+    });
+
+    if (templateMap.has(key)) continue;
+
+    if (!isAutoScheduleEnabled(snapshot.autoScheduleEnabled)) {
+      templateMap.set(key, null);
+      continue;
+    }
+    const paused = isAutoSchedulePaused(snapshot);
+
+    const dueAt = row.tsCreated.getTime() + timeframeToIntervalMs(timeframe);
+    const dueInSec = Math.max(0, Math.floor((dueAt - now) / 1000));
+    const account = accountMap.get(exchangeAccountId);
+
+    templateMap.set(key, {
+      id: row.id,
+      symbol,
+      marketType,
+      timeframe,
+      exchangeAccountId,
+      exchange: account?.exchange ?? "bitget",
+      label: account?.label ?? exchangeAccountId,
+      directionPreference: parseDirectionPreference(snapshot.directionPreference),
+      confidenceTargetPct: readConfidenceTarget(snapshot),
+      leverage: readRequestedLeverage(snapshot) ?? null,
+      paused,
+      tsCreated: row.tsCreated.toISOString(),
+      nextRunAt: new Date(dueAt).toISOString(),
+      dueInSec
+    });
+  }
+
+  const items = Array.from(templateMap.values())
+    .filter((item): item is Exclude<typeof item, null> => Boolean(item))
+    .sort((a, b) => a.dueInSec - b.dueInSec);
+
+  return res.json({ items });
+});
+
+app.post("/api/predictions/:id/pause", requireAuth, async (req, res) => {
+  const user = getUserFromLocals(res);
+  const params = predictionIdParamSchema.safeParse(req.params);
+  if (!params.success) {
+    return res.status(400).json({ error: "invalid_prediction_id" });
+  }
+  const body = predictionPauseSchema.safeParse(req.body ?? {});
+  if (!body.success) {
+    return res.status(400).json({ error: "invalid_payload", details: body.error.flatten() });
+  }
+
+  const scope = await resolvePredictionTemplateScope(user.id, params.data.id);
+  if (!scope) {
+    return res.status(404).json({ error: "prediction_not_found" });
+  }
+
+  const templateRowIds = await findPredictionTemplateRowIds(user.id, {
+    symbol: scope.symbol,
+    marketType: scope.marketType,
+    timeframe: scope.timeframe,
+    exchangeAccountId: scope.exchangeAccountId
+  });
+  const ids = templateRowIds.length > 0 ? templateRowIds : [scope.rowId];
+
+  const rows = await db.prediction.findMany({
+    where: {
+      id: { in: ids },
+      userId: user.id
+    },
+    select: {
+      id: true,
+      featuresSnapshot: true
+    }
+  });
+
+  await Promise.all(
+    rows.map((row: any) => {
+      const snapshot = asRecord(row.featuresSnapshot);
+      return db.prediction.update({
+        where: { id: row.id },
+        data: {
+          featuresSnapshot: {
+            ...snapshot,
+            autoScheduleEnabled: true,
+            autoSchedulePaused: body.data.paused
+          }
+        }
+      });
+    })
+  );
+
+  return res.json({
+    ok: true,
+    paused: body.data.paused,
+    updatedCount: rows.length
+  });
+});
+
+app.post("/api/predictions/:id/stop", requireAuth, async (req, res) => {
+  const user = getUserFromLocals(res);
+  const params = predictionIdParamSchema.safeParse(req.params);
+  if (!params.success) {
+    return res.status(400).json({ error: "invalid_prediction_id" });
+  }
+
+  const scope = await resolvePredictionTemplateScope(user.id, params.data.id);
+  if (!scope) {
+    return res.status(404).json({ error: "prediction_not_found" });
+  }
+
+  const templateRowIds = await findPredictionTemplateRowIds(user.id, {
+    symbol: scope.symbol,
+    marketType: scope.marketType,
+    timeframe: scope.timeframe,
+    exchangeAccountId: scope.exchangeAccountId
+  });
+  const ids = templateRowIds.length > 0 ? templateRowIds : [scope.rowId];
+
+  const rows = await db.prediction.findMany({
+    where: {
+      id: { in: ids },
+      userId: user.id
+    },
+    select: {
+      id: true,
+      featuresSnapshot: true
+    }
+  });
+
+  await Promise.all(
+    rows.map((row: any) =>
+      db.prediction.update({
+        where: { id: row.id },
+        data: {
+          featuresSnapshot: withAutoScheduleFlag(row.featuresSnapshot, false)
+        }
+      })
+    )
+  );
+
+  return res.json({
+    ok: true,
+    stoppedCount: rows.length
+  });
+});
+
+app.post("/api/predictions/:id/delete-schedule", requireAuth, async (req, res) => {
+  const user = getUserFromLocals(res);
+  const params = predictionIdParamSchema.safeParse(req.params);
+  if (!params.success) {
+    return res.status(400).json({ error: "invalid_prediction_id" });
+  }
+
+  const scope = await resolvePredictionTemplateScope(user.id, params.data.id);
+  if (!scope) {
+    return res.status(404).json({ error: "prediction_not_found" });
+  }
+
+  const templateRowIds = await findPredictionTemplateRowIds(user.id, {
+    symbol: scope.symbol,
+    marketType: scope.marketType,
+    timeframe: scope.timeframe,
+    exchangeAccountId: scope.exchangeAccountId
+  });
+  const ids = templateRowIds.length > 0 ? templateRowIds : [scope.rowId];
+
+  const deleted = await db.prediction.deleteMany({
+    where: {
+      userId: user.id,
+      id: { in: ids }
+    }
+  });
+
+  return res.json({
+    ok: true,
+    deletedCount: deleted.count
+  });
+});
+
+app.post("/api/predictions/clear-old", requireAuth, async (req, res) => {
+  const user = getUserFromLocals(res);
+  const parsed = predictionClearOldSchema.safeParse(req.body ?? {});
+  if (!parsed.success) {
+    return res.status(400).json({ error: "invalid_payload", details: parsed.error.flatten() });
+  }
+
+  const olderThanDays = parsed.data.olderThanDays;
+  const keepRunningTemplates = parsed.data.keepRunningTemplates;
+  const cutoff = new Date(Date.now() - olderThanDays * 24 * 60 * 60 * 1000);
+
+  const preservedIds = new Set<string>();
+  if (keepRunningTemplates) {
+    const rows = await db.prediction.findMany({
+      where: { userId: user.id },
+      orderBy: [{ tsCreated: "desc" }, { createdAt: "desc" }],
+      select: {
+        id: true,
+        symbol: true,
+        marketType: true,
+        timeframe: true,
+        featuresSnapshot: true
+      }
+    });
+
+    const seen = new Set<string>();
+    for (const row of rows) {
+      const snapshot = asRecord(row.featuresSnapshot);
+      const exchangeAccountId = readPrefillExchangeAccountId(snapshot);
+      if (!exchangeAccountId) continue;
+
+      const symbol = normalizeSymbolInput(row.symbol);
+      if (!symbol) continue;
+
+      const key = predictionTemplateKey({
+        userId: user.id,
+        exchangeAccountId,
+        symbol,
+        marketType: normalizePredictionMarketType(row.marketType),
+        timeframe: normalizePredictionTimeframe(row.timeframe)
+      });
+      if (seen.has(key)) continue;
+      seen.add(key);
+
+      if (isAutoScheduleEnabled(snapshot.autoScheduleEnabled)) {
+        preservedIds.add(row.id);
+      }
+    }
+  }
+
+  const oldRows = await db.prediction.findMany({
+    where: {
+      userId: user.id,
+      tsCreated: { lt: cutoff }
+    },
+    select: { id: true }
+  });
+
+  const deleteIds = oldRows
+    .map((row: any) => row.id)
+    .filter((id: string) => !preservedIds.has(id));
+
+  if (deleteIds.length === 0) {
+    return res.json({
+      ok: true,
+      olderThanDays,
+      cutoffIso: cutoff.toISOString(),
+      deletedCount: 0,
+      preservedCount: preservedIds.size
+    });
+  }
+
+  const deleted = await db.prediction.deleteMany({
+    where: {
+      userId: user.id,
+      id: { in: deleteIds }
+    }
+  });
+
+  return res.json({
+    ok: true,
+    olderThanDays,
+    cutoffIso: cutoff.toISOString(),
+    deletedCount: deleted.count,
+    preservedCount: preservedIds.size
+  });
+});
+
+app.post("/api/predictions/delete-many", requireAuth, async (req, res) => {
+  const user = getUserFromLocals(res);
+  const parsed = predictionDeleteManySchema.safeParse(req.body ?? {});
+  if (!parsed.success) {
+    return res.status(400).json({ error: "invalid_payload", details: parsed.error.flatten() });
+  }
+
+  const uniqueIds = Array.from(new Set(parsed.data.ids));
+  if (uniqueIds.length === 0) {
+    return res.json({ ok: true, deletedCount: 0 });
+  }
+
+  const deleted = await db.prediction.deleteMany({
+    where: {
+      userId: user.id,
+      id: { in: uniqueIds }
+    }
+  });
+
+  return res.json({
+    ok: true,
+    deletedCount: deleted.count
+  });
+});
+
+app.get("/api/predictions/:id", requireAuth, async (req, res) => {
+  const user = getUserFromLocals(res);
+  const params = predictionIdParamSchema.safeParse(req.params);
+  if (!params.success) {
+    return res.status(400).json({ error: "invalid_prediction_id" });
+  }
+
+  const row = await db.prediction.findFirst({
+    where: {
+      id: params.data.id,
+      userId: user.id
+    }
+  });
+
+  if (!row) {
+    return res.status(404).json({ error: "prediction_not_found" });
+  }
+
+  const [linkedBot, exchangeAccounts] = await Promise.all([
+    row.botId
+      ? db.bot.findFirst({
+          where: {
+            id: row.botId,
+            userId: user.id
+          },
+          select: {
+            exchange: true,
+            exchangeAccountId: true
+          }
+        })
+      : Promise.resolve(null),
+    db.exchangeAccount.findMany({
+      where: { userId: user.id },
+      orderBy: { updatedAt: "desc" },
+      select: {
+        id: true,
+        exchange: true
+      }
+    })
+  ]);
+
+  const accountMap = new Map<string, { exchange: string }>();
+  for (const account of exchangeAccounts) {
+    accountMap.set(account.id, { exchange: account.exchange });
+  }
+  const defaultAccount = exchangeAccounts[0] ?? null;
+
+  const snapshot = asRecord(row.featuresSnapshot);
+  const requestedPrefillAccountId =
+    typeof snapshot.prefillExchangeAccountId === "string"
+      ? snapshot.prefillExchangeAccountId
+      : null;
+  const requestedPrefillExchange =
+    typeof snapshot.prefillExchange === "string"
+      ? snapshot.prefillExchange
+      : null;
+  const prefillAccountId =
+    requestedPrefillAccountId && accountMap.has(requestedPrefillAccountId)
+      ? requestedPrefillAccountId
+      : null;
+
+  const suggestedEntry = deriveSuggestedEntry(snapshot);
+  const suggestedStopLoss = pickNumber(snapshot, ["suggestedStopLoss", "stopLoss", "slPrice", "sl"]);
+  const suggestedTakeProfit = pickNumber(snapshot, ["suggestedTakeProfit", "takeProfit", "tpPrice", "tp"]);
+  const requestedLeverageRaw = pickNumber(snapshot, ["requestedLeverage", "leverage"]);
+  const requestedLeverage =
+    requestedLeverageRaw !== null && Number.isFinite(requestedLeverageRaw)
+      ? Math.max(1, Math.min(125, Math.trunc(requestedLeverageRaw)))
+      : null;
+  const positionSizeHint = derivePositionSizeHint(snapshot);
+
+  const resolvedAccountId =
+    prefillAccountId ??
+    linkedBot?.exchangeAccountId ??
+    defaultAccount?.id ??
+    null;
+
+  const resolvedExchangeFromAccount =
+    resolvedAccountId ? accountMap.get(resolvedAccountId)?.exchange : null;
+
+  return res.json({
+    id: row.id,
+    predictionId: row.id,
+    symbol: row.symbol,
+    marketType: normalizePredictionMarketType(row.marketType),
+    timeframe: normalizePredictionTimeframe(row.timeframe),
+    tsCreated: row.tsCreated.toISOString(),
+    signal: normalizePredictionSignal(row.signal),
+    expectedMovePct: row.expectedMovePct,
+    confidence: row.confidence,
+    leverage: requestedLeverage,
+    explanation: typeof row.explanation === "string" ? row.explanation : "",
+    tags: asStringArray(row.tags).slice(0, 10),
+    keyDrivers: derivePredictionKeyDrivers(snapshot),
+    exchange:
+      requestedPrefillExchange ??
+      resolvedExchangeFromAccount ??
+      linkedBot?.exchange ??
+      defaultAccount?.exchange ??
+      "bitget",
+    accountId: resolvedAccountId,
+    suggestedEntry,
+    suggestedStopLoss,
+    suggestedTakeProfit,
+    positionSizeHint,
+    entryPrice: Number.isFinite(Number(row.entryPrice)) ? Number(row.entryPrice) : null,
+    stopLossPrice: Number.isFinite(Number(row.stopLossPrice)) ? Number(row.stopLossPrice) : null,
+    takeProfitPrice: Number.isFinite(Number(row.takeProfitPrice)) ? Number(row.takeProfitPrice) : null,
+    horizonMs: Number.isFinite(Number(row.horizonMs)) ? Number(row.horizonMs) : null,
+    outcomeStatus: typeof row.outcomeStatus === "string" ? row.outcomeStatus : "pending",
+    outcomeResult: typeof row.outcomeResult === "string" ? row.outcomeResult : null,
+    outcomeReason: typeof row.outcomeReason === "string" ? row.outcomeReason : null,
+    outcomePnlPct: Number.isFinite(Number(row.outcomePnlPct)) ? Number(row.outcomePnlPct) : null,
+    maxFavorablePct: Number.isFinite(Number(row.maxFavorablePct)) ? Number(row.maxFavorablePct) : null,
+    maxAdversePct: Number.isFinite(Number(row.maxAdversePct)) ? Number(row.maxAdversePct) : null,
+    outcomeEvaluatedAt:
+      row.outcomeEvaluatedAt instanceof Date ? row.outcomeEvaluatedAt.toISOString() : null
   });
 });
 
@@ -1900,10 +4106,14 @@ server.listen(port, () => {
   // eslint-disable-next-line no-console
   console.log(`[api] listening on :${port}`);
   startExchangeAutoSyncScheduler();
+  startPredictionAutoScheduler();
+  startPredictionOutcomeEvalScheduler();
 });
 
 process.on("SIGTERM", () => {
   stopExchangeAutoSyncScheduler();
+  stopPredictionAutoScheduler();
+  stopPredictionOutcomeEvalScheduler();
   marketWss.close();
   userWss.close();
   server.close();
@@ -1912,6 +4122,8 @@ process.on("SIGTERM", () => {
 
 process.on("SIGINT", () => {
   stopExchangeAutoSyncScheduler();
+  stopPredictionAutoScheduler();
+  stopPredictionOutcomeEvalScheduler();
   marketWss.close();
   userWss.close();
   server.close();

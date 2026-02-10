@@ -1,185 +1,111 @@
-# uLiquid Market-Maker
+# uTrade Futures
 
-Webbasierter Crypto Market-Maker mit Market-Making‑Strategien, Volume‑Bot, Multi‑CEX‑Support, Metrics/Charts und optionalen Add‑Ons (z.B. DEX‑Price‑Feed, AI‑Insights).
+Multi-tenant Futures Trading Platform mit:
+- Web App (Next.js)
+- API (Express + Prisma)
+- Runner Worker (Bot-Orchestrierung)
+- PostgreSQL + Redis
+- Bitget Futures Integration
+- AI-Predictions + Trading-Desk Prefill
+- Telegram Notifications für handelbare Signale
 
----
+## Architektur
 
-## Features (Kurz)
+Browser -> Web (3000)
+Browser -> API (4000 dev / 8080 prod)
+Runner -> API/DB/Redis
+API/Runner -> Postgres + Redis + Exchange APIs
 
-- Market Making (Spread, Levels, Inventory Skew, Jitter)
-- Volume Bot (fill‑basiert, echte Trades)
-- Multi‑CEX Architektur (Bitmart, Coinstore, Pionex, P2B, MEXC)
-- Web UI (Next.js App Router)
-- API (Node.js + Express + Prisma)
-- Runner Service (Trading Loops)
-- Metrics & Charts (BotMetric Time‑Series)
-- AI Insights (Read‑Only, lizenziert)
-- DEX Price Feed (Read‑Only, lizenziert)
-- PostgreSQL, Docker, HTTPS via Caddy
-- User / Login / Workspace / License Management
+## Schnellstart lokal (Docker)
 
----
+1. `.env` anlegen:
+```bash
+cp .env.example .env
+```
 
-## Architektur Überblick
+2. Stack starten:
+```bash
+docker compose -f docker-compose.dev.yml up -d --build
+```
 
-Browser → Caddy → Web (3000)
-                   API (8080)
-                   Runner
-                   Postgres
+3. Erreichbarkeit prüfen:
+```bash
+curl -i http://localhost:4000/health
+open http://localhost:3000
+```
 
----
+4. Account erstellen:
+- Web: `http://localhost:3000/register`
 
-## Voraussetzungen
+## Production Deploy (VPS)
 
-- Ubuntu 22.04 LTS VPS
-- Docker & Docker Compose
-- Domain + DNS:
-  - `marketmaker.example.com` → VPS IP
-  - `api.marketmaker.example.com` → VPS IP
-- Offene Ports: 80/tcp, 443/tcp, 22/tcp
+Voraussetzungen:
+- Ubuntu 22.04+
+- DNS auf VPS-IP
+- Ports `22`, `80`, `443` offen
 
----
-
-## Installation (VPS – empfohlen)
-
-### Option A) Schnellinstallation via Script
-
-Das Script richtet Docker, Node 20, Caddy (optional), `.env.prod` und die Container ein.
+### Option A: Installer Script (empfohlen)
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/Mario1480/Market-Maker/main/scripts/install_vps.sh -o /tmp/install_vps.sh
+curl -fsSL https://raw.githubusercontent.com/Mario1480/uTrade-Bots/main/scripts/install_vps.sh -o /tmp/install_vps.sh
 chmod +x /tmp/install_vps.sh
 sudo /tmp/install_vps.sh
 ```
 
-Der Installer fragt u.a.:
-- Web/API Domain
-- Admin Email/Password
-- SMTP Passwort
-- License Key (optional)
-- AI Provider + Key (optional)
+Das Script:
+- installiert Docker + Firewall + optional Caddy
+- klont Repo nach `/opt/utrade-bots` (Default)
+- schreibt `.env.prod`
+- startet `docker-compose.prod.yml`
 
-Danach laufen Web + API + Runner automatisch. Logs:
+### Option B: manuell
 
-```bash
-docker compose -f /opt/market-maker/docker-compose.prod.yml ps
-docker compose -f /opt/market-maker/docker-compose.prod.yml logs -f --tail=200 api
-docker compose -f /opt/market-maker/docker-compose.prod.yml logs -f --tail=200 web
-docker compose -f /opt/market-maker/docker-compose.prod.yml logs -f --tail=200 runner
-```
+Siehe `docs/PRODUCTION_DEPLOY.md`.
 
-### Option B) Manuelle Installation (Schritt für Schritt)
+## Wichtige ENV-Variablen
 
-### 1) Docker installieren
+Core:
+- `DATABASE_URL`
+- `NEXT_PUBLIC_API_URL`
+- `API_BASE_URL`
+- `CORS_ORIGINS`
+- `SECRET_MASTER_KEY` (Pflicht für Secret-Verschlüsselung)
 
-```bash
-curl -fsSL https://get.docker.com | sudo sh
-sudo usermod -aG docker $USER
-```
+Trading:
+- `BITGET_REST_BASE_URL`
+- `BITGET_PRODUCT_TYPE`
+- `BITGET_MARGIN_COIN`
 
-Neue Shell öffnen oder neu einloggen.
+Queue/Runner:
+- `ORCHESTRATION_MODE=queue`
+- `REDIS_URL`
+- `WORKER_CONCURRENCY`
 
-### 2) Projekt deployen
+AI Predictions:
+- `AI_PROVIDER` (`none` oder `openai`)
+- `AI_API_KEY`
+- `AI_MODEL`
 
-```bash
-sudo mkdir -p /opt/market-maker
-sudo chown -R $USER:$USER /opt/market-maker
-cd /opt/market-maker
-git clone <REPO_URL> .
-```
+License:
+- `LICENSE_ENFORCEMENT` (`on`/`off`)
+- `LICENSE_STUB_ENABLED`
+- `LICENSE_SERVER_URL`
 
-### 3) .env.prod anlegen
+Telegram:
+- `TELEGRAM_BOT_TOKEN`
+- `TELEGRAM_CHAT_ID`
+- alternativ in der UI: `/settings/notifications`
 
-```bash
-nano .env.prod
-```
+## Nützliche URLs
 
-Minimal (Beispiel):
+- Web: `http://localhost:3000`
+- API Health (dev): `http://localhost:4000/health`
+- API Health (prod): `http://<api-domain>/health`
+- Manual Trading Desk: `/trade`
+- Predictions: `/predictions`
+- Telegram Settings: `/settings/notifications`
 
-```
-NODE_ENV=production
-
-DATABASE_URL=postgresql://mm:mm@postgres:5432/marketmaker
-
-ADMIN_EMAIL=admin@example.com
-ADMIN_PASSWORD=CHANGE_ME
-ADMIN_WORKSPACE_NAME=Main
-
-NEXT_PUBLIC_API_URL=https://api.marketmaker.example.com
-API_BASE_URL=http://api:8080
-
-COOKIE_DOMAIN=.example.com
-COOKIE_SECURE=true
-
-CORS_ORIGINS=https://marketmaker.example.com,http://localhost:3000
-
-BITMART_BASE_URL=https://api-cloud.bitmart.com
-COINSTORE_BASE_URL=https://api.coinstore.com
-PIONEX_BASE_URL=https://api.pionex.com
-
-SMTP_HOST=smtp.example.com
-SMTP_PORT=465
-SMTP_USER=no-reply@example.com
-SMTP_PASS=CHANGE_ME
-SMTP_FROM="uLiquid <no-reply@example.com>"
-SMTP_SECURE=true
-INVITE_BASE_URL=https://marketmaker.example.com
-
-# AI (Read-only insights)
-AI_PROVIDER=none
-AI_BASE_URL=https://api.openai.com/v1
-AI_API_KEY=
-AI_MODEL=gpt-4o-mini
-AI_TIMEOUT_MS=30000
-AI_CACHE_TTL_SEC=300
-AI_RATE_LIMIT_PER_MIN=30
-```
-
-### 4) Caddy (HTTPS) installieren
-
-```bash
-sudo snap install caddy
-sudo snap start --enable caddy.server
-sudo nano /var/snap/caddy/common/Caddyfile
-```
-
-Beispiel:
-
-```
-marketmaker.example.com {
-  reverse_proxy 127.0.0.1:3000
-}
-
-api.marketmaker.example.com {
-  reverse_proxy 127.0.0.1:8080
-}
-```
-
-Aktivieren:
-
-```bash
-sudo caddy adapt \
-  --config /var/snap/caddy/common/Caddyfile \
-  --adapter caddyfile \
-  --pretty > /var/snap/caddy/common/caddy.json
-
-sudo snap restart caddy.server
-```
-
-### 5) Container bauen und starten
-
-```bash
-docker compose -f docker-compose.prod.yml build
-docker compose -f docker-compose.prod.yml up -d
-```
-
-### 6) Migrationen ausführen
-
-```bash
-docker compose -f docker-compose.prod.yml exec -T api sh -lc "npx prisma migrate deploy"
-```
-
-### 7) Status & Logs
+## Betrieb / Logs
 
 ```bash
 docker compose -f docker-compose.prod.yml ps
@@ -188,62 +114,22 @@ docker compose -f docker-compose.prod.yml logs -f --tail=200 web
 docker compose -f docker-compose.prod.yml logs -f --tail=200 runner
 ```
 
----
-
-## Zugriff
-
-- Web UI: `https://marketmaker.example.com`
-- API Health: `https://api.marketmaker.example.com/health`
-- Admin User wird beim ersten Start automatisch angelegt
-
----
-
-## Updates / Re-Deploy
+## Update / Re-Deploy
 
 ```bash
-cd /opt/market-maker
+cd /opt/utrade-bots
 git pull
-docker compose -f docker-compose.prod.yml build
-docker compose -f docker-compose.prod.yml up -d
-docker compose -f docker-compose.prod.yml exec -T api sh -lc "npx prisma migrate deploy"
+docker compose -f docker-compose.prod.yml up -d --build --remove-orphans
 ```
 
-## Deinstallation (optional)
+## Troubleshooting
 
-```bash
-cd /opt/market-maker
-docker compose -f docker-compose.prod.yml down -v
-sudo rm -rf /opt/market-maker
-```
+Login/NetworkError:
+- `NEXT_PUBLIC_API_URL`, `CORS_ORIGINS`, API Health prüfen
 
----
+Prisma/Migrations:
+- API-Logs prüfen (`migrate deploy` läuft beim API-Start)
 
-## Add‑Ons & Lizenzen
-
-Einige Features sind lizenziert (z.B. DEX Price Feed, AI Insights).
-- Wenn ein Add‑On deaktiviert ist, werden UI‑Elemente ausgeblendet.
-- Runner/Trading bleibt unverändert.
-
----
-
-## Häufige Fehler
-
-**Login → NetworkError / CORS**
-- Prüfe `NEXT_PUBLIC_API_URL` und `CORS_ORIGINS`
-- `docker compose -f docker-compose.prod.yml build --no-cache web`
-
-**Prisma Fehler: Spalte existiert nicht**
-- Migrationen ausführen:
-  ```bash
-  docker compose -f docker-compose.prod.yml exec -T api sh -lc "npx prisma migrate deploy"
-  ```
-
-**Runner startet nicht**
-- Fehlende Exchange‑ENV prüfen (z.B. `BITMART_BASE_URL`)
-
----
-
-## Dev vs Production
-
-- **Development**: `docker-compose.dev.yml`, Hot Reload
-- **Production**: `docker-compose.prod.yml`, `next build`
+Trading/Bitget:
+- Exchange Account in UI prüfen (`/settings`)
+- Passphrase für Bitget ist erforderlich

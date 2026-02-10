@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useEffect, useState } from "react";
 import { ApiError, apiDelete, apiGet, apiPost } from "../../lib/api";
 
@@ -164,6 +165,16 @@ export default function SettingsPage() {
       <section className="card" style={{ padding: 12, marginBottom: 12 }}>
         <h3 style={{ marginTop: 0 }}>Account</h3>
         {loading ? <div>Loading...</div> : <div>{me?.email ?? "-"}</div>}
+      </section>
+
+      <section className="card" style={{ padding: 12, marginBottom: 12 }}>
+        <h3 style={{ marginTop: 0 }}>Notifications</h3>
+        <div style={{ fontSize: 13, color: "var(--muted)", marginBottom: 10 }}>
+          Configure Telegram alerts for tradable prediction signals.
+        </div>
+        <Link href="/settings/notifications" className="btn">
+          Open Telegram settings
+        </Link>
       </section>
 
       <section className="card" style={{ padding: 12, marginBottom: 12 }}>

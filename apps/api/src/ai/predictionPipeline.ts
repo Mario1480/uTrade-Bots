@@ -12,6 +12,12 @@ export type PredictionRecordInput = ExplainerInput & {
   userId?: string | null;
   botId?: string | null;
   modelVersionBase?: string;
+  tracking?: {
+    entryPrice?: number | null;
+    stopLossPrice?: number | null;
+    takeProfitPrice?: number | null;
+    horizonMs?: number | null;
+  };
 };
 
 export type PredictionRecordResult = {
@@ -48,6 +54,10 @@ export async function generateAndPersistPrediction(
         explanation: explanation.explanation,
         tags: explanation.tags,
         featuresSnapshot: input.featureSnapshot,
+        entryPrice: input.tracking?.entryPrice ?? null,
+        stopLossPrice: input.tracking?.stopLossPrice ?? null,
+        takeProfitPrice: input.tracking?.takeProfitPrice ?? null,
+        horizonMs: input.tracking?.horizonMs ?? null,
         modelVersion
       }
     });
@@ -73,4 +83,3 @@ export async function generateAndPersistPrediction(
     };
   }
 }
-

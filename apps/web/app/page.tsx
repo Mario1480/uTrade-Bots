@@ -88,6 +88,7 @@ export default function Page() {
           </div>
         </div>
         <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+          <Link href="/predictions" className="btn">Predictions</Link>
           <Link href="/trade" className="btn">Manual Trading</Link>
           <Link href="/bots/new" className="btn btnPrimary">New Futures Bot</Link>
         </div>

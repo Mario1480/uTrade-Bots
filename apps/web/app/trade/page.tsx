@@ -2,8 +2,13 @@
 
 import Link from "next/link";
 import { Suspense, useEffect, useMemo, useRef, useState } from "react";
-import { useSearchParams } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import { ApiError, apiGet, apiPost } from "../../lib/api";
+import {
+  parseTradeDeskPrefill,
+  TRADE_DESK_PREFILL_SESSION_KEY,
+  type TradeDeskPrefillPayload
+} from "../../src/schemas/tradeDeskPrefill";
 
 type ExchangeAccountItem = {
   id: string;
@@ -152,6 +157,13 @@ function fmt(value: number | null | undefined, digits = 2): string {
   });
 }
 
+function fmtConfidence(value: number): string {
+  if (!Number.isFinite(value)) return "-";
+  const normalized = value <= 1 ? value * 100 : value;
+  const clamped = Math.max(0, Math.min(100, normalized));
+  return `${clamped.toFixed(1)}%`;
+}
+
 function toTvInterval(value: string): string {
   if (value === "1m") return "1";
   if (value === "5m") return "5";
@@ -218,6 +230,7 @@ function TradingViewChart({ symbol, timeframe }: { symbol: string; timeframe: st
 }
 
 function TradePageContent() {
+  const router = useRouter();
   const searchParams = useSearchParams();
   const wsBase = useMemo(() => toWsBase(API_BASE), []);
 
@@ -254,6 +267,8 @@ function TradePageContent() {
   const [actionError, setActionError] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [isApplyingLeverage, setIsApplyingLeverage] = useState(false);
+  const [activePrefill, setActivePrefill] = useState<TradeDeskPrefillPayload | null>(null);
+  const [prefillInfo, setPrefillInfo] = useState<string | null>(null);
 
   const marketWsRef = useRef<WebSocket | null>(null);
   const userWsRef = useRef<WebSocket | null>(null);
@@ -268,6 +283,9 @@ function TradePageContent() {
     () => symbols.find((row) => row.symbol === selectedSymbol) ?? null,
     [symbols, selectedSymbol]
   );
+  const isSpotShortPrefillBlocked =
+    activePrefill?.marketType === "spot" &&
+    activePrefill.signal === "down";
 
   const numericLeverage = useMemo(() => {
     const value = Number(leverage);
@@ -418,6 +436,73 @@ function TradePageContent() {
     }
   }
 
+  function resetTicketDefaults() {
+    setOrderType("limit");
+    setMarginMode("cross");
+    setEntryMode("open");
+    setLeverage("10");
+    setQtyInputMode("quantity");
+    setQtyInputModeDraft("quantity");
+    setQty("0.001");
+    setQtyPercent(0);
+    setPrice("");
+    setTpSlEnabled(false);
+    setTakeProfitPrice("");
+    setStopLossPrice("");
+    setPrefillInfo(null);
+  }
+
+  function applyPrefillTicket(prefill: TradeDeskPrefillPayload) {
+    setActivePrefill(prefill);
+    setEntryMode("open");
+
+    if (prefill.timeframe && TIMEFRAMES.includes(prefill.timeframe as any)) {
+      setTimeframe(prefill.timeframe);
+    }
+
+    if (prefill.symbol) {
+      setSelectedSymbol(prefill.symbol.trim().toUpperCase());
+    }
+
+    if (prefill.suggestedEntry?.type === "market" || prefill.suggestedEntry?.type === "limit") {
+      setOrderType(prefill.suggestedEntry.type);
+    }
+
+    if (prefill.suggestedEntry?.type === "limit" && prefill.suggestedEntry.price) {
+      setPrice(String(prefill.suggestedEntry.price));
+    }
+
+    if (prefill.leverage && Number.isFinite(prefill.leverage) && prefill.leverage >= 1 && prefill.leverage <= 125) {
+      setLeverage(String(prefill.leverage));
+    }
+
+    if (prefill.suggestedTakeProfit || prefill.suggestedStopLoss) {
+      setTpSlEnabled(true);
+      setTakeProfitPrice(prefill.suggestedTakeProfit ? String(prefill.suggestedTakeProfit) : "");
+      setStopLossPrice(prefill.suggestedStopLoss ? String(prefill.suggestedStopLoss) : "");
+    }
+
+    if (prefill.positionSizeHint) {
+      if (prefill.positionSizeHint.mode === "percent_balance") {
+        setQtyInputMode("cost");
+        setQtyInputModeDraft("cost");
+        setQtyFromPercent(prefill.positionSizeHint.value);
+      } else {
+        setQtyInputMode("cost");
+        setQtyInputModeDraft("cost");
+        setQty(String(prefill.positionSizeHint.value));
+        setQtyPercent(0);
+      }
+    }
+
+    if (prefill.marketType === "spot" && prefill.signal === "down") {
+      setPrefillInfo("Spot short is not supported. Side prefill was skipped.");
+      return;
+    }
+
+    setPrefillInfo(null);
+  }
+
   async function persistSettings(next: Partial<TradingSettings>) {
     try {
       await apiPost<TradingSettings>("/api/trading/settings", next);
@@ -426,7 +511,10 @@ function TradePageContent() {
     }
   }
 
-  async function loadPrimaryState(preferredAccountId?: string | null) {
+  async function loadPrimaryState(
+    preferredAccountId?: string | null,
+    prefillPayload?: TradeDeskPrefillPayload | null
+  ) {
     setLoading(true);
     setError(null);
     try {
@@ -441,6 +529,7 @@ function TradePageContent() {
       const queryAccountId = searchParams.get("exchangeAccountId");
       const chosenAccount =
         preferredAccountId ??
+        prefillPayload?.accountId ??
         queryAccountId ??
         settings.exchangeAccountId ??
         accountRows[0]?.id ??
@@ -448,11 +537,18 @@ function TradePageContent() {
 
       setSelectedAccountId(chosenAccount);
 
-      if (settings.timeframe && TIMEFRAMES.includes(settings.timeframe as any)) {
+      if (
+        prefillPayload?.timeframe &&
+        TIMEFRAMES.includes(prefillPayload.timeframe as any)
+      ) {
+        setTimeframe(prefillPayload.timeframe);
+      } else if (settings.timeframe && TIMEFRAMES.includes(settings.timeframe as any)) {
         setTimeframe(settings.timeframe);
       }
 
-      if (settings.symbol) {
+      if (prefillPayload?.symbol) {
+        setSelectedSymbol(prefillPayload.symbol.trim().toUpperCase());
+      } else if (settings.symbol) {
         setSelectedSymbol(settings.symbol);
       }
     } catch (e) {
@@ -557,7 +653,32 @@ function TradePageContent() {
   }
 
   useEffect(() => {
-    void loadPrimaryState();
+    let parsedPrefill: TradeDeskPrefillPayload | null = null;
+    const prefillParam = searchParams.get("prefill");
+
+    if (prefillParam) {
+      if (prefillParam === "1") {
+        const raw = sessionStorage.getItem(TRADE_DESK_PREFILL_SESSION_KEY);
+        sessionStorage.removeItem(TRADE_DESK_PREFILL_SESSION_KEY);
+        if (raw) {
+          try {
+            parsedPrefill = parseTradeDeskPrefill(JSON.parse(raw));
+          } catch {
+            parsedPrefill = null;
+          }
+        }
+      }
+
+      if (!parsedPrefill) {
+        setSoftWarning("Invalid prefill payload.");
+      }
+    }
+
+    if (parsedPrefill) {
+      applyPrefillTicket(parsedPrefill);
+    }
+
+    void loadPrimaryState(parsedPrefill?.accountId ?? null, parsedPrefill);
     return () => {
       if (marketWsRef.current) marketWsRef.current.close();
       if (userWsRef.current) userWsRef.current.close();
@@ -568,9 +689,17 @@ function TradePageContent() {
 
   useEffect(() => {
     if (!selectedAccountId) return;
-    void loadDeskData(selectedAccountId);
+    void loadDeskData(selectedAccountId, activePrefill?.symbol ?? undefined);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [selectedAccountId]);
+  }, [selectedAccountId, activePrefill?.symbol]);
+
+  useEffect(() => {
+    if (!activePrefill?.positionSizeHint) return;
+    if (activePrefill.positionSizeHint.mode !== "percent_balance") return;
+    if (!estimatedMaxInputByMode || estimatedMaxInputByMode <= 0) return;
+    setQtyFromPercent(activePrefill.positionSizeHint.value);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activePrefill?.predictionId, estimatedMaxInputByMode]);
 
   useEffect(() => {
     if (!selectedAccountId || !selectedSymbol) return;
@@ -871,6 +1000,20 @@ function TradePageContent() {
     }
   }
 
+  function clearPrefill() {
+    setActivePrefill(null);
+    resetTicketDefaults();
+
+    const params = new URLSearchParams(searchParams.toString());
+    params.delete("prefill");
+    if (!params.get("exchangeAccountId") && selectedAccountId) {
+      params.set("exchangeAccountId", selectedAccountId);
+    }
+
+    const nextPath = params.toString() ? `/trade?${params.toString()}` : "/trade";
+    router.replace(nextPath);
+  }
+
   return (
     <div>
       <div className="dashboardHeader">
@@ -914,6 +1057,47 @@ function TradePageContent() {
       {softWarning ? (
         <div className="card" style={{ padding: 12, borderColor: "#f59e0b", marginBottom: 12 }}>
           <strong>Warning:</strong> {softWarning}
+        </div>
+      ) : null}
+
+      {activePrefill ? (
+        <div className="card" style={{ padding: 12, borderColor: "#3b82f6", marginBottom: 12 }}>
+          <div style={{ display: "flex", justifyContent: "space-between", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
+            <div>
+              <strong>Prefilled from Prediction</strong>
+              <div style={{ fontSize: 12, color: "var(--muted)", marginTop: 4 }}>
+                {activePrefill.symbol} · {activePrefill.timeframe} · {fmtConfidence(activePrefill.confidence)} ·{" "}
+                {new Date(activePrefill.tsCreated).toLocaleString()}
+              </div>
+              {activePrefill.leverage ? (
+                <div style={{ fontSize: 12, color: "var(--muted)", marginTop: 2 }}>
+                  Prefill leverage: {activePrefill.leverage}x
+                </div>
+              ) : null}
+            </div>
+            <button className="btn" onClick={clearPrefill} type="button">Clear Prefill</button>
+          </div>
+          <div style={{ marginTop: 8, fontSize: 12, color: "var(--muted)" }}>
+            Prediction ID: {activePrefill.predictionId}
+          </div>
+          {prefillInfo ? (
+            <div style={{ marginTop: 8, fontSize: 12, color: "#f59e0b" }}>{prefillInfo}</div>
+          ) : null}
+          {(activePrefill.tags?.length || activePrefill.explanation) ? (
+            <details style={{ marginTop: 8 }}>
+              <summary style={{ cursor: "pointer", fontSize: 12 }}>Show explanation and tags</summary>
+              {activePrefill.explanation ? (
+                <div style={{ marginTop: 6, fontSize: 12 }}>{activePrefill.explanation}</div>
+              ) : null}
+              {activePrefill.tags?.length ? (
+                <div style={{ marginTop: 6, display: "flex", gap: 6, flexWrap: "wrap" }}>
+                  {activePrefill.tags.map((tag) => (
+                    <span key={tag} className="badge">{tag}</span>
+                  ))}
+                </div>
+              ) : null}
+            </details>
+          ) : null}
         </div>
       ) : null}
 
@@ -1214,12 +1398,33 @@ function TradePageContent() {
                   <strong>{orderType === "limit" ? "GTC" : "IOC"}</strong>
                 </div>
 
+                {activePrefill ? (
+                  <div className="tradeOrderMetaRow">
+                    <span>Prefilled side</span>
+                    <strong>{activePrefill.side ? activePrefill.side.toUpperCase() : "Manual selection required"}</strong>
+                  </div>
+                ) : null}
+
                 <div className="tradeOrderActionGrid">
-                  <button className="btn btnStart" disabled={isSubmitting} onClick={() => void submitOrder("long")} type="button">
+                  <button
+                    className="btn btnStart"
+                    style={activePrefill?.side === "long" ? { boxShadow: "0 0 0 2px rgba(16,185,129,.45) inset" } : undefined}
+                    disabled={isSubmitting}
+                    onClick={() => void submitOrder("long")}
+                    type="button"
+                  >
                     {entryMode === "open" ? "Open Long" : "Close Short"}
+                    {activePrefill?.side === "long" ? " (Suggested)" : ""}
                   </button>
-                  <button className="btn btnStop" disabled={isSubmitting} onClick={() => void submitOrder("short")} type="button">
+                  <button
+                    className="btn btnStop"
+                    style={activePrefill?.side === "short" ? { boxShadow: "0 0 0 2px rgba(239,68,68,.45) inset" } : undefined}
+                    disabled={isSubmitting || isSpotShortPrefillBlocked}
+                    onClick={() => void submitOrder("short")}
+                    type="button"
+                  >
                     {entryMode === "open" ? "Open Short" : "Close Long"}
+                    {activePrefill?.side === "short" ? " (Suggested)" : ""}
                   </button>
                 </div>
 

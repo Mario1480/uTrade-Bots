@@ -521,6 +521,18 @@ model Prediction {
   explanation      String
   tags             Json
   featuresSnapshot Json
+  entryPrice       Float?
+  stopLossPrice    Float?
+  takeProfitPrice  Float?
+  horizonMs        Int?
+  outcomeStatus    String   @default("pending")
+  outcomeResult    String?
+  outcomeReason    String?
+  outcomePnlPct    Float?
+  maxFavorablePct  Float?
+  maxAdversePct    Float?
+  outcomeEvaluatedAt DateTime?
+  outcomeMeta      Json?
   modelVersion     String
   createdAt        DateTime @default(now())
   updatedAt        DateTime @updatedAt
@@ -528,4 +540,5 @@ model Prediction {
   @@index([symbol, timeframe, tsCreated])
   @@index([userId, createdAt])
   @@index([botId, createdAt])
+  @@index([userId, outcomeStatus, createdAt])
 }
