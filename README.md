@@ -124,8 +124,14 @@ docker compose -f docker-compose.prod.yml logs -f --tail=200 runner
 
 ```bash
 cd /opt/utrade-bots
-git pull
-docker compose -f docker-compose.prod.yml up -d --build --remove-orphans
+./scripts/deploy_prod.sh
+```
+
+Optional (ohne `git pull`):
+
+```bash
+cd /opt/utrade-bots
+./scripts/deploy_prod.sh --no-pull
 ```
 
 ## Troubleshooting
