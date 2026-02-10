@@ -886,7 +886,7 @@ a { color: inherit; }
 .btnPrimary {
   background: linear-gradient(129deg, #1481c0 0%, #ffc107 100%);
   border: 0;
-  color: #111;
+  color: #fff;
   font-weight: 700;
 }
 
