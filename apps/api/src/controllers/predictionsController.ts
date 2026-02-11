@@ -31,6 +31,18 @@ type PredictionDetailDb = {
       where: { id: string };
     }): Promise<PredictionRecord | null>;
   };
+  predictionState: {
+    findUnique(args: {
+      where: { id: string };
+    }): Promise<PredictionStateRecord | null>;
+  };
+  predictionEvent: {
+    findMany(args: {
+      where: { stateId: string };
+      orderBy: { tsCreated: "desc" }[];
+      take: number;
+    }): Promise<PredictionEventRecord[]>;
+  };
   bot: {
     findUnique(args: {
       where: { id: string };
@@ -83,6 +95,47 @@ type PredictionRecord = {
   outcomeMeta?: unknown;
 };
 
+type PredictionStateRecord = {
+  id: string;
+  userId: string;
+  exchange: string;
+  accountId: string;
+  symbol: string;
+  marketType: string;
+  timeframe: string;
+  tsUpdated: Date;
+  tsPredictedFor: Date;
+  signal: string;
+  expectedMovePct: number | null;
+  confidence: number;
+  tags: unknown;
+  explanation: string | null;
+  keyDrivers: unknown;
+  featuresSnapshot: unknown;
+  modelVersion: string;
+  lastAiExplainedAt: Date | null;
+  lastChangeHash: string | null;
+  lastChangeReason: string | null;
+  autoScheduleEnabled: boolean;
+  autoSchedulePaused: boolean;
+  directionPreference: string | null;
+  confidenceTargetPct: number | null;
+  leverage: number | null;
+  createdAt: Date;
+  updatedAt: Date;
+};
+
+type PredictionEventRecord = {
+  id: string;
+  tsCreated: Date;
+  changeType: string;
+  prevSnapshot: unknown;
+  newSnapshot: unknown;
+  delta: unknown;
+  modelVersion: string;
+  reason: string | null;
+};
+
 export type PredictionDetailControllerResult =
   | { status: 200; body: Record<string, unknown> }
   | { status: 400; body: { error: "invalid_prediction_id" } }
@@ -94,6 +147,8 @@ export type PredictionDetailControllerInput = {
   db: PredictionDetailDb;
   predictionId: string;
   userId: string;
+  includeEvents?: boolean;
+  eventsLimit?: number;
 };
 
 type Timeframe = "5m" | "15m" | "1h" | "4h" | "1d";
@@ -253,6 +308,163 @@ export async function getPredictionDetailController(
     return { status: 400, body: { error: "invalid_prediction_id" } };
   }
 
+  const [stateRow, exchangeAccounts] = await Promise.all([
+    input.db.predictionState.findUnique({
+      where: { id: parsedParams.data.id }
+    }),
+    input.db.exchangeAccount.findMany({
+      where: { userId: input.userId },
+      orderBy: { updatedAt: "desc" },
+      select: {
+        id: true,
+        exchange: true
+      }
+    })
+  ]);
+
+  if (stateRow) {
+    const accountIds = new Set(exchangeAccounts.map((rowItem) => rowItem.id));
+    const hasAccess = stateRow.userId === input.userId || accountIds.has(stateRow.accountId);
+    if (!hasAccess) {
+      return { status: 403, body: { error: "prediction_access_denied" } };
+    }
+
+    const resolvedAccountId =
+      stateRow.accountId && accountIds.has(stateRow.accountId)
+        ? stateRow.accountId
+        : exchangeAccounts[0]?.id ?? stateRow.accountId;
+    const resolvedExchangeFromAccount = exchangeAccounts.find(
+      (account) => account.id === resolvedAccountId
+    )?.exchange;
+    const resolvedExchange =
+      (typeof stateRow.exchange === "string" && stateRow.exchange.trim()) ||
+      resolvedExchangeFromAccount ||
+      "bitget";
+
+    const snapshot = normalizePredictionFeatureSnapshot(stateRow.featuresSnapshot);
+    const tags = normalizePredictionTags(stateRow.tags);
+    const explanation = normalizePredictionExplanation(stateRow.explanation);
+    const keyDrivers = normalizePredictionKeyDrivers(
+      stateRow.keyDrivers ?? (snapshot as Record<string, unknown>).keyDrivers ?? derivePredictionKeyDrivers(snapshot)
+    );
+    const indicators = asRecord(snapshot.indicators) ?? null;
+
+    const dtoCandidate = {
+      id: stateRow.id,
+      exchange: resolvedExchange,
+      accountId: resolvedAccountId,
+      symbol: stateRow.symbol,
+      marketType: normalizeMarketType(stateRow.marketType),
+      timeframe: normalizeTimeframe(stateRow.timeframe),
+      tsCreated: stateRow.tsUpdated.toISOString(),
+      tsPredictedFor: stateRow.tsPredictedFor.toISOString(),
+      prediction: {
+        signal: normalizeSignal(stateRow.signal),
+        expectedMovePct: toNumber(stateRow.expectedMovePct),
+        confidence: normalizePredictionConfidence(stateRow.confidence)
+      },
+      tags,
+      explanation: explanation.value,
+      keyDrivers,
+      featureSnapshot: snapshot,
+      modelVersion:
+        typeof stateRow.modelVersion === "string" && stateRow.modelVersion.trim().length > 0
+          ? stateRow.modelVersion
+          : "baseline-v1",
+      realized: {
+        realizedReturnPct: null,
+        evaluatedAt: null,
+        errorMetrics: null
+      }
+    };
+
+    const parsedDto = predictionDetailDtoSchema.safeParse(dtoCandidate);
+    if (!parsedDto.success) {
+      logger.error("prediction_detail_state_dto_validation_failed", {
+        predictionId: stateRow.id,
+        exchange: resolvedExchange,
+        timeframe: stateRow.timeframe,
+        modelVersion: stateRow.modelVersion,
+        featureSnapshotBytes: Buffer.byteLength(JSON.stringify(snapshot), "utf8"),
+        featureSnapshotHash: hashStableObject(snapshot)
+      });
+      return { status: 500, body: { error: "prediction_detail_unexpected_error" } };
+    }
+
+    if (explanation.truncated) {
+      logger.warn("prediction_detail_explanation_truncated", {
+        predictionId: stateRow.id,
+        exchange: parsedDto.data.exchange,
+        timeframe: parsedDto.data.timeframe,
+        modelVersion: parsedDto.data.modelVersion
+      });
+    }
+
+    const suggestedStopLoss = pickNumber(snapshot, ["suggestedStopLoss", "stopLoss", "slPrice", "sl"]);
+    const suggestedTakeProfit = pickNumber(snapshot, ["suggestedTakeProfit", "takeProfit", "tpPrice", "tp"]);
+    const requestedLeverageRaw = pickNumber(snapshot, ["requestedLeverage", "leverage"]);
+    const requestedLeverage =
+      requestedLeverageRaw !== null && Number.isFinite(requestedLeverageRaw)
+        ? Math.max(1, Math.min(125, Math.trunc(requestedLeverageRaw)))
+        : null;
+    const positionSizeHint = derivePositionSizeHint(snapshot);
+    const riskFlags = asRecord(snapshot.riskFlags);
+
+    const events =
+      input.includeEvents
+        ? await input.db.predictionEvent.findMany({
+            where: { stateId: stateRow.id },
+            orderBy: [{ tsCreated: "desc" }],
+            take: Math.max(1, Math.min(100, input.eventsLimit ?? 20))
+          })
+        : [];
+
+    return {
+      status: 200,
+      body: {
+        ...parsedDto.data,
+        predictionId: parsedDto.data.id,
+        signal: parsedDto.data.prediction.signal,
+        expectedMovePct: parsedDto.data.prediction.expectedMovePct,
+        confidence: parsedDto.data.prediction.confidence,
+        indicators: indicators ?? null,
+        riskFlags: riskFlags ?? null,
+        accountId: parsedDto.data.accountId === "unassigned" ? null : parsedDto.data.accountId,
+        leverage: requestedLeverage,
+        suggestedEntry: deriveSuggestedEntry(snapshot),
+        suggestedStopLoss,
+        suggestedTakeProfit,
+        positionSizeHint,
+        entryPrice: null,
+        stopLossPrice: suggestedStopLoss,
+        takeProfitPrice: suggestedTakeProfit,
+        horizonMs: null,
+        outcomeStatus: "pending",
+        outcomeResult: null,
+        outcomeReason: null,
+        outcomePnlPct: null,
+        maxFavorablePct: null,
+        maxAdversePct: null,
+        outcomeEvaluatedAt: null,
+        tags: asStringArray(parsedDto.data.tags).slice(0, 5),
+        ...(input.includeEvents
+          ? {
+              events: events.map((event) => ({
+                id: event.id,
+                tsCreated: event.tsCreated.toISOString(),
+                changeType: event.changeType,
+                reason: event.reason,
+                delta: event.delta,
+                prevSnapshot: event.prevSnapshot,
+                newSnapshot: event.newSnapshot,
+                modelVersion: event.modelVersion
+              }))
+            }
+          : {})
+      }
+    };
+  }
+
   const row = await input.db.prediction.findUnique({
     where: { id: parsedParams.data.id }
   });
@@ -260,7 +472,7 @@ export async function getPredictionDetailController(
     return { status: 404, body: { error: "prediction_not_found" } };
   }
 
-  const [linkedBot, exchangeAccounts] = await Promise.all([
+  const [linkedBot, ownedExchangeAccounts] = await Promise.all([
     row.botId
       ? input.db.bot.findUnique({
           where: { id: row.botId },
@@ -272,18 +484,11 @@ export async function getPredictionDetailController(
           }
         })
       : Promise.resolve(null),
-    input.db.exchangeAccount.findMany({
-      where: { userId: input.userId },
-      orderBy: { updatedAt: "desc" },
-      select: {
-        id: true,
-        exchange: true
-      }
-    })
+    Promise.resolve(exchangeAccounts)
   ]);
 
-  const accountIds = new Set(exchangeAccounts.map((rowItem) => rowItem.id));
-  const defaultAccount = exchangeAccounts[0] ?? null;
+  const accountIds = new Set(ownedExchangeAccounts.map((rowItem) => rowItem.id));
+  const defaultAccount = ownedExchangeAccounts[0] ?? null;
 
   const snapshot = normalizePredictionFeatureSnapshot(row.featuresSnapshot);
   const requestedPrefillAccountId =
@@ -315,7 +520,7 @@ export async function getPredictionDetailController(
     defaultAccount?.id ??
     "unassigned";
 
-  const resolvedExchangeFromAccount = exchangeAccounts.find((account) => account.id === resolvedAccountId)?.exchange;
+  const resolvedExchangeFromAccount = ownedExchangeAccounts.find((account) => account.id === resolvedAccountId)?.exchange;
   const resolvedExchange =
     requestedPrefillExchange ??
     resolvedExchangeFromAccount ??

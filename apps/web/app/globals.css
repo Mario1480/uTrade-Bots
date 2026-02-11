@@ -958,9 +958,22 @@ a { color: inherit; }
   margin-top: 8px;
 }
 
+.predictionRowFlipRecent {
+  box-shadow: inset 3px 0 0 rgba(20, 129, 192, 0.55);
+}
+
+.predictionRowFlipRecent td {
+  background: rgba(20, 129, 192, 0.05);
+}
+
 .predictionDetailPanel {
   margin: 0;
   padding: 12px;
+}
+
+.predictionDetailStack {
+  display: grid;
+  gap: 8px;
 }
 
 .predictionDetailHeader {
@@ -971,9 +984,105 @@ a { color: inherit; }
   flex-wrap: wrap;
 }
 
+.predictionDetailHeaderActions {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.predictionMiniBtn {
+  padding: 6px 10px;
+  border-radius: 6px;
+  font-size: 12px;
+}
+
 .predictionDetailWarning {
   color: #f59e0b;
   font-size: 12px;
+}
+
+.predictionContextRow {
+  margin-top: 8px;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+
+.predictionContextReason {
+  margin-top: 6px;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.35;
+  overflow-wrap: anywhere;
+}
+
+.predictionUpdateCell {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.predictionUpdateMeta {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.predictionUpdateMetaFresh::before {
+  content: "";
+  width: 7px;
+  height: 7px;
+  border-radius: 999px;
+  background: #10b981;
+  box-shadow: 0 0 0 4px rgba(16, 185, 129, 0.18);
+}
+
+.predictionChangeCell {
+  display: grid;
+  gap: 4px;
+}
+
+.predictionChangeBadges {
+  display: flex;
+  gap: 4px;
+  flex-wrap: wrap;
+}
+
+.predictionChangeText {
+  color: var(--muted);
+  font-size: 12px;
+  max-width: 190px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.predictionReasonBadgeTrigger {
+  border-color: rgba(20, 129, 192, 0.9);
+  color: #6ec8ff;
+}
+
+.predictionReasonBadgeScheduled {
+  border-color: rgba(148, 163, 184, 0.9);
+  color: #cbd5e1;
+}
+
+.predictionReasonBadgeManual {
+  border-color: rgba(255, 193, 7, 0.9);
+  color: #ffe082;
+}
+
+.predictionReasonBadgeUnknown {
+  border-color: rgba(148, 163, 184, 0.45);
+  color: var(--muted);
+}
+
+.predictionFlipBadge {
+  border-color: rgba(239, 68, 68, 0.9);
+  color: #ef4444;
 }
 
 .predictionIndicatorGrid {
@@ -1003,6 +1112,42 @@ a { color: inherit; }
   color: var(--muted);
   font-size: 12px;
   margin-top: 2px;
+}
+
+.predictionEventList {
+  margin-top: 10px;
+  display: grid;
+  gap: 6px;
+}
+
+.predictionEventItem {
+  border: 1px solid rgba(255, 193, 7, 0.22);
+  border-radius: 8px;
+  padding: 8px;
+  background: rgba(255, 255, 255, 0.02);
+}
+
+.predictionEventHeader {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 8px;
+}
+
+.predictionEventTimestamp {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.predictionEventReason {
+  margin-top: 6px;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.predictionEventDelta {
+  margin-top: 4px;
+  font-size: 12px;
 }
 
 .btn {
@@ -1305,6 +1450,19 @@ a { color: inherit; }
   .predictionDetailPanel {
     padding: 10px;
   }
+  .predictionContextRow {
+    gap: 5px;
+  }
+  .predictionContextReason {
+    font-size: 11px;
+  }
+  .predictionChangeText {
+    max-width: 100%;
+  }
+  .predictionMiniBtn {
+    width: 100%;
+    justify-content: center;
+  }
   .predictionIndicatorGrid {
     grid-template-columns: 1fr;
     gap: 6px;
@@ -1319,6 +1477,14 @@ a { color: inherit; }
     font-size: 13px;
   }
   .predictionIndicatorMeta {
+    font-size: 11px;
+  }
+  .predictionEventItem {
+    padding: 7px;
+  }
+  .predictionEventTimestamp,
+  .predictionEventReason,
+  .predictionEventDelta {
     font-size: 11px;
   }
   .homeGrid,

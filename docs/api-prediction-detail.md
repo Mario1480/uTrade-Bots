@@ -2,6 +2,9 @@
 
 ## Endpoint
 - `GET /api/predictions/:id`
+- Optional query:
+  - `events=1` include latest change events (when `:id` is a `predictions_state` id)
+  - `eventsLimit=<1..100>` default `20`
 
 ## Auth & Access
 - Authentication required.
@@ -57,3 +60,6 @@
 ## Notes
 - For compatibility with the current web client, the response still includes legacy top-level fields (for example `signal`, `confidence`, `expectedMovePct`, `predictionId`).
 - Contract validation is done server-side with zod before returning `200`.
+- `:id` can be either:
+  - legacy history row (`Prediction.id`)
+  - state row (`predictions_state.id`)

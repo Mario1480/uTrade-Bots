@@ -35,6 +35,11 @@ import {
 import { ExchangeSyncError, syncExchangeAccount } from "./exchange-sync.js";
 import { invalidateAiApiKeyCache } from "./ai/provider.js";
 import {
+  fallbackExplain,
+  generatePredictionExplanation,
+  type ExplainerOutput
+} from "./ai/predictionExplainer.js";
+import {
   ManualTradingError,
   cancelAllOrders,
   closePositionsMarket,
@@ -75,6 +80,15 @@ import {
 } from "./market/indicators.js";
 import { bucketCandles } from "./market/timeframe.js";
 import { registerPredictionDetailRoute } from "./routes/predictions.js";
+import {
+  buildEventDelta,
+  buildPredictionChangeHash,
+  evaluateSignificantChange,
+  refreshIntervalMsForTimeframe,
+  shouldCallAiForRefresh,
+  type PredictionStateLike
+} from "./predictions/refreshService.js";
+import { shouldRefreshTF } from "./predictions/refreshTriggers.js";
 
 const db = prisma as any;
 
@@ -263,6 +277,13 @@ const closePositionSchema = z.object({
   side: z.enum(["long", "short"]).optional()
 });
 
+const marketCandlesQuerySchema = z.object({
+  exchangeAccountId: z.string().trim().min(1).optional(),
+  symbol: z.string().trim().min(1),
+  timeframe: z.enum(["1m", "5m", "15m", "1h", "4h", "1d"]).default("15m"),
+  limit: z.coerce.number().int().min(20).max(1000).default(400)
+});
+
 const predictionGenerateSchema = z.object({
   symbol: z.string().trim().min(1),
   marketType: z.enum(["spot", "perp"]),
@@ -291,7 +312,8 @@ const predictionGenerateAutoSchema = z.object({
 });
 
 const predictionListQuerySchema = z.object({
-  limit: z.coerce.number().int().min(1).max(200).default(50)
+  limit: z.coerce.number().int().min(1).max(200).default(50),
+  mode: z.enum(["state", "history"]).default("state")
 });
 
 const predictionClearOldSchema = z.object({
@@ -309,6 +331,19 @@ const predictionPauseSchema = z.object({
 
 const predictionIdParamSchema = z.object({
   id: z.string().trim().min(1)
+});
+
+const predictionStateQuerySchema = z.object({
+  exchange: z.string().trim().min(1),
+  accountId: z.string().trim().min(1),
+  symbol: z.string().trim().min(1),
+  marketType: z.enum(["spot", "perp"]),
+  timeframe: z.enum(["5m", "15m", "1h", "4h", "1d"])
+});
+
+const predictionEventsQuerySchema = z.object({
+  stateId: z.string().trim().min(1),
+  limit: z.coerce.number().int().min(1).max(100).default(30)
 });
 
 const thresholdsLatestQuerySchema = z.object({
@@ -372,6 +407,17 @@ const PREDICTION_OUTCOME_EVAL_POLL_MS =
   Math.max(30, Number(process.env.PREDICTION_OUTCOME_EVAL_POLL_SECONDS ?? "60")) * 1000;
 const PREDICTION_OUTCOME_EVAL_BATCH_SIZE =
   Math.max(5, Number(process.env.PREDICTION_OUTCOME_EVAL_BATCH_SIZE ?? "50"));
+const PREDICTION_REFRESH_ENABLED = !["0", "false", "off", "no"].includes(
+  String(process.env.PREDICTION_REFRESH_ENABLED ?? "1").trim().toLowerCase()
+);
+const PREDICTION_REFRESH_SCAN_LIMIT =
+  Math.max(10, Number(process.env.PREDICTION_REFRESH_SCAN_LIMIT ?? PREDICTION_AUTO_TEMPLATE_SCAN_LIMIT));
+const PREDICTION_REFRESH_MAX_RUNS_PER_CYCLE =
+  Math.max(1, Number(process.env.PREDICTION_REFRESH_MAX_RUNS_PER_CYCLE ?? PREDICTION_AUTO_MAX_RUNS_PER_CYCLE));
+const PREDICTION_REFRESH_TRIGGER_MIN_AGE_MS =
+  Math.max(30, Number(process.env.PREDICTION_REFRESH_TRIGGER_MIN_AGE_SECONDS ?? "120")) * 1000;
+const PREDICTION_REFRESH_TRIGGER_PROBE_LIMIT =
+  Math.max(1, Number(process.env.PREDICTION_REFRESH_TRIGGER_PROBE_LIMIT ?? "25"));
 const FEATURE_THRESHOLDS_CACHE_TTL_MS =
   Math.max(30, Number(process.env.FEATURE_THRESHOLDS_CACHE_TTL_SECONDS ?? "600")) * 1000;
 const FEATURE_THRESHOLDS_WINSORIZE_PCT = clamp(
@@ -969,6 +1015,13 @@ function timeframeToBitgetGranularity(timeframe: PredictionTimeframe): string {
   return timeframe;
 }
 
+function marketTimeframeToBitgetGranularity(timeframe: "1m" | PredictionTimeframe): string {
+  if (timeframe === "1h") return "1H";
+  if (timeframe === "4h") return "4H";
+  if (timeframe === "1d") return "1D";
+  return timeframe;
+}
+
 function timeframeToIntervalMs(timeframe: PredictionTimeframe): number {
   if (timeframe === "5m") return 5 * 60 * 1000;
   if (timeframe === "15m") return 15 * 60 * 1000;
@@ -1526,6 +1579,12 @@ async function generateAutoPredictionForUser(
     );
 
     inferred.featureSnapshot.autoScheduleEnabled = payload.autoSchedule;
+    inferred.featureSnapshot.autoSchedulePaused = false;
+    inferred.featureSnapshot.directionPreference = payload.directionPreference;
+    inferred.featureSnapshot.confidenceTargetPct = payload.confidenceTargetPct;
+    inferred.featureSnapshot.requestedLeverage = payload.leverage ?? null;
+    inferred.featureSnapshot.prefillExchangeAccountId = payload.exchangeAccountId;
+    inferred.featureSnapshot.prefillExchange = account.exchange;
     inferred.featureSnapshot.qualityWinRatePct = quality.winRatePct;
     inferred.featureSnapshot.qualitySampleSize = quality.sampleSize;
     inferred.featureSnapshot.qualityAvgOutcomePnlPct = quality.avgOutcomePnlPct;
@@ -1547,6 +1606,93 @@ async function generateAutoPredictionForUser(
       modelVersionBase: payload.modelVersionBase ?? "baseline-v1:auto-market-v1"
     });
 
+    const stateTags = normalizeTagList(
+      created.explanation.tags.length > 0
+        ? created.explanation.tags
+        : inferred.featureSnapshot.tags
+    );
+    const stateKeyDrivers = normalizeKeyDriverList(created.explanation.keyDrivers);
+    const stateTs = new Date(tsCreated);
+    const stateHash = buildPredictionChangeHash({
+      signal: inferred.prediction.signal,
+      confidence: inferred.prediction.confidence,
+      tags: stateTags,
+      keyDrivers: stateKeyDrivers,
+      featureSnapshot: inferred.featureSnapshot
+    });
+
+    const existingState = await db.predictionState.findFirst({
+      where: {
+        exchange: account.exchange,
+        accountId: payload.exchangeAccountId,
+        symbol: canonicalSymbol,
+        marketType: payload.marketType,
+        timeframe: payload.timeframe
+      },
+      select: { id: true }
+    });
+
+    const stateData = {
+      exchange: account.exchange,
+      accountId: payload.exchangeAccountId,
+      userId,
+      symbol: canonicalSymbol,
+      marketType: payload.marketType,
+      timeframe: payload.timeframe,
+      tsUpdated: stateTs,
+      tsPredictedFor: new Date(stateTs.getTime() + timeframeToIntervalMs(payload.timeframe)),
+      signal: inferred.prediction.signal,
+      expectedMovePct: Number.isFinite(Number(inferred.prediction.expectedMovePct))
+        ? Number(inferred.prediction.expectedMovePct)
+        : null,
+      confidence: Number.isFinite(Number(inferred.prediction.confidence))
+        ? Number(inferred.prediction.confidence)
+        : 0,
+      tags: stateTags,
+      explanation: created.explanation.explanation,
+      keyDrivers: stateKeyDrivers,
+      featuresSnapshot: inferred.featureSnapshot,
+      modelVersion: created.modelVersion,
+      lastAiExplainedAt: stateTs,
+      lastChangeHash: stateHash,
+      lastChangeReason: "manual",
+      autoScheduleEnabled: payload.autoSchedule,
+      autoSchedulePaused: false,
+      directionPreference: payload.directionPreference,
+      confidenceTargetPct: payload.confidenceTargetPct,
+      leverage: payload.leverage ?? null
+    };
+
+    const stateRow = existingState
+      ? await db.predictionState.update({
+          where: { id: existingState.id },
+          data: stateData,
+          select: { id: true }
+        })
+      : await db.predictionState.create({
+          data: stateData,
+          select: { id: true }
+        });
+
+    await db.predictionEvent.create({
+      data: {
+        stateId: stateRow.id,
+        changeType: "manual",
+        prevSnapshot: null,
+        newSnapshot: {
+          signal: inferred.prediction.signal,
+          confidence: inferred.prediction.confidence,
+          expectedMovePct: inferred.prediction.expectedMovePct,
+          tags: stateTags
+        },
+        delta: {
+          reason: "manual_create"
+        },
+        modelVersion: created.modelVersion,
+        reason: "manual_create"
+      }
+    });
+
     await notifyTradablePrediction({
       userId,
       exchange: account.exchange,
@@ -1558,7 +1704,7 @@ async function generateAutoPredictionForUser(
       confidence: inferred.prediction.confidence,
       confidenceTargetPct: payload.confidenceTargetPct,
       expectedMovePct: inferred.prediction.expectedMovePct,
-      predictionId: created.rowId,
+      predictionId: stateRow.id,
       explanation: created.explanation.explanation,
       source: "auto"
     });
@@ -1568,7 +1714,7 @@ async function generateAutoPredictionForUser(
       prediction: inferred.prediction,
       explanation: created.explanation,
       modelVersion: created.modelVersion,
-      predictionId: created.rowId,
+      predictionId: stateRow.id,
       tsCreated
     };
   } finally {
@@ -2502,6 +2648,62 @@ function withAutoScheduleFlag(
   };
 }
 
+function normalizeTagList(value: unknown): string[] {
+  return asStringArray(value)
+    .map((item) => item.trim())
+    .filter(Boolean)
+    .slice(0, 5);
+}
+
+function normalizeKeyDriverList(
+  value: unknown
+): Array<{ name: string; value: unknown }> {
+  if (!Array.isArray(value)) return [];
+  const out: Array<{ name: string; value: unknown }> = [];
+  for (const item of value) {
+    if (!item || typeof item !== "object" || Array.isArray(item)) continue;
+    const name = String((item as Record<string, unknown>).name ?? "").trim();
+    if (!name) continue;
+    out.push({
+      name,
+      value: (item as Record<string, unknown>).value
+    });
+    if (out.length >= 5) break;
+  }
+  return out;
+}
+
+function readPredictionStateLike(row: any): PredictionStateLike {
+  return {
+    id: String(row.id),
+    signal: normalizePredictionSignal(row.signal),
+    confidence: Number.isFinite(Number(row.confidence))
+      ? Number(row.confidence)
+      : 0,
+    tags: normalizeTagList(row.tags),
+    explanation: typeof row.explanation === "string" ? row.explanation : null,
+    keyDrivers: normalizeKeyDriverList(row.keyDrivers),
+    featureSnapshot: asRecord(row.featuresSnapshot),
+    modelVersion:
+      typeof row.modelVersion === "string" && row.modelVersion.trim()
+        ? row.modelVersion
+        : "baseline-v1",
+    tsUpdated: row.tsUpdated instanceof Date ? row.tsUpdated : new Date(),
+    lastAiExplainedAt:
+      row.lastAiExplainedAt instanceof Date ? row.lastAiExplainedAt : null
+  };
+}
+
+function predictionStateTemplateKey(parts: {
+  userId: string;
+  exchangeAccountId: string;
+  symbol: string;
+  marketType: PredictionMarketType;
+  timeframe: PredictionTimeframe;
+}): string {
+  return `${parts.userId}:${parts.exchangeAccountId}:${parts.symbol}:${parts.marketType}:${parts.timeframe}`;
+}
+
 async function resolvePredictionTemplateScope(userId: string, predictionId: string): Promise<{
   rowId: string;
   symbol: string;
@@ -2710,127 +2912,685 @@ async function runPredictionOutcomeEvalCycle() {
   }
 }
 
+type PredictionRefreshTemplate = {
+  stateId: string;
+  userId: string;
+  exchangeAccountId: string;
+  exchange: string;
+  symbol: string;
+  marketType: PredictionMarketType;
+  timeframe: PredictionTimeframe;
+  directionPreference: DirectionPreference;
+  confidenceTargetPct: number;
+  leverage: number | null;
+  autoScheduleEnabled: boolean;
+  autoSchedulePaused: boolean;
+  tsUpdated: Date;
+  featureSnapshot: Record<string, unknown>;
+  modelVersionBase: string;
+};
+
+let predictionStateBootstrapped = false;
+
+async function bootstrapPredictionStateFromHistory() {
+  if (predictionStateBootstrapped) return;
+
+  const rows = await db.prediction.findMany({
+    where: {
+      userId: { not: null }
+    },
+    orderBy: [{ tsCreated: "desc" }, { createdAt: "desc" }],
+    take: Math.max(200, PREDICTION_REFRESH_SCAN_LIMIT * 2),
+    select: {
+      id: true,
+      userId: true,
+      symbol: true,
+      marketType: true,
+      timeframe: true,
+      tsCreated: true,
+      signal: true,
+      expectedMovePct: true,
+      confidence: true,
+      explanation: true,
+      tags: true,
+      featuresSnapshot: true,
+      modelVersion: true
+    }
+  });
+
+  for (const row of rows) {
+    const userId = typeof row.userId === "string" ? row.userId : null;
+    if (!userId) continue;
+
+    const featureSnapshot = asRecord(row.featuresSnapshot);
+    const exchangeAccountId = readPrefillExchangeAccountId(featureSnapshot);
+    if (!exchangeAccountId) continue;
+
+    const symbol = normalizeSymbolInput(row.symbol);
+    if (!symbol) continue;
+
+    const marketType = normalizePredictionMarketType(row.marketType);
+    const timeframe = normalizePredictionTimeframe(row.timeframe);
+    const exchange =
+      typeof featureSnapshot.prefillExchange === "string"
+        ? normalizeExchangeValue(featureSnapshot.prefillExchange)
+        : "bitget";
+
+    const existing = await db.predictionState.findFirst({
+      where: {
+        exchange,
+        accountId: exchangeAccountId,
+        symbol,
+        marketType,
+        timeframe
+      },
+      select: { id: true }
+    });
+    if (existing) continue;
+
+    const tags = normalizeTagList(row.tags);
+    const keyDrivers = normalizeKeyDriverList(featureSnapshot.keyDrivers);
+    const changeHash = buildPredictionChangeHash({
+      signal: normalizePredictionSignal(row.signal),
+      confidence: Number(row.confidence),
+      tags,
+      keyDrivers,
+      featureSnapshot
+    });
+
+    await db.predictionState.create({
+      data: {
+        exchange,
+        accountId: exchangeAccountId,
+        userId,
+        symbol,
+        marketType,
+        timeframe,
+        tsUpdated: row.tsCreated,
+        tsPredictedFor: new Date(row.tsCreated.getTime() + timeframeToIntervalMs(timeframe)),
+        signal: normalizePredictionSignal(row.signal),
+        expectedMovePct: Number.isFinite(Number(row.expectedMovePct))
+          ? Number(row.expectedMovePct)
+          : null,
+        confidence: Number.isFinite(Number(row.confidence))
+          ? Number(row.confidence)
+          : 0,
+        tags,
+        explanation: typeof row.explanation === "string" ? row.explanation : null,
+        keyDrivers,
+        featuresSnapshot: featureSnapshot,
+        modelVersion:
+          typeof row.modelVersion === "string" && row.modelVersion.trim()
+            ? row.modelVersion
+            : "baseline-v1",
+        lastAiExplainedAt: row.tsCreated,
+        lastChangeHash: changeHash,
+        lastChangeReason: "bootstrap",
+        autoScheduleEnabled: isAutoScheduleEnabled(featureSnapshot.autoScheduleEnabled),
+        autoSchedulePaused: isAutoSchedulePaused(featureSnapshot),
+        directionPreference: parseDirectionPreference(featureSnapshot.directionPreference),
+        confidenceTargetPct: readConfidenceTarget(featureSnapshot),
+        leverage: readRequestedLeverage(featureSnapshot)
+      }
+    });
+  }
+
+  predictionStateBootstrapped = true;
+}
+
+async function listPredictionRefreshTemplates(): Promise<PredictionRefreshTemplate[]> {
+  const rows = await db.predictionState.findMany({
+    where: {
+      userId: { not: null }
+    },
+    orderBy: [{ tsUpdated: "asc" }, { updatedAt: "asc" }],
+    take: PREDICTION_REFRESH_SCAN_LIMIT,
+    select: {
+      id: true,
+      userId: true,
+      accountId: true,
+      exchange: true,
+      symbol: true,
+      marketType: true,
+      timeframe: true,
+      directionPreference: true,
+      confidenceTargetPct: true,
+      leverage: true,
+      autoScheduleEnabled: true,
+      autoSchedulePaused: true,
+      tsUpdated: true,
+      featuresSnapshot: true,
+      modelVersion: true
+    }
+  });
+
+  return rows
+    .map((row: any): PredictionRefreshTemplate | null => {
+      const userId = typeof row.userId === "string" ? row.userId : null;
+      const exchangeAccountId =
+        typeof row.accountId === "string" && row.accountId.trim()
+          ? row.accountId.trim()
+          : null;
+      const symbol = normalizeSymbolInput(row.symbol);
+      if (!userId || !exchangeAccountId || !symbol) return null;
+      const marketType = normalizePredictionMarketType(row.marketType);
+      const timeframe = normalizePredictionTimeframe(row.timeframe);
+      const snapshot = asRecord(row.featuresSnapshot);
+
+      return {
+        stateId: String(row.id),
+        userId,
+        exchangeAccountId,
+        exchange:
+          typeof row.exchange === "string" && row.exchange.trim()
+            ? normalizeExchangeValue(row.exchange)
+            : "bitget",
+        symbol,
+        marketType,
+        timeframe,
+        directionPreference: parseDirectionPreference(
+          row.directionPreference ?? snapshot.directionPreference
+        ),
+        confidenceTargetPct: Number.isFinite(Number(row.confidenceTargetPct))
+          && row.confidenceTargetPct !== null
+          && row.confidenceTargetPct !== undefined
+          ? Number(row.confidenceTargetPct)
+          : readConfidenceTarget(snapshot),
+        leverage:
+          Number.isFinite(Number(row.leverage))
+          && row.leverage !== null
+          && row.leverage !== undefined
+            ? Math.max(1, Math.trunc(Number(row.leverage)))
+            : (readRequestedLeverage(snapshot) ?? null),
+        autoScheduleEnabled: Boolean(row.autoScheduleEnabled),
+        autoSchedulePaused: Boolean(row.autoSchedulePaused),
+        tsUpdated: row.tsUpdated instanceof Date ? row.tsUpdated : new Date(),
+        featureSnapshot: snapshot,
+        modelVersionBase:
+          typeof row.modelVersion === "string" && row.modelVersion.trim()
+            ? row.modelVersion
+            : "baseline-v1:auto-market-v1"
+      };
+    })
+    .filter((item: PredictionRefreshTemplate | null): item is PredictionRefreshTemplate => Boolean(item));
+}
+
+async function probePredictionRefreshTrigger(
+  template: PredictionRefreshTemplate
+): Promise<{ refresh: boolean; reasons: string[] }> {
+  let adapter: BitgetFuturesAdapter | null = null;
+  try {
+    const account = await resolveTradingAccount(template.userId, template.exchangeAccountId);
+    adapter = createBitgetAdapter(account);
+    await adapter.contractCache.warmup();
+
+    const exchangeSymbol = await adapter.toExchangeSymbol(template.symbol);
+    const lookback = Math.max(80, minimumCandlesForIndicators(template.timeframe));
+    const candlesRaw = await adapter.marketApi.getCandles({
+      symbol: exchangeSymbol,
+      productType: adapter.productType,
+      granularity: timeframeToBitgetGranularity(template.timeframe),
+      limit: lookback
+    });
+    const candles = bucketCandles(parseBitgetCandles(candlesRaw), template.timeframe);
+    if (candles.length < 40) {
+      return { refresh: false, reasons: [] };
+    }
+
+    const closes = candles.map((row) => row.close);
+    const highs = candles.map((row) => row.high);
+    const lows = candles.map((row) => row.low);
+    const indicators = computeIndicators(candles, template.timeframe, {
+      exchange: template.exchange,
+      symbol: template.symbol,
+      marketType: template.marketType,
+      logVwapMetrics: false
+    });
+    const tickerRaw = await adapter.marketApi.getTicker(exchangeSymbol, adapter.productType);
+    const ticker = normalizeTickerPayload(coerceFirstItem(tickerRaw));
+    const referencePrice = ticker.mark ?? ticker.last ?? closes[closes.length - 1];
+    if (!referencePrice || !Number.isFinite(referencePrice)) {
+      return { refresh: false, reasons: [] };
+    }
+
+    const thresholdResolution = await resolveFeatureThresholds({
+      exchange: template.exchange,
+      symbol: template.symbol,
+      marketType: template.marketType,
+      timeframe: template.timeframe
+    });
+
+    const inferred = inferPredictionFromMarket({
+      closes,
+      highs,
+      lows,
+      indicators,
+      referencePrice,
+      timeframe: template.timeframe,
+      directionPreference: template.directionPreference,
+      confidenceTargetPct: template.confidenceTargetPct,
+      leverage: template.leverage ?? undefined,
+      marketType: template.marketType,
+      exchangeAccountId: template.exchangeAccountId,
+      exchange: template.exchange,
+      thresholdResolution
+    });
+
+    const trigger = shouldRefreshTF({
+      timeframe: template.timeframe,
+      nowMs: Date.now(),
+      lastUpdatedMs: template.tsUpdated.getTime(),
+      refreshIntervalMs: refreshIntervalMsForTimeframe(template.timeframe),
+      previousFeatureSnapshot: template.featureSnapshot,
+      currentFeatureSnapshot: inferred.featureSnapshot
+    });
+    return {
+      refresh: trigger.refresh,
+      reasons: trigger.reasons
+    };
+  } catch (error) {
+    // eslint-disable-next-line no-console
+    console.warn("[predictions:refresh] trigger probe failed", {
+      stateId: template.stateId,
+      reason: String(error)
+    });
+    return { refresh: false, reasons: [] };
+  } finally {
+    if (adapter) await adapter.close();
+  }
+}
+
+async function refreshPredictionStateForTemplate(params: {
+  template: PredictionRefreshTemplate;
+  reason: string;
+}): Promise<{ refreshed: boolean; significant: boolean; aiCalled: boolean }> {
+  const { template } = params;
+  let adapter: BitgetFuturesAdapter | null = null;
+  try {
+    const account = await resolveTradingAccount(template.userId, template.exchangeAccountId);
+    adapter = createBitgetAdapter(account);
+    await adapter.contractCache.warmup();
+
+    const exchangeSymbol = await adapter.toExchangeSymbol(template.symbol);
+    const candleLookback = Math.max(160, minimumCandlesForIndicators(template.timeframe));
+    const [tickerRaw, candlesRaw] = await Promise.all([
+      adapter.marketApi.getTicker(exchangeSymbol, adapter.productType),
+      adapter.marketApi.getCandles({
+        symbol: exchangeSymbol,
+        productType: adapter.productType,
+        granularity: timeframeToBitgetGranularity(template.timeframe),
+        limit: candleLookback
+      })
+    ]);
+
+    const candles = bucketCandles(parseBitgetCandles(candlesRaw), template.timeframe);
+    if (candles.length < 20) {
+      return { refreshed: false, significant: false, aiCalled: false };
+    }
+
+    const closes = candles.map((row) => row.close);
+    const highs = candles.map((row) => row.high);
+    const lows = candles.map((row) => row.low);
+    const indicators = computeIndicators(candles, template.timeframe, {
+      exchange: account.exchange,
+      symbol: template.symbol,
+      marketType: template.marketType,
+      logVwapMetrics: true
+    });
+    const ticker = normalizeTickerPayload(coerceFirstItem(tickerRaw));
+    const referencePrice = ticker.mark ?? ticker.last ?? closes[closes.length - 1];
+    if (!referencePrice || !Number.isFinite(referencePrice) || referencePrice <= 0) {
+      return { refreshed: false, significant: false, aiCalled: false };
+    }
+
+    const thresholdResolution = await resolveFeatureThresholds({
+      exchange: account.exchange,
+      symbol: template.symbol,
+      marketType: template.marketType,
+      timeframe: template.timeframe
+    });
+
+    const inferred = inferPredictionFromMarket({
+      closes,
+      highs,
+      lows,
+      indicators,
+      referencePrice,
+      timeframe: template.timeframe,
+      directionPreference: template.directionPreference,
+      confidenceTargetPct: template.confidenceTargetPct,
+      leverage: template.leverage ?? undefined,
+      marketType: template.marketType,
+      exchangeAccountId: template.exchangeAccountId,
+      exchange: account.exchange,
+      thresholdResolution
+    });
+
+    const quality = await getPredictionQualityContext(
+      template.userId,
+      template.symbol,
+      template.timeframe,
+      template.marketType
+    );
+
+    inferred.featureSnapshot.autoScheduleEnabled = template.autoScheduleEnabled;
+    inferred.featureSnapshot.autoSchedulePaused = template.autoSchedulePaused;
+    inferred.featureSnapshot.directionPreference = template.directionPreference;
+    inferred.featureSnapshot.confidenceTargetPct = template.confidenceTargetPct;
+    inferred.featureSnapshot.requestedLeverage = template.leverage ?? null;
+    inferred.featureSnapshot.prefillExchangeAccountId = template.exchangeAccountId;
+    inferred.featureSnapshot.prefillExchange = account.exchange;
+    inferred.featureSnapshot.qualityWinRatePct = quality.winRatePct;
+    inferred.featureSnapshot.qualitySampleSize = quality.sampleSize;
+    inferred.featureSnapshot.qualityAvgOutcomePnlPct = quality.avgOutcomePnlPct;
+    inferred.featureSnapshot.qualityTpCount = quality.tpCount;
+    inferred.featureSnapshot.qualitySlCount = quality.slCount;
+    inferred.featureSnapshot.qualityExpiredCount = quality.expiredCount;
+
+    const prevStateRow = await db.predictionState.findUnique({
+      where: { id: template.stateId }
+    });
+    const prevState = prevStateRow ? readPredictionStateLike(prevStateRow) : null;
+
+    const baselineTags = normalizeTagList(inferred.featureSnapshot.tags);
+    const significant = evaluateSignificantChange({
+      prev: prevState,
+      next: {
+        signal: inferred.prediction.signal,
+        confidence: inferred.prediction.confidence,
+        tags: baselineTags,
+        featureSnapshot: inferred.featureSnapshot
+      }
+    });
+
+    const aiDecision = shouldCallAiForRefresh({
+      prev: prevState,
+      next: {
+        signal: inferred.prediction.signal,
+        confidence: inferred.prediction.confidence,
+        tags: baselineTags
+      },
+      significant,
+      nowMs: Date.now()
+    });
+
+    const tsCreated = new Date().toISOString();
+    let explainer: ExplainerOutput;
+    let aiCalled = false;
+
+    if (aiDecision.shouldCallAi) {
+      try {
+        explainer = await generatePredictionExplanation({
+          symbol: template.symbol,
+          marketType: template.marketType,
+          timeframe: template.timeframe,
+          tsCreated,
+          prediction: inferred.prediction,
+          featureSnapshot: inferred.featureSnapshot
+        });
+        aiCalled = true;
+      } catch {
+        explainer = fallbackExplain({
+          symbol: template.symbol,
+          marketType: template.marketType,
+          timeframe: template.timeframe,
+          tsCreated,
+          prediction: inferred.prediction,
+          featureSnapshot: inferred.featureSnapshot
+        });
+      }
+    } else if (
+      prevState &&
+      !significant.significant &&
+      typeof prevState.explanation === "string" &&
+      prevState.explanation.trim()
+    ) {
+      explainer = {
+        explanation: prevState.explanation,
+        tags: prevState.tags,
+        keyDrivers: prevState.keyDrivers,
+        disclaimer: "grounded_features_only"
+      };
+    } else {
+      explainer = fallbackExplain({
+        symbol: template.symbol,
+        marketType: template.marketType,
+        timeframe: template.timeframe,
+        tsCreated,
+        prediction: inferred.prediction,
+        featureSnapshot: inferred.featureSnapshot
+      });
+    }
+
+    const tags = normalizeTagList(explainer.tags.length > 0 ? explainer.tags : baselineTags);
+    const keyDrivers = normalizeKeyDriverList(explainer.keyDrivers);
+    const modelVersion = `${template.modelVersionBase || "baseline-v1:auto-market-v1"} + openai-explain-v1`;
+    const tsUpdated = new Date(tsCreated);
+    const tsPredictedFor = new Date(tsUpdated.getTime() + timeframeToIntervalMs(template.timeframe));
+    const changeHash = buildPredictionChangeHash({
+      signal: inferred.prediction.signal,
+      confidence: inferred.prediction.confidence,
+      tags,
+      keyDrivers,
+      featureSnapshot: inferred.featureSnapshot
+    });
+
+    const stateData = {
+      exchange: account.exchange,
+      accountId: template.exchangeAccountId,
+      userId: template.userId,
+      symbol: template.symbol,
+      marketType: template.marketType,
+      timeframe: template.timeframe,
+      tsUpdated,
+      tsPredictedFor,
+      signal: inferred.prediction.signal,
+      expectedMovePct: Number.isFinite(Number(inferred.prediction.expectedMovePct))
+        ? Number(inferred.prediction.expectedMovePct)
+        : null,
+      confidence: Number.isFinite(Number(inferred.prediction.confidence))
+        ? Number(inferred.prediction.confidence)
+        : 0,
+      tags,
+      explanation: explainer.explanation,
+      keyDrivers,
+      featuresSnapshot: inferred.featureSnapshot,
+      modelVersion,
+      lastAiExplainedAt: aiCalled ? tsUpdated : prevState?.lastAiExplainedAt ?? null,
+      lastChangeHash: changeHash,
+      lastChangeReason:
+        significant.significant && significant.reasons.length > 0
+          ? significant.reasons.join(",")
+          : params.reason,
+      autoScheduleEnabled: template.autoScheduleEnabled,
+      autoSchedulePaused: template.autoSchedulePaused,
+      directionPreference: template.directionPreference,
+      confidenceTargetPct: template.confidenceTargetPct,
+      leverage: template.leverage ?? null
+    };
+
+    let stateId = template.stateId;
+    if (prevStateRow) {
+      await db.predictionState.update({
+        where: { id: template.stateId },
+        data: stateData
+      });
+    } else {
+      const createdState = await db.predictionState.create({
+        data: stateData,
+        select: { id: true }
+      });
+      stateId = createdState.id;
+    }
+
+    if (significant.significant) {
+      const prevMinimal = prevState
+        ? {
+            signal: prevState.signal,
+            confidence: prevState.confidence,
+            tags: prevState.tags,
+            tsUpdated: prevState.tsUpdated.toISOString()
+          }
+        : null;
+      const nextMinimal = {
+        signal: inferred.prediction.signal,
+        confidence: inferred.prediction.confidence,
+        expectedMovePct: inferred.prediction.expectedMovePct,
+        tags
+      };
+      const delta = buildEventDelta({
+        prev: prevState,
+        next: {
+          signal: inferred.prediction.signal,
+          confidence: inferred.prediction.confidence,
+          tags,
+          expectedMovePct: inferred.prediction.expectedMovePct
+        },
+        reasons: significant.reasons
+      });
+
+      await db.predictionEvent.create({
+        data: {
+          stateId,
+          changeType: significant.changeType,
+          prevSnapshot: prevMinimal,
+          newSnapshot: nextMinimal,
+          delta,
+          modelVersion,
+          reason: params.reason
+        }
+      });
+
+      const historyTs = new Date(tsCreated);
+      await db.prediction.create({
+        data: {
+          userId: template.userId,
+          botId: null,
+          symbol: template.symbol,
+          marketType: template.marketType,
+          timeframe: template.timeframe,
+          tsCreated: historyTs,
+          signal: inferred.prediction.signal,
+          expectedMovePct: inferred.prediction.expectedMovePct,
+          confidence: inferred.prediction.confidence,
+          explanation: explainer.explanation,
+          tags,
+          featuresSnapshot: inferred.featureSnapshot,
+          entryPrice: inferred.tracking.entryPrice,
+          stopLossPrice: inferred.tracking.stopLossPrice,
+          takeProfitPrice: inferred.tracking.takeProfitPrice,
+          horizonMs: inferred.tracking.horizonMs,
+          modelVersion
+        }
+      });
+
+      await notifyTradablePrediction({
+        userId: template.userId,
+        exchange: account.exchange,
+        exchangeAccountLabel: account.label,
+        symbol: template.symbol,
+        marketType: template.marketType,
+        timeframe: template.timeframe,
+        signal: inferred.prediction.signal,
+        confidence: inferred.prediction.confidence,
+        confidenceTargetPct: template.confidenceTargetPct,
+        expectedMovePct: inferred.prediction.expectedMovePct,
+        predictionId: stateId,
+        explanation: explainer.explanation,
+        source: "auto"
+      });
+    }
+
+    return {
+      refreshed: true,
+      significant: significant.significant,
+      aiCalled
+    };
+  } catch (error) {
+    // eslint-disable-next-line no-console
+    console.warn("[predictions:refresh] state refresh failed", {
+      stateId: template.stateId,
+      symbol: template.symbol,
+      timeframe: template.timeframe,
+      reason: String(error)
+    });
+    return {
+      refreshed: false,
+      significant: false,
+      aiCalled: false
+    };
+  } finally {
+    if (adapter) {
+      await adapter.close();
+    }
+  }
+}
+
 async function runPredictionAutoCycle() {
-  if (!PREDICTION_AUTO_ENABLED) return;
+  if (!PREDICTION_AUTO_ENABLED || !PREDICTION_REFRESH_ENABLED) return;
   if (predictionAutoRunning) return;
 
   predictionAutoRunning = true;
   try {
-    const rows = await db.prediction.findMany({
-      where: {
-        userId: { not: null }
-      },
-      orderBy: [{ tsCreated: "desc" }, { createdAt: "desc" }],
-      take: PREDICTION_AUTO_TEMPLATE_SCAN_LIMIT,
-      select: {
-        id: true,
-        userId: true,
-        symbol: true,
-        marketType: true,
-        timeframe: true,
-        tsCreated: true,
-        featuresSnapshot: true
-      }
-    });
-
-    const templates = new Map<string, ({
-      userId: string;
-      exchangeAccountId: string;
-      symbol: string;
-      marketType: PredictionMarketType;
-      timeframe: PredictionTimeframe;
-      directionPreference: DirectionPreference;
-      confidenceTargetPct: number;
-      leverage?: number;
-      tsCreated: Date;
-      modelVersionBase?: string;
-    }) | null>();
-
-    for (const row of rows) {
-      const userId = typeof row.userId === "string" ? row.userId : null;
-      if (!userId) continue;
-
-      const snapshot = asRecord(row.featuresSnapshot);
-      const exchangeAccountId = readPrefillExchangeAccountId(snapshot);
-      if (!exchangeAccountId) continue;
-
-      const symbol = normalizeSymbolInput(row.symbol);
-      if (!symbol) continue;
-
-      const timeframe = normalizePredictionTimeframe(row.timeframe);
-      const marketType = normalizePredictionMarketType(row.marketType);
-      const key = predictionTemplateKey({
-        userId,
-        exchangeAccountId,
-        symbol,
-        marketType,
-        timeframe
-      });
-      if (templates.has(key)) continue;
-      if (!isAutoScheduleEnabled(snapshot.autoScheduleEnabled)) {
-        templates.set(key, null);
-        continue;
-      }
-      if (isAutoSchedulePaused(snapshot)) {
-        templates.set(key, null);
-        continue;
-      }
-
-      templates.set(key, {
-        userId,
-        exchangeAccountId,
-        symbol,
-        marketType,
-        timeframe,
-        directionPreference: parseDirectionPreference(snapshot.directionPreference),
-        confidenceTargetPct: readConfidenceTarget(snapshot),
-        leverage: readRequestedLeverage(snapshot),
-        tsCreated: row.tsCreated,
-        modelVersionBase: typeof row.modelVersion === "string" ? row.modelVersion : undefined
-      });
-    }
+    await bootstrapPredictionStateFromHistory();
+    const templates = await listPredictionRefreshTemplates();
+    const active = templates.filter(
+      (row) => row.autoScheduleEnabled && !row.autoSchedulePaused
+    );
 
     const now = Date.now();
-    let executed = 0;
-    for (const template of templates.values()) {
-      if (!template) continue;
-      if (executed >= PREDICTION_AUTO_MAX_RUNS_PER_CYCLE) break;
-      const dueMs = timeframeToIntervalMs(template.timeframe);
-      const ageMs = now - template.tsCreated.getTime();
-      if (ageMs < dueMs) continue;
+    let refreshed = 0;
+    let significantCount = 0;
+    let aiCallCount = 0;
 
-      try {
-        await generateAutoPredictionForUser(template.userId, {
-          exchangeAccountId: template.exchangeAccountId,
-          symbol: template.symbol,
-          marketType: template.marketType,
-          timeframe: template.timeframe,
-          directionPreference: template.directionPreference,
-          confidenceTargetPct: template.confidenceTargetPct,
-          leverage: template.marketType === "perp" ? template.leverage : undefined,
-          autoSchedule: true,
-          modelVersionBase: "baseline-v1:auto-market-v1:scheduler"
+    const dueTemplates = active.filter((template) => {
+      const intervalMs = refreshIntervalMsForTimeframe(template.timeframe);
+      return now - template.tsUpdated.getTime() >= intervalMs;
+    });
+
+    for (const template of dueTemplates) {
+      if (refreshed >= PREDICTION_REFRESH_MAX_RUNS_PER_CYCLE) break;
+      const result = await refreshPredictionStateForTemplate({
+        template,
+        reason: "scheduled_due"
+      });
+      if (!result.refreshed) continue;
+      refreshed += 1;
+      if (result.significant) significantCount += 1;
+      if (result.aiCalled) aiCallCount += 1;
+    }
+
+    if (refreshed < PREDICTION_REFRESH_MAX_RUNS_PER_CYCLE) {
+      const remaining = active
+        .filter((template) => !dueTemplates.some((item) => item.stateId === template.stateId))
+        .filter((template) => now - template.tsUpdated.getTime() >= PREDICTION_REFRESH_TRIGGER_MIN_AGE_MS)
+        .slice(0, PREDICTION_REFRESH_TRIGGER_PROBE_LIMIT);
+
+      for (const template of remaining) {
+        if (refreshed >= PREDICTION_REFRESH_MAX_RUNS_PER_CYCLE) break;
+        const triggerProbe = await probePredictionRefreshTrigger(template);
+        if (!triggerProbe.refresh) continue;
+        const result = await refreshPredictionStateForTemplate({
+          template,
+          reason: triggerProbe.reasons.join(",") || "triggered"
         });
-        executed += 1;
-      } catch (error) {
-        // eslint-disable-next-line no-console
-        console.warn("[predictions:auto] generation failed", {
-          userId: template.userId,
-          exchangeAccountId: template.exchangeAccountId,
-          symbol: template.symbol,
-          timeframe: template.timeframe,
-          reason: String(error)
-        });
+        if (!result.refreshed) continue;
+        refreshed += 1;
+        if (result.significant) significantCount += 1;
+        if (result.aiCalled) aiCallCount += 1;
       }
     }
 
-    if (executed > 0) {
+    if (refreshed > 0) {
       // eslint-disable-next-line no-console
-      console.log(`[predictions:auto] generated ${executed} prediction(s)`);
+      console.log(
+        `[predictions:refresh] updated ${refreshed} state row(s), ` +
+          `significant=${significantCount}, ai_called=${aiCallCount}`
+      );
     }
   } catch (error) {
     // eslint-disable-next-line no-console
-    console.error("[predictions:auto] scheduler cycle failed", String(error));
+    console.error("[predictions:refresh] scheduler cycle failed", String(error));
   } finally {
     predictionAutoRunning = false;
   }
@@ -3590,6 +4350,7 @@ app.delete("/admin/users/:id", requireAuth, async (req, res) => {
     }
 
     await tx.prediction.deleteMany({ where: { userId: user.id } });
+    await tx.predictionState.deleteMany({ where: { userId: user.id } });
     await tx.manualTradeLog.deleteMany({ where: { userId: user.id } });
     await tx.exchangeAccount.deleteMany({ where: { userId: user.id } });
     await tx.botConfigPreset.deleteMany({ where: { createdByUserId: user.id } });
@@ -3888,6 +4649,98 @@ app.post("/api/predictions/generate", requireAuth, async (req, res) => {
     modelVersionBase: payload.modelVersionBase
   });
 
+  let statePredictionId: string | null = null;
+  const snapshot = asRecord(payload.featureSnapshot);
+  const exchangeAccountId = readPrefillExchangeAccountId(snapshot);
+  if (exchangeAccountId) {
+    const exchange =
+      typeof snapshot.prefillExchange === "string" && snapshot.prefillExchange.trim()
+        ? normalizeExchangeValue(snapshot.prefillExchange)
+        : "bitget";
+    const tags = normalizeTagList(
+      created.explanation.tags.length > 0
+        ? created.explanation.tags
+        : payload.featureSnapshot.tags
+    );
+    const keyDrivers = normalizeKeyDriverList(created.explanation.keyDrivers);
+    const tsDate = new Date(tsCreated);
+    const changeHash = buildPredictionChangeHash({
+      signal: payload.prediction.signal,
+      confidence: payload.prediction.confidence,
+      tags,
+      keyDrivers,
+      featureSnapshot: payload.featureSnapshot
+    });
+    const existingState = await db.predictionState.findFirst({
+      where: {
+        exchange,
+        accountId: exchangeAccountId,
+        symbol: payload.symbol,
+        marketType: payload.marketType,
+        timeframe: payload.timeframe
+      },
+      select: { id: true }
+    });
+    const statePayload = {
+      exchange,
+      accountId: exchangeAccountId,
+      userId: user.id,
+      symbol: payload.symbol,
+      marketType: payload.marketType,
+      timeframe: payload.timeframe,
+      tsUpdated: tsDate,
+      tsPredictedFor: new Date(tsDate.getTime() + timeframeToIntervalMs(payload.timeframe)),
+      signal: payload.prediction.signal,
+      expectedMovePct: Number.isFinite(Number(payload.prediction.expectedMovePct))
+        ? Number(payload.prediction.expectedMovePct)
+        : null,
+      confidence: Number.isFinite(Number(payload.prediction.confidence))
+        ? Number(payload.prediction.confidence)
+        : 0,
+      tags,
+      explanation: created.explanation.explanation,
+      keyDrivers,
+      featuresSnapshot: payload.featureSnapshot,
+      modelVersion: created.modelVersion,
+      lastAiExplainedAt: tsDate,
+      lastChangeHash: changeHash,
+      lastChangeReason: "manual",
+      autoScheduleEnabled: isAutoScheduleEnabled(snapshot.autoScheduleEnabled),
+      autoSchedulePaused: isAutoSchedulePaused(snapshot),
+      directionPreference: parseDirectionPreference(snapshot.directionPreference),
+      confidenceTargetPct: readConfidenceTarget(snapshot),
+      leverage: readRequestedLeverage(snapshot)
+    };
+    const stateRow = existingState
+      ? await db.predictionState.update({
+          where: { id: existingState.id },
+          data: statePayload,
+          select: { id: true }
+        })
+      : await db.predictionState.create({
+          data: statePayload,
+          select: { id: true }
+        });
+    statePredictionId = stateRow.id;
+
+    await db.predictionEvent.create({
+      data: {
+        stateId: stateRow.id,
+        changeType: "manual",
+        prevSnapshot: null,
+        newSnapshot: {
+          signal: payload.prediction.signal,
+          confidence: payload.prediction.confidence,
+          expectedMovePct: payload.prediction.expectedMovePct,
+          tags
+        },
+        delta: { reason: "manual_generate" },
+        modelVersion: created.modelVersion,
+        reason: "manual_generate"
+      }
+    });
+  }
+
   await notifyTradablePrediction({
     userId: user.id,
     exchange:
@@ -3907,7 +4760,7 @@ app.post("/api/predictions/generate", requireAuth, async (req, res) => {
     confidence: payload.prediction.confidence,
     confidenceTargetPct: readConfidenceTarget(payload.featureSnapshot),
     expectedMovePct: payload.prediction.expectedMovePct,
-    predictionId: created.rowId,
+    predictionId: statePredictionId ?? created.rowId,
     explanation: created.explanation.explanation,
     source: "manual"
   });
@@ -3923,7 +4776,7 @@ app.post("/api/predictions/generate", requireAuth, async (req, res) => {
     },
     explanation: created.explanation,
     modelVersion: created.modelVersion,
-    predictionId: created.rowId
+    predictionId: statePredictionId ?? created.rowId
   });
 });
 
@@ -3964,6 +4817,76 @@ app.get("/api/predictions", requireAuth, async (req, res) => {
   const parsed = predictionListQuerySchema.safeParse(req.query);
   if (!parsed.success) {
     return res.status(400).json({ error: "invalid_query", details: parsed.error.flatten() });
+  }
+
+  if (parsed.data.mode === "state") {
+    const rows = await db.predictionState.findMany({
+      where: { userId: user.id },
+      orderBy: [{ tsUpdated: "desc" }, { updatedAt: "desc" }],
+      take: parsed.data.limit,
+      select: {
+        id: true,
+        symbol: true,
+        marketType: true,
+        timeframe: true,
+        tsUpdated: true,
+        signal: true,
+        expectedMovePct: true,
+        confidence: true,
+        explanation: true,
+        tags: true,
+        autoScheduleEnabled: true,
+        autoSchedulePaused: true,
+        confidenceTargetPct: true,
+        exchange: true,
+        accountId: true,
+        lastChangeReason: true
+      }
+    });
+
+    const items = rows.map((row: any) => ({
+      id: row.id,
+      symbol: row.symbol,
+      marketType: normalizePredictionMarketType(row.marketType),
+      timeframe: normalizePredictionTimeframe(row.timeframe),
+      tsCreated:
+        row.tsUpdated instanceof Date ? row.tsUpdated.toISOString() : new Date().toISOString(),
+      signal: normalizePredictionSignal(row.signal),
+      expectedMovePct: Number.isFinite(Number(row.expectedMovePct))
+        ? Number(row.expectedMovePct)
+        : 0,
+      confidence: Number.isFinite(Number(row.confidence)) ? Number(row.confidence) : 0,
+      explanation: typeof row.explanation === "string" ? row.explanation : "",
+      tags: normalizeTagList(row.tags),
+      entryPrice: null,
+      stopLossPrice: null,
+      takeProfitPrice: null,
+      horizonMs: timeframeToIntervalMs(normalizePredictionTimeframe(row.timeframe)) * PREDICTION_OUTCOME_HORIZON_BARS,
+      outcomeStatus: "pending",
+      outcomeResult: null,
+      outcomePnlPct: null,
+      maxFavorablePct: null,
+      maxAdversePct: null,
+      outcomeEvaluatedAt: null,
+      autoScheduleEnabled: Boolean(row.autoScheduleEnabled) && !Boolean(row.autoSchedulePaused),
+      confidenceTargetPct:
+        Number.isFinite(Number(row.confidenceTargetPct))
+        && row.confidenceTargetPct !== null
+        && row.confidenceTargetPct !== undefined
+          ? Number(row.confidenceTargetPct)
+          : 55,
+      exchange:
+        typeof row.exchange === "string" && row.exchange.trim()
+          ? row.exchange
+          : "bitget",
+      accountId: typeof row.accountId === "string" ? row.accountId : null,
+      lastUpdatedAt:
+        row.tsUpdated instanceof Date ? row.tsUpdated.toISOString() : null,
+      lastChangeReason:
+        typeof row.lastChangeReason === "string" ? row.lastChangeReason : null
+    }));
+
+    return res.json({ items });
   }
 
   const rows = await db.prediction.findMany({
@@ -4173,16 +5096,24 @@ app.get("/api/predictions/running", requireAuth, async (req, res) => {
   const user = getUserFromLocals(res);
 
   const [rows, exchangeAccounts] = await Promise.all([
-    db.prediction.findMany({
+    db.predictionState.findMany({
       where: { userId: user.id },
-      orderBy: [{ tsCreated: "desc" }, { createdAt: "desc" }],
-      take: Math.max(200, PREDICTION_AUTO_TEMPLATE_SCAN_LIMIT),
+      orderBy: [{ tsUpdated: "desc" }, { updatedAt: "desc" }],
+      take: Math.max(200, PREDICTION_REFRESH_SCAN_LIMIT),
       select: {
         id: true,
         symbol: true,
         marketType: true,
         timeframe: true,
-        tsCreated: true,
+        tsUpdated: true,
+        tsPredictedFor: true,
+        exchange: true,
+        accountId: true,
+        directionPreference: true,
+        confidenceTargetPct: true,
+        leverage: true,
+        autoScheduleEnabled: true,
+        autoSchedulePaused: true,
         featuresSnapshot: true
       }
     }),
@@ -4204,7 +5135,7 @@ app.get("/api/predictions/running", requireAuth, async (req, res) => {
     });
   }
 
-  const templateMap = new Map<string, {
+  const items: Array<{
     id: string;
     symbol: string;
     marketType: PredictionMarketType;
@@ -4219,12 +5150,15 @@ app.get("/api/predictions/running", requireAuth, async (req, res) => {
     tsCreated: string;
     nextRunAt: string;
     dueInSec: number;
-  } | null>();
+  }> = [];
 
   const now = Date.now();
   for (const row of rows) {
     const snapshot = asRecord(row.featuresSnapshot);
-    const exchangeAccountId = readPrefillExchangeAccountId(snapshot);
+    const exchangeAccountId =
+      typeof row.accountId === "string" && row.accountId.trim()
+        ? row.accountId.trim()
+        : readPrefillExchangeAccountId(snapshot);
     if (!exchangeAccountId) continue;
 
     const symbol = normalizeSymbolInput(row.symbol);
@@ -4232,47 +5166,50 @@ app.get("/api/predictions/running", requireAuth, async (req, res) => {
 
     const timeframe = normalizePredictionTimeframe(row.timeframe);
     const marketType = normalizePredictionMarketType(row.marketType);
-    const key = predictionTemplateKey({
-      userId: user.id,
-      exchangeAccountId,
-      symbol,
-      marketType,
-      timeframe
-    });
+    if (!Boolean(row.autoScheduleEnabled)) continue;
 
-    if (templateMap.has(key)) continue;
-
-    if (!isAutoScheduleEnabled(snapshot.autoScheduleEnabled)) {
-      templateMap.set(key, null);
-      continue;
-    }
-    const paused = isAutoSchedulePaused(snapshot);
-
-    const dueAt = row.tsCreated.getTime() + timeframeToIntervalMs(timeframe);
+    const paused = Boolean(row.autoSchedulePaused);
+    const dueAt = row.tsPredictedFor instanceof Date
+      ? row.tsPredictedFor.getTime()
+      : row.tsUpdated.getTime() + refreshIntervalMsForTimeframe(timeframe);
     const dueInSec = Math.max(0, Math.floor((dueAt - now) / 1000));
     const account = accountMap.get(exchangeAccountId);
 
-    templateMap.set(key, {
+    items.push({
       id: row.id,
       symbol,
       marketType,
       timeframe,
       exchangeAccountId,
-      exchange: account?.exchange ?? "bitget",
+      exchange:
+        (typeof row.exchange === "string" && row.exchange.trim()) ||
+        account?.exchange ||
+        "bitget",
       label: account?.label ?? exchangeAccountId,
-      directionPreference: parseDirectionPreference(snapshot.directionPreference),
-      confidenceTargetPct: readConfidenceTarget(snapshot),
-      leverage: readRequestedLeverage(snapshot) ?? null,
+      directionPreference: parseDirectionPreference(
+        row.directionPreference ?? snapshot.directionPreference
+      ),
+      confidenceTargetPct:
+        Number.isFinite(Number(row.confidenceTargetPct))
+          && row.confidenceTargetPct !== null
+          && row.confidenceTargetPct !== undefined
+          ? Number(row.confidenceTargetPct)
+          : readConfidenceTarget(snapshot),
+      leverage:
+        Number.isFinite(Number(row.leverage))
+          && row.leverage !== null
+          && row.leverage !== undefined
+          ? Math.max(1, Math.trunc(Number(row.leverage)))
+          : readRequestedLeverage(snapshot) ?? null,
       paused,
-      tsCreated: row.tsCreated.toISOString(),
+      tsCreated:
+        row.tsUpdated instanceof Date ? row.tsUpdated.toISOString() : new Date().toISOString(),
       nextRunAt: new Date(dueAt).toISOString(),
       dueInSec
     });
   }
 
-  const items = Array.from(templateMap.values())
-    .filter((item): item is Exclude<typeof item, null> => Boolean(item))
-    .sort((a, b) => a.dueInSec - b.dueInSec);
+  items.sort((a, b) => a.dueInSec - b.dueInSec);
 
   return res.json({ items });
 });
@@ -4286,6 +5223,39 @@ app.post("/api/predictions/:id/pause", requireAuth, async (req, res) => {
   const body = predictionPauseSchema.safeParse(req.body ?? {});
   if (!body.success) {
     return res.status(400).json({ error: "invalid_payload", details: body.error.flatten() });
+  }
+
+  const stateRow = await db.predictionState.findFirst({
+    where: {
+      id: params.data.id,
+      userId: user.id
+    },
+    select: {
+      id: true,
+      featuresSnapshot: true
+    }
+  });
+
+  if (stateRow) {
+    const snapshot = asRecord(stateRow.featuresSnapshot);
+    await db.predictionState.update({
+      where: { id: stateRow.id },
+      data: {
+        autoScheduleEnabled: true,
+        autoSchedulePaused: body.data.paused,
+        featuresSnapshot: {
+          ...snapshot,
+          autoScheduleEnabled: true,
+          autoSchedulePaused: body.data.paused
+        }
+      }
+    });
+
+    return res.json({
+      ok: true,
+      paused: body.data.paused,
+      updatedCount: 1
+    });
   }
 
   const scope = await resolvePredictionTemplateScope(user.id, params.data.id);
@@ -4342,6 +5312,38 @@ app.post("/api/predictions/:id/stop", requireAuth, async (req, res) => {
     return res.status(400).json({ error: "invalid_prediction_id" });
   }
 
+  const stateRow = await db.predictionState.findFirst({
+    where: {
+      id: params.data.id,
+      userId: user.id
+    },
+    select: {
+      id: true,
+      featuresSnapshot: true
+    }
+  });
+
+  if (stateRow) {
+    const snapshot = asRecord(stateRow.featuresSnapshot);
+    await db.predictionState.update({
+      where: { id: stateRow.id },
+      data: {
+        autoScheduleEnabled: false,
+        autoSchedulePaused: false,
+        featuresSnapshot: {
+          ...snapshot,
+          autoScheduleEnabled: false,
+          autoSchedulePaused: false
+        }
+      }
+    });
+
+    return res.json({
+      ok: true,
+      stoppedCount: 1
+    });
+  }
+
   const scope = await resolvePredictionTemplateScope(user.id, params.data.id);
   if (!scope) {
     return res.status(404).json({ error: "prediction_not_found" });
@@ -4390,6 +5392,19 @@ app.post("/api/predictions/:id/delete-schedule", requireAuth, async (req, res) =
     return res.status(400).json({ error: "invalid_prediction_id" });
   }
 
+  const stateDeleted = await db.predictionState.deleteMany({
+    where: {
+      id: params.data.id,
+      userId: user.id
+    }
+  });
+  if (stateDeleted.count > 0) {
+    return res.json({
+      ok: true,
+      deletedCount: stateDeleted.count
+    });
+  }
+
   const scope = await resolvePredictionTemplateScope(user.id, params.data.id);
   if (!scope) {
     return res.status(404).json({ error: "prediction_not_found" });
@@ -4426,6 +5441,47 @@ app.post("/api/predictions/clear-old", requireAuth, async (req, res) => {
   const olderThanDays = parsed.data.olderThanDays;
   const keepRunningTemplates = parsed.data.keepRunningTemplates;
   const cutoff = new Date(Date.now() - olderThanDays * 24 * 60 * 60 * 1000);
+
+  const stateRowsForUser = await db.predictionState.findMany({
+    where: { userId: user.id },
+    select: {
+      id: true,
+      autoScheduleEnabled: true,
+      updatedAt: true
+    }
+  });
+  const preservedStateIds = new Set(
+    keepRunningTemplates
+      ? stateRowsForUser
+          .filter((row: any) => Boolean(row.autoScheduleEnabled))
+          .map((row: any) => String(row.id))
+      : []
+  );
+  const staleStateIds = stateRowsForUser
+    .filter((row: any) => row.updatedAt instanceof Date && row.updatedAt < cutoff)
+    .map((row: any) => String(row.id))
+    .filter((id: string) => !preservedStateIds.has(id));
+
+  const stateDeleteResult =
+    staleStateIds.length > 0
+      ? await db.predictionState.deleteMany({
+          where: {
+            userId: user.id,
+            id: { in: staleStateIds }
+          }
+        })
+      : { count: 0 };
+
+  const userStateIds = stateRowsForUser.map((row: any) => String(row.id));
+  const staleEventDeleteResult =
+    userStateIds.length > 0
+      ? await db.predictionEvent.deleteMany({
+          where: {
+            stateId: { in: userStateIds },
+            tsCreated: { lt: cutoff }
+          }
+        })
+      : { count: 0 };
 
   const preservedIds = new Set<string>();
   if (keepRunningTemplates) {
@@ -4484,7 +5540,9 @@ app.post("/api/predictions/clear-old", requireAuth, async (req, res) => {
       olderThanDays,
       cutoffIso: cutoff.toISOString(),
       deletedCount: 0,
-      preservedCount: preservedIds.size
+      preservedCount: preservedIds.size,
+      deletedStateCount: stateDeleteResult.count,
+      deletedEventCount: staleEventDeleteResult.count
     });
   }
 
@@ -4500,7 +5558,9 @@ app.post("/api/predictions/clear-old", requireAuth, async (req, res) => {
     olderThanDays,
     cutoffIso: cutoff.toISOString(),
     deletedCount: deleted.count,
-    preservedCount: preservedIds.size
+    preservedCount: preservedIds.size,
+    deletedStateCount: stateDeleteResult.count,
+    deletedEventCount: staleEventDeleteResult.count
   });
 });
 
@@ -4516,16 +5576,121 @@ app.post("/api/predictions/delete-many", requireAuth, async (req, res) => {
     return res.json({ ok: true, deletedCount: 0 });
   }
 
-  const deleted = await db.prediction.deleteMany({
-    where: {
-      userId: user.id,
-      id: { in: uniqueIds }
-    }
-  });
+  const [deletedStates, deletedHistory] = await Promise.all([
+    db.predictionState.deleteMany({
+      where: {
+        userId: user.id,
+        id: { in: uniqueIds }
+      }
+    }),
+    db.prediction.deleteMany({
+      where: {
+        userId: user.id,
+        id: { in: uniqueIds }
+      }
+    })
+  ]);
+
+  const deletedCount = (deletedStates?.count ?? 0) + (deletedHistory?.count ?? 0);
 
   return res.json({
     ok: true,
-    deletedCount: deleted.count
+    deletedCount
+  });
+});
+
+app.get("/api/predictions/state", requireAuth, async (req, res) => {
+  const user = getUserFromLocals(res);
+  const parsed = predictionStateQuerySchema.safeParse(req.query ?? {});
+  if (!parsed.success) {
+    return res.status(400).json({ error: "invalid_query", details: parsed.error.flatten() });
+  }
+
+  const symbol = normalizeSymbolInput(parsed.data.symbol);
+  if (!symbol) {
+    return res.status(400).json({ error: "invalid_symbol" });
+  }
+
+  const row = await db.predictionState.findFirst({
+    where: {
+      userId: user.id,
+      exchange: normalizeExchangeValue(parsed.data.exchange),
+      accountId: parsed.data.accountId,
+      symbol,
+      marketType: parsed.data.marketType,
+      timeframe: parsed.data.timeframe
+    },
+    orderBy: [{ tsUpdated: "desc" }, { updatedAt: "desc" }]
+  });
+
+  if (!row) {
+    return res.status(404).json({ error: "prediction_state_not_found" });
+  }
+
+  return res.json({
+    id: row.id,
+    exchange: row.exchange,
+    accountId: row.accountId,
+    symbol: row.symbol,
+    marketType: normalizePredictionMarketType(row.marketType),
+    timeframe: normalizePredictionTimeframe(row.timeframe),
+    tsUpdated: row.tsUpdated instanceof Date ? row.tsUpdated.toISOString() : null,
+    tsPredictedFor: row.tsPredictedFor instanceof Date ? row.tsPredictedFor.toISOString() : null,
+    signal: normalizePredictionSignal(row.signal),
+    expectedMovePct: Number.isFinite(Number(row.expectedMovePct))
+      ? Number(row.expectedMovePct)
+      : null,
+    confidence: Number.isFinite(Number(row.confidence)) ? Number(row.confidence) : 0,
+    tags: normalizeTagList(row.tags),
+    explanation: typeof row.explanation === "string" ? row.explanation : null,
+    keyDrivers: normalizeKeyDriverList(row.keyDrivers),
+    featureSnapshot: asRecord(row.featuresSnapshot),
+    modelVersion: row.modelVersion,
+    autoScheduleEnabled: Boolean(row.autoScheduleEnabled),
+    autoSchedulePaused: Boolean(row.autoSchedulePaused),
+    lastChangeReason:
+      typeof row.lastChangeReason === "string" ? row.lastChangeReason : null
+  });
+});
+
+app.get("/api/predictions/events", requireAuth, async (req, res) => {
+  const user = getUserFromLocals(res);
+  const parsed = predictionEventsQuerySchema.safeParse(req.query ?? {});
+  if (!parsed.success) {
+    return res.status(400).json({ error: "invalid_query", details: parsed.error.flatten() });
+  }
+
+  const state = await db.predictionState.findFirst({
+    where: {
+      id: parsed.data.stateId,
+      userId: user.id,
+    },
+    select: { id: true }
+  });
+  if (!state) {
+    return res.status(404).json({ error: "prediction_state_not_found" });
+  }
+
+  const rows = await db.predictionEvent.findMany({
+    where: {
+      stateId: state.id
+    },
+    orderBy: [{ tsCreated: "desc" }],
+    take: parsed.data.limit
+  });
+
+  return res.json({
+    items: rows.map((row: any) => ({
+      id: row.id,
+      stateId: row.stateId,
+      tsCreated: row.tsCreated instanceof Date ? row.tsCreated.toISOString() : null,
+      changeType: row.changeType,
+      reason: typeof row.reason === "string" ? row.reason : null,
+      delta: asRecord(row.delta),
+      prevSnapshot: row.prevSnapshot ?? null,
+      newSnapshot: row.newSnapshot ?? null,
+      modelVersion: row.modelVersion
+    }))
   });
 });
 
@@ -4546,6 +5711,50 @@ app.get("/api/symbols", requireAuth, async (req, res) => {
         exchangeAccountId: account.id,
         exchange: account.exchange,
         ...symbols
+      });
+    } finally {
+      await adapter.close();
+    }
+  } catch (error) {
+    return sendManualTradingError(res, error);
+  }
+});
+
+app.get("/api/market/candles", requireAuth, async (req, res) => {
+  const user = getUserFromLocals(res);
+  const parsed = marketCandlesQuerySchema.safeParse(req.query ?? {});
+  if (!parsed.success) {
+    return res.status(400).json({ error: "invalid_query", details: parsed.error.flatten() });
+  }
+
+  try {
+    const account = await resolveTradingAccount(user.id, parsed.data.exchangeAccountId);
+    const adapter = createBitgetAdapter(account);
+
+    try {
+      const symbol = normalizeSymbolInput(parsed.data.symbol);
+      if (!symbol) {
+        return res.status(400).json({ error: "symbol_required" });
+      }
+
+      const exchangeSymbol = await adapter.toExchangeSymbol(symbol);
+      const granularity = marketTimeframeToBitgetGranularity(parsed.data.timeframe as "1m" | PredictionTimeframe);
+      const raw = await adapter.marketApi.getCandles({
+        symbol: exchangeSymbol,
+        productType: adapter.productType,
+        granularity,
+        limit: parsed.data.limit
+      });
+
+      const items = parseBitgetCandles(raw);
+
+      return res.json({
+        exchangeAccountId: account.id,
+        exchange: account.exchange,
+        symbol,
+        timeframe: parsed.data.timeframe,
+        granularity,
+        items
       });
     } finally {
       await adapter.close();
@@ -4843,7 +6052,7 @@ app.get("/exchange-accounts", requireAuth, async (_req, res) => {
 
 app.get("/dashboard/overview", requireAuth, async (_req, res) => {
   const user = getUserFromLocals(res);
-  const [accounts, bots, predictionRows] = await Promise.all([
+  const [accounts, bots, predictionStates] = await Promise.all([
     db.exchangeAccount.findMany({
       where: { userId: user.id },
       orderBy: { createdAt: "desc" },
@@ -4882,15 +6091,16 @@ app.get("/dashboard/overview", requireAuth, async (_req, res) => {
         }
       }
     }),
-    db.prediction.findMany({
-      where: { userId: user.id },
-      orderBy: [{ tsCreated: "desc" }, { createdAt: "desc" }],
-      take: Math.max(200, PREDICTION_AUTO_TEMPLATE_SCAN_LIMIT),
+    db.predictionState.findMany({
+      where: {
+        userId: user.id,
+        autoScheduleEnabled: true,
+        autoSchedulePaused: false
+      },
+      orderBy: [{ tsUpdated: "desc" }, { updatedAt: "desc" }],
+      take: Math.max(200, PREDICTION_REFRESH_SCAN_LIMIT),
       select: {
-        symbol: true,
-        marketType: true,
-        timeframe: true,
-        featuresSnapshot: true
+        accountId: true
       }
     })
   ]);
@@ -4917,35 +6127,14 @@ app.get("/dashboard/overview", requireAuth, async (_req, res) => {
     });
   }
 
-  const accountIds = new Set(accounts.map((row) => row.id));
-  const templateMap = new Map<string, string | null>();
   const runningPredictionCounts = new Map<string, number>();
 
-  for (const row of predictionRows) {
-    const snapshot = asRecord(row.featuresSnapshot);
-    const exchangeAccountId = readPrefillExchangeAccountId(snapshot);
-    if (!exchangeAccountId || !accountIds.has(exchangeAccountId)) continue;
-
-    const symbol = normalizeSymbolInput(row.symbol);
-    if (!symbol) continue;
-
-    const timeframe = normalizePredictionTimeframe(row.timeframe);
-    const marketType = normalizePredictionMarketType(row.marketType);
-    const key = predictionTemplateKey({
-      userId: user.id,
-      exchangeAccountId,
-      symbol,
-      marketType,
-      timeframe
-    });
-    if (templateMap.has(key)) continue;
-
-    if (!isAutoScheduleEnabled(snapshot.autoScheduleEnabled) || isAutoSchedulePaused(snapshot)) {
-      templateMap.set(key, null);
-      continue;
-    }
-
-    templateMap.set(key, exchangeAccountId);
+  for (const row of predictionStates) {
+    const exchangeAccountId =
+      typeof row.accountId === "string" && row.accountId.trim()
+        ? row.accountId.trim()
+        : null;
+    if (!exchangeAccountId) continue;
     runningPredictionCounts.set(
       exchangeAccountId,
       (runningPredictionCounts.get(exchangeAccountId) ?? 0) + 1

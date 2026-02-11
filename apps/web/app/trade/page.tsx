@@ -9,6 +9,7 @@ import {
   TRADE_DESK_PREFILL_SESSION_KEY,
   type TradeDeskPrefillPayload
 } from "../../src/schemas/tradeDeskPrefill";
+import { LightweightChart } from "./LightweightChart";
 
 type ExchangeAccountItem = {
   id: string;
@@ -123,14 +124,6 @@ const QTY_INPUT_MODE_OPTIONS: QtyInputModeOption[] = [
   }
 ];
 
-declare global {
-  interface Window {
-    TradingView?: {
-      widget: new (options: Record<string, unknown>) => unknown;
-    };
-  }
-}
-
 function toWsBase(url: string): string {
   if (url.startsWith("https://")) return `wss://${url.slice("https://".length)}`;
   if (url.startsWith("http://")) return `ws://${url.slice("http://".length)}`;
@@ -178,71 +171,6 @@ function decodeBase64UrlJson(value: string): unknown | null {
   } catch {
     return null;
   }
-}
-
-function toTvInterval(value: string): string {
-  if (value === "1m") return "1";
-  if (value === "5m") return "5";
-  if (value === "15m") return "15";
-  if (value === "1h") return "60";
-  if (value === "4h") return "240";
-  if (value === "1d") return "1D";
-  return "15";
-}
-
-function TradingViewChart({ symbol, timeframe }: { symbol: string; timeframe: string }) {
-  const containerRef = useRef<HTMLDivElement | null>(null);
-
-  useEffect(() => {
-    let cancelled = false;
-    let script: HTMLScriptElement | null = null;
-
-    const container = containerRef.current;
-    if (!container) return;
-    container.innerHTML = "";
-
-    const containerId = `tv_${Math.random().toString(16).slice(2)}`;
-    container.id = containerId;
-
-    const mountWidget = () => {
-      if (cancelled || !window.TradingView) return;
-      new window.TradingView.widget({
-        autosize: true,
-        symbol: `BITGET:${symbol}`,
-        interval: toTvInterval(timeframe),
-        timezone: "Etc/UTC",
-        theme: "dark",
-        style: "1",
-        locale: "en",
-        toolbar_bg: "#0b0f14",
-        enable_publishing: false,
-        allow_symbol_change: false,
-        container_id: containerId
-      });
-    };
-
-    if (window.TradingView) {
-      mountWidget();
-    } else {
-      script = document.createElement("script");
-      script.src = "https://s3.tradingview.com/tv.js";
-      script.async = true;
-      script.onload = () => mountWidget();
-      document.head.appendChild(script);
-    }
-
-    return () => {
-      cancelled = true;
-      if (script && script.parentNode) {
-        script.parentNode.removeChild(script);
-      }
-      if (containerRef.current) {
-        containerRef.current.innerHTML = "";
-      }
-    };
-  }, [symbol, timeframe]);
-
-  return <div ref={containerRef} style={{ width: "100%", height: 520 }} />;
 }
 
 function TradePageContent() {
@@ -1313,7 +1241,12 @@ function TradePageContent() {
               <div style={{ marginBottom: 8, fontWeight: 700 }}>
                 {selectedSymbol} {selectedSymbolMeta?.status ? `- ${selectedSymbolMeta.status}` : ""}
               </div>
-              <TradingViewChart symbol={selectedSymbol} timeframe={timeframe} />
+              <LightweightChart
+                exchangeAccountId={selectedAccountId}
+                symbol={selectedSymbol}
+                timeframe={timeframe}
+                prefill={activePrefill}
+              />
             </article>
 
             <article className="card" style={{ padding: 10, minHeight: 620 }}>

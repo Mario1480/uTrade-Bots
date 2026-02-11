@@ -6,6 +6,8 @@ import { getPredictionDetailController } from "./predictionsController.js";
 
 type FixtureDb = {
   predictions: Prediction[];
+  predictionStates?: Array<any>;
+  predictionEvents?: Array<any>;
   bots: Array<{
     id: string;
     userId: string | null;
@@ -71,10 +73,22 @@ function makePrediction(
 }
 
 function makeDb(fixtures: FixtureDb) {
+  const predictionStates = fixtures.predictionStates ?? [];
+  const predictionEvents = fixtures.predictionEvents ?? [];
   return {
     prediction: {
       findUnique: async (args: { where: { id: string } }) =>
         fixtures.predictions.find((item) => item.id === args.where.id) ?? null
+    },
+    predictionState: {
+      findUnique: async (args: { where: { id: string } }) =>
+        predictionStates.find((item) => item.id === args.where.id) ?? null
+    },
+    predictionEvent: {
+      findMany: async (args: { where: { stateId: string }; take: number }) =>
+        predictionEvents
+          .filter((item) => item.stateId === args.where.stateId)
+          .slice(0, args.take)
     },
     bot: {
       findUnique: async (args: { where: { id: string } }) =>
@@ -194,4 +208,79 @@ test("backward compatibility: missing indicators/explanation still returns valid
   assert.equal(parsed.explanation, null);
   assert.equal(parsed.featureSnapshot.indicators, undefined);
   assert.deepEqual(parsed.tags, ["trend_down"]);
+});
+
+test("returns state dto when id belongs to predictions_state and can include events", async () => {
+  const now = new Date("2026-02-11T12:00:00.000Z");
+  const db = makeDb({
+    predictions: [],
+    predictionStates: [
+      {
+        id: "11111111-1111-4111-8111-111111111111",
+        userId: "user_1",
+        exchange: "bitget",
+        accountId: "acc_1",
+        symbol: "BTCUSDT",
+        marketType: "perp",
+        timeframe: "15m",
+        tsUpdated: now,
+        tsPredictedFor: new Date(now.getTime() + 15 * 60 * 1000),
+        signal: "up",
+        expectedMovePct: 1.1,
+        confidence: 0.71,
+        tags: ["trend_up", "high_vol"],
+        explanation: "State explanation.",
+        keyDrivers: [{ name: "indicators.rsi_14", value: 63.4 }],
+        featuresSnapshot: {
+          indicators: {
+            rsi_14: 63.4
+          },
+          prefillExchangeAccountId: "acc_1"
+        },
+        modelVersion: "baseline-v1 + openai-explain-v1",
+        lastAiExplainedAt: now,
+        lastChangeHash: "abc",
+        lastChangeReason: "signal_flip",
+        autoScheduleEnabled: true,
+        autoSchedulePaused: false,
+        directionPreference: "either",
+        confidenceTargetPct: 60,
+        leverage: 10,
+        createdAt: now,
+        updatedAt: now
+      }
+    ],
+    predictionEvents: [
+      {
+        id: "evt_1",
+        stateId: "11111111-1111-4111-8111-111111111111",
+        tsCreated: now,
+        changeType: "signal_flip",
+        prevSnapshot: { signal: "down" },
+        newSnapshot: { signal: "up" },
+        delta: { signal: "down->up" },
+        modelVersion: "baseline-v1 + openai-explain-v1",
+        reason: "trigger_trend_flip"
+      }
+    ],
+    bots: [],
+    exchangeAccounts: [
+      { id: "acc_1", userId: "user_1", exchange: "bitget", updatedAt: now }
+    ]
+  });
+
+  const result = await getPredictionDetailController({
+    db: db as any,
+    predictionId: "11111111-1111-4111-8111-111111111111",
+    userId: "user_1",
+    includeEvents: true,
+    eventsLimit: 10
+  });
+
+  assert.equal(result.status, 200);
+  if (result.status !== 200) return;
+  assert.equal(result.body.id, "11111111-1111-4111-8111-111111111111");
+  assert.equal(result.body.signal, "up");
+  assert.equal(Array.isArray((result.body as any).events), true);
+  assert.equal(((result.body as any).events as any[]).length, 1);
 });

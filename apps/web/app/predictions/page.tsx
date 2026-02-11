@@ -9,6 +9,13 @@ import {
   TRADE_DESK_PREFILL_SESSION_KEY,
   type PredictionPrefillSource
 } from "../../src/schemas/tradeDeskPrefill";
+import {
+  buildPredictionCopySummary,
+  formatRelativeTime,
+  isRecentTimestamp,
+  parsePredictionChangeReason,
+  type PredictionSignalFlip
+} from "../../src/predictions/refreshUi";
 
 type PredictionSignal = "up" | "down" | "neutral";
 type PredictionTimeframe = "5m" | "15m" | "1h" | "4h" | "1d";
@@ -38,6 +45,20 @@ type PredictionListItem = {
   outcomeEvaluatedAt?: string | null;
   exchange: string;
   accountId: string | null;
+  lastUpdatedAt?: string | null;
+  lastChangeReason?: string | null;
+};
+
+type PredictionEventItem = {
+  id: string;
+  stateId: string;
+  tsCreated: string | null;
+  changeType: string;
+  reason: string | null;
+  delta: Record<string, unknown> | null;
+  prevSnapshot: unknown;
+  newSnapshot: unknown;
+  modelVersion: string | null;
 };
 
 type PredictionDetailResponse = PredictionPrefillSource & {
@@ -66,6 +87,7 @@ type PredictionDetailResponse = PredictionPrefillSource & {
   riskFlags?: {
     dataGap?: boolean;
   } | null;
+  events?: PredictionEventItem[];
 };
 
 type ExchangeAccountItem = {
@@ -180,6 +202,38 @@ function fmtNum(value: unknown, decimals = 2): string {
   return parsed.toFixed(decimals);
 }
 
+function summarizeEventDelta(delta: Record<string, unknown> | null): string {
+  if (!delta || typeof delta !== "object") return "No delta data";
+  const parts: string[] = [];
+
+  const signal = typeof delta.signal === "string" ? delta.signal : null;
+  if (signal) parts.push(`signal ${signal}`);
+
+  const confidenceDelta = toNum(delta.confidenceDelta);
+  if (confidenceDelta !== null) {
+    const sign = confidenceDelta >= 0 ? "+" : "";
+    parts.push(`confidence ${sign}${confidenceDelta.toFixed(2)}`);
+  }
+
+  const tagsAdded = Array.isArray(delta.tagsAdded)
+    ? delta.tagsAdded.map((item) => String(item)).filter(Boolean)
+    : [];
+  if (tagsAdded.length > 0) parts.push(`+${tagsAdded.join(", ")}`);
+
+  const tagsRemoved = Array.isArray(delta.tagsRemoved)
+    ? delta.tagsRemoved.map((item) => String(item)).filter(Boolean)
+    : [];
+  if (tagsRemoved.length > 0) parts.push(`-${tagsRemoved.join(", ")}`);
+
+  if (parts.length === 0) return "No delta data";
+  return parts.join(" | ");
+}
+
+function formatFlipLabel(flip: PredictionSignalFlip | null): string {
+  if (!flip) return "FLIP";
+  return `${flip.from.toUpperCase()}->${flip.to.toUpperCase()}`;
+}
+
 export default function PredictionsPage() {
   const router = useRouter();
 
@@ -222,6 +276,10 @@ export default function PredictionsPage() {
   const [detailsById, setDetailsById] = useState<Record<string, PredictionDetailResponse>>({});
   const [detailsLoadingId, setDetailsLoadingId] = useState<string | null>(null);
   const [detailsError, setDetailsError] = useState<string | null>(null);
+  const [eventsByStateId, setEventsByStateId] = useState<Record<string, PredictionEventItem[]>>({});
+  const [eventsLoadingStateId, setEventsLoadingStateId] = useState<string | null>(null);
+  const [eventsErrorByStateId, setEventsErrorByStateId] = useState<Record<string, string | null>>({});
+  const [expandedEventsByStateId, setExpandedEventsByStateId] = useState<Record<string, boolean>>({});
 
   async function loadPredictions() {
     setLoading(true);
@@ -402,6 +460,56 @@ export default function PredictionsPage() {
     }
   }
 
+  async function loadPredictionEvents(stateId: string) {
+    if (eventsByStateId[stateId]) return;
+    setEventsLoadingStateId(stateId);
+    setEventsErrorByStateId((prev) => ({ ...prev, [stateId]: null }));
+    try {
+      const payload = await apiGet<{ items: PredictionEventItem[] }>(
+        `/api/predictions/events?stateId=${encodeURIComponent(stateId)}&limit=10`
+      );
+      setEventsByStateId((prev) => ({
+        ...prev,
+        [stateId]: Array.isArray(payload.items) ? payload.items : []
+      }));
+    } catch {
+      setEventsErrorByStateId((prev) => ({
+        ...prev,
+        [stateId]: "Unable to load events."
+      }));
+    } finally {
+      setEventsLoadingStateId(null);
+    }
+  }
+
+  function toggleEventLog(stateId: string) {
+    const nextExpanded = !expandedEventsByStateId[stateId];
+    setExpandedEventsByStateId((prev) => ({ ...prev, [stateId]: nextExpanded }));
+    if (nextExpanded) {
+      void loadPredictionEvents(stateId);
+    }
+  }
+
+  async function copyRowSummary(row: PredictionListItem) {
+    const summary = buildPredictionCopySummary({
+      symbol: row.symbol,
+      timeframe: row.timeframe,
+      signal: row.signal,
+      confidence: row.confidence,
+      expectedMovePct: row.expectedMovePct,
+      lastUpdatedAt: row.lastUpdatedAt ?? row.tsCreated,
+      lastChangeReason: row.lastChangeReason ?? null,
+      tags: row.tags,
+      nowMs
+    });
+    try {
+      await navigator.clipboard.writeText(summary);
+      setNotice("Summary copied.");
+    } catch {
+      setActionError("Copy failed. Clipboard access denied.");
+    }
+  }
+
   async function createPrediction() {
     setActionError(null);
     setNotice(null);
@@ -570,11 +678,27 @@ export default function PredictionsPage() {
     }
   }
 
-  function renderIndicatorDetail(rowId: string) {
+  function renderIndicatorDetail(row: PredictionListItem) {
+    const rowId = row.id;
     const detail = detailsById[rowId];
     const indicators = detail?.indicators ?? null;
     const loadingDetail = detailsLoadingId === rowId;
     const dataGap = Boolean(indicators?.dataGap || detail?.riskFlags?.dataGap);
+    const updatedAtIso = row.lastUpdatedAt ?? row.tsCreated;
+    const parsedReason = parsePredictionChangeReason(row.lastChangeReason ?? null);
+    const events = eventsByStateId[rowId] ?? detail?.events ?? [];
+    const eventsExpanded = Boolean(expandedEventsByStateId[rowId]);
+    const eventsLoading = eventsLoadingStateId === rowId;
+    const eventsError = eventsErrorByStateId[rowId] ?? null;
+
+    const reasonBadgeClass =
+      parsedReason.kind === "triggered"
+        ? "predictionReasonBadgeTrigger"
+        : parsedReason.kind === "scheduled"
+          ? "predictionReasonBadgeScheduled"
+          : parsedReason.kind === "manual"
+            ? "predictionReasonBadgeManual"
+            : "predictionReasonBadgeUnknown";
 
     if (loadingDetail && !detail) {
       return (
@@ -585,58 +709,136 @@ export default function PredictionsPage() {
     }
 
     return (
-      <div className="card predictionDetailPanel">
-        <div className="predictionDetailHeader">
-          <strong>Indicator Snapshot</strong>
+      <div className="predictionDetailStack">
+        <div className="card predictionDetailPanel">
+          <div className="predictionDetailHeader">
+            <strong>Prediction Context</strong>
+            <div className="predictionDetailHeaderActions">
+              <button className="btn predictionMiniBtn" type="button" onClick={() => void copyRowSummary(row)}>
+                Copy Summary
+              </button>
+            </div>
+          </div>
+
+          <div className="predictionContextRow">
+            <span className={`badge ${reasonBadgeClass}`}>{parsedReason.label}</span>
+            {parsedReason.signalFlip ? (
+              <span className="badge predictionFlipBadge">FLIP {formatFlipLabel(parsedReason.signalFlip)}</span>
+            ) : null}
+            <span
+              className={`predictionUpdateMeta ${isRecentTimestamp(updatedAtIso, nowMs, 2 * 60 * 1000) ? "predictionUpdateMetaFresh" : ""}`}
+              title={updatedAtIso ? new Date(updatedAtIso).toLocaleString() : "n/a"}
+            >
+              Last updated {formatRelativeTime(updatedAtIso, nowMs)}
+            </span>
+          </div>
+          <div className="predictionContextReason">
+            Reason: {parsedReason.raw ?? "n/a"}
+          </div>
+
           {dataGap ? (
             <span className="predictionDetailWarning">
               Data gap detected
             </span>
           ) : null}
+
+          {indicators ? (
+            <div className="predictionIndicatorGrid">
+              <div className="card predictionIndicatorCard">
+                <div className="predictionIndicatorTitle">RSI (14)</div>
+                <div className="predictionIndicatorValue">{fmtNum(indicators.rsi_14, 2)}</div>
+              </div>
+              <div className="card predictionIndicatorCard">
+                <div className="predictionIndicatorTitle">MACD (line / signal / hist)</div>
+                <div className="predictionIndicatorValue">
+                  {fmtNum(indicators.macd?.line, 4)} / {fmtNum(indicators.macd?.signal, 4)} / {fmtNum(indicators.macd?.hist, 4)}
+                </div>
+              </div>
+              <div className="card predictionIndicatorCard">
+                <div className="predictionIndicatorTitle">Bollinger (width% / pos)</div>
+                <div className="predictionIndicatorValue">
+                  {fmtNum(indicators.bb?.width_pct, 2)} / {fmtNum(indicators.bb?.pos, 3)}
+                </div>
+              </div>
+              <div className="card predictionIndicatorCard">
+                <div className="predictionIndicatorTitle">VWAP (value / dist%)</div>
+                <div className="predictionIndicatorValue">
+                  {fmtNum(indicators.vwap?.value, 2)} / {fmtNum(indicators.vwap?.dist_pct, 2)}
+                </div>
+                <div className="predictionIndicatorMeta">
+                  mode: {indicators.vwap?.mode ?? "n/a"}
+                </div>
+              </div>
+              <div className="card predictionIndicatorCard">
+                <div className="predictionIndicatorTitle">ADX (ADX / +DI / -DI)</div>
+                <div className="predictionIndicatorValue">
+                  {fmtNum(indicators.adx?.adx_14, 2)} / {fmtNum(indicators.adx?.plus_di_14, 2)} / {fmtNum(indicators.adx?.minus_di_14, 2)}
+                </div>
+              </div>
+              <div className="card predictionIndicatorCard">
+                <div className="predictionIndicatorTitle">ATR %</div>
+                <div className="predictionIndicatorValue">{fmtNum(indicators.atr_pct, 4)}</div>
+              </div>
+            </div>
+          ) : (
+            <div style={{ color: "var(--muted)", marginTop: 8 }}>
+              No indicator data for this prediction.
+            </div>
+          )}
         </div>
-        {indicators ? (
-          <div className="predictionIndicatorGrid">
-            <div className="card predictionIndicatorCard">
-              <div className="predictionIndicatorTitle">RSI (14)</div>
-              <div className="predictionIndicatorValue">{fmtNum(indicators.rsi_14, 2)}</div>
-            </div>
-            <div className="card predictionIndicatorCard">
-              <div className="predictionIndicatorTitle">MACD (line / signal / hist)</div>
-              <div className="predictionIndicatorValue">
-                {fmtNum(indicators.macd?.line, 4)} / {fmtNum(indicators.macd?.signal, 4)} / {fmtNum(indicators.macd?.hist, 4)}
-              </div>
-            </div>
-            <div className="card predictionIndicatorCard">
-              <div className="predictionIndicatorTitle">Bollinger (width% / pos)</div>
-              <div className="predictionIndicatorValue">
-                {fmtNum(indicators.bb?.width_pct, 2)} / {fmtNum(indicators.bb?.pos, 3)}
-              </div>
-            </div>
-            <div className="card predictionIndicatorCard">
-              <div className="predictionIndicatorTitle">VWAP (value / dist%)</div>
-              <div className="predictionIndicatorValue">
-                {fmtNum(indicators.vwap?.value, 2)} / {fmtNum(indicators.vwap?.dist_pct, 2)}
-              </div>
-              <div className="predictionIndicatorMeta">
-                mode: {indicators.vwap?.mode ?? "n/a"}
-              </div>
-            </div>
-            <div className="card predictionIndicatorCard">
-              <div className="predictionIndicatorTitle">ADX (ADX / +DI / -DI)</div>
-              <div className="predictionIndicatorValue">
-                {fmtNum(indicators.adx?.adx_14, 2)} / {fmtNum(indicators.adx?.plus_di_14, 2)} / {fmtNum(indicators.adx?.minus_di_14, 2)}
-              </div>
-            </div>
-            <div className="card predictionIndicatorCard">
-              <div className="predictionIndicatorTitle">ATR %</div>
-              <div className="predictionIndicatorValue">{fmtNum(indicators.atr_pct, 4)}</div>
-            </div>
+
+        <div className="card predictionDetailPanel">
+          <div className="predictionDetailHeader">
+            <strong>Recent Changes</strong>
+            <button
+              className="btn predictionMiniBtn"
+              type="button"
+              onClick={() => toggleEventLog(rowId)}
+            >
+              {eventsExpanded ? "Hide" : "Show"} ({events.length})
+            </button>
           </div>
-        ) : (
-          <div style={{ color: "var(--muted)", marginTop: 8 }}>
-            No indicator data for this prediction.
-          </div>
-        )}
+
+          {eventsExpanded ? (
+            eventsLoading ? (
+              <div style={{ color: "var(--muted)", marginTop: 8 }}>
+                Loading event log...
+              </div>
+            ) : eventsError ? (
+              <div style={{ color: "var(--muted)", marginTop: 8 }}>
+                {eventsError}
+              </div>
+            ) : events.length === 0 ? (
+              <div style={{ color: "var(--muted)", marginTop: 8 }}>
+                No recent changes recorded.
+              </div>
+            ) : (
+              <div className="predictionEventList">
+                {events.map((event) => (
+                  <div key={event.id} className="predictionEventItem">
+                    <div className="predictionEventHeader">
+                      <span className="badge">{event.changeType}</span>
+                      <span
+                        className="predictionEventTimestamp"
+                        title={event.tsCreated ? new Date(event.tsCreated).toLocaleString() : "n/a"}
+                      >
+                        {formatRelativeTime(event.tsCreated, nowMs)}
+                      </span>
+                    </div>
+                    <div className="predictionEventReason">{event.reason ?? "n/a"}</div>
+                    <div className="predictionEventDelta">
+                      {summarizeEventDelta(event.delta)}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )
+          ) : (
+            <div style={{ color: "var(--muted)", marginTop: 8 }}>
+              Expand to see the last refresh events.
+            </div>
+          )}
+        </div>
       </div>
     );
   }
@@ -1050,6 +1252,8 @@ export default function PredictionsPage() {
                   <th style={{ padding: "8px 6px" }}>Outcome</th>
                   <th style={{ padding: "8px 6px" }}>Outcome PnL</th>
                   <th style={{ padding: "8px 6px" }}>Tags / Explanation</th>
+                  <th style={{ padding: "8px 6px" }}>Last Updated</th>
+                  <th style={{ padding: "8px 6px" }}>Change</th>
                   <th style={{ padding: "8px 6px" }}>Created</th>
                   <th style={{ padding: "8px 6px" }}>Action</th>
                 </tr>
@@ -1065,9 +1269,24 @@ export default function PredictionsPage() {
                   const belowTarget = confidencePct < targetPct;
                   const expanded = expandedDetailId === row.id;
                   const loadingDetail = detailsLoadingId === row.id;
+                  const updatedAtIso = row.lastUpdatedAt ?? row.tsCreated;
+                  const changeReason = parsePredictionChangeReason(row.lastChangeReason ?? null);
+                  const flipRecently =
+                    Boolean(changeReason.signalFlip) && isRecentTimestamp(updatedAtIso, nowMs, 15 * 60 * 1000);
+                  const reasonBadgeClass =
+                    changeReason.kind === "triggered"
+                      ? "predictionReasonBadgeTrigger"
+                      : changeReason.kind === "scheduled"
+                        ? "predictionReasonBadgeScheduled"
+                        : changeReason.kind === "manual"
+                          ? "predictionReasonBadgeManual"
+                          : "predictionReasonBadgeUnknown";
                   return (
                     <Fragment key={row.id}>
-                      <tr style={{ borderTop: "1px solid rgba(255,255,255,.06)" }}>
+                      <tr
+                        className={flipRecently ? "predictionRowFlipRecent" : undefined}
+                        style={{ borderTop: "1px solid rgba(255,255,255,.06)" }}
+                      >
                         <td style={{ padding: "8px 6px", fontWeight: 700 }}>{row.symbol}</td>
                         <td style={{ padding: "8px 6px" }}>{row.marketType}</td>
                         <td style={{ padding: "8px 6px" }}>{row.timeframe}</td>
@@ -1100,6 +1319,31 @@ export default function PredictionsPage() {
                             {row.explanation || "-"}
                           </div>
                         </td>
+                        <td style={{ padding: "8px 6px" }}>
+                          <div className="predictionUpdateCell">
+                            <span
+                              className={`predictionUpdateMeta ${isRecentTimestamp(updatedAtIso, nowMs, 2 * 60 * 1000) ? "predictionUpdateMetaFresh" : ""}`}
+                              title={updatedAtIso ? new Date(updatedAtIso).toLocaleString() : "n/a"}
+                            >
+                              {formatRelativeTime(updatedAtIso, nowMs)}
+                            </span>
+                          </div>
+                        </td>
+                        <td style={{ padding: "8px 6px", maxWidth: 200 }}>
+                          <div className="predictionChangeCell">
+                            <div className="predictionChangeBadges">
+                              <span className={`badge ${reasonBadgeClass}`}>{changeReason.label}</span>
+                              {changeReason.signalFlip ? (
+                                <span className="badge predictionFlipBadge">
+                                  FLIP {formatFlipLabel(changeReason.signalFlip)}
+                                </span>
+                              ) : null}
+                            </div>
+                            <div className="predictionChangeText" title={changeReason.raw ?? "n/a"}>
+                              {changeReason.shortReason}
+                            </div>
+                          </div>
+                        </td>
                         <td style={{ padding: "8px 6px" }}>{new Date(row.tsCreated).toLocaleString()}</td>
                         <td style={{ padding: "8px 6px" }}>
                           <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
@@ -1129,13 +1373,20 @@ export default function PredictionsPage() {
                             >
                               {expanded ? "Hide details" : "Details"}
                             </button>
+                            <button
+                              className="btn"
+                              type="button"
+                              onClick={() => void copyRowSummary(row)}
+                            >
+                              Copy
+                            </button>
                           </div>
                         </td>
                       </tr>
                       {expanded ? (
                         <tr style={{ borderTop: "1px dashed rgba(255,255,255,.08)" }}>
-                          <td colSpan={12} style={{ padding: "10px 6px" }}>
-                            {renderIndicatorDetail(row.id)}
+                          <td colSpan={14} style={{ padding: "10px 6px" }}>
+                            {renderIndicatorDetail(row)}
                           </td>
                         </tr>
                       ) : null}
@@ -1157,6 +1408,16 @@ export default function PredictionsPage() {
               const belowTarget = confidencePct < targetPct;
               const expanded = expandedDetailId === row.id;
               const loadingDetail = detailsLoadingId === row.id;
+              const updatedAtIso = row.lastUpdatedAt ?? row.tsCreated;
+              const changeReason = parsePredictionChangeReason(row.lastChangeReason ?? null);
+              const reasonBadgeClass =
+                changeReason.kind === "triggered"
+                  ? "predictionReasonBadgeTrigger"
+                  : changeReason.kind === "scheduled"
+                    ? "predictionReasonBadgeScheduled"
+                    : changeReason.kind === "manual"
+                      ? "predictionReasonBadgeManual"
+                      : "predictionReasonBadgeUnknown";
 
               return (
                 <div key={`${row.id}_mobile`} className="card predictionRowCard">
@@ -1169,6 +1430,9 @@ export default function PredictionsPage() {
                     <span>{row.marketType}</span>
                     <span>{row.timeframe}</span>
                     <span>{new Date(row.tsCreated).toLocaleString()}</span>
+                    <span title={updatedAtIso ? new Date(updatedAtIso).toLocaleString() : "n/a"}>
+                      Updated {formatRelativeTime(updatedAtIso, nowMs)}
+                    </span>
                   </div>
 
                   <div className="predictionRowCardStats">
@@ -1195,6 +1459,12 @@ export default function PredictionsPage() {
                   </div>
 
                   <div style={{ display: "flex", gap: 4, flexWrap: "wrap", marginBottom: 6 }}>
+                    <span className={`badge ${reasonBadgeClass}`}>{changeReason.label}</span>
+                    {changeReason.signalFlip ? (
+                      <span className="badge predictionFlipBadge">
+                        FLIP {formatFlipLabel(changeReason.signalFlip)}
+                      </span>
+                    ) : null}
                     {row.tags.slice(0, 4).map((tag) => (
                       <span key={`${row.id}_m_${tag}`} className="badge">{tag}</span>
                     ))}
@@ -1236,11 +1506,18 @@ export default function PredictionsPage() {
                     >
                       {expanded ? "Hide details" : "Details"}
                     </button>
+                    <button
+                      className="btn"
+                      type="button"
+                      onClick={() => void copyRowSummary(row)}
+                    >
+                      Copy
+                    </button>
                   </div>
 
                   {expanded ? (
                     <div className="predictionRowCardDetail">
-                      {renderIndicatorDetail(row.id)}
+                      {renderIndicatorDetail(row)}
                     </div>
                   ) : null}
                 </div>

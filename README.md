@@ -91,6 +91,16 @@ AI Predictions:
 - `FEATURE_THRESHOLDS_SYMBOLS`
 - `FEATURE_THRESHOLDS_TIMEFRAMES`
 - `FEATURE_THRESHOLDS_WINSORIZE_PCT`
+- Refresh Scheduler v1:
+  - `PREDICTION_REFRESH_ENABLED`
+  - `PREDICTION_REFRESH_MAX_RUNS_PER_CYCLE`
+  - `PREDICTION_REFRESH_AI_COOLDOWN_SECONDS`
+  - `PREDICTION_REFRESH_5M_SECONDS`
+  - `PREDICTION_REFRESH_15M_SECONDS`
+  - `PREDICTION_REFRESH_1H_SECONDS`
+  - `PREDICTION_REFRESH_4H_SECONDS`
+  - `PREDICTION_REFRESH_1D_SECONDS`
+  - Details: `docs/prediction-refresh-scheduler.md`
 
 Prediction Indicator Pack v1 (backend, deterministic from OHLCV):
 - RSI(14), MACD(12/26/9), Bollinger(20/2), ADX(14), ATR(14)/close
@@ -125,6 +135,15 @@ SMTP:
 - Telegram Settings: `/settings/notifications`
 - Admin Backend: `/admin` (Superadmin)
 - Global OpenAI Key (encrypted DB): `/admin/api-keys`
+
+## Manual Trading Desk Chart
+
+Der Trading-Desk verwendet aktuell `lightweight-charts` (Node/TS, ohne native Abhängigkeiten):
+- Candlestick-Chart im Manual Trading Desk
+- Datenquelle: `GET /api/market/candles`
+- Polling-Refresh für neue Kerzen (MVP)
+
+Damit die Kerzen erscheinen, muss die API erreichbar sein (`/api/market/candles`) und ein gültiger Exchange-Account gewählt sein.
 
 ## Betrieb / Logs
 

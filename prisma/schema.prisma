@@ -560,3 +560,59 @@ model FeatureThreshold {
   @@index([exchange, symbol, marketType, timeframe, computedAt(sort: Desc)])
   @@map("feature_thresholds")
 }
+
+model PredictionState {
+  id                String   @id @default(uuid())
+  exchange          String
+  accountId         String   @map("account_id")
+  userId            String   @map("user_id")
+  symbol            String
+  marketType        String   @map("market_type")
+  timeframe         String
+  tsUpdated         DateTime @map("ts_updated")
+  tsPredictedFor    DateTime @map("ts_predicted_for")
+  signal            String
+  expectedMovePct   Float?   @map("expected_move_pct")
+  confidence        Float
+  tags              Json
+  explanation       String?
+  keyDrivers        Json     @map("key_drivers")
+  featuresSnapshot  Json     @map("features_snapshot")
+  modelVersion      String   @map("model_version")
+  lastAiExplainedAt DateTime? @map("last_ai_explained_at")
+  lastChangeHash    String?  @map("last_change_hash")
+  lastChangeReason  String?  @map("last_change_reason")
+  autoScheduleEnabled Boolean @default(true) @map("auto_schedule_enabled")
+  autoSchedulePaused Boolean  @default(false) @map("auto_schedule_paused")
+  directionPreference String? @map("direction_preference")
+  confidenceTargetPct Float?  @map("confidence_target_pct")
+  leverage          Int?
+  createdAt         DateTime @default(now()) @map("created_at")
+  updatedAt         DateTime @updatedAt @map("updated_at")
+
+  events PredictionEvent[]
+
+  @@unique([exchange, accountId, symbol, marketType, timeframe])
+  @@index([exchange, accountId, timeframe, tsUpdated(sort: Desc)])
+  @@index([symbol, timeframe, tsUpdated(sort: Desc)])
+  @@index([userId, updatedAt(sort: Desc)])
+  @@map("predictions_state")
+}
+
+model PredictionEvent {
+  id            String   @id @default(uuid())
+  stateId       String   @map("state_id")
+  tsCreated     DateTime @default(now()) @map("ts_created")
+  changeType    String   @map("change_type")
+  prevSnapshot  Json?    @map("prev_snapshot")
+  newSnapshot   Json?    @map("new_snapshot")
+  delta         Json?
+  horizonEvalRef String? @map("horizon_eval_ref")
+  modelVersion  String   @map("model_version")
+  reason        String?
+
+  state PredictionState @relation(fields: [stateId], references: [id], onDelete: Cascade)
+
+  @@index([stateId, tsCreated(sort: Desc)])
+  @@map("predictions_events")
+}
