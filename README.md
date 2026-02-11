@@ -87,6 +87,19 @@ AI Predictions:
 - `AI_PROVIDER` (`none` oder `openai`)
 - `AI_API_KEY`
 - `AI_MODEL`
+- `FEATURE_THRESHOLDS_CALIBRATION_ENABLED`
+- `FEATURE_THRESHOLDS_SYMBOLS`
+- `FEATURE_THRESHOLDS_TIMEFRAMES`
+- `FEATURE_THRESHOLDS_WINSORIZE_PCT`
+
+Prediction Indicator Pack v1 (backend, deterministic from OHLCV):
+- RSI(14), MACD(12/26/9), Bollinger(20/2), ADX(14), ATR(14)/close
+- VWAP:
+  - intraday (`5m`,`15m`,`1h`,`4h`) = `session_utc` VWAP (UTC day reset)
+  - `1d` = `rolling_20` VWAP
+- Session VWAP cache:
+  - `VWAP_SESSION_CACHE_TTL_MS` (default `120000`)
+  - `VWAP_SESSION_GAP_THRESHOLD` (default `0.03`)
 
 License:
 - `LICENSE_ENFORCEMENT` (`on`/`off`)
@@ -108,6 +121,7 @@ SMTP:
 - API Health (prod): `http://<api-domain>/health`
 - Manual Trading Desk: `/trade`
 - Predictions: `/predictions`
+- Thresholds API (latest): `/api/thresholds/latest?exchange=bitget&symbol=BTCUSDT&marketType=perp&tf=15m`
 - Telegram Settings: `/settings/notifications`
 - Admin Backend: `/admin` (Superadmin)
 - Global OpenAI Key (encrypted DB): `/admin/api-keys`

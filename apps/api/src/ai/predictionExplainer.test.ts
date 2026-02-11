@@ -22,7 +22,14 @@ const baseInput: ExplainerInput = {
     rsi: 57.2,
     emaSpread: 0.0012,
     volatility: 0.021,
-    spreadBps: 8
+    spreadBps: 8,
+    indicators: {
+      rsi_14: 57.2,
+      macd: { line: 0.1, signal: 0.08, hist: 0.02 },
+      bb: { upper: 101, mid: 100, lower: 99, width_pct: 2, pos: 0.6 },
+      vwap: { value: 100.1, dist_pct: 0.4, mode: "session_utc" },
+      adx: { adx_14: 21.5, plus_di_14: 24.1, minus_di_14: 19.7 }
+    }
   }
 };
 
@@ -42,6 +49,23 @@ test("schema validation success", () => {
 
   assert.equal(value.disclaimer, "grounded_features_only");
   assert.equal(value.tags.includes("trend_up"), true);
+  assert.equal(value.keyDrivers.length, 2);
+});
+
+test("nested keyDrivers paths are accepted", () => {
+  const value = validateExplainerOutput(
+    {
+      explanation: "Signal up with MACD and RSI confirmation.",
+      tags: ["trend_up"],
+      keyDrivers: [
+        { name: "indicators.rsi_14", value: 57.2 },
+        { name: "indicators.macd.hist", value: 0.02 }
+      ],
+      disclaimer: "grounded_features_only"
+    },
+    baseInput.featureSnapshot
+  );
+
   assert.equal(value.keyDrivers.length, 2);
 });
 
@@ -116,4 +140,3 @@ test("fallback path is used on timeout error", async () => {
 test.afterEach(() => {
   resetAiAnalyzerState();
 });
-

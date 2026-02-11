@@ -164,6 +164,22 @@ function fmtConfidence(value: number): string {
   return `${clamped.toFixed(1)}%`;
 }
 
+function fmtIndicator(value: number | null | undefined, digits: number): string {
+  if (value === null || value === undefined || !Number.isFinite(value)) return "n/a";
+  return Number(value).toFixed(digits);
+}
+
+function decodeBase64UrlJson(value: string): unknown | null {
+  try {
+    const normalized = value.replace(/-/g, "+").replace(/_/g, "/");
+    const padded = normalized.padEnd(Math.ceil(normalized.length / 4) * 4, "=");
+    const decoded = atob(padded);
+    return JSON.parse(decoded);
+  } catch {
+    return null;
+  }
+}
+
 function toTvInterval(value: string): string {
   if (value === "1m") return "1";
   if (value === "5m") return "5";
@@ -269,6 +285,8 @@ function TradePageContent() {
   const [isApplyingLeverage, setIsApplyingLeverage] = useState(false);
   const [activePrefill, setActivePrefill] = useState<TradeDeskPrefillPayload | null>(null);
   const [prefillInfo, setPrefillInfo] = useState<string | null>(null);
+  const [prefillContextExpanded, setPrefillContextExpanded] = useState(true);
+  const [prefillActionNotice, setPrefillActionNotice] = useState<string | null>(null);
 
   const marketWsRef = useRef<WebSocket | null>(null);
   const userWsRef = useRef<WebSocket | null>(null);
@@ -450,11 +468,15 @@ function TradePageContent() {
     setTakeProfitPrice("");
     setStopLossPrice("");
     setPrefillInfo(null);
+    setPrefillActionNotice(null);
   }
 
   function applyPrefillTicket(prefill: TradeDeskPrefillPayload) {
     setActivePrefill(prefill);
     setEntryMode("open");
+    if (typeof window !== "undefined") {
+      setPrefillContextExpanded(!window.matchMedia("(max-width: 700px)").matches);
+    }
 
     if (prefill.timeframe && TIMEFRAMES.includes(prefill.timeframe as any)) {
       setTimeframe(prefill.timeframe);
@@ -501,6 +523,35 @@ function TradePageContent() {
     }
 
     setPrefillInfo(null);
+  }
+
+  async function copyPrefillSummary() {
+    if (!activePrefill) return;
+    const lines = [
+      `Prediction ${activePrefill.predictionId}`,
+      `${activePrefill.symbol} ${activePrefill.marketType} ${activePrefill.timeframe}`,
+      `Signal: ${activePrefill.signal}`,
+      `Side: ${activePrefill.side ?? "manual"}`,
+      `Confidence: ${fmtConfidence(activePrefill.confidence)}`,
+      typeof activePrefill.expectedMovePct === "number"
+        ? `Expected move: ${activePrefill.expectedMovePct.toFixed(2)}%`
+        : null,
+      activePrefill.tags?.length ? `Tags: ${activePrefill.tags.slice(0, 5).join(", ")}` : null,
+      activePrefill.explanation ? `Explanation: ${activePrefill.explanation}` : null,
+      activePrefill.keyDrivers?.length
+        ? `Key drivers: ${activePrefill.keyDrivers
+            .slice(0, 5)
+            .map((driver) => `${driver.name}=${String(driver.value)}`)
+            .join("; ")}`
+        : null
+    ].filter(Boolean).join("\n");
+
+    try {
+      await navigator.clipboard.writeText(lines);
+      setPrefillActionNotice("Prediction summary copied.");
+    } catch {
+      setPrefillActionNotice("Clipboard access failed.");
+    }
   }
 
   async function persistSettings(next: Partial<TradingSettings>) {
@@ -667,6 +718,8 @@ function TradePageContent() {
             parsedPrefill = null;
           }
         }
+      } else {
+        parsedPrefill = parseTradeDeskPrefill(decodeBase64UrlJson(prefillParam));
       }
 
       if (!parsedPrefill) {
@@ -1064,10 +1117,16 @@ function TradePageContent() {
         <div className="card" style={{ padding: 12, borderColor: "#3b82f6", marginBottom: 12 }}>
           <div style={{ display: "flex", justifyContent: "space-between", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
             <div>
-              <strong>Prefilled from Prediction</strong>
+              <strong>Prediction Context</strong>
               <div style={{ fontSize: 12, color: "var(--muted)", marginTop: 4 }}>
-                {activePrefill.symbol} · {activePrefill.timeframe} · {fmtConfidence(activePrefill.confidence)} ·{" "}
+                {activePrefill.symbol} · {activePrefill.marketType} · {activePrefill.timeframe} · {fmtConfidence(activePrefill.confidence)} ·{" "}
                 {new Date(activePrefill.tsCreated).toLocaleString()}
+              </div>
+              <div style={{ fontSize: 12, color: "var(--muted)", marginTop: 2 }}>
+                Signal: {activePrefill.signal} · Side: {activePrefill.side ?? "manual"}
+                {typeof activePrefill.expectedMovePct === "number"
+                  ? ` · Move: ${activePrefill.expectedMovePct.toFixed(2)}%`
+                  : ""}
               </div>
               {activePrefill.leverage ? (
                 <div style={{ fontSize: 12, color: "var(--muted)", marginTop: 2 }}>
@@ -1075,28 +1134,95 @@ function TradePageContent() {
                 </div>
               ) : null}
             </div>
-            <button className="btn" onClick={clearPrefill} type="button">Clear Prefill</button>
+            <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+              <button
+                className="btn"
+                type="button"
+                onClick={() => setPrefillContextExpanded((prev) => !prev)}
+              >
+                {prefillContextExpanded ? "Hide context" : "Show context"}
+              </button>
+              <button className="btn" onClick={() => void copyPrefillSummary()} type="button">Copy Summary</button>
+              <Link href="/predictions" className="btn">Back to Prediction</Link>
+              <button className="btn" onClick={clearPrefill} type="button">Clear Prefill</button>
+            </div>
           </div>
           <div style={{ marginTop: 8, fontSize: 12, color: "var(--muted)" }}>
             Prediction ID: {activePrefill.predictionId}
           </div>
+          {prefillActionNotice ? (
+            <div style={{ marginTop: 8, fontSize: 12, color: "var(--muted)" }}>
+              {prefillActionNotice}
+            </div>
+          ) : null}
           {prefillInfo ? (
             <div style={{ marginTop: 8, fontSize: 12, color: "#f59e0b" }}>{prefillInfo}</div>
           ) : null}
-          {(activePrefill.tags?.length || activePrefill.explanation) ? (
-            <details style={{ marginTop: 8 }}>
-              <summary style={{ cursor: "pointer", fontSize: 12 }}>Show explanation and tags</summary>
-              {activePrefill.explanation ? (
-                <div style={{ marginTop: 6, fontSize: 12 }}>{activePrefill.explanation}</div>
-              ) : null}
+          {prefillContextExpanded ? (
+            <div style={{ marginTop: 10, display: "grid", gap: 10 }}>
               {activePrefill.tags?.length ? (
-                <div style={{ marginTop: 6, display: "flex", gap: 6, flexWrap: "wrap" }}>
+                <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
                   {activePrefill.tags.map((tag) => (
                     <span key={tag} className="badge">{tag}</span>
                   ))}
                 </div>
               ) : null}
-            </details>
+
+              {activePrefill.explanation ? (
+                <details>
+                  <summary style={{ cursor: "pointer", fontSize: 12 }}>AI explanation</summary>
+                  <div style={{ marginTop: 6, fontSize: 12 }}>{activePrefill.explanation}</div>
+                </details>
+              ) : null}
+
+              <div style={{ display: "grid", gap: 8, gridTemplateColumns: "repeat(auto-fit,minmax(180px,1fr))" }}>
+                <div className="card" style={{ margin: 0, padding: 8 }}>
+                  <div style={{ fontSize: 11, color: "var(--muted)" }}>RSI (14)</div>
+                  <div style={{ fontWeight: 700 }}>{fmtIndicator(activePrefill.indicators?.rsi_14, 1)}</div>
+                </div>
+                <div className="card" style={{ margin: 0, padding: 8 }}>
+                  <div style={{ fontSize: 11, color: "var(--muted)" }}>MACD hist</div>
+                  <div style={{ fontWeight: 700 }}>{fmtIndicator(activePrefill.indicators?.macd?.hist, 4)}</div>
+                  <div style={{ fontSize: 11, color: "var(--muted)", marginTop: 2 }}>
+                    line {fmtIndicator(activePrefill.indicators?.macd?.line, 4)} / signal {fmtIndicator(activePrefill.indicators?.macd?.signal, 4)}
+                  </div>
+                </div>
+                <div className="card" style={{ margin: 0, padding: 8 }}>
+                  <div style={{ fontSize: 11, color: "var(--muted)" }}>BB width% / pos</div>
+                  <div style={{ fontWeight: 700 }}>
+                    {fmtIndicator(activePrefill.indicators?.bb?.width_pct, 2)} / {fmtIndicator(activePrefill.indicators?.bb?.pos, 3)}
+                  </div>
+                </div>
+                <div className="card" style={{ margin: 0, padding: 8 }}>
+                  <div style={{ fontSize: 11, color: "var(--muted)" }}>VWAP dist%</div>
+                  <div style={{ fontWeight: 700 }}>{fmtIndicator(activePrefill.indicators?.vwap?.dist_pct, 2)}</div>
+                  <div style={{ fontSize: 11, color: "var(--muted)", marginTop: 2 }}>
+                    mode {activePrefill.indicators?.vwap?.mode ?? "n/a"}
+                  </div>
+                </div>
+                <div className="card" style={{ margin: 0, padding: 8 }}>
+                  <div style={{ fontSize: 11, color: "var(--muted)" }}>ADX / +DI / -DI</div>
+                  <div style={{ fontWeight: 700 }}>
+                    {fmtIndicator(activePrefill.indicators?.adx?.adx_14, 1)} / {fmtIndicator(activePrefill.indicators?.adx?.plus_di_14, 1)} / {fmtIndicator(activePrefill.indicators?.adx?.minus_di_14, 1)}
+                  </div>
+                </div>
+              </div>
+
+              <div className="card" style={{ margin: 0, padding: 8 }}>
+                <div style={{ fontSize: 11, color: "var(--muted)", marginBottom: 4 }}>Key drivers</div>
+                {activePrefill.keyDrivers?.length ? (
+                  <ul style={{ margin: 0, paddingLeft: 18, fontSize: 12 }}>
+                    {activePrefill.keyDrivers.slice(0, 5).map((driver) => (
+                      <li key={driver.name}>
+                        <strong>{driver.name}</strong>: {String(driver.value)}
+                      </li>
+                    ))}
+                  </ul>
+                ) : (
+                  <div style={{ fontSize: 12, color: "var(--muted)" }}>n/a</div>
+                )}
+              </div>
+            </div>
           ) : null}
         </div>
       ) : null}

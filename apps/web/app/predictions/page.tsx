@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useEffect, useMemo, useState } from "react";
+import { Fragment, useEffect, useMemo, useState } from "react";
 import { ApiError, apiGet, apiPost } from "../../lib/api";
 import {
   buildTradeDeskPrefillPayload,
@@ -43,6 +43,29 @@ type PredictionListItem = {
 type PredictionDetailResponse = PredictionPrefillSource & {
   id: string;
   expectedMovePct: number;
+  indicators?: {
+    rsi_14?: number | null;
+    macd?: { line?: number | null; signal?: number | null; hist?: number | null } | null;
+    bb?: {
+      upper?: number | null;
+      mid?: number | null;
+      lower?: number | null;
+      width_pct?: number | null;
+      pos?: number | null;
+    } | null;
+    vwap?: {
+      value?: number | null;
+      dist_pct?: number | null;
+      mode?: "session_utc" | "rolling_20";
+      sessionStartUtcMs?: number | null;
+    } | null;
+    adx?: { adx_14?: number | null; plus_di_14?: number | null; minus_di_14?: number | null } | null;
+    atr_pct?: number | null;
+    dataGap?: boolean;
+  } | null;
+  riskFlags?: {
+    dataGap?: boolean;
+  } | null;
 };
 
 type ExchangeAccountItem = {
@@ -146,6 +169,17 @@ function outcomeLabel(outcomeStatus?: string, outcomeResult?: string | null): st
   return outcomeResult;
 }
 
+function toNum(value: unknown): number | null {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+function fmtNum(value: unknown, decimals = 2): string {
+  const parsed = toNum(value);
+  if (parsed === null) return "n/a";
+  return parsed.toFixed(decimals);
+}
+
 export default function PredictionsPage() {
   const router = useRouter();
 
@@ -184,6 +218,10 @@ export default function PredictionsPage() {
   const [newLeverage, setNewLeverage] = useState("10");
   const [newAutoSchedule, setNewAutoSchedule] = useState(true);
   const [nowMs, setNowMs] = useState(() => Date.now());
+  const [expandedDetailId, setExpandedDetailId] = useState<string | null>(null);
+  const [detailsById, setDetailsById] = useState<Record<string, PredictionDetailResponse>>({});
+  const [detailsLoadingId, setDetailsLoadingId] = useState<string | null>(null);
+  const [detailsError, setDetailsError] = useState<string | null>(null);
 
   async function loadPredictions() {
     setLoading(true);
@@ -335,11 +373,32 @@ export default function PredictionsPage() {
         prefill: "1",
         exchangeAccountId: built.payload.accountId
       });
-      router.push(`/trade?${params.toString()}`);
+      router.push(`/trading-desk?${params.toString()}`);
     } catch (e) {
       setActionError(errMsg(e));
     } finally {
       setSendingId(null);
+    }
+  }
+
+  async function togglePredictionDetail(id: string) {
+    setDetailsError(null);
+    if (expandedDetailId === id) {
+      setExpandedDetailId(null);
+      return;
+    }
+
+    setExpandedDetailId(id);
+    if (detailsById[id]) return;
+
+    setDetailsLoadingId(id);
+    try {
+      const detail = await apiGet<PredictionDetailResponse>(`/api/predictions/${id}`);
+      setDetailsById((prev) => ({ ...prev, [id]: detail }));
+    } catch (e) {
+      setDetailsError(errMsg(e));
+    } finally {
+      setDetailsLoadingId(null);
     }
   }
 
@@ -509,6 +568,77 @@ export default function PredictionsPage() {
     } finally {
       setClearingListed(false);
     }
+  }
+
+  function renderIndicatorDetail(rowId: string) {
+    const detail = detailsById[rowId];
+    const indicators = detail?.indicators ?? null;
+    const loadingDetail = detailsLoadingId === rowId;
+    const dataGap = Boolean(indicators?.dataGap || detail?.riskFlags?.dataGap);
+
+    if (loadingDetail && !detail) {
+      return (
+        <div style={{ color: "var(--muted)", fontSize: 13 }}>
+          Loading prediction details...
+        </div>
+      );
+    }
+
+    return (
+      <div className="card predictionDetailPanel">
+        <div className="predictionDetailHeader">
+          <strong>Indicator Snapshot</strong>
+          {dataGap ? (
+            <span className="predictionDetailWarning">
+              Data gap detected
+            </span>
+          ) : null}
+        </div>
+        {indicators ? (
+          <div className="predictionIndicatorGrid">
+            <div className="card predictionIndicatorCard">
+              <div className="predictionIndicatorTitle">RSI (14)</div>
+              <div className="predictionIndicatorValue">{fmtNum(indicators.rsi_14, 2)}</div>
+            </div>
+            <div className="card predictionIndicatorCard">
+              <div className="predictionIndicatorTitle">MACD (line / signal / hist)</div>
+              <div className="predictionIndicatorValue">
+                {fmtNum(indicators.macd?.line, 4)} / {fmtNum(indicators.macd?.signal, 4)} / {fmtNum(indicators.macd?.hist, 4)}
+              </div>
+            </div>
+            <div className="card predictionIndicatorCard">
+              <div className="predictionIndicatorTitle">Bollinger (width% / pos)</div>
+              <div className="predictionIndicatorValue">
+                {fmtNum(indicators.bb?.width_pct, 2)} / {fmtNum(indicators.bb?.pos, 3)}
+              </div>
+            </div>
+            <div className="card predictionIndicatorCard">
+              <div className="predictionIndicatorTitle">VWAP (value / dist%)</div>
+              <div className="predictionIndicatorValue">
+                {fmtNum(indicators.vwap?.value, 2)} / {fmtNum(indicators.vwap?.dist_pct, 2)}
+              </div>
+              <div className="predictionIndicatorMeta">
+                mode: {indicators.vwap?.mode ?? "n/a"}
+              </div>
+            </div>
+            <div className="card predictionIndicatorCard">
+              <div className="predictionIndicatorTitle">ADX (ADX / +DI / -DI)</div>
+              <div className="predictionIndicatorValue">
+                {fmtNum(indicators.adx?.adx_14, 2)} / {fmtNum(indicators.adx?.plus_di_14, 2)} / {fmtNum(indicators.adx?.minus_di_14, 2)}
+              </div>
+            </div>
+            <div className="card predictionIndicatorCard">
+              <div className="predictionIndicatorTitle">ATR %</div>
+              <div className="predictionIndicatorValue">{fmtNum(indicators.atr_pct, 4)}</div>
+            </div>
+          </div>
+        ) : (
+          <div style={{ color: "var(--muted)", marginTop: 8 }}>
+            No indicator data for this prediction.
+          </div>
+        )}
+      </div>
+    );
   }
 
   return (
@@ -836,6 +966,12 @@ export default function PredictionsPage() {
         </div>
       ) : null}
 
+      {detailsError ? (
+        <div className="card" style={{ padding: 12, borderColor: "#ef4444", marginBottom: 12 }}>
+          <strong>Detail load failed:</strong> {detailsError}
+        </div>
+      ) : null}
+
       {notice ? (
         <div className="card" style={{ padding: 12, borderColor: "#f59e0b", marginBottom: 12 }}>
           <strong>Notice:</strong> {notice}
@@ -900,7 +1036,7 @@ export default function PredictionsPage() {
         </div>
       ) : (
         <section className="card" style={{ padding: 12 }}>
-          <div style={{ overflowX: "auto" }}>
+          <div className="predictionsDesktopTableWrap" style={{ overflowX: "auto" }}>
             <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
               <thead>
                 <tr style={{ textAlign: "left", color: "var(--muted)" }}>
@@ -927,66 +1063,189 @@ export default function PredictionsPage() {
                       ? Math.max(0, Math.min(100, row.confidenceTargetPct))
                       : 0;
                   const belowTarget = confidencePct < targetPct;
+                  const expanded = expandedDetailId === row.id;
+                  const loadingDetail = detailsLoadingId === row.id;
                   return (
-                  <tr key={row.id} style={{ borderTop: "1px solid rgba(255,255,255,.06)" }}>
-                    <td style={{ padding: "8px 6px", fontWeight: 700 }}>{row.symbol}</td>
-                    <td style={{ padding: "8px 6px" }}>{row.marketType}</td>
-                    <td style={{ padding: "8px 6px" }}>{row.timeframe}</td>
-                    <td style={{ padding: "8px 6px" }}>
-                      <span className="badge" style={signalBadgeStyle(row.signal)}>{row.signal}</span>
-                    </td>
-                    <td style={{ padding: "8px 6px" }}>{fmtConfidence(row.confidence)}</td>
-                    <td style={{ padding: "8px 6px" }}>{row.expectedMovePct.toFixed(2)}%</td>
-                    <td style={{ padding: "8px 6px" }}>
-                      <div>{row.autoScheduleEnabled ? "enabled" : "off"}</div>
-                      <div style={{ color: "var(--muted)", fontSize: 12 }}>
-                        Next: {nextAutoRunText(row, nowMs)}
-                      </div>
-                    </td>
-                    <td style={{ padding: "8px 6px" }}>
-                      {outcomeLabel(row.outcomeStatus, row.outcomeResult)}
-                    </td>
-                    <td style={{ padding: "8px 6px" }}>
-                      {row.outcomePnlPct !== null && row.outcomePnlPct !== undefined
-                        ? `${row.outcomePnlPct.toFixed(2)}%`
-                        : "-"}
-                    </td>
-                    <td style={{ padding: "8px 6px", maxWidth: 360 }}>
-                      <div style={{ display: "flex", gap: 4, flexWrap: "wrap", marginBottom: 4 }}>
-                        {row.tags.slice(0, 4).map((tag) => (
-                          <span key={`${row.id}_${tag}`} className="badge">{tag}</span>
-                        ))}
-                      </div>
-                      <div style={{ color: "var(--muted)", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
-                        {row.explanation || "-"}
-                      </div>
-                    </td>
-                    <td style={{ padding: "8px 6px" }}>{new Date(row.tsCreated).toLocaleString()}</td>
-                    <td style={{ padding: "8px 6px" }}>
-                      {row.signal === "neutral" ? (
-                        <span style={{ color: "var(--muted)", fontSize: 12 }}>
-                          No trade setup
-                        </span>
-                      ) : belowTarget ? (
-                        <span style={{ color: "var(--muted)", fontSize: 12 }}>
-                          Below confidence target ({targetPct.toFixed(0)}%)
-                        </span>
-                      ) : (
-                        <button
-                          className="btn btnPrimary"
-                          onClick={() => void sendToDesk(row.id)}
-                          disabled={sendingId === row.id || !row.accountId}
-                          title={row.accountId ? "Prefill trade ticket" : "Create an exchange account first"}
-                        >
-                          {sendingId === row.id ? "Sending..." : "Send to Trading Desk"}
-                        </button>
-                      )}
-                    </td>
-                  </tr>
+                    <Fragment key={row.id}>
+                      <tr style={{ borderTop: "1px solid rgba(255,255,255,.06)" }}>
+                        <td style={{ padding: "8px 6px", fontWeight: 700 }}>{row.symbol}</td>
+                        <td style={{ padding: "8px 6px" }}>{row.marketType}</td>
+                        <td style={{ padding: "8px 6px" }}>{row.timeframe}</td>
+                        <td style={{ padding: "8px 6px" }}>
+                          <span className="badge" style={signalBadgeStyle(row.signal)}>{row.signal}</span>
+                        </td>
+                        <td style={{ padding: "8px 6px" }}>{fmtConfidence(row.confidence)}</td>
+                        <td style={{ padding: "8px 6px" }}>{row.expectedMovePct.toFixed(2)}%</td>
+                        <td style={{ padding: "8px 6px" }}>
+                          <div>{row.autoScheduleEnabled ? "enabled" : "off"}</div>
+                          <div style={{ color: "var(--muted)", fontSize: 12 }}>
+                            Next: {nextAutoRunText(row, nowMs)}
+                          </div>
+                        </td>
+                        <td style={{ padding: "8px 6px" }}>
+                          {outcomeLabel(row.outcomeStatus, row.outcomeResult)}
+                        </td>
+                        <td style={{ padding: "8px 6px" }}>
+                          {row.outcomePnlPct !== null && row.outcomePnlPct !== undefined
+                            ? `${row.outcomePnlPct.toFixed(2)}%`
+                            : "-"}
+                        </td>
+                        <td style={{ padding: "8px 6px", maxWidth: 360 }}>
+                          <div style={{ display: "flex", gap: 4, flexWrap: "wrap", marginBottom: 4 }}>
+                            {row.tags.slice(0, 4).map((tag) => (
+                              <span key={`${row.id}_${tag}`} className="badge">{tag}</span>
+                            ))}
+                          </div>
+                          <div style={{ color: "var(--muted)", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+                            {row.explanation || "-"}
+                          </div>
+                        </td>
+                        <td style={{ padding: "8px 6px" }}>{new Date(row.tsCreated).toLocaleString()}</td>
+                        <td style={{ padding: "8px 6px" }}>
+                          <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+                            {row.signal === "neutral" ? (
+                              <span style={{ color: "var(--muted)", fontSize: 12 }}>
+                                No trade setup
+                              </span>
+                            ) : belowTarget ? (
+                              <span style={{ color: "var(--muted)", fontSize: 12 }}>
+                                Below confidence target ({targetPct.toFixed(0)}%)
+                              </span>
+                            ) : (
+                              <button
+                                className="btn btnPrimary"
+                                onClick={() => void sendToDesk(row.id)}
+                                disabled={sendingId === row.id || !row.accountId}
+                                title={row.accountId ? "Prefill trade ticket" : "Create an exchange account first"}
+                              >
+                                {sendingId === row.id ? "Sending..." : "Send to Trading Desk"}
+                              </button>
+                            )}
+                            <button
+                              className="btn"
+                              type="button"
+                              onClick={() => void togglePredictionDetail(row.id)}
+                              disabled={loadingDetail && !expanded}
+                            >
+                              {expanded ? "Hide details" : "Details"}
+                            </button>
+                          </div>
+                        </td>
+                      </tr>
+                      {expanded ? (
+                        <tr style={{ borderTop: "1px dashed rgba(255,255,255,.08)" }}>
+                          <td colSpan={12} style={{ padding: "10px 6px" }}>
+                            {renderIndicatorDetail(row.id)}
+                          </td>
+                        </tr>
+                      ) : null}
+                    </Fragment>
                   );
                 })}
               </tbody>
             </table>
+          </div>
+
+          <div className="predictionsMobileList">
+            {filteredRows.map((row) => {
+              const confidencePct = confidenceToPct(row.confidence);
+              const targetPct =
+                typeof row.confidenceTargetPct === "number" &&
+                Number.isFinite(row.confidenceTargetPct)
+                  ? Math.max(0, Math.min(100, row.confidenceTargetPct))
+                  : 0;
+              const belowTarget = confidencePct < targetPct;
+              const expanded = expandedDetailId === row.id;
+              const loadingDetail = detailsLoadingId === row.id;
+
+              return (
+                <div key={`${row.id}_mobile`} className="card predictionRowCard">
+                  <div className="predictionRowCardHeader">
+                    <div className="predictionRowCardSymbol">{row.symbol}</div>
+                    <span className="badge" style={signalBadgeStyle(row.signal)}>{row.signal}</span>
+                  </div>
+
+                  <div className="predictionRowCardMeta">
+                    <span>{row.marketType}</span>
+                    <span>{row.timeframe}</span>
+                    <span>{new Date(row.tsCreated).toLocaleString()}</span>
+                  </div>
+
+                  <div className="predictionRowCardStats">
+                    <div className="predictionRowCardStat">
+                      <div className="predictionRowCardStatLabel">Confidence</div>
+                      <div className="predictionRowCardStatValue">{fmtConfidence(row.confidence)}</div>
+                    </div>
+                    <div className="predictionRowCardStat">
+                      <div className="predictionRowCardStatLabel">Move</div>
+                      <div className="predictionRowCardStatValue">{row.expectedMovePct.toFixed(2)}%</div>
+                    </div>
+                    <div className="predictionRowCardStat">
+                      <div className="predictionRowCardStatLabel">Outcome</div>
+                      <div className="predictionRowCardStatValue">{outcomeLabel(row.outcomeStatus, row.outcomeResult)}</div>
+                    </div>
+                    <div className="predictionRowCardStat">
+                      <div className="predictionRowCardStatLabel">Outcome PnL</div>
+                      <div className="predictionRowCardStatValue">
+                        {row.outcomePnlPct !== null && row.outcomePnlPct !== undefined
+                          ? `${row.outcomePnlPct.toFixed(2)}%`
+                          : "-"}
+                      </div>
+                    </div>
+                  </div>
+
+                  <div style={{ display: "flex", gap: 4, flexWrap: "wrap", marginBottom: 6 }}>
+                    {row.tags.slice(0, 4).map((tag) => (
+                      <span key={`${row.id}_m_${tag}`} className="badge">{tag}</span>
+                    ))}
+                  </div>
+
+                  <div className="predictionRowCardText">
+                    {row.explanation || "-"}
+                  </div>
+
+                  <div className="predictionRowCardAuto">
+                    <span>{row.autoScheduleEnabled ? "Auto: enabled" : "Auto: off"}</span>
+                    <span>Next: {nextAutoRunText(row, nowMs)}</span>
+                  </div>
+
+                  <div className="predictionRowCardActions">
+                    {row.signal === "neutral" ? (
+                      <span style={{ color: "var(--muted)", fontSize: 12 }}>
+                        No trade setup
+                      </span>
+                    ) : belowTarget ? (
+                      <span style={{ color: "var(--muted)", fontSize: 12 }}>
+                        Below confidence target ({targetPct.toFixed(0)}%)
+                      </span>
+                    ) : (
+                      <button
+                        className="btn btnPrimary"
+                        onClick={() => void sendToDesk(row.id)}
+                        disabled={sendingId === row.id || !row.accountId}
+                        title={row.accountId ? "Prefill trade ticket" : "Create an exchange account first"}
+                      >
+                        {sendingId === row.id ? "Sending..." : "Send to Trading Desk"}
+                      </button>
+                    )}
+                    <button
+                      className="btn"
+                      type="button"
+                      onClick={() => void togglePredictionDetail(row.id)}
+                      disabled={loadingDetail && !expanded}
+                    >
+                      {expanded ? "Hide details" : "Details"}
+                    </button>
+                  </div>
+
+                  {expanded ? (
+                    <div className="predictionRowCardDetail">
+                      {renderIndicatorDetail(row.id)}
+                    </div>
+                  ) : null}
+                </div>
+              );
+            })}
           </div>
         </section>
       )}

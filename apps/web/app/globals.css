@@ -869,6 +869,142 @@ a { color: inherit; }
   gap: 8px;
 }
 
+.predictionsDesktopTableWrap {
+  display: block;
+}
+
+.predictionsMobileList {
+  display: none;
+}
+
+.predictionRowCard {
+  margin: 0 0 10px;
+  padding: 10px;
+}
+
+.predictionRowCard:last-child {
+  margin-bottom: 0;
+}
+
+.predictionRowCardHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.predictionRowCardSymbol {
+  font-size: 15px;
+  font-weight: 800;
+}
+
+.predictionRowCardMeta {
+  margin-top: 6px;
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.predictionRowCardStats {
+  margin-top: 8px;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.predictionRowCardStat {
+  border: 1px solid rgba(255, 193, 7, 0.18);
+  border-radius: 8px;
+  padding: 6px 8px;
+  background: rgba(255,255,255,.02);
+}
+
+.predictionRowCardStatLabel {
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.predictionRowCardStatValue {
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.predictionRowCardText {
+  margin-top: 6px;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.35;
+}
+
+.predictionRowCardAuto {
+  margin-top: 6px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 10px;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.predictionRowCardActions {
+  margin-top: 8px;
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.predictionRowCardDetail {
+  margin-top: 8px;
+}
+
+.predictionDetailPanel {
+  margin: 0;
+  padding: 12px;
+}
+
+.predictionDetailHeader {
+  display: flex;
+  gap: 8px;
+  justify-content: space-between;
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+.predictionDetailWarning {
+  color: #f59e0b;
+  font-size: 12px;
+}
+
+.predictionIndicatorGrid {
+  margin-top: 10px;
+  display: grid;
+  gap: 8px;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+}
+
+.predictionIndicatorCard {
+  margin: 0;
+  padding: 8px;
+}
+
+.predictionIndicatorTitle {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.predictionIndicatorValue {
+  margin-top: 2px;
+  font-weight: 700;
+  font-size: 14px;
+}
+
+.predictionIndicatorMeta {
+  color: var(--muted);
+  font-size: 12px;
+  margin-top: 2px;
+}
+
 .btn {
   display: inline-flex;
   align-items: center;
@@ -877,7 +1013,7 @@ a { color: inherit; }
   border: 1px solid var(--border);
   background: rgba(255,255,255,.04);
   color: var(--text);
-  border-radius: 12px;
+  border-radius: 8px;
   padding: 10px 14px;
   cursor: pointer;
   text-decoration: none;
@@ -888,7 +1024,7 @@ a { color: inherit; }
   background: linear-gradient(129deg, #1481c0 0%, #ffc107 100%);
   border: 0;
   color: #fff;
-  font-weight: 700;
+  font-weight: 400;
 }
 
 .btnPrimary:hover {
@@ -1142,6 +1278,48 @@ a { color: inherit; }
   }
   .predictionCreateHint {
     min-height: 0;
+  }
+  .predictionsDesktopTableWrap {
+    display: none;
+  }
+  .predictionsMobileList {
+    display: block;
+  }
+  .predictionRowCard {
+    padding: 9px;
+  }
+  .predictionRowCardStats {
+    grid-template-columns: 1fr 1fr;
+    gap: 6px;
+  }
+  .predictionRowCardStat {
+    padding: 5px 7px;
+  }
+  .predictionRowCardStatValue {
+    font-size: 12px;
+  }
+  .predictionRowCardActions .btn {
+    width: 100%;
+    justify-content: center;
+  }
+  .predictionDetailPanel {
+    padding: 10px;
+  }
+  .predictionIndicatorGrid {
+    grid-template-columns: 1fr;
+    gap: 6px;
+  }
+  .predictionIndicatorCard {
+    padding: 7px;
+  }
+  .predictionIndicatorTitle {
+    font-size: 11px;
+  }
+  .predictionIndicatorValue {
+    font-size: 13px;
+  }
+  .predictionIndicatorMeta {
+    font-size: 11px;
   }
   .homeGrid,
   .gridTwoCol {

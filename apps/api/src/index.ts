@@ -52,6 +52,29 @@ import {
   saveTradingSettings
 } from "./trading.js";
 import { generateAndPersistPrediction } from "./ai/predictionPipeline.js";
+import {
+  FEATURE_THRESHOLD_VERSION,
+  applyConfidencePenalty,
+  buildFeatureThresholds,
+  calibrationWindowMsForTimeframe,
+  deriveRegimeTags,
+  expectedBarsForWindow,
+  fallbackFeatureThresholds,
+  minimumBarsForTimeframe,
+  percentileRankFromBands,
+  readFeatureThresholds,
+  type FeatureThresholdsJson,
+  type ResolvedFeatureThresholds,
+  type ThresholdMarketType,
+  type ThresholdTimeframe
+} from "./prediction-thresholds.js";
+import {
+  computeIndicators,
+  minimumCandlesForIndicators,
+  type IndicatorsSnapshot
+} from "./market/indicators.js";
+import { bucketCandles } from "./market/timeframe.js";
+import { registerPredictionDetailRoute } from "./routes/predictions.js";
 
 const db = prisma as any;
 
@@ -288,6 +311,14 @@ const predictionIdParamSchema = z.object({
   id: z.string().trim().min(1)
 });
 
+const thresholdsLatestQuerySchema = z.object({
+  exchange: z.string().trim().min(1),
+  symbol: z.string().trim().min(1),
+  marketType: z.enum(["spot", "perp"]).default("perp"),
+  timeframe: z.enum(["5m", "15m", "1h", "4h", "1d"]).optional(),
+  tf: z.enum(["5m", "15m", "1h", "4h", "1d"]).optional()
+});
+
 type PredictionTimeframe = "5m" | "15m" | "1h" | "4h" | "1d";
 type PredictionMarketType = "spot" | "perp";
 type PredictionSignal = "up" | "down" | "neutral";
@@ -341,6 +372,43 @@ const PREDICTION_OUTCOME_EVAL_POLL_MS =
   Math.max(30, Number(process.env.PREDICTION_OUTCOME_EVAL_POLL_SECONDS ?? "60")) * 1000;
 const PREDICTION_OUTCOME_EVAL_BATCH_SIZE =
   Math.max(5, Number(process.env.PREDICTION_OUTCOME_EVAL_BATCH_SIZE ?? "50"));
+const FEATURE_THRESHOLDS_CACHE_TTL_MS =
+  Math.max(30, Number(process.env.FEATURE_THRESHOLDS_CACHE_TTL_SECONDS ?? "600")) * 1000;
+const FEATURE_THRESHOLDS_WINSORIZE_PCT = clamp(
+  Number(process.env.FEATURE_THRESHOLDS_WINSORIZE_PCT ?? "0.01"),
+  0,
+  0.25
+);
+const FEATURE_THRESHOLDS_MAX_GAP_RATIO = clamp(
+  Number(process.env.FEATURE_THRESHOLDS_MAX_GAP_RATIO ?? "0.05"),
+  0,
+  1
+);
+const FEATURE_THRESHOLDS_CALIBRATION_ENABLED = !["0", "false", "off", "no"].includes(
+  String(process.env.FEATURE_THRESHOLDS_CALIBRATION_ENABLED ?? "1").trim().toLowerCase()
+);
+const FEATURE_THRESHOLDS_CALIBRATION_SCAN_MS =
+  Math.max(5, Number(process.env.FEATURE_THRESHOLDS_CALIBRATION_SCAN_MINUTES ?? "10")) * 60 * 1000;
+const FEATURE_THRESHOLDS_SYMBOLS = String(
+  process.env.FEATURE_THRESHOLDS_SYMBOLS ?? "BTCUSDT,ETHUSDT,SOLUSDT,XRPUSDT,BNBUSDT"
+)
+  .split(",")
+  .map((item) => normalizeSymbolInput(item))
+  .filter((item): item is string => Boolean(item));
+const FEATURE_THRESHOLDS_TIMEFRAMES = String(
+  process.env.FEATURE_THRESHOLDS_TIMEFRAMES ?? "5m,15m,1h,4h,1d"
+)
+  .split(",")
+  .map((item) => item.trim())
+  .filter((item): item is ThresholdTimeframe =>
+    ["5m", "15m", "1h", "4h", "1d"].includes(item)
+  );
+const FEATURE_THRESHOLDS_MARKET_TYPES = String(
+  process.env.FEATURE_THRESHOLDS_MARKET_TYPES ?? "perp"
+)
+  .split(",")
+  .map((item) => item.trim().toLowerCase())
+  .filter((item): item is ThresholdMarketType => item === "spot" || item === "perp");
 
 const GLOBAL_SETTING_EXCHANGES_KEY = "admin.exchanges";
 const GLOBAL_SETTING_SMTP_KEY = "admin.smtp";
@@ -688,6 +756,8 @@ function normalizePredictionSignal(value: unknown): PredictionSignal {
 
 function derivePredictionKeyDrivers(snapshot: Record<string, unknown>) {
   const preferred = [
+    "atr_pct_rank_0_100",
+    "ema_spread_abs_rank_0_100",
     "rsi",
     "emaSpread",
     "emaFast",
@@ -907,6 +977,223 @@ function timeframeToIntervalMs(timeframe: PredictionTimeframe): number {
   return 24 * 60 * 60 * 1000;
 }
 
+type FeatureThresholdRecord = {
+  exchange: string;
+  symbol: string;
+  marketType: PredictionMarketType;
+  timeframe: PredictionTimeframe;
+  windowFrom: Date;
+  windowTo: Date;
+  nBars: number;
+  computedAt: Date;
+  version: string;
+  thresholdsJson: FeatureThresholdsJson;
+};
+
+type FeatureThresholdResolution = {
+  thresholds: ResolvedFeatureThresholds;
+  source: "db" | "fallback";
+  computedAt: string | null;
+  version: string;
+  windowFrom: string | null;
+  windowTo: string | null;
+  nBars: number | null;
+};
+
+const featureThresholdCache = new Map<string, {
+  expiresAt: number;
+  row: FeatureThresholdRecord | null;
+}>();
+
+function featureThresholdKey(params: {
+  exchange: string;
+  symbol: string;
+  marketType: PredictionMarketType;
+  timeframe: PredictionTimeframe;
+}) {
+  return [
+    params.exchange.trim().toLowerCase(),
+    normalizeSymbolInput(params.symbol) ?? params.symbol.trim().toUpperCase(),
+    params.marketType,
+    params.timeframe
+  ].join(":");
+}
+
+async function readLatestFeatureThresholdRow(params: {
+  exchange: string;
+  symbol: string;
+  marketType: PredictionMarketType;
+  timeframe: PredictionTimeframe;
+}): Promise<FeatureThresholdRecord | null> {
+  const key = featureThresholdKey(params);
+  const now = Date.now();
+  const cached = featureThresholdCache.get(key);
+  if (cached && cached.expiresAt > now) return cached.row;
+
+  const row = await db.featureThreshold.findFirst({
+    where: {
+      exchange: params.exchange.trim().toLowerCase(),
+      accountScope: "global",
+      symbol: (normalizeSymbolInput(params.symbol) ?? params.symbol.trim().toUpperCase()),
+      marketType: params.marketType,
+      timeframe: params.timeframe
+    },
+    orderBy: { computedAt: "desc" },
+    select: {
+      exchange: true,
+      symbol: true,
+      marketType: true,
+      timeframe: true,
+      windowFrom: true,
+      windowTo: true,
+      nBars: true,
+      computedAt: true,
+      version: true,
+      thresholdsJson: true
+    }
+  });
+
+  const normalized = row
+    ? {
+        exchange: row.exchange,
+        symbol: row.symbol,
+        marketType: normalizePredictionMarketType(row.marketType),
+        timeframe: normalizePredictionTimeframe(row.timeframe),
+        windowFrom: row.windowFrom,
+        windowTo: row.windowTo,
+        nBars: Number(row.nBars),
+        computedAt: row.computedAt,
+        version: String(row.version ?? FEATURE_THRESHOLD_VERSION),
+        thresholdsJson: asRecord(row.thresholdsJson) as FeatureThresholdsJson
+      }
+    : null;
+
+  featureThresholdCache.set(key, {
+    expiresAt: now + FEATURE_THRESHOLDS_CACHE_TTL_MS,
+    row: normalized
+  });
+  return normalized;
+}
+
+function setFeatureThresholdCacheRow(row: FeatureThresholdRecord) {
+  featureThresholdCache.set(featureThresholdKey({
+    exchange: row.exchange,
+    symbol: row.symbol,
+    marketType: row.marketType,
+    timeframe: row.timeframe
+  }), {
+    expiresAt: Date.now() + FEATURE_THRESHOLDS_CACHE_TTL_MS,
+    row
+  });
+}
+
+async function resolveFeatureThresholds(params: {
+  exchange: string;
+  symbol: string;
+  marketType: PredictionMarketType;
+  timeframe: PredictionTimeframe;
+}): Promise<FeatureThresholdResolution> {
+  const row = await readLatestFeatureThresholdRow(params);
+  if (!row) {
+    return {
+      thresholds: fallbackFeatureThresholds(),
+      source: "fallback",
+      computedAt: null,
+      version: FEATURE_THRESHOLD_VERSION,
+      windowFrom: null,
+      windowTo: null,
+      nBars: null
+    };
+  }
+
+  const parsed = readFeatureThresholds(row.thresholdsJson);
+  if (!parsed) {
+    return {
+      thresholds: fallbackFeatureThresholds(),
+      source: "fallback",
+      computedAt: toIso(row.computedAt),
+      version: row.version,
+      windowFrom: toIso(row.windowFrom),
+      windowTo: toIso(row.windowTo),
+      nBars: row.nBars
+    };
+  }
+
+  return {
+    thresholds: parsed,
+    source: "db",
+    computedAt: toIso(row.computedAt),
+    version: row.version,
+    windowFrom: toIso(row.windowFrom),
+    windowTo: toIso(row.windowTo),
+    nBars: row.nBars
+  };
+}
+
+function computeAtrPctSeries(candles: CandleBar[], period = 14): number[] {
+  const trValues: number[] = [];
+  const out: number[] = [];
+
+  for (let i = 1; i < candles.length; i += 1) {
+    const prevClose = candles[i - 1]?.close;
+    const bar = candles[i];
+    if (!bar || !Number.isFinite(prevClose) || !Number.isFinite(bar.close) || bar.close <= 0) continue;
+    const tr = Math.max(
+      Math.abs(bar.high - bar.low),
+      Math.abs(bar.high - (prevClose as number)),
+      Math.abs(bar.low - (prevClose as number))
+    );
+    trValues.push(tr);
+    if (trValues.length > period) trValues.shift();
+    if (trValues.length === period) {
+      out.push(average(trValues) / bar.close);
+    }
+  }
+  return out;
+}
+
+function computeAbsEmaSpreadSeries(candles: CandleBar[], fast = 12, slow = 26): number[] {
+  const out: number[] = [];
+  const fastK = 2 / (fast + 1);
+  const slowK = 2 / (slow + 1);
+  let emaFast: number | null = null;
+  let emaSlow: number | null = null;
+
+  for (const bar of candles) {
+    if (!Number.isFinite(bar.close) || bar.close <= 0) continue;
+    emaFast = emaFast === null ? bar.close : bar.close * fastK + emaFast * (1 - fastK);
+    emaSlow = emaSlow === null ? bar.close : bar.close * slowK + emaSlow * (1 - slowK);
+    if (emaSlow !== null && emaSlow !== 0 && emaFast !== null) {
+      out.push(Math.abs((emaFast - emaSlow) / emaSlow));
+    }
+  }
+
+  return out;
+}
+
+function computeGapRatio(timeframe: PredictionTimeframe, windowMs: number, nBars: number): number {
+  const expectedBars = expectedBarsForWindow(timeframe as ThresholdTimeframe, windowMs);
+  if (expectedBars <= 0) return 0;
+  return Math.max(0, Math.min(1, 1 - nBars / Math.max(1, expectedBars)));
+}
+
+function isDailyCalibrationTime(now: Date): boolean {
+  return now.getUTCHours() === 2 && now.getUTCMinutes() >= 15 && now.getUTCMinutes() < 25;
+}
+
+function isoWeekBucket(now: Date): string {
+  const date = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()));
+  const day = date.getUTCDay() || 7;
+  date.setUTCDate(date.getUTCDate() + 4 - day);
+  const yearStart = new Date(Date.UTC(date.getUTCFullYear(), 0, 1));
+  const weekNo = Math.ceil((((date.getTime() - yearStart.getTime()) / 86400000) + 1) / 7);
+  return `${date.getUTCFullYear()}-W${String(weekNo).padStart(2, "0")}`;
+}
+
+function isWeeklyCalibrationTime(now: Date): boolean {
+  return now.getUTCDay() === 0 && now.getUTCHours() === 3 && now.getUTCMinutes() < 15;
+}
+
 type PredictionQualityContext = {
   sampleSize: number;
   winRatePct: number | null;
@@ -989,6 +1276,7 @@ function inferPredictionFromMarket(params: {
   closes: number[];
   highs: number[];
   lows: number[];
+  indicators: IndicatorsSnapshot;
   referencePrice: number;
   timeframe: PredictionTimeframe;
   directionPreference: DirectionPreference;
@@ -997,6 +1285,7 @@ function inferPredictionFromMarket(params: {
   marketType: PredictionMarketType;
   exchangeAccountId: string;
   exchange: string;
+  thresholdResolution: FeatureThresholdResolution;
 }): {
   prediction: { signal: PredictionSignal; expectedMovePct: number; confidence: number };
   featureSnapshot: Record<string, unknown>;
@@ -1024,23 +1313,33 @@ function inferPredictionFromMarket(params: {
     if (prev > 0 && next > 0) returns.push((next - prev) / prev);
   }
   const volatility = stddev(returns.slice(-30));
-  const atrProxy = average(
+  const atrProxyFallback = average(
     highs.slice(-20).map((high, idx) => {
       const low = lows.slice(-20)[idx] ?? high;
       if (last <= 0) return 0;
       return Math.abs(high - low) / last;
     })
   );
+  const atrProxy = typeof params.indicators.atr_pct === "number"
+    ? params.indicators.atr_pct
+    : atrProxyFallback;
+  const absEmaSpread = Math.abs(emaSpread);
 
   const rawScore = emaSpread * 0.65 + momentum * 0.35;
   const threshold = 0.0008 + volatility * 0.25;
   let signal = deriveSignalFromScore(rawScore, threshold, params.directionPreference);
 
-  const confidenceRaw = clamp(
+  const confidencePrePenalty = clamp(
     0.3 + (Math.abs(rawScore) / Math.max(0.0004, threshold + volatility)) * 0.5,
     0.05,
     0.95
   );
+  const confidenceRaw = applyConfidencePenalty({
+    baseConfidence: confidencePrePenalty,
+    atrPct: atrProxy,
+    emaSpreadPct: emaSpread,
+    thresholds: params.thresholdResolution.thresholds
+  });
   const targetConfidence = clamp(params.confidenceTargetPct / 100, 0, 1);
   const confidence = confidenceRaw >= targetConfidence ? confidenceRaw : Math.max(0.2, confidenceRaw * 0.85);
 
@@ -1062,16 +1361,23 @@ function inferPredictionFromMarket(params: {
     ? referencePrice * (1 - tpMultiplier)
     : referencePrice * (1 + tpMultiplier);
 
-  const rsi = computeRsi(closes);
+  const rsi = typeof params.indicators.rsi_14 === "number"
+    ? params.indicators.rsi_14
+    : computeRsi(closes);
   const sizePercent = clamp(Math.round((confidence * 100) * 0.35), 10, 35);
   const horizonMs = timeframeToIntervalMs(params.timeframe) * PREDICTION_OUTCOME_HORIZON_BARS;
-  const tags: string[] = [];
-  if (volatility >= 0.02) tags.push("high_vol");
-  if (volatility <= 0.0075) tags.push("low_vol");
-  if (signal === "up") tags.push("trend_up");
-  if (signal === "down") tags.push("trend_down");
-  if (signal === "neutral") tags.push("range_bound");
-  if (atrProxy >= 0.015) tags.push("breakout_risk");
+  const tags = deriveRegimeTags({
+    signal,
+    atrPct: atrProxy,
+    emaSpreadPct: emaSpread,
+    rsi,
+    thresholds: params.thresholdResolution.thresholds
+  });
+  const atrPctRank = percentileRankFromBands(atrProxy, params.thresholdResolution.thresholds.atrPct);
+  const emaSpreadAbsRank = percentileRankFromBands(
+    absEmaSpread,
+    params.thresholdResolution.thresholds.absEmaSpreadPct
+  );
 
   return {
     prediction: {
@@ -1085,6 +1391,16 @@ function inferPredictionFromMarket(params: {
       momentum: Number(momentum.toFixed(6)),
       volatility: Number(volatility.toFixed(6)),
       atrPct: Number(atrProxy.toFixed(6)),
+      atr_pct_rank_0_100: atrPctRank !== null ? Number(atrPctRank.toFixed(2)) : null,
+      ema_spread_abs_rank_0_100:
+        emaSpreadAbsRank !== null ? Number(emaSpreadAbsRank.toFixed(2)) : null,
+      indicators: params.indicators,
+      thresholdSource: params.thresholdResolution.source,
+      thresholdVersion: params.thresholdResolution.version,
+      thresholdComputedAt: params.thresholdResolution.computedAt,
+      thresholdWindowFrom: params.thresholdResolution.windowFrom,
+      thresholdWindowTo: params.thresholdResolution.windowTo,
+      thresholdBars: params.thresholdResolution.nBars,
       suggestedEntryType: "limit",
       suggestedEntryPrice: Number(entryPrice.toFixed(2)),
       suggestedStopLoss: Number(suggestedStopLoss.toFixed(2)),
@@ -1098,7 +1414,8 @@ function inferPredictionFromMarket(params: {
       confidenceTargetPct: params.confidenceTargetPct,
       prefillExchangeAccountId: params.exchangeAccountId,
       prefillExchange: params.exchange,
-      tags
+      tags,
+      ...(params.indicators.dataGap ? { riskFlags: { dataGap: true } } : {})
     },
     tracking: {
       entryPrice: Number(entryPrice.toFixed(2)),
@@ -1138,18 +1455,20 @@ async function generateAutoPredictionForUser(
     }
 
     const exchangeSymbol = await adapter.toExchangeSymbol(canonicalSymbol);
+    const candleLookback = Math.max(120, minimumCandlesForIndicators(payload.timeframe));
     const [tickerRaw, candlesRaw] = await Promise.all([
       adapter.marketApi.getTicker(exchangeSymbol, adapter.productType),
       adapter.marketApi.getCandles({
         symbol: exchangeSymbol,
         productType: adapter.productType,
         granularity: timeframeToBitgetGranularity(payload.timeframe),
-        limit: 120
+        limit: candleLookback
       })
     ]);
 
     const candles = parseBitgetCandles(candlesRaw);
-    if (candles.length < 20) {
+    const alignedCandles = bucketCandles(candles, payload.timeframe);
+    if (alignedCandles.length < 20) {
       throw new ManualTradingError(
         "Not enough candle data to generate prediction.",
         422,
@@ -1157,9 +1476,15 @@ async function generateAutoPredictionForUser(
       );
     }
 
-    const closes = candles.map((row) => row.close);
-    const highs = candles.map((row) => row.high);
-    const lows = candles.map((row) => row.low);
+    const closes = alignedCandles.map((row) => row.close);
+    const highs = alignedCandles.map((row) => row.high);
+    const lows = alignedCandles.map((row) => row.low);
+    const indicators = computeIndicators(alignedCandles, payload.timeframe, {
+      exchange: account.exchange,
+      symbol: canonicalSymbol,
+      marketType: payload.marketType,
+      logVwapMetrics: true
+    });
     const ticker = normalizeTickerPayload(coerceFirstItem(tickerRaw));
     const referencePrice = ticker.mark ?? ticker.last ?? closes[closes.length - 1];
     if (!referencePrice || !Number.isFinite(referencePrice) || referencePrice <= 0) {
@@ -1170,10 +1495,18 @@ async function generateAutoPredictionForUser(
       );
     }
 
+    const thresholdResolution = await resolveFeatureThresholds({
+      exchange: account.exchange,
+      symbol: canonicalSymbol,
+      marketType: payload.marketType,
+      timeframe: payload.timeframe
+    });
+
     const inferred = inferPredictionFromMarket({
       closes,
       highs,
       lows,
+      indicators,
       referencePrice,
       timeframe: payload.timeframe,
       directionPreference: payload.directionPreference,
@@ -1181,7 +1514,8 @@ async function generateAutoPredictionForUser(
       leverage: payload.leverage,
       marketType: payload.marketType,
       exchangeAccountId: payload.exchangeAccountId,
-      exchange: account.exchange
+      exchange: account.exchange,
+      thresholdResolution
     });
 
     const quality = await getPredictionQualityContext(
@@ -1451,6 +1785,333 @@ function stopExchangeAutoSyncScheduler() {
   if (!exchangeAutoSyncTimer) return;
   clearInterval(exchangeAutoSyncTimer);
   exchangeAutoSyncTimer = null;
+}
+
+let featureThresholdCalibrationTimer: NodeJS.Timeout | null = null;
+let featureThresholdCalibrationRunning = false;
+const featureThresholdCalibrationBuckets = new Map<PredictionTimeframe, string>();
+
+async function fetchHistoricalCandles(
+  adapter: BitgetFuturesAdapter,
+  symbol: string,
+  timeframe: PredictionTimeframe,
+  windowFromMs: number,
+  windowToMs: number,
+  minBars: number
+): Promise<CandleBar[]> {
+  const targetBars = Math.max(minBars, 1200);
+  const maxBars = Math.max(targetBars + 200, 5000);
+  const byTs = new Map<number, CandleBar>();
+  let cursorEnd = windowToMs;
+  let rounds = 0;
+
+  while (cursorEnd > windowFromMs && byTs.size < maxBars && rounds < 80) {
+    const raw = await adapter.marketApi.getCandles({
+      symbol,
+      productType: adapter.productType,
+      granularity: timeframeToBitgetGranularity(timeframe),
+      startTime: windowFromMs,
+      endTime: cursorEnd,
+      limit: 200
+    });
+    const batch = parseBitgetCandles(raw);
+    if (batch.length === 0) break;
+
+    for (const row of batch) {
+      if (!Number.isFinite(row.ts) || row.ts === null) continue;
+      const ts = Number(row.ts);
+      if (ts < windowFromMs || ts > windowToMs) continue;
+      byTs.set(ts, row);
+    }
+
+    const firstTs = batch[0]?.ts;
+    if (!Number.isFinite(firstTs) || firstTs === null) break;
+    if ((firstTs as number) <= windowFromMs) break;
+    cursorEnd = (firstTs as number) - 1;
+    rounds += 1;
+  }
+
+  return Array.from(byTs.values()).sort((a, b) => (a.ts ?? 0) - (b.ts ?? 0));
+}
+
+function extractMicrostructureSeries(
+  rows: Array<{ featuresSnapshot: unknown }>,
+  exchange: string
+) {
+  const spreadBpsSeries: number[] = [];
+  const depth1pctUsdSeries: number[] = [];
+  const normalizedExchange = normalizeExchangeValue(exchange);
+
+  for (const row of rows) {
+    const snapshot = asRecord(row.featuresSnapshot);
+    const snapshotExchange = typeof snapshot.prefillExchange === "string"
+      ? normalizeExchangeValue(snapshot.prefillExchange)
+      : null;
+    if (snapshotExchange && snapshotExchange !== normalizedExchange) continue;
+    const spread = pickNumber(snapshot, ["spreadBps", "spread_bps"]);
+    const depth = pickNumber(snapshot, ["depth1pctUsd", "depth_1pct_usd", "orderBookDepth1pctUsd"]);
+    if (spread !== null) spreadBpsSeries.push(spread);
+    if (depth !== null) depth1pctUsdSeries.push(depth);
+  }
+
+  return {
+    spreadBpsSeries,
+    depth1pctUsdSeries
+  };
+}
+
+async function calibrateFeatureThresholdForSymbol(params: {
+  adapter: BitgetFuturesAdapter;
+  exchange: string;
+  symbol: string;
+  marketType: PredictionMarketType;
+  timeframe: PredictionTimeframe;
+  now: Date;
+}) {
+  const windowMs = calibrationWindowMsForTimeframe(params.timeframe as ThresholdTimeframe);
+  const minBars = minimumBarsForTimeframe(params.timeframe as ThresholdTimeframe);
+  const windowToMs = params.now.getTime();
+  const windowFromMs = windowToMs - windowMs;
+
+  const exchangeSymbol = await params.adapter.toExchangeSymbol(params.symbol);
+  const candles = await fetchHistoricalCandles(
+    params.adapter,
+    exchangeSymbol,
+    params.timeframe,
+    windowFromMs,
+    windowToMs,
+    minBars
+  );
+  const nBars = candles.length;
+  const gapRatio = computeGapRatio(params.timeframe, windowMs, nBars);
+
+  const atrPctSeries = computeAtrPctSeries(candles);
+  const absEmaSpreadPctSeries = computeAbsEmaSpreadSeries(candles);
+
+  const predictionRows = await db.prediction.findMany({
+    where: {
+      symbol: params.symbol,
+      marketType: params.marketType,
+      timeframe: params.timeframe,
+      tsCreated: {
+        gte: new Date(windowFromMs)
+      }
+    },
+    orderBy: { tsCreated: "desc" },
+    take: 1500,
+    select: {
+      featuresSnapshot: true
+    }
+  });
+  const microstructure = extractMicrostructureSeries(predictionRows, params.exchange);
+  const expectedBars = expectedBarsForWindow(params.timeframe as ThresholdTimeframe, windowMs);
+  const dataGapDetected = gapRatio > FEATURE_THRESHOLDS_MAX_GAP_RATIO;
+  const insufficientBars = nBars < minBars;
+  if (dataGapDetected) {
+    // eslint-disable-next-line no-console
+    console.warn("[thresholds] data gap detected, storing fallback thresholds", {
+      exchange: params.exchange,
+      symbol: params.symbol,
+      marketType: params.marketType,
+      timeframe: params.timeframe,
+      nBars,
+      gapRatio
+    });
+  }
+  if (insufficientBars) {
+    // eslint-disable-next-line no-console
+    console.warn("[thresholds] insufficient bars, storing fallback thresholds", {
+      exchange: params.exchange,
+      symbol: params.symbol,
+      marketType: params.marketType,
+      timeframe: params.timeframe,
+      nBars,
+      minBars
+    });
+  }
+  const built = buildFeatureThresholds({
+    atrPctSeries: dataGapDetected || insufficientBars ? [] : atrPctSeries,
+    absEmaSpreadPctSeries: dataGapDetected || insufficientBars ? [] : absEmaSpreadPctSeries,
+    spreadBpsSeries: dataGapDetected || insufficientBars ? [] : microstructure.spreadBpsSeries,
+    depth1pctUsdSeries: dataGapDetected || insufficientBars ? [] : microstructure.depth1pctUsdSeries,
+    winsorizePct: FEATURE_THRESHOLDS_WINSORIZE_PCT,
+    expectedBars,
+    nBars,
+    dataGap: dataGapDetected
+  });
+
+  const row = await db.featureThreshold.create({
+    data: {
+      exchange: params.exchange.trim().toLowerCase(),
+      accountScope: "global",
+      symbol: params.symbol,
+      marketType: params.marketType,
+      timeframe: params.timeframe,
+      windowFrom: new Date(windowFromMs),
+      windowTo: new Date(windowToMs),
+      nBars,
+      thresholdsJson: built.thresholdsJson,
+      computedAt: params.now,
+      version: FEATURE_THRESHOLD_VERSION
+    },
+    select: {
+      exchange: true,
+      symbol: true,
+      marketType: true,
+      timeframe: true,
+      windowFrom: true,
+      windowTo: true,
+      nBars: true,
+      computedAt: true,
+      version: true,
+      thresholdsJson: true
+    }
+  });
+
+  setFeatureThresholdCacheRow({
+    exchange: row.exchange,
+    symbol: row.symbol,
+    marketType: normalizePredictionMarketType(row.marketType),
+    timeframe: normalizePredictionTimeframe(row.timeframe),
+    windowFrom: row.windowFrom,
+    windowTo: row.windowTo,
+    nBars: Number(row.nBars),
+    computedAt: row.computedAt,
+    version: String(row.version ?? FEATURE_THRESHOLD_VERSION),
+    thresholdsJson: asRecord(row.thresholdsJson) as FeatureThresholdsJson
+  });
+}
+
+function thresholdBucketForTimeframe(timeframe: PredictionTimeframe, now: Date): string | null {
+  if (timeframe === "5m" || timeframe === "15m") {
+    if (!isDailyCalibrationTime(now)) return null;
+    return now.toISOString().slice(0, 10);
+  }
+  if (!isWeeklyCalibrationTime(now)) return null;
+  return isoWeekBucket(now);
+}
+
+async function runFeatureThresholdCalibrationCycle(mode: "startup" | "scheduled") {
+  if (!FEATURE_THRESHOLDS_CALIBRATION_ENABLED) return;
+  if (featureThresholdCalibrationRunning) return;
+  featureThresholdCalibrationRunning = true;
+
+  try {
+    const timeframes =
+      FEATURE_THRESHOLDS_TIMEFRAMES.length > 0
+        ? FEATURE_THRESHOLDS_TIMEFRAMES
+        : (["5m", "15m", "1h", "4h", "1d"] as ThresholdTimeframe[]);
+    const now = new Date();
+    const dueTimeframes: PredictionTimeframe[] = [];
+
+    for (const timeframe of timeframes) {
+      const tf = normalizePredictionTimeframe(timeframe);
+      if (mode === "startup") {
+        dueTimeframes.push(tf);
+        continue;
+      }
+      const bucket = thresholdBucketForTimeframe(tf, now);
+      if (!bucket) continue;
+      if (featureThresholdCalibrationBuckets.get(tf) === bucket) continue;
+      dueTimeframes.push(tf);
+      featureThresholdCalibrationBuckets.set(tf, bucket);
+    }
+
+    if (dueTimeframes.length === 0) return;
+
+    const accounts = await db.exchangeAccount.findMany({
+      orderBy: [{ updatedAt: "desc" }, { createdAt: "desc" }],
+      select: {
+        id: true,
+        userId: true,
+        exchange: true
+      }
+    });
+
+    const byExchange = new Map<string, { id: string; userId: string; exchange: string }>();
+    for (const account of accounts) {
+      const exchange = normalizeExchangeValue(account.exchange);
+      if (!byExchange.has(exchange)) {
+        byExchange.set(exchange, {
+          id: account.id,
+          userId: account.userId,
+          exchange
+        });
+      }
+    }
+
+    const symbols =
+      FEATURE_THRESHOLDS_SYMBOLS.length > 0
+        ? FEATURE_THRESHOLDS_SYMBOLS
+        : ["BTCUSDT", "ETHUSDT", "SOLUSDT", "XRPUSDT", "BNBUSDT"];
+    const marketTypes =
+      FEATURE_THRESHOLDS_MARKET_TYPES.length > 0
+        ? FEATURE_THRESHOLDS_MARKET_TYPES
+        : (["perp"] as ThresholdMarketType[]);
+
+    for (const [exchange, accountRef] of byExchange.entries()) {
+      if (exchange !== "bitget") continue;
+      let adapter: BitgetFuturesAdapter | null = null;
+      try {
+        const account = await resolveTradingAccount(accountRef.userId, accountRef.id);
+        adapter = createBitgetAdapter(account);
+        await adapter.contractCache.warmup();
+
+        for (const symbol of symbols) {
+          for (const marketType of marketTypes) {
+            const normalizedMarketType = normalizePredictionMarketType(marketType);
+            for (const timeframe of dueTimeframes) {
+              try {
+                await calibrateFeatureThresholdForSymbol({
+                  adapter,
+                  exchange,
+                  symbol,
+                  marketType: normalizedMarketType,
+                  timeframe,
+                  now
+                });
+              } catch (error) {
+                // eslint-disable-next-line no-console
+                console.warn("[thresholds] calibration failed", {
+                  exchange,
+                  symbol,
+                  marketType: normalizedMarketType,
+                  timeframe,
+                  reason: String(error)
+                });
+              }
+            }
+          }
+        }
+      } catch (error) {
+        // eslint-disable-next-line no-console
+        console.warn("[thresholds] exchange calibration skipped", {
+          exchange,
+          reason: String(error)
+        });
+      } finally {
+        if (adapter) {
+          await adapter.close();
+        }
+      }
+    }
+  } finally {
+    featureThresholdCalibrationRunning = false;
+  }
+}
+
+function startFeatureThresholdCalibrationScheduler() {
+  if (!FEATURE_THRESHOLDS_CALIBRATION_ENABLED) return;
+  featureThresholdCalibrationTimer = setInterval(() => {
+    void runFeatureThresholdCalibrationCycle("scheduled");
+  }, FEATURE_THRESHOLDS_CALIBRATION_SCAN_MS);
+  void runFeatureThresholdCalibrationCycle("startup");
+}
+
+function stopFeatureThresholdCalibrationScheduler() {
+  if (!featureThresholdCalibrationTimer) return;
+  clearInterval(featureThresholdCalibrationTimer);
+  featureThresholdCalibrationTimer = null;
 }
 
 function isAutoScheduleEnabled(value: unknown): boolean {
@@ -3472,6 +4133,42 @@ app.get("/api/predictions/quality", requireAuth, async (req, res) => {
   });
 });
 
+app.get("/api/thresholds/latest", requireAuth, async (req, res) => {
+  const parsed = thresholdsLatestQuerySchema.safeParse(req.query ?? {});
+  if (!parsed.success) {
+    return res.status(400).json({ error: "invalid_query", details: parsed.error.flatten() });
+  }
+
+  const timeframe = normalizePredictionTimeframe(parsed.data.timeframe ?? parsed.data.tf ?? "15m");
+  const marketType = normalizePredictionMarketType(parsed.data.marketType);
+  const exchange = normalizeExchangeValue(parsed.data.exchange);
+  const symbol = normalizeSymbolInput(parsed.data.symbol);
+  if (!symbol) {
+    return res.status(400).json({ error: "invalid_symbol" });
+  }
+
+  const resolved = await resolveFeatureThresholds({
+    exchange,
+    symbol,
+    marketType,
+    timeframe
+  });
+
+  return res.json({
+    exchange,
+    symbol,
+    marketType,
+    timeframe,
+    source: resolved.source,
+    computedAt: resolved.computedAt,
+    windowFrom: resolved.windowFrom,
+    windowTo: resolved.windowTo,
+    nBars: resolved.nBars,
+    version: resolved.version,
+    thresholds: resolved.thresholds
+  });
+});
+
 app.get("/api/predictions/running", requireAuth, async (req, res) => {
   const user = getUserFromLocals(res);
 
@@ -3832,125 +4529,7 @@ app.post("/api/predictions/delete-many", requireAuth, async (req, res) => {
   });
 });
 
-app.get("/api/predictions/:id", requireAuth, async (req, res) => {
-  const user = getUserFromLocals(res);
-  const params = predictionIdParamSchema.safeParse(req.params);
-  if (!params.success) {
-    return res.status(400).json({ error: "invalid_prediction_id" });
-  }
-
-  const row = await db.prediction.findFirst({
-    where: {
-      id: params.data.id,
-      userId: user.id
-    }
-  });
-
-  if (!row) {
-    return res.status(404).json({ error: "prediction_not_found" });
-  }
-
-  const [linkedBot, exchangeAccounts] = await Promise.all([
-    row.botId
-      ? db.bot.findFirst({
-          where: {
-            id: row.botId,
-            userId: user.id
-          },
-          select: {
-            exchange: true,
-            exchangeAccountId: true
-          }
-        })
-      : Promise.resolve(null),
-    db.exchangeAccount.findMany({
-      where: { userId: user.id },
-      orderBy: { updatedAt: "desc" },
-      select: {
-        id: true,
-        exchange: true
-      }
-    })
-  ]);
-
-  const accountMap = new Map<string, { exchange: string }>();
-  for (const account of exchangeAccounts) {
-    accountMap.set(account.id, { exchange: account.exchange });
-  }
-  const defaultAccount = exchangeAccounts[0] ?? null;
-
-  const snapshot = asRecord(row.featuresSnapshot);
-  const requestedPrefillAccountId =
-    typeof snapshot.prefillExchangeAccountId === "string"
-      ? snapshot.prefillExchangeAccountId
-      : null;
-  const requestedPrefillExchange =
-    typeof snapshot.prefillExchange === "string"
-      ? snapshot.prefillExchange
-      : null;
-  const prefillAccountId =
-    requestedPrefillAccountId && accountMap.has(requestedPrefillAccountId)
-      ? requestedPrefillAccountId
-      : null;
-
-  const suggestedEntry = deriveSuggestedEntry(snapshot);
-  const suggestedStopLoss = pickNumber(snapshot, ["suggestedStopLoss", "stopLoss", "slPrice", "sl"]);
-  const suggestedTakeProfit = pickNumber(snapshot, ["suggestedTakeProfit", "takeProfit", "tpPrice", "tp"]);
-  const requestedLeverageRaw = pickNumber(snapshot, ["requestedLeverage", "leverage"]);
-  const requestedLeverage =
-    requestedLeverageRaw !== null && Number.isFinite(requestedLeverageRaw)
-      ? Math.max(1, Math.min(125, Math.trunc(requestedLeverageRaw)))
-      : null;
-  const positionSizeHint = derivePositionSizeHint(snapshot);
-
-  const resolvedAccountId =
-    prefillAccountId ??
-    linkedBot?.exchangeAccountId ??
-    defaultAccount?.id ??
-    null;
-
-  const resolvedExchangeFromAccount =
-    resolvedAccountId ? accountMap.get(resolvedAccountId)?.exchange : null;
-
-  return res.json({
-    id: row.id,
-    predictionId: row.id,
-    symbol: row.symbol,
-    marketType: normalizePredictionMarketType(row.marketType),
-    timeframe: normalizePredictionTimeframe(row.timeframe),
-    tsCreated: row.tsCreated.toISOString(),
-    signal: normalizePredictionSignal(row.signal),
-    expectedMovePct: row.expectedMovePct,
-    confidence: row.confidence,
-    leverage: requestedLeverage,
-    explanation: typeof row.explanation === "string" ? row.explanation : "",
-    tags: asStringArray(row.tags).slice(0, 10),
-    keyDrivers: derivePredictionKeyDrivers(snapshot),
-    exchange:
-      requestedPrefillExchange ??
-      resolvedExchangeFromAccount ??
-      linkedBot?.exchange ??
-      defaultAccount?.exchange ??
-      "bitget",
-    accountId: resolvedAccountId,
-    suggestedEntry,
-    suggestedStopLoss,
-    suggestedTakeProfit,
-    positionSizeHint,
-    entryPrice: Number.isFinite(Number(row.entryPrice)) ? Number(row.entryPrice) : null,
-    stopLossPrice: Number.isFinite(Number(row.stopLossPrice)) ? Number(row.stopLossPrice) : null,
-    takeProfitPrice: Number.isFinite(Number(row.takeProfitPrice)) ? Number(row.takeProfitPrice) : null,
-    horizonMs: Number.isFinite(Number(row.horizonMs)) ? Number(row.horizonMs) : null,
-    outcomeStatus: typeof row.outcomeStatus === "string" ? row.outcomeStatus : "pending",
-    outcomeResult: typeof row.outcomeResult === "string" ? row.outcomeResult : null,
-    outcomeReason: typeof row.outcomeReason === "string" ? row.outcomeReason : null,
-    outcomePnlPct: Number.isFinite(Number(row.outcomePnlPct)) ? Number(row.outcomePnlPct) : null,
-    maxFavorablePct: Number.isFinite(Number(row.maxFavorablePct)) ? Number(row.maxFavorablePct) : null,
-    maxAdversePct: Number.isFinite(Number(row.maxAdversePct)) ? Number(row.maxAdversePct) : null,
-    outcomeEvaluatedAt:
-      row.outcomeEvaluatedAt instanceof Date ? row.outcomeEvaluatedAt.toISOString() : null
-  });
-});
+registerPredictionDetailRoute(app, db);
 
 app.get("/api/symbols", requireAuth, async (req, res) => {
   const user = getUserFromLocals(res);
@@ -5202,6 +5781,7 @@ async function startApiServer() {
     // eslint-disable-next-line no-console
     console.log(`[api] listening on :${port}`);
     startExchangeAutoSyncScheduler();
+    startFeatureThresholdCalibrationScheduler();
     startPredictionAutoScheduler();
     startPredictionOutcomeEvalScheduler();
   });
@@ -5211,6 +5791,7 @@ void startApiServer();
 
 process.on("SIGTERM", () => {
   stopExchangeAutoSyncScheduler();
+  stopFeatureThresholdCalibrationScheduler();
   stopPredictionAutoScheduler();
   stopPredictionOutcomeEvalScheduler();
   marketWss.close();
@@ -5221,6 +5802,7 @@ process.on("SIGTERM", () => {
 
 process.on("SIGINT", () => {
   stopExchangeAutoSyncScheduler();
+  stopFeatureThresholdCalibrationScheduler();
   stopPredictionAutoScheduler();
   stopPredictionOutcomeEvalScheduler();
   marketWss.close();

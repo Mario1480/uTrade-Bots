@@ -59,7 +59,8 @@ type GenerateDeps = {
 
 const SYSTEM_MESSAGE =
   "You are a trading assistant. You must only use the provided JSON featureSnapshot. " +
-  "If a value is missing, say 'unknown' or omit it. Do not mention news unless featureSnapshot contains a 'newsRisk' flag.";
+  "If a value is missing, say 'unknown' or omit it. Do not mention news unless featureSnapshot contains a 'newsRisk' flag. " +
+  "Never mention TradingView.";
 
 function toNumber(value: unknown): number | null {
   const parsed = Number(value);
@@ -73,17 +74,27 @@ function toBoolean(value: unknown): boolean | null {
   return null;
 }
 
-function pickNumber(snapshot: Record<string, unknown>, keys: string[]): number | null {
-  for (const key of keys) {
-    const val = toNumber(snapshot[key]);
+function getByPath(snapshot: Record<string, unknown>, path: string): unknown {
+  if (!path.includes(".")) return snapshot[path];
+  let cursor: unknown = snapshot;
+  for (const segment of path.split(".")) {
+    if (!cursor || typeof cursor !== "object" || Array.isArray(cursor)) return undefined;
+    cursor = (cursor as Record<string, unknown>)[segment];
+  }
+  return cursor;
+}
+
+function pickNumberByPaths(snapshot: Record<string, unknown>, paths: string[]): number | null {
+  for (const path of paths) {
+    const val = toNumber(getByPath(snapshot, path));
     if (val !== null) return val;
   }
   return null;
 }
 
-function pickBoolean(snapshot: Record<string, unknown>, keys: string[]): boolean | null {
-  for (const key of keys) {
-    const val = toBoolean(snapshot[key]);
+function pickBooleanByPaths(snapshot: Record<string, unknown>, paths: string[]): boolean | null {
+  for (const path of paths) {
+    const val = toBoolean(getByPath(snapshot, path));
     if (val !== null) return val;
   }
   return null;
@@ -116,6 +127,25 @@ function stripCodeFenceJson(raw: string): string {
   return trimmed.replace(/^```[a-zA-Z]*\s*/, "").replace(/```$/, "").trim();
 }
 
+function collectFeaturePaths(
+  value: unknown,
+  prefix = "",
+  out: Set<string> = new Set<string>(),
+  depth = 0
+): Set<string> {
+  if (depth > 5) return out;
+  if (!value || typeof value !== "object" || Array.isArray(value)) return out;
+  const record = value as Record<string, unknown>;
+  for (const [key, next] of Object.entries(record)) {
+    const path = prefix ? `${prefix}.${key}` : key;
+    out.add(path);
+    if (next && typeof next === "object" && !Array.isArray(next)) {
+      collectFeaturePaths(next, path, out, depth + 1);
+    }
+  }
+  return out;
+}
+
 export function validateExplainerOutput(
   rawValue: unknown,
   featureSnapshot: Record<string, unknown>
@@ -125,7 +155,7 @@ export function validateExplainerOutput(
     throw new Error(`schema_validation_failed:${parsed.error.issues.map((i) => i.path.join(".")).join(",")}`);
   }
 
-  const keySet = new Set(Object.keys(featureSnapshot));
+  const keySet = collectFeaturePaths(featureSnapshot);
   const invalidDriver = parsed.data.keyDrivers.find((driver) => !keySet.has(driver.name));
   if (invalidDriver) {
     throw new Error(`key_driver_outside_snapshot:${invalidDriver.name}`);
@@ -154,15 +184,32 @@ export function fallbackExplain(input: ExplainerInput): ExplainerOutput {
   const snapshot = input.featureSnapshot ?? {};
   const tags: ExplainerTag[] = [];
 
-  const vol = pickNumber(snapshot, ["volatility", "vol", "atrPct", "realizedVol", "volatilityPct"]);
-  const trend = pickNumber(snapshot, ["emaSpread", "trendScore", "trend", "ema_slope"]);
-  const adx = pickNumber(snapshot, ["adx", "trendStrength"]);
-  const breakoutProb = pickNumber(snapshot, ["breakoutProb", "breakoutRisk", "breakout_score"]);
-  const meanReversionScore = pickNumber(snapshot, ["meanReversionScore", "mrScore", "mean_reversion_score"]);
-  const spreadBps = pickNumber(snapshot, ["spreadBps", "bookSpreadBps"]);
-  const liquidity = pickNumber(snapshot, ["liquidityScore", "depthScore"]);
-  const funding = pickNumber(snapshot, ["fundingRate", "fundingRatePct", "funding"]);
-  const newsRisk = pickBoolean(snapshot, ["newsRisk", "news_risk"]);
+  const vol = pickNumberByPaths(snapshot, [
+    "volatility",
+    "vol",
+    "atrPct",
+    "realizedVol",
+    "volatilityPct",
+    "indicators.atr_pct",
+    "indicators.bb.width_pct"
+  ]);
+  const trend = pickNumberByPaths(snapshot, [
+    "emaSpread",
+    "trendScore",
+    "trend",
+    "ema_slope",
+    "indicators.macd.hist",
+    "indicators.vwap.dist_pct"
+  ]);
+  const adx = pickNumberByPaths(snapshot, ["adx", "trendStrength", "indicators.adx.adx_14"]);
+  const breakoutProb = pickNumberByPaths(snapshot, ["breakoutProb", "breakoutRisk", "breakout_score"]);
+  const meanReversionScore = pickNumberByPaths(snapshot, ["meanReversionScore", "mrScore", "mean_reversion_score"]);
+  const rsi = pickNumberByPaths(snapshot, ["rsi", "indicators.rsi_14"]);
+  const bbPos = pickNumberByPaths(snapshot, ["indicators.bb.pos"]);
+  const spreadBps = pickNumberByPaths(snapshot, ["spreadBps", "bookSpreadBps"]);
+  const liquidity = pickNumberByPaths(snapshot, ["liquidityScore", "depthScore"]);
+  const funding = pickNumberByPaths(snapshot, ["fundingRate", "fundingRatePct", "funding"]);
+  const newsRisk = pickBooleanByPaths(snapshot, ["newsRisk", "news_risk"]);
 
   if (vol !== null) {
     if (vol >= 0.03) tags.push("high_vol");
@@ -181,6 +228,8 @@ export function fallbackExplain(input: ExplainerInput): ExplainerOutput {
 
   if (breakoutProb !== null && breakoutProb >= 0.6) tags.push("breakout_risk");
   if (meanReversionScore !== null && meanReversionScore >= 0.6) tags.push("mean_reversion");
+  if (rsi !== null && (rsi >= 70 || rsi <= 30)) tags.push("mean_reversion");
+  if (bbPos !== null && (bbPos >= 0.9 || bbPos <= 0.1)) tags.push("mean_reversion");
   if ((spreadBps !== null && spreadBps >= 25) || (liquidity !== null && liquidity <= 0.35)) {
     tags.push("low_liquidity");
   }
@@ -217,11 +266,13 @@ export function fallbackExplain(input: ExplainerInput): ExplainerOutput {
   );
 
   const preferredDrivers = [
-    "rsi",
+    "indicators.rsi_14",
+    "indicators.macd.hist",
+    "indicators.bb.width_pct",
+    "indicators.bb.pos",
+    "indicators.vwap.dist_pct",
+    "indicators.adx.adx_14",
     "emaSpread",
-    "emaFast",
-    "emaSlow",
-    "macd",
     "atrPct",
     "volatility",
     "fundingRate",
@@ -230,9 +281,10 @@ export function fallbackExplain(input: ExplainerInput): ExplainerOutput {
   ];
 
   const keyDrivers: { name: string; value: unknown }[] = [];
-  for (const key of preferredDrivers) {
-    if (!(key in snapshot)) continue;
-    keyDrivers.push({ name: key, value: snapshot[key] });
+  for (const path of preferredDrivers) {
+    const value = getByPath(snapshot, path);
+    if (value === undefined) continue;
+    keyDrivers.push({ name: path, value });
     if (keyDrivers.length >= 3) break;
   }
 
@@ -268,7 +320,7 @@ function buildPromptPayload(input: ExplainerInput) {
     outputSchema: {
       explanation: "string <= 400 chars",
       tags: "string[] <= 5 items, must be from tagsAllowlist",
-      keyDrivers: "{name: string, value: any}[] <= 5 items, names from featureSnapshot keys only",
+      keyDrivers: "{name: string, value: any}[] <= 5 items, names from featureSnapshot key paths only",
       disclaimer: "grounded_features_only"
     }
   };

@@ -542,3 +542,21 @@ model Prediction {
   @@index([botId, createdAt])
   @@index([userId, outcomeStatus, createdAt])
 }
+
+model FeatureThreshold {
+  id             String   @id @default(uuid())
+  exchange       String
+  accountScope   String   @default("global") @map("account_scope")
+  symbol         String
+  marketType     String   @map("market_type")
+  timeframe      String
+  windowFrom     DateTime @map("window_from")
+  windowTo       DateTime @map("window_to")
+  nBars          Int      @map("n_bars")
+  thresholdsJson Json     @map("thresholds_json")
+  computedAt     DateTime @default(now()) @map("computed_at")
+  version        String
+
+  @@index([exchange, symbol, marketType, timeframe, computedAt(sort: Desc)])
+  @@map("feature_thresholds")
+}
