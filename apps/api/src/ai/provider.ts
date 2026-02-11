@@ -1,3 +1,5 @@
+import { prisma } from "@mm/db";
+import { decryptSecret } from "../secret-crypto.js";
 import { logger } from "../logger.js";
 
 type ChatCompletionResponse = {
@@ -20,6 +22,14 @@ export type CallAiOptions = {
 };
 
 const OPENAI_ENDPOINT = "https://api.openai.com/v1/chat/completions";
+const AI_API_KEYS_GLOBAL_SETTING_KEY = "admin.apiKeys";
+const AI_DB_KEY_CACHE_TTL_MS =
+  Math.max(5, Number(process.env.AI_DB_KEY_CACHE_TTL_SEC ?? "30")) * 1000;
+
+const db = prisma as any;
+let dbApiKeyCacheUntil = 0;
+let dbApiKeyCached: string | null = null;
+let dbApiKeyInFlight: Promise<string | null> | null = null;
 
 function resolveProvider(value: string | undefined): "openai" | "disabled" {
   const normalized = (value ?? "openai").trim().toLowerCase();
@@ -42,6 +52,58 @@ function readContent(payload: ChatCompletionResponse): string {
   throw new Error("ai_empty_response");
 }
 
+function parseStoredOpenAiKeyEnc(value: unknown): string | null {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  const raw = (value as Record<string, unknown>).openaiApiKeyEnc;
+  if (typeof raw !== "string") return null;
+  const trimmed = raw.trim();
+  return trimmed.length > 0 ? trimmed : null;
+}
+
+async function loadDbOpenAiApiKey(): Promise<string | null> {
+  const row = await db.globalSetting.findUnique({
+    where: { key: AI_API_KEYS_GLOBAL_SETTING_KEY },
+    select: { value: true }
+  });
+  const openaiApiKeyEnc = parseStoredOpenAiKeyEnc(row?.value);
+  if (!openaiApiKeyEnc) return null;
+  const decrypted = decryptSecret(openaiApiKeyEnc).trim();
+  return decrypted.length > 0 ? decrypted : null;
+}
+
+async function resolveOpenAiApiKey(): Promise<string | null> {
+  const envApiKey = process.env.AI_API_KEY?.trim() || null;
+  const now = Date.now();
+  if (now < dbApiKeyCacheUntil) {
+    return dbApiKeyCached ?? envApiKey;
+  }
+
+  if (!dbApiKeyInFlight) {
+    dbApiKeyInFlight = (async () => {
+      try {
+        return await loadDbOpenAiApiKey();
+      } catch (error) {
+        logger.warn("ai_provider_key_lookup_failed", {
+          reason: String(error)
+        });
+        return null;
+      } finally {
+        dbApiKeyInFlight = null;
+      }
+    })();
+  }
+
+  dbApiKeyCached = await dbApiKeyInFlight;
+  dbApiKeyCacheUntil = Date.now() + AI_DB_KEY_CACHE_TTL_MS;
+  return dbApiKeyCached ?? envApiKey;
+}
+
+export function invalidateAiApiKeyCache() {
+  dbApiKeyCacheUntil = 0;
+  dbApiKeyCached = null;
+  dbApiKeyInFlight = null;
+}
+
 export function getAiModel(): string {
   return process.env.AI_MODEL?.trim() || "gpt-4o-mini";
 }
@@ -50,7 +112,7 @@ export async function callAi(prompt: string, options: CallAiOptions = {}): Promi
   const provider = resolveProvider(process.env.AI_PROVIDER);
   if (provider === "disabled") throw new Error("ai_provider_disabled");
 
-  const apiKey = process.env.AI_API_KEY?.trim();
+  const apiKey = await resolveOpenAiApiKey();
   if (!apiKey) throw new Error("ai_api_key_missing");
 
   const model = options.model ?? getAiModel();
@@ -105,4 +167,3 @@ export async function callAi(prompt: string, options: CallAiOptions = {}): Promi
     clearTimeout(timeout);
   }
 }
-

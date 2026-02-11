@@ -30,6 +30,11 @@ const ADMIN_LINKS = [
     href: "/admin/smtp",
     title: "SMTP",
     description: "Configure SMTP transport and send test email."
+  },
+  {
+    href: "/admin/api-keys",
+    title: "API Keys",
+    description: "Store global API keys (starting with OpenAI) encrypted in DB."
   }
 ];
 

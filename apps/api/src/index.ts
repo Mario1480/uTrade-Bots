@@ -33,6 +33,7 @@ import {
   getRuntimeOrchestrationMode
 } from "./orchestration.js";
 import { ExchangeSyncError, syncExchangeAccount } from "./exchange-sync.js";
+import { invalidateAiApiKeyCache } from "./ai/provider.js";
 import {
   ManualTradingError,
   cancelAllOrders,
@@ -191,6 +192,13 @@ const adminSmtpTestSchema = z.object({
   to: z.string().trim().email()
 });
 
+const adminApiKeysSchema = z.object({
+  openaiApiKey: z.string().trim().min(10).max(500).optional(),
+  clearOpenaiApiKey: z.boolean().default(false)
+}).refine((value) => value.clearOpenaiApiKey || Boolean(value.openaiApiKey), {
+  message: "openaiApiKey is required unless clearOpenaiApiKey is true"
+});
+
 const placeOrderSchema = z.object({
   exchangeAccountId: z.string().trim().min(1).optional(),
   symbol: z.string().trim().min(1),
@@ -302,6 +310,7 @@ type ExchangeAccountOverview = {
   pnlTodayUsd: number | null;
   lastSyncError: { at: string | null; message: string | null } | null;
   bots: { running: number; stopped: number; error: number };
+  runningPredictions: number;
   alerts: { hasErrors: boolean; message?: string | null };
 };
 
@@ -336,6 +345,7 @@ const PREDICTION_OUTCOME_EVAL_BATCH_SIZE =
 const GLOBAL_SETTING_EXCHANGES_KEY = "admin.exchanges";
 const GLOBAL_SETTING_SMTP_KEY = "admin.smtp";
 const GLOBAL_SETTING_SECURITY_KEY = "settings.security";
+const GLOBAL_SETTING_API_KEYS_KEY = "admin.apiKeys";
 const SUPERADMIN_EMAIL = (process.env.ADMIN_EMAIL ?? "admin@utrade.vip").trim().toLowerCase();
 const DEFAULT_ADMIN_PASSWORD = process.env.ADMIN_PASSWORD?.trim() || "TempAdmin1234!";
 const PASSWORD_RESET_PURPOSE = "password_reset";
@@ -463,6 +473,10 @@ type StoredSmtpSettings = {
   passEnc: string | null;
 };
 
+type StoredApiKeysSettings = {
+  openaiApiKeyEnc: string | null;
+};
+
 function parseStoredSmtpSettings(value: unknown): StoredSmtpSettings {
   const record = parseJsonObject(value);
   const host = typeof record.host === "string" && record.host.trim() ? record.host.trim() : null;
@@ -496,6 +510,33 @@ function toPublicSmtpSettings(value: StoredSmtpSettings) {
     from: value.from,
     secure: value.secure ?? (value.port === 465),
     hasPassword: Boolean(value.passEnc)
+  };
+}
+
+function parseStoredApiKeysSettings(value: unknown): StoredApiKeysSettings {
+  const record = parseJsonObject(value);
+  const openaiApiKeyEnc =
+    typeof record.openaiApiKeyEnc === "string" && record.openaiApiKeyEnc.trim()
+      ? record.openaiApiKeyEnc.trim()
+      : null;
+  return {
+    openaiApiKeyEnc
+  };
+}
+
+function toPublicApiKeysSettings(value: StoredApiKeysSettings) {
+  let openaiApiKeyMasked: string | null = null;
+  if (value.openaiApiKeyEnc) {
+    try {
+      const decrypted = decryptSecret(value.openaiApiKeyEnc);
+      openaiApiKeyMasked = maskSecret(decrypted);
+    } catch {
+      openaiApiKeyMasked = "****";
+    }
+  }
+  return {
+    openaiApiKeyMasked,
+    hasOpenAiApiKey: Boolean(value.openaiApiKeyEnc)
   };
 }
 
@@ -3100,6 +3141,51 @@ app.post("/admin/settings/smtp/test", requireAuth, async (req, res) => {
   return res.json({ ok: true });
 });
 
+app.get("/admin/settings/api-keys", requireAuth, async (_req, res) => {
+  if (!(await requireSuperadmin(res))) return;
+  const row = await db.globalSetting.findUnique({
+    where: { key: GLOBAL_SETTING_API_KEYS_KEY },
+    select: {
+      value: true,
+      updatedAt: true
+    }
+  });
+  const settings = parseStoredApiKeysSettings(row?.value);
+  const envConfigured = Boolean(process.env.AI_API_KEY?.trim());
+
+  return res.json({
+    ...toPublicApiKeysSettings(settings),
+    updatedAt: row?.updatedAt ?? null,
+    envOverride: envConfigured
+  });
+});
+
+app.put("/admin/settings/api-keys", requireAuth, async (req, res) => {
+  if (!(await requireSuperadmin(res))) return;
+  const parsed = adminApiKeysSchema.safeParse(req.body ?? {});
+  if (!parsed.success) {
+    return res.status(400).json({ error: "invalid_payload", details: parsed.error.flatten() });
+  }
+
+  const existing = parseStoredApiKeysSettings(await getGlobalSettingValue(GLOBAL_SETTING_API_KEYS_KEY));
+  const nextValue = {
+    openaiApiKeyEnc: parsed.data.clearOpenaiApiKey
+      ? null
+      : parsed.data.openaiApiKey
+        ? encryptSecret(parsed.data.openaiApiKey)
+        : existing.openaiApiKeyEnc
+  };
+
+  const updated = await setGlobalSettingValue(GLOBAL_SETTING_API_KEYS_KEY, nextValue);
+  const settings = parseStoredApiKeysSettings(updated.value);
+  invalidateAiApiKeyCache();
+
+  return res.json({
+    ...toPublicApiKeysSettings(settings),
+    updatedAt: updated.updatedAt
+  });
+});
+
 app.get("/api/trading/settings", requireAuth, async (_req, res) => {
   const user = getUserFromLocals(res);
   const settings = await getTradingSettings(user.id);
@@ -4178,7 +4264,7 @@ app.get("/exchange-accounts", requireAuth, async (_req, res) => {
 
 app.get("/dashboard/overview", requireAuth, async (_req, res) => {
   const user = getUserFromLocals(res);
-  const [accounts, bots] = await Promise.all([
+  const [accounts, bots, predictionRows] = await Promise.all([
     db.exchangeAccount.findMany({
       where: { userId: user.id },
       orderBy: { createdAt: "desc" },
@@ -4216,6 +4302,17 @@ app.get("/dashboard/overview", requireAuth, async (_req, res) => {
           }
         }
       }
+    }),
+    db.prediction.findMany({
+      where: { userId: user.id },
+      orderBy: [{ tsCreated: "desc" }, { createdAt: "desc" }],
+      take: Math.max(200, PREDICTION_AUTO_TEMPLATE_SCAN_LIMIT),
+      select: {
+        symbol: true,
+        marketType: true,
+        timeframe: true,
+        featuresSnapshot: true
+      }
     })
   ]);
 
@@ -4239,6 +4336,41 @@ app.get("/dashboard/overview", requireAuth, async (_req, res) => {
       latestRuntimeFreeUsdt: null,
       lastErrorMessage: null
     });
+  }
+
+  const accountIds = new Set(accounts.map((row) => row.id));
+  const templateMap = new Map<string, string | null>();
+  const runningPredictionCounts = new Map<string, number>();
+
+  for (const row of predictionRows) {
+    const snapshot = asRecord(row.featuresSnapshot);
+    const exchangeAccountId = readPrefillExchangeAccountId(snapshot);
+    if (!exchangeAccountId || !accountIds.has(exchangeAccountId)) continue;
+
+    const symbol = normalizeSymbolInput(row.symbol);
+    if (!symbol) continue;
+
+    const timeframe = normalizePredictionTimeframe(row.timeframe);
+    const marketType = normalizePredictionMarketType(row.marketType);
+    const key = predictionTemplateKey({
+      userId: user.id,
+      exchangeAccountId,
+      symbol,
+      marketType,
+      timeframe
+    });
+    if (templateMap.has(key)) continue;
+
+    if (!isAutoScheduleEnabled(snapshot.autoScheduleEnabled) || isAutoSchedulePaused(snapshot)) {
+      templateMap.set(key, null);
+      continue;
+    }
+
+    templateMap.set(key, exchangeAccountId);
+    runningPredictionCounts.set(
+      exchangeAccountId,
+      (runningPredictionCounts.get(exchangeAccountId) ?? 0) + 1
+    );
   }
 
   for (const bot of bots) {
@@ -4313,6 +4445,7 @@ app.get("/dashboard/overview", requireAuth, async (_req, res) => {
         stopped: row?.stopped ?? 0,
         error: row?.error ?? 0
       },
+      runningPredictions: runningPredictionCounts.get(account.id) ?? 0,
       alerts: {
         hasErrors: (row?.error ?? 0) > 0,
         message: row?.lastErrorMessage ?? null

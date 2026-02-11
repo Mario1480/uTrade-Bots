@@ -13,6 +13,7 @@ export type ExchangeAccountOverview = {
   futuresBudget: { equity?: number | null; availableMargin?: number | null } | null;
   pnlTodayUsd: number | null;
   bots: { running: number; stopped: number; error: number };
+  runningPredictions: number;
   alerts: { hasErrors: boolean; message?: string | null };
 };
 
@@ -90,11 +91,12 @@ export default function ExchangeAccountOverviewCard({ overview }: { overview: Ex
           <div className="exchangeOverviewStatValue">{formatMoney(overview.pnlTodayUsd)}</div>
         </div>
         <div className="exchangeOverviewStatBlock">
-          <div className="exchangeOverviewStatTitle">Bots</div>
+          <div className="exchangeOverviewStatTitle">Bots / Predictions</div>
           <div className="exchangeOverviewBotStatus">
             <span>Run {overview.bots.running}</span>
             <span>Stop {overview.bots.stopped}</span>
             <span className={overview.bots.error > 0 ? "exchangeOverviewBotError" : ""}>Err {overview.bots.error}</span>
+            <span>Pred {overview.runningPredictions}</span>
           </div>
         </div>
       </div>

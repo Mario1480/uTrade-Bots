@@ -110,6 +110,7 @@ SMTP:
 - Predictions: `/predictions`
 - Telegram Settings: `/settings/notifications`
 - Admin Backend: `/admin` (Superadmin)
+- Global OpenAI Key (encrypted DB): `/admin/api-keys`
 
 ## Betrieb / Logs
 
