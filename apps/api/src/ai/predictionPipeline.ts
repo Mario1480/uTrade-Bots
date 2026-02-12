@@ -8,10 +8,13 @@ import {
 
 const db = prisma as any;
 
+export type PredictionSignalSource = "local" | "ai";
+
 export type PredictionRecordInput = ExplainerInput & {
   userId?: string | null;
   botId?: string | null;
   modelVersionBase?: string;
+  preferredSignalSource?: PredictionSignalSource;
   tracking?: {
     entryPrice?: number | null;
     stopLossPrice?: number | null;
@@ -22,6 +25,8 @@ export type PredictionRecordInput = ExplainerInput & {
 
 export type PredictionRecordResult = {
   persisted: boolean;
+  prediction: ExplainerInput["prediction"];
+  signalSource: PredictionSignalSource;
   explanation: ExplainerOutput;
   featureSnapshot: Record<string, unknown>;
   modelVersion: string;
@@ -34,17 +39,48 @@ function toDate(value: string): Date {
   return parsed;
 }
 
+function normalizeSignalSource(value: unknown): PredictionSignalSource {
+  return value === "ai" ? "ai" : "local";
+}
+
+function normalizePrediction(input: {
+  signal: unknown;
+  expectedMovePct: unknown;
+  confidence: unknown;
+}): ExplainerInput["prediction"] {
+  const signal = input.signal === "up" || input.signal === "down" || input.signal === "neutral"
+    ? input.signal
+    : "neutral";
+  const expectedMovePctRaw = Number(input.expectedMovePct);
+  const confidenceRaw = Number(input.confidence);
+  return {
+    signal,
+    expectedMovePct: Number.isFinite(expectedMovePctRaw)
+      ? Number(Math.max(0, Math.min(25, Math.abs(expectedMovePctRaw))).toFixed(2))
+      : 0,
+    confidence: Number.isFinite(confidenceRaw)
+      ? Number(Math.max(0, Math.min(1, confidenceRaw <= 1 ? confidenceRaw : confidenceRaw / 100)).toFixed(4))
+      : 0
+  };
+}
+
 export async function generateAndPersistPrediction(
   input: PredictionRecordInput
 ): Promise<PredictionRecordResult> {
+  const localPrediction = normalizePrediction(input.prediction);
+  const preferredSignalSource = normalizeSignalSource(input.preferredSignalSource);
   const explanation = await generatePredictionExplanation(input);
+  const aiPrediction = normalizePrediction(explanation.aiPrediction);
+  const selectedPrediction = preferredSignalSource === "ai" ? aiPrediction : localPrediction;
   const featureSnapshot = {
     ...input.featureSnapshot,
+    localPrediction,
     aiPrediction: {
-      signal: explanation.aiPrediction.signal,
-      expectedMovePct: explanation.aiPrediction.expectedMovePct,
-      confidence: explanation.aiPrediction.confidence
-    }
+      signal: aiPrediction.signal,
+      expectedMovePct: aiPrediction.expectedMovePct,
+      confidence: aiPrediction.confidence
+    },
+    selectedSignalSource: preferredSignalSource
   };
   const modelVersion = `${input.modelVersionBase ?? "baseline-v1"} + openai-explain-v1`;
 
@@ -57,9 +93,9 @@ export async function generateAndPersistPrediction(
         marketType: input.marketType,
         timeframe: input.timeframe,
         tsCreated: toDate(input.tsCreated),
-        signal: input.prediction.signal,
-        expectedMovePct: input.prediction.expectedMovePct,
-        confidence: input.prediction.confidence,
+        signal: selectedPrediction.signal,
+        expectedMovePct: selectedPrediction.expectedMovePct,
+        confidence: selectedPrediction.confidence,
         explanation: explanation.explanation,
         tags: explanation.tags,
         featuresSnapshot: featureSnapshot,
@@ -73,6 +109,8 @@ export async function generateAndPersistPrediction(
 
     return {
       persisted: true,
+      prediction: selectedPrediction,
+      signalSource: preferredSignalSource,
       explanation,
       featureSnapshot,
       modelVersion,
@@ -87,6 +125,8 @@ export async function generateAndPersistPrediction(
 
     return {
       persisted: false,
+      prediction: selectedPrediction,
+      signalSource: preferredSignalSource,
       explanation,
       featureSnapshot,
       modelVersion,

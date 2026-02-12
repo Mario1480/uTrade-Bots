@@ -58,6 +58,7 @@ type PredictionListItem = {
   accountId: string | null;
   lastUpdatedAt?: string | null;
   lastChangeReason?: string | null;
+  localPrediction?: AiPredictionSummary | null;
   aiPrediction?: AiPredictionSummary | null;
 };
 
@@ -190,6 +191,14 @@ type PredictionQualitySummary = {
   invalid: number;
   winRatePct: number | null;
   avgOutcomePnlPct: number | null;
+  comparison24h?: {
+    sampleSize: number;
+    localHits: number;
+    aiHits: number;
+    localHitRatePct: number | null;
+    aiHitRatePct: number | null;
+    deltaAiVsLocalPct: number | null;
+  } | null;
 };
 
 type PredictionActivityResponse = {
@@ -328,16 +337,19 @@ function readAiPrediction(value: unknown): AiPredictionSummary | null {
 }
 
 function resolveSignal(row: PredictionListItem, source: SignalSource): PredictionSignal {
+  if (source === "local" && row.localPrediction) return row.localPrediction.signal;
   if (source === "ai" && row.aiPrediction) return row.aiPrediction.signal;
   return row.signal;
 }
 
 function resolveConfidence(row: PredictionListItem, source: SignalSource): number {
+  if (source === "local" && row.localPrediction) return row.localPrediction.confidence;
   if (source === "ai" && row.aiPrediction) return row.aiPrediction.confidence;
   return row.confidence;
 }
 
 function resolveExpectedMove(row: PredictionListItem, source: SignalSource): number {
+  if (source === "local" && row.localPrediction) return row.localPrediction.expectedMovePct;
   if (source === "ai" && row.aiPrediction) return row.aiPrediction.expectedMovePct;
   return row.expectedMovePct;
 }
@@ -483,6 +495,7 @@ export default function PredictionsPage() {
         Array.isArray(payload.items)
           ? payload.items.map((row) => ({
               ...row,
+              localPrediction: readAiPrediction((row as Record<string, unknown>).localPrediction),
               aiPrediction: readAiPrediction((row as Record<string, unknown>).aiPrediction)
             }))
           : []
@@ -649,6 +662,8 @@ export default function PredictionsPage() {
     try {
       const detail = await apiGet<PredictionDetailResponse>(`/api/predictions/${id}`);
       const row = rows.find((item) => item.id === id);
+      const localPrediction =
+        row?.localPrediction ?? readAiPrediction(asRecord(detail.featureSnapshot).localPrediction);
       const aiPrediction =
         row?.aiPrediction ?? readAiPrediction(asRecord(detail.featureSnapshot).aiPrediction);
       if (!detail.accountId) {
@@ -662,6 +677,13 @@ export default function PredictionsPage() {
               confidence: aiPrediction.confidence,
               expectedMovePct: aiPrediction.expectedMovePct
             }
+          : signalSource === "local" && localPrediction
+            ? {
+                ...detail,
+                signal: localPrediction.signal,
+                confidence: localPrediction.confidence,
+                expectedMovePct: localPrediction.expectedMovePct
+              }
           : detail;
       const built = buildTradeDeskPrefillPayload(detailForPrefill);
       sessionStorage.setItem(TRADE_DESK_PREFILL_SESSION_KEY, JSON.stringify(built.payload));
@@ -929,10 +951,23 @@ export default function PredictionsPage() {
     const detail = detailsById[rowId];
     const indicators = detail?.indicators ?? null;
     const detailSnapshot = asRecord(detail?.featureSnapshot);
+    const localPrediction = row.localPrediction ?? readAiPrediction(detailSnapshot.localPrediction);
     const aiPrediction = row.aiPrediction ?? readAiPrediction(detailSnapshot.aiPrediction);
-    const activeSignal = signalSource === "ai" && aiPrediction ? aiPrediction.signal : row.signal;
-    const activeConfidence = signalSource === "ai" && aiPrediction ? aiPrediction.confidence : row.confidence;
-    const activeMove = signalSource === "ai" && aiPrediction ? aiPrediction.expectedMovePct : row.expectedMovePct;
+    const activeSignal = signalSource === "ai" && aiPrediction
+      ? aiPrediction.signal
+      : signalSource === "local" && localPrediction
+        ? localPrediction.signal
+        : row.signal;
+    const activeConfidence = signalSource === "ai" && aiPrediction
+      ? aiPrediction.confidence
+      : signalSource === "local" && localPrediction
+        ? localPrediction.confidence
+        : row.confidence;
+    const activeMove = signalSource === "ai" && aiPrediction
+      ? aiPrediction.expectedMovePct
+      : signalSource === "local" && localPrediction
+        ? localPrediction.expectedMovePct
+        : row.expectedMovePct;
     const loadingDetail = detailsLoadingId === rowId;
     const dataGap = Boolean(indicators?.dataGap || detail?.riskFlags?.dataGap);
     const updatedAtIso = row.lastUpdatedAt ?? row.tsCreated;
@@ -1028,10 +1063,10 @@ export default function PredictionsPage() {
             <div className="card predictionIndicatorCard">
               <div className="predictionIndicatorTitle">Local vs AI signal</div>
               <div className="predictionIndicatorValue">
-                {row.signal} / {aiPrediction?.signal ?? "n/a"}
+                {(localPrediction?.signal ?? row.signal)} / {aiPrediction?.signal ?? "n/a"}
               </div>
               <div className="predictionIndicatorMeta">
-                local {fmtConfidence(row.confidence)} · ai {aiPrediction ? fmtConfidence(aiPrediction.confidence) : "n/a"}
+                local {fmtConfidence(localPrediction?.confidence ?? row.confidence)} · ai {aiPrediction ? fmtConfidence(aiPrediction.confidence) : "n/a"}
               </div>
             </div>
             <div className="card predictionIndicatorCard">
@@ -1420,15 +1455,32 @@ export default function PredictionsPage() {
 	                : "-"}
 	            </div>
 	          </div>
-	          <div className="card" style={{ margin: 0, padding: 10 }}>
-	            <div style={{ color: "var(--muted)", fontSize: 12 }}>MSE</div>
-	            <div style={{ fontSize: 20, fontWeight: 800 }}>
-	              {metrics?.mse !== null && metrics?.mse !== undefined
-	                ? metrics.mse.toFixed(4)
-	                : "-"}
-	            </div>
-	          </div>
-	          <div className="card predictionActivityCard" style={{ margin: 0, padding: 10 }}>
+          <div className="card" style={{ margin: 0, padding: 10 }}>
+            <div style={{ color: "var(--muted)", fontSize: 12 }}>MSE</div>
+            <div style={{ fontSize: 20, fontWeight: 800 }}>
+              {metrics?.mse !== null && metrics?.mse !== undefined
+                ? metrics.mse.toFixed(4)
+                : "-"}
+            </div>
+          </div>
+          <div className="card" style={{ margin: 0, padding: 10 }}>
+            <div style={{ color: "var(--muted)", fontSize: 12 }}>24h Hit Rate Local / AI</div>
+            <div style={{ fontSize: 18, fontWeight: 800 }}>
+              {quality?.comparison24h?.localHitRatePct !== null
+              && quality?.comparison24h?.localHitRatePct !== undefined
+              && quality?.comparison24h?.aiHitRatePct !== null
+              && quality?.comparison24h?.aiHitRatePct !== undefined
+                ? `${quality.comparison24h.localHitRatePct.toFixed(2)}% / ${quality.comparison24h.aiHitRatePct.toFixed(2)}%`
+                : "-"}
+            </div>
+            <div style={{ color: "var(--muted)", fontSize: 11 }}>
+              Δ AI-Local: {quality?.comparison24h?.deltaAiVsLocalPct !== null
+              && quality?.comparison24h?.deltaAiVsLocalPct !== undefined
+                ? `${quality.comparison24h.deltaAiVsLocalPct >= 0 ? "+" : ""}${quality.comparison24h.deltaAiVsLocalPct.toFixed(2)} pp`
+                : "n/a"} · N={quality?.comparison24h?.sampleSize ?? 0}
+            </div>
+          </div>
+          <div className="card predictionActivityCard" style={{ margin: 0, padding: 10 }}>
             <div className="predictionActivityHeader">
               <div style={{ color: "var(--muted)", fontSize: 12 }}>AI Refresh</div>
               <span className={`badge ${activityBadgeClass}`}>
@@ -1740,8 +1792,9 @@ export default function PredictionsPage() {
                   const activeSignal = resolveSignal(row, signalSource);
                   const activeConfidence = resolveConfidence(row, signalSource);
                   const activeMove = resolveExpectedMove(row, signalSource);
+                  const localComparisonSignal = row.localPrediction?.signal ?? row.signal;
                   const aiComparisonAvailable = Boolean(row.aiPrediction);
-                  const aiDisagrees = aiComparisonAvailable && row.aiPrediction!.signal !== row.signal;
+                  const aiDisagrees = aiComparisonAvailable && row.aiPrediction!.signal !== localComparisonSignal;
                   const confidencePct = confidenceToPct(activeConfidence);
                   const targetPct =
                     typeof row.confidenceTargetPct === "number" &&
@@ -1780,7 +1833,7 @@ export default function PredictionsPage() {
                           <span className="badge" style={signalBadgeStyle(activeSignal)}>{activeSignal}</span>
                           {aiComparisonAvailable ? (
                             <div style={{ color: "var(--muted)", fontSize: 11, marginTop: 4 }}>
-                              local {row.signal} / ai {row.aiPrediction?.signal}
+                              local {localComparisonSignal} / ai {row.aiPrediction?.signal}
                             </div>
                           ) : null}
                           {signalSource === "ai" && !aiComparisonAvailable ? (

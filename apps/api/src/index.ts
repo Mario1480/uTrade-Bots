@@ -56,7 +56,10 @@ import {
   resolveTradingAccount,
   saveTradingSettings
 } from "./trading.js";
-import { generateAndPersistPrediction } from "./ai/predictionPipeline.js";
+import {
+  generateAndPersistPrediction,
+  type PredictionSignalSource
+} from "./ai/predictionPipeline.js";
 import {
   FEATURE_THRESHOLD_VERSION,
   applyConfidencePenalty,
@@ -479,6 +482,10 @@ type DirectionPreference = "long" | "short" | "either";
 const PREDICTION_TIMEFRAMES = new Set<PredictionTimeframe>(["5m", "15m", "1h", "4h", "1d"]);
 const PREDICTION_MARKET_TYPES = new Set<PredictionMarketType>(["spot", "perp"]);
 const PREDICTION_SIGNALS = new Set<PredictionSignal>(["up", "down", "neutral"]);
+const PREDICTION_PRIMARY_SIGNAL_SOURCE: PredictionSignalSource =
+  String(process.env.PREDICTION_PRIMARY_SIGNAL_SOURCE ?? "local").trim().toLowerCase() === "ai"
+    ? "ai"
+    : "local";
 
 type DashboardConnectionStatus = "connected" | "degraded" | "disconnected";
 
@@ -695,14 +702,13 @@ type AiPredictionSnapshot = {
   confidence: number;
 };
 
-function readAiPredictionSnapshot(snapshot: Record<string, unknown>): AiPredictionSnapshot | null {
-  const raw = asRecord(snapshot.aiPrediction);
+function normalizeSnapshotPrediction(value: Record<string, unknown>): AiPredictionSnapshot | null {
   const signal =
-    raw.signal === "up" || raw.signal === "down" || raw.signal === "neutral"
-      ? raw.signal
+    value.signal === "up" || value.signal === "down" || value.signal === "neutral"
+      ? value.signal
       : null;
-  const expectedMoveRaw = Number(raw.expectedMovePct);
-  const confidenceRaw = Number(raw.confidence);
+  const expectedMoveRaw = Number(value.expectedMovePct);
+  const confidenceRaw = Number(value.confidence);
   if (!signal || !Number.isFinite(expectedMoveRaw) || !Number.isFinite(confidenceRaw)) return null;
   const confidenceNormalized = confidenceRaw <= 1 ? confidenceRaw : confidenceRaw / 100;
   return {
@@ -712,17 +718,71 @@ function readAiPredictionSnapshot(snapshot: Record<string, unknown>): AiPredicti
   };
 }
 
-function withAiPredictionSnapshot(
-  snapshot: Record<string, unknown>,
-  prediction: ExplainerOutput["aiPrediction"]
-): Record<string, unknown> {
+function readAiPredictionSnapshot(snapshot: Record<string, unknown>): AiPredictionSnapshot | null {
+  return normalizeSnapshotPrediction(asRecord(snapshot.aiPrediction));
+}
+
+function readLocalPredictionSnapshot(snapshot: Record<string, unknown>): AiPredictionSnapshot | null {
+  return normalizeSnapshotPrediction(asRecord(snapshot.localPrediction));
+}
+
+function readSelectedSignalSource(snapshot: Record<string, unknown>): PredictionSignalSource {
+  return snapshot.selectedSignalSource === "ai" ? "ai" : "local";
+}
+
+function withPredictionSnapshots(params: {
+  snapshot: Record<string, unknown>;
+  localPrediction: {
+    signal: PredictionSignal;
+    expectedMovePct: number;
+    confidence: number;
+  };
+  aiPrediction: {
+    signal: PredictionSignal;
+    expectedMovePct: number;
+    confidence: number;
+  };
+  selectedSignalSource: PredictionSignalSource;
+}): Record<string, unknown> {
   return {
-    ...snapshot,
-    aiPrediction: {
-      signal: prediction.signal,
-      expectedMovePct: Number(clamp(Math.abs(prediction.expectedMovePct), 0, 25).toFixed(2)),
-      confidence: Number(clamp(prediction.confidence, 0, 1).toFixed(4))
-    }
+    ...params.snapshot,
+    localPrediction: normalizeSnapshotPrediction(asRecord(params.localPrediction)) ?? params.localPrediction,
+    aiPrediction: normalizeSnapshotPrediction(asRecord(params.aiPrediction)) ?? params.aiPrediction,
+    selectedSignalSource: params.selectedSignalSource
+  };
+}
+
+function selectPredictionBySource(params: {
+  localPrediction: {
+    signal: PredictionSignal;
+    expectedMovePct: number;
+    confidence: number;
+  };
+  aiPrediction: {
+    signal: PredictionSignal;
+    expectedMovePct: number;
+    confidence: number;
+  };
+  source: PredictionSignalSource;
+}): {
+  signal: PredictionSignal;
+  expectedMovePct: number;
+  confidence: number;
+  source: PredictionSignalSource;
+} {
+  if (params.source === "ai") {
+    return {
+      signal: params.aiPrediction.signal,
+      expectedMovePct: params.aiPrediction.expectedMovePct,
+      confidence: params.aiPrediction.confidence,
+      source: "ai"
+    };
+  }
+  return {
+    signal: params.localPrediction.signal,
+    expectedMovePct: params.localPrediction.expectedMovePct,
+    confidence: params.localPrediction.confidence,
+    source: "local"
   };
 }
 
@@ -1902,6 +1962,7 @@ async function generateAutoPredictionForUser(
 ): Promise<{
   persisted: boolean;
   prediction: { signal: PredictionSignal; expectedMovePct: number; confidence: number };
+  signalSource: PredictionSignalSource;
   explanation: Awaited<ReturnType<typeof generateAndPersistPrediction>>["explanation"];
   modelVersion: string;
   predictionId: string | null;
@@ -2039,6 +2100,7 @@ async function generateAutoPredictionForUser(
     );
 
     const tsCreated = new Date().toISOString();
+    const selectedSignalSource = PREDICTION_PRIMARY_SIGNAL_SOURCE;
     const created = await generateAndPersistPrediction({
       symbol: canonicalSymbol,
       marketType: payload.marketType,
@@ -2046,6 +2108,7 @@ async function generateAutoPredictionForUser(
       tsCreated,
       prediction: inferred.prediction,
       featureSnapshot: inferred.featureSnapshot,
+      preferredSignalSource: selectedSignalSource,
       tracking: inferred.tracking,
       userId,
       botId: null,
@@ -2062,8 +2125,8 @@ async function generateAutoPredictionForUser(
     const stateKeyDrivers = normalizeKeyDriverList(created.explanation.keyDrivers);
     const stateTs = new Date(tsCreated);
     const stateHash = buildPredictionChangeHash({
-      signal: inferred.prediction.signal,
-      confidence: inferred.prediction.confidence,
+      signal: created.prediction.signal,
+      confidence: created.prediction.confidence,
       tags: stateTags,
       keyDrivers: stateKeyDrivers,
       featureSnapshot: featureSnapshotForState
@@ -2089,12 +2152,12 @@ async function generateAutoPredictionForUser(
       timeframe: payload.timeframe,
       tsUpdated: stateTs,
       tsPredictedFor: new Date(stateTs.getTime() + timeframeToIntervalMs(payload.timeframe)),
-      signal: inferred.prediction.signal,
-      expectedMovePct: Number.isFinite(Number(inferred.prediction.expectedMovePct))
-        ? Number(inferred.prediction.expectedMovePct)
+      signal: created.prediction.signal,
+      expectedMovePct: Number.isFinite(Number(created.prediction.expectedMovePct))
+        ? Number(created.prediction.expectedMovePct)
         : null,
-      confidence: Number.isFinite(Number(inferred.prediction.confidence))
-        ? Number(inferred.prediction.confidence)
+      confidence: Number.isFinite(Number(created.prediction.confidence))
+        ? Number(created.prediction.confidence)
         : 0,
       tags: stateTags,
       explanation: created.explanation.explanation,
@@ -2128,9 +2191,9 @@ async function generateAutoPredictionForUser(
         changeType: "manual",
         prevSnapshot: null,
         newSnapshot: {
-          signal: inferred.prediction.signal,
-          confidence: inferred.prediction.confidence,
-          expectedMovePct: inferred.prediction.expectedMovePct,
+          signal: created.prediction.signal,
+          confidence: created.prediction.confidence,
+          expectedMovePct: created.prediction.expectedMovePct,
           tags: stateTags
         },
         delta: {
@@ -2149,22 +2212,24 @@ async function generateAutoPredictionForUser(
       symbol: canonicalSymbol,
       marketType: payload.marketType,
       timeframe: payload.timeframe,
-      signal: inferred.prediction.signal,
-      confidence: inferred.prediction.confidence,
+      signal: created.prediction.signal,
+      confidence: created.prediction.confidence,
       confidenceTargetPct: payload.confidenceTargetPct,
-      expectedMovePct: inferred.prediction.expectedMovePct,
+      expectedMovePct: created.prediction.expectedMovePct,
       predictionId: created.rowId,
       explanation: created.explanation.explanation,
-      source: "auto"
+      source: "auto",
+      signalSource: created.signalSource
     });
 
     return {
       persisted: created.persisted,
-      prediction: inferred.prediction,
+      prediction: created.prediction,
       explanation: created.explanation,
       modelVersion: created.modelVersion,
       predictionId: created.rowId,
-      tsCreated
+      tsCreated,
+      signalSource: created.signalSource
     };
   } finally {
     await adapter.close();
@@ -2856,6 +2921,7 @@ async function notifyTradablePrediction(params: {
   predictionId: string | null;
   explanation?: string | null;
   source: "manual" | "auto";
+  signalSource: PredictionSignalSource;
 }): Promise<void> {
   if (!isTradableSignal({
     signal: params.signal,
@@ -2880,6 +2946,7 @@ async function notifyTradablePrediction(params: {
     "🆕 SIGNAL ALERT",
     `${params.symbol} (${params.marketType}, ${params.timeframe})`,
     `Signal: ${signalLabel}`,
+    `Signal source: ${params.signalSource}`,
     `Confidence: ${confidencePct.toFixed(1)}% (target ${params.confidenceTargetPct.toFixed(0)}%)`,
     `Expected move: ${params.expectedMovePct.toFixed(2)}%`,
     `Exchange: ${params.exchangeAccountLabel}`,
@@ -4238,7 +4305,7 @@ async function refreshPredictionStateForTemplate(params: {
       inferred.featureSnapshot.tags,
       inferred.featureSnapshot
     );
-    const significant = evaluateSignificantChange({
+    const significantForAiGate = evaluateSignificantChange({
       prev: prevState,
       next: {
         signal: inferred.prediction.signal,
@@ -4255,7 +4322,7 @@ async function refreshPredictionStateForTemplate(params: {
         confidence: inferred.prediction.confidence,
         tags: baselineTags
       },
-      significant,
+      significant: significantForAiGate,
       nowMs: Date.now(),
       cooldownMs: predictionRefreshRuntimeSettings.aiCooldownSec * 1000
     });
@@ -4287,7 +4354,7 @@ async function refreshPredictionStateForTemplate(params: {
       }
     } else if (
       prevState &&
-      !significant.significant &&
+      !significantForAiGate.significant &&
       typeof prevState.explanation === "string" &&
       prevState.explanation.trim()
     ) {
@@ -4313,16 +4380,42 @@ async function refreshPredictionStateForTemplate(params: {
         featureSnapshot: inferred.featureSnapshot
       });
     }
-    inferred.featureSnapshot = withAiPredictionSnapshot(
-      inferred.featureSnapshot,
-      explainer.aiPrediction
-    );
+    const localPrediction =
+      normalizeSnapshotPrediction(asRecord(inferred.prediction)) ??
+      {
+        signal: inferred.prediction.signal,
+        expectedMovePct: Number(clamp(Math.abs(inferred.prediction.expectedMovePct), 0, 25).toFixed(2)),
+        confidence: Number(clamp(inferred.prediction.confidence, 0, 1).toFixed(4))
+      };
+    const aiPrediction =
+      normalizeSnapshotPrediction(asRecord(explainer.aiPrediction)) ??
+      localPrediction;
+    const selectedPrediction = selectPredictionBySource({
+      localPrediction,
+      aiPrediction,
+      source: PREDICTION_PRIMARY_SIGNAL_SOURCE
+    });
+    inferred.featureSnapshot = withPredictionSnapshots({
+      snapshot: inferred.featureSnapshot,
+      localPrediction,
+      aiPrediction,
+      selectedSignalSource: selectedPrediction.source
+    });
 
     const tags = enforceNewsRiskTag(
       explainer.tags.length > 0 ? explainer.tags : baselineTags,
       inferred.featureSnapshot
     );
     const keyDrivers = normalizeKeyDriverList(explainer.keyDrivers);
+    const significant = evaluateSignificantChange({
+      prev: prevState,
+      next: {
+        signal: selectedPrediction.signal,
+        confidence: selectedPrediction.confidence,
+        tags,
+        featureSnapshot: inferred.featureSnapshot
+      }
+    });
     const changeReasons = significant.reasons.length > 0 ? [...significant.reasons] : [params.reason];
     if (significant.significant && significant.changeType === "signal_flip") {
       const recentFlips = await db.predictionEvent.findMany({
@@ -4360,8 +4453,8 @@ async function refreshPredictionStateForTemplate(params: {
     const tsUpdated = new Date(tsCreated);
     const tsPredictedFor = new Date(tsUpdated.getTime() + timeframeToIntervalMs(template.timeframe));
     const changeHash = buildPredictionChangeHash({
-      signal: inferred.prediction.signal,
-      confidence: inferred.prediction.confidence,
+      signal: selectedPrediction.signal,
+      confidence: selectedPrediction.confidence,
       tags,
       keyDrivers,
       featureSnapshot: inferred.featureSnapshot
@@ -4376,12 +4469,12 @@ async function refreshPredictionStateForTemplate(params: {
       timeframe: template.timeframe,
       tsUpdated,
       tsPredictedFor,
-      signal: inferred.prediction.signal,
-      expectedMovePct: Number.isFinite(Number(inferred.prediction.expectedMovePct))
-        ? Number(inferred.prediction.expectedMovePct)
+      signal: selectedPrediction.signal,
+      expectedMovePct: Number.isFinite(Number(selectedPrediction.expectedMovePct))
+        ? Number(selectedPrediction.expectedMovePct)
         : null,
-      confidence: Number.isFinite(Number(inferred.prediction.confidence))
-        ? Number(inferred.prediction.confidence)
+      confidence: Number.isFinite(Number(selectedPrediction.confidence))
+        ? Number(selectedPrediction.confidence)
         : 0,
       tags,
       explanation: explainer.explanation,
@@ -4425,18 +4518,18 @@ async function refreshPredictionStateForTemplate(params: {
           }
         : null;
       const nextMinimal = {
-        signal: inferred.prediction.signal,
-        confidence: inferred.prediction.confidence,
-        expectedMovePct: inferred.prediction.expectedMovePct,
+        signal: selectedPrediction.signal,
+        confidence: selectedPrediction.confidence,
+        expectedMovePct: selectedPrediction.expectedMovePct,
         tags
       };
       const delta = buildEventDelta({
         prev: prevState,
         next: {
-          signal: inferred.prediction.signal,
-          confidence: inferred.prediction.confidence,
+          signal: selectedPrediction.signal,
+          confidence: selectedPrediction.confidence,
           tags,
-          expectedMovePct: inferred.prediction.expectedMovePct
+          expectedMovePct: selectedPrediction.expectedMovePct
         },
         reasons: changeReasons
       });
@@ -4466,9 +4559,9 @@ async function refreshPredictionStateForTemplate(params: {
             marketType: template.marketType,
             timeframe: template.timeframe,
             tsCreated: historyTs,
-            signal: inferred.prediction.signal,
-            expectedMovePct: inferred.prediction.expectedMovePct,
-            confidence: inferred.prediction.confidence,
+            signal: selectedPrediction.signal,
+            expectedMovePct: selectedPrediction.expectedMovePct,
+            confidence: selectedPrediction.confidence,
             explanation: explainer.explanation,
             tags,
             featuresSnapshot: inferred.featureSnapshot,
@@ -4501,13 +4594,14 @@ async function refreshPredictionStateForTemplate(params: {
           symbol: template.symbol,
           marketType: template.marketType,
           timeframe: template.timeframe,
-          signal: inferred.prediction.signal,
-          confidence: inferred.prediction.confidence,
+          signal: selectedPrediction.signal,
+          confidence: selectedPrediction.confidence,
           confidenceTargetPct: template.confidenceTargetPct,
-          expectedMovePct: inferred.prediction.expectedMovePct,
+          expectedMovePct: selectedPrediction.expectedMovePct,
           predictionId: historyRow.id,
           explanation: explainer.explanation,
-          source: "auto"
+          source: "auto",
+          signalSource: selectedPrediction.source
         });
       }
     }
@@ -6125,6 +6219,7 @@ app.post("/api/predictions/generate", requireAuth, async (req, res) => {
     tsCreated,
     prediction: payload.prediction,
     featureSnapshot: payload.featureSnapshot,
+    preferredSignalSource: PREDICTION_PRIMARY_SIGNAL_SOURCE,
     tracking,
     userId: user.id,
     botId: payload.botId ?? null,
@@ -6147,8 +6242,8 @@ app.post("/api/predictions/generate", requireAuth, async (req, res) => {
     const keyDrivers = normalizeKeyDriverList(created.explanation.keyDrivers);
     const tsDate = new Date(tsCreated);
     const changeHash = buildPredictionChangeHash({
-      signal: payload.prediction.signal,
-      confidence: payload.prediction.confidence,
+      signal: created.prediction.signal,
+      confidence: created.prediction.confidence,
       tags,
       keyDrivers,
       featureSnapshot: created.featureSnapshot
@@ -6172,12 +6267,12 @@ app.post("/api/predictions/generate", requireAuth, async (req, res) => {
       timeframe: payload.timeframe,
       tsUpdated: tsDate,
       tsPredictedFor: new Date(tsDate.getTime() + timeframeToIntervalMs(payload.timeframe)),
-      signal: payload.prediction.signal,
-      expectedMovePct: Number.isFinite(Number(payload.prediction.expectedMovePct))
-        ? Number(payload.prediction.expectedMovePct)
+      signal: created.prediction.signal,
+      expectedMovePct: Number.isFinite(Number(created.prediction.expectedMovePct))
+        ? Number(created.prediction.expectedMovePct)
         : null,
-      confidence: Number.isFinite(Number(payload.prediction.confidence))
-        ? Number(payload.prediction.confidence)
+      confidence: Number.isFinite(Number(created.prediction.confidence))
+        ? Number(created.prediction.confidence)
         : 0,
       tags,
       explanation: created.explanation.explanation,
@@ -6210,9 +6305,9 @@ app.post("/api/predictions/generate", requireAuth, async (req, res) => {
         changeType: "manual",
         prevSnapshot: null,
         newSnapshot: {
-          signal: payload.prediction.signal,
-          confidence: payload.prediction.confidence,
-          expectedMovePct: payload.prediction.expectedMovePct,
+          signal: created.prediction.signal,
+          confidence: created.prediction.confidence,
+          expectedMovePct: created.prediction.expectedMovePct,
           tags
         },
         delta: { reason: "manual_generate" },
@@ -6238,13 +6333,14 @@ app.post("/api/predictions/generate", requireAuth, async (req, res) => {
     symbol: payload.symbol,
     marketType: payload.marketType,
     timeframe: payload.timeframe,
-    signal: payload.prediction.signal,
-    confidence: payload.prediction.confidence,
+    signal: created.prediction.signal,
+    confidence: created.prediction.confidence,
     confidenceTargetPct: readConfidenceTarget(snapshot),
-    expectedMovePct: payload.prediction.expectedMovePct,
+    expectedMovePct: created.prediction.expectedMovePct,
     predictionId: created.rowId,
     explanation: created.explanation.explanation,
-    source: "manual"
+    source: "manual",
+    signalSource: created.signalSource
   });
 
   return res.status(created.persisted ? 201 : 202).json({
@@ -6254,8 +6350,9 @@ app.post("/api/predictions/generate", requireAuth, async (req, res) => {
       marketType: payload.marketType,
       timeframe: payload.timeframe,
       tsCreated,
-      ...payload.prediction
+      ...created.prediction
     },
+    signalSource: created.signalSource,
     explanation: created.explanation,
     modelVersion: created.modelVersion,
     predictionId: created.rowId
@@ -6285,6 +6382,7 @@ app.post("/api/predictions/generate-auto", requireAuth, async (req, res) => {
       directionPreference: payload.directionPreference,
       leverage: payload.leverage ?? null,
       autoSchedule: payload.autoSchedule,
+      signalSource: created.signalSource,
       explanation: created.explanation,
       modelVersion: created.modelVersion,
       predictionId: created.predictionId
@@ -6353,6 +6451,7 @@ app.get("/api/predictions", requireAuth, async (req, res) => {
         maxFavorablePct: null,
         maxAdversePct: null,
         outcomeEvaluatedAt: null,
+        localPrediction: readLocalPredictionSnapshot(snapshot),
         aiPrediction: readAiPredictionSnapshot(snapshot),
         autoScheduleEnabled: Boolean(row.autoScheduleEnabled) && !Boolean(row.autoSchedulePaused),
         confidenceTargetPct:
@@ -6494,6 +6593,13 @@ app.get("/api/predictions", requireAuth, async (req, res) => {
       realizedHit,
       realizedAbsError: Number.isFinite(realizedAbsError) ? realizedAbsError : null,
       realizedSqError: Number.isFinite(realizedSqError) ? realizedSqError : null,
+      localPrediction:
+        readLocalPredictionSnapshot(snapshot) ??
+        normalizeSnapshotPrediction(asRecord({
+          signal: row.signal,
+          expectedMovePct: row.expectedMovePct,
+          confidence: row.confidence
+        })),
       aiPrediction: readAiPredictionSnapshot(snapshot),
       autoScheduleEnabled: isAutoScheduleEnabled(snapshot.autoScheduleEnabled),
       confidenceTargetPct: readConfiguredConfidenceTarget(snapshot),
@@ -6515,8 +6621,14 @@ app.get("/api/predictions/quality", requireAuth, async (req, res) => {
       outcomeStatus: "closed"
     },
     orderBy: { tsCreated: "desc" },
-    take: 500,
+    take: 2000,
     select: {
+      tsCreated: true,
+      signal: true,
+      expectedMovePct: true,
+      confidence: true,
+      featuresSnapshot: true,
+      outcomeMeta: true,
       outcomeResult: true,
       outcomePnlPct: true
     }
@@ -6529,6 +6641,10 @@ app.get("/api/predictions/quality", requireAuth, async (req, res) => {
   let invalid = 0;
   let pnlSum = 0;
   let pnlCount = 0;
+  let compare24hSampleSize = 0;
+  let compare24hLocalHits = 0;
+  let compare24hAiHits = 0;
+  const compare24hWindowStartMs = Date.now() - 24 * 60 * 60 * 1000;
 
   for (const row of rows) {
     const result = typeof row.outcomeResult === "string" ? row.outcomeResult : "";
@@ -6543,11 +6659,66 @@ app.get("/api/predictions/quality", requireAuth, async (req, res) => {
       pnlSum += pnl;
       pnlCount += 1;
     }
+
+    if (!(row.tsCreated instanceof Date) || row.tsCreated.getTime() < compare24hWindowStartMs) {
+      continue;
+    }
+    const outcomeMeta = asRecord(row.outcomeMeta);
+    const startClose = Number(outcomeMeta.realizedStartClose);
+    const endClose = Number(outcomeMeta.realizedEndClose);
+    if (!Number.isFinite(startClose) || startClose <= 0 || !Number.isFinite(endClose) || endClose <= 0) {
+      continue;
+    }
+
+    const snapshot = asRecord(row.featuresSnapshot);
+    const localPrediction =
+      readLocalPredictionSnapshot(snapshot) ??
+      normalizeSnapshotPrediction(asRecord({
+        signal: row.signal,
+        expectedMovePct: row.expectedMovePct,
+        confidence: row.confidence
+      }));
+    const aiPrediction = readAiPredictionSnapshot(snapshot);
+    if (!localPrediction || !aiPrediction) {
+      continue;
+    }
+
+    const localMetrics = computePredictionErrorMetrics({
+      signal: localPrediction.signal,
+      expectedMovePct: localPrediction.expectedMovePct,
+      realizedReturnPct: computeDirectionalRealizedReturnPct(
+        localPrediction.signal,
+        startClose,
+        endClose
+      )
+    });
+    const aiMetrics = computePredictionErrorMetrics({
+      signal: aiPrediction.signal,
+      expectedMovePct: aiPrediction.expectedMovePct,
+      realizedReturnPct: computeDirectionalRealizedReturnPct(aiPrediction.signal, startClose, endClose)
+    });
+    if (typeof localMetrics.hit !== "boolean" || typeof aiMetrics.hit !== "boolean") {
+      continue;
+    }
+
+    compare24hSampleSize += 1;
+    if (localMetrics.hit) compare24hLocalHits += 1;
+    if (aiMetrics.hit) compare24hAiHits += 1;
   }
 
   const sampleSize = rows.length;
   const winRatePct = sampleSize > 0 ? Number(((tp / sampleSize) * 100).toFixed(2)) : null;
   const avgOutcomePnlPct = pnlCount > 0 ? Number((pnlSum / pnlCount).toFixed(4)) : null;
+  const localHitRate24hPct = compare24hSampleSize > 0
+    ? Number(((compare24hLocalHits / compare24hSampleSize) * 100).toFixed(2))
+    : null;
+  const aiHitRate24hPct = compare24hSampleSize > 0
+    ? Number(((compare24hAiHits / compare24hSampleSize) * 100).toFixed(2))
+    : null;
+  const deltaAiVsLocal24hPct =
+    localHitRate24hPct !== null && aiHitRate24hPct !== null
+      ? Number((aiHitRate24hPct - localHitRate24hPct).toFixed(2))
+      : null;
 
   return res.json({
     sampleSize,
@@ -6557,7 +6728,15 @@ app.get("/api/predictions/quality", requireAuth, async (req, res) => {
     skipped,
     invalid,
     winRatePct,
-    avgOutcomePnlPct
+    avgOutcomePnlPct,
+    comparison24h: {
+      sampleSize: compare24hSampleSize,
+      localHits: compare24hLocalHits,
+      aiHits: compare24hAiHits,
+      localHitRatePct: localHitRate24hPct,
+      aiHitRatePct: aiHitRate24hPct,
+      deltaAiVsLocalPct: deltaAiVsLocal24hPct
+    }
   });
 });
 
