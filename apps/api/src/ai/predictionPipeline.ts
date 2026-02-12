@@ -23,6 +23,7 @@ export type PredictionRecordInput = ExplainerInput & {
 export type PredictionRecordResult = {
   persisted: boolean;
   explanation: ExplainerOutput;
+  featureSnapshot: Record<string, unknown>;
   modelVersion: string;
   rowId: string | null;
 };
@@ -37,6 +38,14 @@ export async function generateAndPersistPrediction(
   input: PredictionRecordInput
 ): Promise<PredictionRecordResult> {
   const explanation = await generatePredictionExplanation(input);
+  const featureSnapshot = {
+    ...input.featureSnapshot,
+    aiPrediction: {
+      signal: explanation.aiPrediction.signal,
+      expectedMovePct: explanation.aiPrediction.expectedMovePct,
+      confidence: explanation.aiPrediction.confidence
+    }
+  };
   const modelVersion = `${input.modelVersionBase ?? "baseline-v1"} + openai-explain-v1`;
 
   try {
@@ -53,7 +62,7 @@ export async function generateAndPersistPrediction(
         confidence: input.prediction.confidence,
         explanation: explanation.explanation,
         tags: explanation.tags,
-        featuresSnapshot: input.featureSnapshot,
+        featuresSnapshot: featureSnapshot,
         entryPrice: input.tracking?.entryPrice ?? null,
         stopLossPrice: input.tracking?.stopLossPrice ?? null,
         takeProfitPrice: input.tracking?.takeProfitPrice ?? null,
@@ -65,6 +74,7 @@ export async function generateAndPersistPrediction(
     return {
       persisted: true,
       explanation,
+      featureSnapshot,
       modelVersion,
       rowId: typeof row?.id === "string" ? row.id : null
     };
@@ -78,6 +88,7 @@ export async function generateAndPersistPrediction(
     return {
       persisted: false,
       explanation,
+      featureSnapshot,
       modelVersion,
       rowId: null
     };
