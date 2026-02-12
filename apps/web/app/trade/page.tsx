@@ -5,8 +5,10 @@ import { Suspense, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { ApiError, apiGet, apiPost } from "../../lib/api";
 import {
+  buildTradeDeskPrefillPayload,
   parseTradeDeskPrefill,
   TRADE_DESK_PREFILL_SESSION_KEY,
+  type PredictionPrefillSource,
   type TradeDeskPrefillPayload
 } from "../../src/schemas/tradeDeskPrefill";
 import { LightweightChart } from "./LightweightChart";
@@ -80,6 +82,10 @@ type WsEnvelope = {
   symbol?: string;
   data?: any;
   message?: string;
+};
+
+type PredictionDetailResponse = PredictionPrefillSource & {
+  accountId: string | null;
 };
 
 const API_BASE =
@@ -608,35 +614,59 @@ function TradePageContent() {
   }
 
   useEffect(() => {
-    let parsedPrefill: TradeDeskPrefillPayload | null = null;
-    const prefillParam = searchParams.get("prefill");
+    let disposed = false;
+    async function bootstrap() {
+      let parsedPrefill: TradeDeskPrefillPayload | null = null;
+      const prefillParam = searchParams.get("prefill");
+      const predictionIdParam = searchParams.get("predictionId");
 
-    if (prefillParam) {
-      if (prefillParam === "1") {
-        const raw = sessionStorage.getItem(TRADE_DESK_PREFILL_SESSION_KEY);
-        sessionStorage.removeItem(TRADE_DESK_PREFILL_SESSION_KEY);
-        if (raw) {
-          try {
-            parsedPrefill = parseTradeDeskPrefill(JSON.parse(raw));
-          } catch {
-            parsedPrefill = null;
+      if (prefillParam) {
+        if (prefillParam === "1") {
+          const raw = sessionStorage.getItem(TRADE_DESK_PREFILL_SESSION_KEY);
+          sessionStorage.removeItem(TRADE_DESK_PREFILL_SESSION_KEY);
+          if (raw) {
+            try {
+              parsedPrefill = parseTradeDeskPrefill(JSON.parse(raw));
+            } catch {
+              parsedPrefill = null;
+            }
           }
+        } else {
+          parsedPrefill = parseTradeDeskPrefill(decodeBase64UrlJson(prefillParam));
         }
-      } else {
-        parsedPrefill = parseTradeDeskPrefill(decodeBase64UrlJson(prefillParam));
+
+        if (!parsedPrefill) {
+          setSoftWarning("Invalid prefill payload.");
+        }
+      } else if (predictionIdParam) {
+        try {
+          const detail = await apiGet<PredictionDetailResponse>(
+            `/api/predictions/${encodeURIComponent(predictionIdParam)}`
+          );
+          if (!detail.accountId) {
+            setSoftWarning("Prediction has no exchange account mapping for prefill.");
+          } else {
+            const built = buildTradeDeskPrefillPayload(detail);
+            parsedPrefill = built.payload;
+            if (built.info) {
+              setPrefillInfo(built.info);
+            }
+          }
+        } catch (e) {
+          setSoftWarning(`Unable to load prediction prefill (${errMsg(e)}).`);
+        }
       }
 
-      if (!parsedPrefill) {
-        setSoftWarning("Invalid prefill payload.");
+      if (disposed) return;
+      if (parsedPrefill) {
+        applyPrefillTicket(parsedPrefill);
       }
+      await loadPrimaryState(parsedPrefill?.accountId ?? null, parsedPrefill);
     }
 
-    if (parsedPrefill) {
-      applyPrefillTicket(parsedPrefill);
-    }
-
-    void loadPrimaryState(parsedPrefill?.accountId ?? null, parsedPrefill);
+    void bootstrap();
     return () => {
+      disposed = true;
       if (marketWsRef.current) marketWsRef.current.close();
       if (userWsRef.current) userWsRef.current.close();
       if (refreshTimerRef.current) window.clearInterval(refreshTimerRef.current);
@@ -963,6 +993,7 @@ function TradePageContent() {
 
     const params = new URLSearchParams(searchParams.toString());
     params.delete("prefill");
+    params.delete("predictionId");
     if (!params.get("exchangeAccountId") && selectedAccountId) {
       params.set("exchangeAccountId", selectedAccountId);
     }

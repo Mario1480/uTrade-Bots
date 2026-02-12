@@ -68,6 +68,7 @@ Core:
 - `DATABASE_URL`
 - `NEXT_PUBLIC_API_URL`
 - `API_BASE_URL`
+- `PANEL_BASE_URL` (optional, für Telegram Deep-Link direkt in den Manual Trading Desk)
 - `CORS_ORIGINS`
 - `SECRET_MASTER_KEY` (Pflicht für Secret-Verschlüsselung)
 - `ADMIN_EMAIL`

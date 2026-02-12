@@ -1836,6 +1836,7 @@ async function generateAutoPredictionForUser(
         delta: {
           reason: "manual_create"
         },
+        horizonEvalRef: created.rowId,
         modelVersion: created.modelVersion,
         reason: "manual_create"
       }
@@ -1852,7 +1853,7 @@ async function generateAutoPredictionForUser(
       confidence: inferred.prediction.confidence,
       confidenceTargetPct: payload.confidenceTargetPct,
       expectedMovePct: inferred.prediction.expectedMovePct,
-      predictionId: stateRow.id,
+      predictionId: created.rowId,
       explanation: created.explanation.explanation,
       source: "auto"
     });
@@ -1862,7 +1863,7 @@ async function generateAutoPredictionForUser(
       prediction: inferred.prediction,
       explanation: created.explanation,
       modelVersion: created.modelVersion,
-      predictionId: stateRow.id,
+      predictionId: created.rowId,
       tsCreated
     };
   } finally {
@@ -2451,6 +2452,25 @@ type TelegramConfig = {
   chatId: string;
 };
 
+function resolvePanelBaseUrl(): string {
+  const configured =
+    (typeof process.env.PANEL_BASE_URL === "string" ? process.env.PANEL_BASE_URL : null) ??
+    (typeof process.env.INVITE_BASE_URL === "string" ? process.env.INVITE_BASE_URL : null) ??
+    "http://localhost:3000";
+  return configured.trim().replace(/\/+$/, "") || "http://localhost:3000";
+}
+
+function buildManualDeskPredictionLink(predictionId: string | null): string | null {
+  if (!predictionId) return null;
+  try {
+    const url = new URL("/trading-desk", `${resolvePanelBaseUrl()}/`);
+    url.searchParams.set("predictionId", predictionId);
+    return url.toString();
+  } catch {
+    return null;
+  }
+}
+
 function parseTelegramConfigValue(value: unknown): string | null {
   if (typeof value !== "string") return null;
   const trimmed = value.trim();
@@ -2538,6 +2558,7 @@ async function notifyTradablePrediction(params: {
   const signalLabel = params.signal === "up" ? "LONG" : "SHORT";
   const explanation = typeof params.explanation === "string" ? params.explanation.trim() : "";
   const shortExplanation = explanation.length > 180 ? `${explanation.slice(0, 177)}...` : explanation;
+  const deskLink = buildManualDeskPredictionLink(params.predictionId);
 
   const lines = [
     "🆕 SIGNAL ALERT",
@@ -2547,8 +2568,9 @@ async function notifyTradablePrediction(params: {
     `Expected move: ${params.expectedMovePct.toFixed(2)}%`,
     `Exchange: ${params.exchangeAccountLabel}`,
     `Source: ${params.source}`,
-    params.predictionId ? `Prediction ID: ${params.predictionId}` : null,
-    shortExplanation ? `Reason: ${shortExplanation}` : null
+    params.predictionId ? `Signal ID: ${params.predictionId}` : null,
+    shortExplanation ? `Reason: ${shortExplanation}` : null,
+    deskLink ? `Open in Manual Desk: ${deskLink}` : null
   ].filter((line): line is string => Boolean(line));
 
   try {
@@ -2563,6 +2585,57 @@ async function notifyTradablePrediction(params: {
       predictionId: params.predictionId ?? null,
       reason: String(error)
     });
+  }
+}
+
+async function notifyPredictionOutcome(params: {
+  userId: string;
+  exchangeAccountLabel: string;
+  symbol: string;
+  marketType: PredictionMarketType;
+  timeframe: PredictionTimeframe;
+  signal: PredictionSignal;
+  predictionId: string;
+  outcomeResult: "tp_hit" | "sl_hit";
+  outcomePnlPct: number | null;
+}): Promise<boolean> {
+  const config = await resolveTelegramConfig();
+  if (!config) {
+    return false;
+  }
+
+  const sideLabel = params.signal === "down" ? "SHORT" : "LONG";
+  const outcomeLabel = params.outcomeResult === "tp_hit" ? "TP HIT" : "SL HIT";
+  const pnlText = Number.isFinite(params.outcomePnlPct)
+    ? `${Number(params.outcomePnlPct).toFixed(2)}%`
+    : "n/a";
+  const emoji = params.outcomeResult === "tp_hit" ? "✅" : "🛑";
+
+  const lines = [
+    `${emoji} SIGNAL OUTCOME`,
+    `${params.symbol} (${params.marketType}, ${params.timeframe})`,
+    `Side: ${sideLabel}`,
+    `Result: ${outcomeLabel}`,
+    `PnL: ${pnlText}`,
+    `Exchange: ${params.exchangeAccountLabel}`,
+    `Signal ID: ${params.predictionId}`
+  ];
+
+  try {
+    await sendTelegramMessage({
+      ...config,
+      text: lines.join("\n")
+    });
+    return true;
+  } catch (error) {
+    // eslint-disable-next-line no-console
+    console.warn("[telegram] prediction outcome notification failed", {
+      userId: params.userId,
+      predictionId: params.predictionId,
+      outcomeResult: params.outcomeResult,
+      reason: String(error)
+    });
+    return false;
   }
 }
 
@@ -2605,7 +2678,10 @@ function preserveRealizedMeta(outcomeMeta: unknown): Record<string, unknown> {
     "realizedEndBucketMs",
     "predictedMovePct",
     "evaluatorVersion",
-    "errorMetrics"
+    "errorMetrics",
+    "outcomeAlertSentAt",
+    "outcomeAlertResult",
+    "outcomeAlertSignalId"
   ];
   for (const key of keys) {
     if (key in meta) preserved[key] = meta[key];
@@ -2988,7 +3064,8 @@ async function runPredictionOutcomeEvalCycle() {
         takeProfitPrice: true,
         horizonMs: true,
         featuresSnapshot: true,
-        outcomeMeta: true
+        outcomeMeta: true,
+        outcomeResult: true
       }
     });
 
@@ -3084,10 +3161,58 @@ async function runPredictionOutcomeEvalCycle() {
           });
 
           if (!evaluation) continue;
+          const nextOutcomeResultRaw = evaluation.data.outcomeResult;
+          const nextOutcomeResult =
+            nextOutcomeResultRaw === "tp_hit" || nextOutcomeResultRaw === "sl_hit"
+              ? nextOutcomeResultRaw
+              : null;
+          const previousOutcomeMeta = asRecord(row.outcomeMeta);
+          const alreadySentResult = typeof previousOutcomeMeta.outcomeAlertResult === "string"
+            ? previousOutcomeMeta.outcomeAlertResult
+            : null;
+          const alreadySentAt = typeof previousOutcomeMeta.outcomeAlertSentAt === "string"
+            ? previousOutcomeMeta.outcomeAlertSentAt
+            : null;
+          const shouldNotifyOutcome =
+            nextOutcomeResult !== null &&
+            !(alreadySentAt && alreadySentResult === nextOutcomeResult) &&
+            row.outcomeResult !== nextOutcomeResult;
           await db.prediction.update({
             where: { id: row.id },
             data: evaluation.data
           });
+
+          if (shouldNotifyOutcome) {
+            const outcomePnlRaw = evaluation.data.outcomePnlPct;
+            const outcomePnlPct = Number.isFinite(Number(outcomePnlRaw))
+              ? Number(outcomePnlRaw)
+              : null;
+            const sent = await notifyPredictionOutcome({
+              userId,
+              exchangeAccountLabel: account.label,
+              symbol,
+              marketType: row.marketType === "spot" ? "spot" : "perp",
+              timeframe,
+              signal,
+              predictionId: row.id,
+              outcomeResult: nextOutcomeResult,
+              outcomePnlPct
+            });
+            if (sent) {
+              const nextMeta = asRecord(evaluation.data.outcomeMeta);
+              await db.prediction.update({
+                where: { id: row.id },
+                data: {
+                  outcomeMeta: {
+                    ...nextMeta,
+                    outcomeAlertSentAt: new Date().toISOString(),
+                    outcomeAlertResult: nextOutcomeResult,
+                    outcomeAlertSignalId: row.id
+                  }
+                }
+              });
+            }
+          }
         }
       } catch (error) {
         // eslint-disable-next-line no-console
@@ -3907,20 +4032,8 @@ async function refreshPredictionStateForTemplate(params: {
         eventThrottleMs: predictionRefreshRuntimeSettings.eventThrottleSec * 1000
       });
       if (!throttled) {
-        await db.predictionEvent.create({
-          data: {
-            stateId,
-            changeType: significant.changeType,
-            prevSnapshot: prevMinimal,
-            newSnapshot: nextMinimal,
-            delta,
-            modelVersion,
-            reason: params.reason
-          }
-        });
-
         const historyTs = new Date(tsCreated);
-        await db.prediction.create({
+        const historyRow = await db.prediction.create({
           data: {
             userId: template.userId,
             botId: null,
@@ -3939,6 +4052,20 @@ async function refreshPredictionStateForTemplate(params: {
             takeProfitPrice: inferred.tracking.takeProfitPrice,
             horizonMs: inferred.tracking.horizonMs,
             modelVersion
+          },
+          select: { id: true }
+        });
+
+        await db.predictionEvent.create({
+          data: {
+            stateId,
+            changeType: significant.changeType,
+            prevSnapshot: prevMinimal,
+            newSnapshot: nextMinimal,
+            delta,
+            horizonEvalRef: historyRow.id,
+            modelVersion,
+            reason: params.reason
           }
         });
 
@@ -3953,7 +4080,7 @@ async function refreshPredictionStateForTemplate(params: {
           confidence: inferred.prediction.confidence,
           confidenceTargetPct: template.confidenceTargetPct,
           expectedMovePct: inferred.prediction.expectedMovePct,
-          predictionId: stateId,
+          predictionId: historyRow.id,
           explanation: explainer.explanation,
           source: "auto"
         });
@@ -5291,7 +5418,6 @@ app.post("/api/predictions/generate", requireAuth, async (req, res) => {
     modelVersionBase: payload.modelVersionBase
   });
 
-  let statePredictionId: string | null = null;
   const snapshot = asRecord(payload.featureSnapshot);
   const exchangeAccountId = readPrefillExchangeAccountId(snapshot);
   if (exchangeAccountId) {
@@ -5363,7 +5489,6 @@ app.post("/api/predictions/generate", requireAuth, async (req, res) => {
           data: statePayload,
           select: { id: true }
         });
-    statePredictionId = stateRow.id;
 
     await db.predictionEvent.create({
       data: {
@@ -5377,6 +5502,7 @@ app.post("/api/predictions/generate", requireAuth, async (req, res) => {
           tags
         },
         delta: { reason: "manual_generate" },
+        horizonEvalRef: created.rowId,
         modelVersion: created.modelVersion,
         reason: "manual_generate"
       }
@@ -5402,7 +5528,7 @@ app.post("/api/predictions/generate", requireAuth, async (req, res) => {
     confidence: payload.prediction.confidence,
     confidenceTargetPct: readConfidenceTarget(payload.featureSnapshot),
     expectedMovePct: payload.prediction.expectedMovePct,
-    predictionId: statePredictionId ?? created.rowId,
+    predictionId: created.rowId,
     explanation: created.explanation.explanation,
     source: "manual"
   });
@@ -5418,7 +5544,7 @@ app.post("/api/predictions/generate", requireAuth, async (req, res) => {
     },
     explanation: created.explanation,
     modelVersion: created.modelVersion,
-    predictionId: statePredictionId ?? created.rowId
+    predictionId: created.rowId
   });
 });
 
