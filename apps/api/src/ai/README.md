@@ -29,11 +29,17 @@
   - `ai_fallback_used`
   - `ai_model`
 
-## Indicator Pack v1
+## Indicator Pack v2
 Predictions enrich `featureSnapshot.indicators` with deterministic OHLCV-based values:
 - `rsi_14` (period 14)
 - `macd` (`12/26/9`: line/signal/hist)
 - `bb` (`20/2`: upper/mid/lower + `width_pct` + `pos`)
+- `stochrsi` (`14/14/3/3`: `%K`, `%D`, `value`)
+- `volume` (`lookback=100`: `vol_z`, `rel_vol`, `vol_ema_fast`, `vol_ema_slow`, `vol_trend`)
+- `fvg` (3-candle imbalance summary):
+  - open bullish / bearish counts
+  - nearest bullish / bearish gap (zone + distance + age)
+  - last created / last filled gap metadata
 - `vwap`:
   - intraday timeframes (`5m`,`15m`,`1h`,`4h`): `session_utc` VWAP reset daily at **UTC 00:00**
   - daily (`1d`): `rolling_20` VWAP
@@ -45,3 +51,7 @@ If candle history is insufficient, indicators are set to `null` and `featureSnap
 Session VWAP runtime tuning:
 - `VWAP_SESSION_CACHE_TTL_MS` (default `120000`)
 - `VWAP_SESSION_GAP_THRESHOLD` (default `0.03`)
+
+FVG runtime tuning:
+- `FVG_LOOKBACK_BARS` (default `300`)
+- `FVG_FILL_RULE` (`overlap` default, optional `mid_touch`)

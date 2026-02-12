@@ -60,6 +60,8 @@ type GenerateDeps = {
 const SYSTEM_MESSAGE =
   "You are a trading assistant. You must only use the provided JSON featureSnapshot. " +
   "If a value is missing, say 'unknown' or omit it. Do not mention news unless featureSnapshot contains a 'newsRisk' flag. " +
+  "You may reference indicators only when values exist under featureSnapshot.indicators (including stochrsi, volume, fvg). " +
+  "Do not claim volume spikes or fair value gaps unless those fields explicitly support it. " +
   "Never mention TradingView.";
 
 function toNumber(value: unknown): number | null {
@@ -205,9 +207,18 @@ export function fallbackExplain(input: ExplainerInput): ExplainerOutput {
   const breakoutProb = pickNumberByPaths(snapshot, ["breakoutProb", "breakoutRisk", "breakout_score"]);
   const meanReversionScore = pickNumberByPaths(snapshot, ["meanReversionScore", "mrScore", "mean_reversion_score"]);
   const rsi = pickNumberByPaths(snapshot, ["rsi", "indicators.rsi_14"]);
+  const stochRsiK = pickNumberByPaths(snapshot, ["indicators.stochrsi.k", "indicators.stochrsi.value"]);
+  const stochRsiD = pickNumberByPaths(snapshot, ["indicators.stochrsi.d"]);
   const bbPos = pickNumberByPaths(snapshot, ["indicators.bb.pos"]);
   const spreadBps = pickNumberByPaths(snapshot, ["spreadBps", "bookSpreadBps"]);
   const liquidity = pickNumberByPaths(snapshot, ["liquidityScore", "depthScore"]);
+  const volZ = pickNumberByPaths(snapshot, ["indicators.volume.vol_z"]);
+  const relVol = pickNumberByPaths(snapshot, ["indicators.volume.rel_vol"]);
+  const volTrend = pickNumberByPaths(snapshot, ["indicators.volume.vol_trend"]);
+  const openBullishGaps = pickNumberByPaths(snapshot, ["indicators.fvg.open_bullish_count"]);
+  const openBearishGaps = pickNumberByPaths(snapshot, ["indicators.fvg.open_bearish_count"]);
+  const nearestBullGapDist = pickNumberByPaths(snapshot, ["indicators.fvg.nearest_bullish_gap.dist_pct"]);
+  const nearestBearGapDist = pickNumberByPaths(snapshot, ["indicators.fvg.nearest_bearish_gap.dist_pct"]);
   const funding = pickNumberByPaths(snapshot, ["fundingRate", "fundingRatePct", "funding"]);
   const newsRisk = pickBooleanByPaths(snapshot, ["newsRisk", "news_risk"]);
 
@@ -229,6 +240,18 @@ export function fallbackExplain(input: ExplainerInput): ExplainerOutput {
   if (breakoutProb !== null && breakoutProb >= 0.6) tags.push("breakout_risk");
   if (meanReversionScore !== null && meanReversionScore >= 0.6) tags.push("mean_reversion");
   if (rsi !== null && (rsi >= 70 || rsi <= 30)) tags.push("mean_reversion");
+  if (stochRsiK !== null && (stochRsiK >= 80 || stochRsiK <= 20)) tags.push("mean_reversion");
+  if (
+    (openBullishGaps !== null && openBullishGaps > 0 && nearestBullGapDist !== null && Math.abs(nearestBullGapDist) <= 0.35) ||
+    (openBearishGaps !== null && openBearishGaps > 0 && nearestBearGapDist !== null && Math.abs(nearestBearGapDist) <= 0.35) ||
+    (volZ !== null && volZ >= 1.8) ||
+    (relVol !== null && relVol >= 1.8)
+  ) {
+    tags.push("breakout_risk");
+  }
+  if (volTrend !== null && Math.abs(volTrend) < 0.2 && stochRsiD !== null && stochRsiK !== null) {
+    tags.push("range_bound");
+  }
   if (bbPos !== null && (bbPos >= 0.9 || bbPos <= 0.1)) tags.push("mean_reversion");
   if ((spreadBps !== null && spreadBps >= 25) || (liquidity !== null && liquidity <= 0.35)) {
     tags.push("low_liquidity");
@@ -270,6 +293,15 @@ export function fallbackExplain(input: ExplainerInput): ExplainerOutput {
     "indicators.macd.hist",
     "indicators.bb.width_pct",
     "indicators.bb.pos",
+    "indicators.stochrsi.k",
+    "indicators.stochrsi.d",
+    "indicators.volume.rel_vol",
+    "indicators.volume.vol_z",
+    "indicators.volume.vol_trend",
+    "indicators.fvg.open_bullish_count",
+    "indicators.fvg.open_bearish_count",
+    "indicators.fvg.nearest_bullish_gap.dist_pct",
+    "indicators.fvg.nearest_bearish_gap.dist_pct",
     "indicators.vwap.dist_pct",
     "indicators.adx.adx_14",
     "emaSpread",
@@ -322,7 +354,13 @@ function buildPromptPayload(input: ExplainerInput) {
       tags: "string[] <= 5 items, must be from tagsAllowlist",
       keyDrivers: "{name: string, value: any}[] <= 5 items, names from featureSnapshot key paths only",
       disclaimer: "grounded_features_only"
-    }
+    },
+    groundingRules: [
+      "Only reference values that exist in featureSnapshot",
+      "Only reference stochrsi/volume/fvg when present and non-null",
+      "Do not claim volume spikes unless rel_vol or vol_z supports it",
+      "Do not claim fair value gaps unless fvg counts or distances support it"
+    ]
   };
 }
 

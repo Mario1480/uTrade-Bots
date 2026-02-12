@@ -53,6 +53,65 @@ export const predictionIndicatorsSchema = z.object({
       plus_di_14: z.number().nullable().optional(),
       minus_di_14: z.number().nullable().optional()
     })
+    .optional(),
+  stochrsi: z
+    .object({
+      rsi_len: z.number().int().positive().optional(),
+      stoch_len: z.number().int().positive().optional(),
+      smooth_k: z.number().int().positive().optional(),
+      smooth_d: z.number().int().positive().optional(),
+      k: z.number().nullable().optional(),
+      d: z.number().nullable().optional(),
+      value: z.number().nullable().optional()
+    })
+    .optional(),
+  volume: z
+    .object({
+      lookback: z.number().int().positive().optional(),
+      vol_z: z.number().nullable().optional(),
+      rel_vol: z.number().nullable().optional(),
+      vol_ema_fast: z.number().nullable().optional(),
+      vol_ema_slow: z.number().nullable().optional(),
+      vol_trend: z.number().nullable().optional()
+    })
+    .optional(),
+  fvg: z
+    .object({
+      lookback: z.number().int().positive().optional(),
+      fill_rule: z.enum(["overlap", "mid_touch"]).optional(),
+      open_bullish_count: z.number().int().nonnegative().optional(),
+      open_bearish_count: z.number().int().nonnegative().optional(),
+      nearest_bullish_gap: z
+        .object({
+          upper: z.number().nullable().optional(),
+          lower: z.number().nullable().optional(),
+          mid: z.number().nullable().optional(),
+          dist_pct: z.number().nullable().optional(),
+          age_bars: z.number().nullable().optional()
+        })
+        .optional(),
+      nearest_bearish_gap: z
+        .object({
+          upper: z.number().nullable().optional(),
+          lower: z.number().nullable().optional(),
+          mid: z.number().nullable().optional(),
+          dist_pct: z.number().nullable().optional(),
+          age_bars: z.number().nullable().optional()
+        })
+        .optional(),
+      last_created: z
+        .object({
+          type: z.enum(["bullish", "bearish"]).nullable().optional(),
+          age_bars: z.number().nullable().optional()
+        })
+        .optional(),
+      last_filled: z
+        .object({
+          type: z.enum(["bullish", "bearish"]).nullable().optional(),
+          age_bars: z.number().nullable().optional()
+        })
+        .optional()
+    })
     .optional()
 });
 
@@ -108,6 +167,12 @@ function toFiniteOrNull(value: unknown): number | null {
   return Number.isFinite(parsed) ? parsed : null;
 }
 
+function toIntOrUndefined(value: unknown): number | undefined {
+  const parsed = toFiniteOrNull(value);
+  if (parsed === null) return undefined;
+  return Math.trunc(parsed);
+}
+
 export function normalizePredictionConfidence(value: unknown): number {
   const parsed = Number(value);
   if (!Number.isFinite(parsed)) return 0;
@@ -159,6 +224,13 @@ export function normalizePredictionExplanation(value: unknown): {
 export function normalizePredictionIndicators(value: unknown): PredictionIndicators | undefined {
   const record = asRecord(value);
   if (!record) return undefined;
+  const stoch = asRecord(record.stochrsi);
+  const volume = asRecord(record.volume);
+  const fvg = asRecord(record.fvg);
+  const nearestBull = asRecord(fvg?.nearest_bullish_gap);
+  const nearestBear = asRecord(fvg?.nearest_bearish_gap);
+  const lastCreated = asRecord(fvg?.last_created);
+  const lastFilled = asRecord(fvg?.last_filled);
   return {
     rsi_14: toFiniteOrNull(record.rsi_14),
     macd: {
@@ -183,6 +255,58 @@ export function normalizePredictionIndicators(value: unknown): PredictionIndicat
       adx_14: toFiniteOrNull(asRecord(record.adx)?.adx_14),
       plus_di_14: toFiniteOrNull(asRecord(record.adx)?.plus_di_14),
       minus_di_14: toFiniteOrNull(asRecord(record.adx)?.minus_di_14)
+    },
+    stochrsi: {
+      rsi_len: toIntOrUndefined(stoch?.rsi_len),
+      stoch_len: toIntOrUndefined(stoch?.stoch_len),
+      smooth_k: toIntOrUndefined(stoch?.smooth_k),
+      smooth_d: toIntOrUndefined(stoch?.smooth_d),
+      k: toFiniteOrNull(stoch?.k),
+      d: toFiniteOrNull(stoch?.d),
+      value: toFiniteOrNull(stoch?.value)
+    },
+    volume: {
+      lookback: toIntOrUndefined(volume?.lookback),
+      vol_z: toFiniteOrNull(volume?.vol_z),
+      rel_vol: toFiniteOrNull(volume?.rel_vol),
+      vol_ema_fast: toFiniteOrNull(volume?.vol_ema_fast),
+      vol_ema_slow: toFiniteOrNull(volume?.vol_ema_slow),
+      vol_trend: toFiniteOrNull(volume?.vol_trend)
+    },
+    fvg: {
+      lookback: toIntOrUndefined(fvg?.lookback),
+      fill_rule:
+        String(fvg?.fill_rule ?? "").trim().toLowerCase() === "mid_touch"
+          ? "mid_touch"
+          : "overlap",
+      open_bullish_count: Math.max(0, Math.trunc(toFiniteOrNull(fvg?.open_bullish_count) ?? 0)),
+      open_bearish_count: Math.max(0, Math.trunc(toFiniteOrNull(fvg?.open_bearish_count) ?? 0)),
+      nearest_bullish_gap: {
+        upper: toFiniteOrNull(nearestBull?.upper),
+        lower: toFiniteOrNull(nearestBull?.lower),
+        mid: toFiniteOrNull(nearestBull?.mid),
+        dist_pct: toFiniteOrNull(nearestBull?.dist_pct),
+        age_bars: toFiniteOrNull(nearestBull?.age_bars)
+      },
+      nearest_bearish_gap: {
+        upper: toFiniteOrNull(nearestBear?.upper),
+        lower: toFiniteOrNull(nearestBear?.lower),
+        mid: toFiniteOrNull(nearestBear?.mid),
+        dist_pct: toFiniteOrNull(nearestBear?.dist_pct),
+        age_bars: toFiniteOrNull(nearestBear?.age_bars)
+      },
+      last_created: {
+        type: lastCreated?.type === "bullish" || lastCreated?.type === "bearish"
+          ? lastCreated.type
+          : null,
+        age_bars: toFiniteOrNull(lastCreated?.age_bars)
+      },
+      last_filled: {
+        type: lastFilled?.type === "bullish" || lastFilled?.type === "bearish"
+          ? lastFilled.type
+          : null,
+        age_bars: toFiniteOrNull(lastFilled?.age_bars)
+      }
     }
   };
 }

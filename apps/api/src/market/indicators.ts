@@ -9,6 +9,11 @@ import {
   computeRollingVWAP,
   computeSessionVWAP
 } from "./indicatorsVwap.js";
+import {
+  computeFVGSummary,
+  type FvgFillRule,
+  type FvgSummary
+} from "./fvg.js";
 
 export type { Candle, Timeframe } from "./timeframe.js";
 
@@ -39,14 +44,50 @@ export type IndicatorsSnapshot = {
     plus_di_14: NullableNumber;
     minus_di_14: NullableNumber;
   };
+  stochrsi: {
+    rsi_len: number;
+    stoch_len: number;
+    smooth_k: number;
+    smooth_d: number;
+    k: NullableNumber;
+    d: NullableNumber;
+    value: NullableNumber;
+  };
+  volume: {
+    lookback: number;
+    vol_z: NullableNumber;
+    rel_vol: NullableNumber;
+    vol_ema_fast: NullableNumber;
+    vol_ema_slow: NullableNumber;
+    vol_trend: NullableNumber;
+  };
+  fvg: FvgSummary;
   atr_pct: NullableNumber;
   dataGap: boolean;
 };
 
-const INTRADAY_MIN_BARS = 300;
+const STOCHRSI_RSI_LEN = 14;
+const STOCHRSI_STOCH_LEN = 14;
+const STOCHRSI_SMOOTH_K = 3;
+const STOCHRSI_SMOOTH_D = 3;
+const STOCHRSI_REQUIRED_BARS =
+  STOCHRSI_RSI_LEN + STOCHRSI_STOCH_LEN + STOCHRSI_SMOOTH_K + STOCHRSI_SMOOTH_D + 50;
+
+const VOLUME_LOOKBACK = 100;
+const VOLUME_EMA_FAST = 10;
+const VOLUME_EMA_SLOW = 30;
+const INTRADAY_MIN_BARS = Math.max(200, STOCHRSI_REQUIRED_BARS, VOLUME_LOOKBACK + 20);
 const DAILY_MIN_BARS = 220;
 const ADX_PERIOD = 14;
 const VWAP_ROLLING_LEN_DAILY = 20;
+const rawFvgLookback = Number(process.env.FVG_LOOKBACK_BARS ?? 300);
+const FVG_LOOKBACK_BARS = Number.isFinite(rawFvgLookback)
+  ? Math.max(50, Math.trunc(rawFvgLookback))
+  : 300;
+const FVG_FILL_RULE: FvgFillRule =
+  String(process.env.FVG_FILL_RULE ?? "overlap").trim().toLowerCase() === "mid_touch"
+    ? "mid_touch"
+    : "overlap";
 
 function toFinite(value: unknown): number | null {
   const parsed = Number(value);
@@ -62,6 +103,144 @@ function clamp(value: number, min: number, max: number): number {
   return Math.max(min, Math.min(max, value));
 }
 
+function mean(values: number[]): number | null {
+  if (values.length === 0) return null;
+  let sum = 0;
+  for (const value of values) {
+    if (!Number.isFinite(value)) return null;
+    sum += value;
+  }
+  return sum / values.length;
+}
+
+function std(values: number[]): number | null {
+  if (values.length === 0) return null;
+  const avg = mean(values);
+  if (avg === null) return null;
+  let sum = 0;
+  for (const value of values) {
+    const delta = value - avg;
+    sum += delta * delta;
+  }
+  return Math.sqrt(sum / values.length);
+}
+
+function smaSeries(values: number[], period: number): number[] {
+  if (period <= 0 || values.length < period) return [];
+  const out: number[] = [];
+  let windowSum = 0;
+  for (let i = 0; i < values.length; i += 1) {
+    windowSum += values[i];
+    if (i >= period) {
+      windowSum -= values[i - period];
+    }
+    if (i >= period - 1) {
+      out.push(windowSum / period);
+    }
+  }
+  return out;
+}
+
+function emaLatest(values: number[], period: number): number | null {
+  if (period <= 0 || values.length < period) return null;
+  const k = 2 / (period + 1);
+  const seed = mean(values.slice(0, period));
+  if (seed === null) return null;
+  let ema = seed;
+  for (let i = period; i < values.length; i += 1) {
+    ema = values[i] * k + ema * (1 - k);
+  }
+  return ema;
+}
+
+function computeStochRsi(values: number[]): {
+  k: number | null;
+  d: number | null;
+  value: number | null;
+} {
+  if (values.length < STOCHRSI_REQUIRED_BARS) {
+    return { k: null, d: null, value: null };
+  }
+  const rsiSeries = RSI.calculate({ values, period: STOCHRSI_RSI_LEN });
+  if (rsiSeries.length < STOCHRSI_STOCH_LEN + STOCHRSI_SMOOTH_K + STOCHRSI_SMOOTH_D) {
+    return { k: null, d: null, value: null };
+  }
+
+  const rawStoch: number[] = [];
+  for (let i = STOCHRSI_STOCH_LEN - 1; i < rsiSeries.length; i += 1) {
+    const window = rsiSeries.slice(i - STOCHRSI_STOCH_LEN + 1, i + 1);
+    const low = Math.min(...window);
+    const high = Math.max(...window);
+    if (!Number.isFinite(low) || !Number.isFinite(high)) continue;
+    const denom = high - low;
+    if (Math.abs(denom) < 1e-12) {
+      rawStoch.push(50);
+    } else {
+      rawStoch.push(clamp(((rsiSeries[i] - low) / denom) * 100, 0, 100));
+    }
+  }
+
+  const kSeries = smaSeries(rawStoch, STOCHRSI_SMOOTH_K);
+  const dSeries = smaSeries(kSeries, STOCHRSI_SMOOTH_D);
+  const k = kSeries.length > 0 ? kSeries[kSeries.length - 1] : null;
+  const d = dSeries.length > 0 ? dSeries[dSeries.length - 1] : null;
+
+  return {
+    k,
+    d,
+    value: k
+  };
+}
+
+function computeVolumeFeatures(candles: Candle[]): {
+  vol_z: number | null;
+  rel_vol: number | null;
+  vol_ema_fast: number | null;
+  vol_ema_slow: number | null;
+  vol_trend: number | null;
+} {
+  const volumes = candles.map((row) => {
+    const parsed = Number(row.volume);
+    return Number.isFinite(parsed) && parsed >= 0 ? parsed : 0;
+  });
+  if (volumes.length < VOLUME_LOOKBACK) {
+    return {
+      vol_z: null,
+      rel_vol: null,
+      vol_ema_fast: null,
+      vol_ema_slow: null,
+      vol_trend: null
+    };
+  }
+
+  const tail = volumes.slice(-VOLUME_LOOKBACK);
+  const volLast = tail[tail.length - 1];
+  const volMean = mean(tail);
+  const volStd = std(tail);
+  const volSma = volMean;
+  const volFast = emaLatest(volumes, VOLUME_EMA_FAST);
+  const volSlow = emaLatest(volumes, VOLUME_EMA_SLOW);
+
+  const volZ = volMean === null || volStd === null
+    ? null
+    : volStd <= 1e-12
+      ? 0
+      : (volLast - volMean) / volStd;
+  const relVol = volSma !== null && volSma > 0 ? volLast / volSma : null;
+  const volTrend =
+    volFast !== null && volSlow !== null && volSlow > 0
+      ? ((volFast / volSlow) - 1) * 100
+      : null;
+
+  return {
+    vol_z: volZ,
+    rel_vol: relVol,
+    vol_ema_fast: volFast,
+    vol_ema_slow: volSlow,
+    vol_trend: volTrend
+  };
+}
+
 function emptyIndicators(mode: "session_utc" | "rolling_20", dataGap: boolean): IndicatorsSnapshot {
   return {
     rsi_14: null,
@@ -69,6 +248,33 @@ function emptyIndicators(mode: "session_utc" | "rolling_20", dataGap: boolean): 
     bb: { upper: null, mid: null, lower: null, width_pct: null, pos: null },
     vwap: { value: null, dist_pct: null, mode, sessionStartUtcMs: null },
     adx: { adx_14: null, plus_di_14: null, minus_di_14: null },
+    stochrsi: {
+      rsi_len: STOCHRSI_RSI_LEN,
+      stoch_len: STOCHRSI_STOCH_LEN,
+      smooth_k: STOCHRSI_SMOOTH_K,
+      smooth_d: STOCHRSI_SMOOTH_D,
+      k: null,
+      d: null,
+      value: null
+    },
+    volume: {
+      lookback: VOLUME_LOOKBACK,
+      vol_z: null,
+      rel_vol: null,
+      vol_ema_fast: null,
+      vol_ema_slow: null,
+      vol_trend: null
+    },
+    fvg: {
+      lookback: FVG_LOOKBACK_BARS,
+      fill_rule: FVG_FILL_RULE,
+      open_bullish_count: 0,
+      open_bearish_count: 0,
+      nearest_bullish_gap: { upper: null, lower: null, mid: null, dist_pct: null, age_bars: null },
+      nearest_bearish_gap: { upper: null, lower: null, mid: null, dist_pct: null, age_bars: null },
+      last_created: { type: null, age_bars: null },
+      last_filled: { type: null, age_bars: null }
+    },
     atr_pct: null,
     dataGap
   };
@@ -248,6 +454,12 @@ export function computeIndicators(
     : null;
 
   const adx = computeADX14(bucketedCandles);
+  const stochRsi = computeStochRsi(closes);
+  const volumeFeatures = computeVolumeFeatures(bucketedCandles);
+  const fvg = computeFVGSummary(bucketedCandles, {
+    lookbackBars: FVG_LOOKBACK_BARS,
+    fillRule: FVG_FILL_RULE
+  });
 
   let vwapValue: number | null = null;
   let vwapDistPct: number | null = null;
@@ -309,6 +521,24 @@ export function computeIndicators(
       plus_di_14: round(toFinite(adx.plus_di_14), 4),
       minus_di_14: round(toFinite(adx.minus_di_14), 4)
     },
+    stochrsi: {
+      rsi_len: STOCHRSI_RSI_LEN,
+      stoch_len: STOCHRSI_STOCH_LEN,
+      smooth_k: STOCHRSI_SMOOTH_K,
+      smooth_d: STOCHRSI_SMOOTH_D,
+      k: round(toFinite(stochRsi.k), 4),
+      d: round(toFinite(stochRsi.d), 4),
+      value: round(toFinite(stochRsi.value), 4)
+    },
+    volume: {
+      lookback: VOLUME_LOOKBACK,
+      vol_z: round(toFinite(volumeFeatures.vol_z), 6),
+      rel_vol: round(toFinite(volumeFeatures.rel_vol), 6),
+      vol_ema_fast: round(toFinite(volumeFeatures.vol_ema_fast), 6),
+      vol_ema_slow: round(toFinite(volumeFeatures.vol_ema_slow), 6),
+      vol_trend: round(toFinite(volumeFeatures.vol_trend), 6)
+    },
+    fvg,
     atr_pct: round(atrPct, 6),
     dataGap: bucketedMeta.candleBucketed || vwapDataGap
   };
@@ -324,6 +554,13 @@ export function computeIndicators(
     result.bb.width_pct,
     result.bb.pos,
     result.adx.adx_14,
+    result.stochrsi.k,
+    result.stochrsi.d,
+    result.volume.rel_vol,
+    result.volume.vol_z,
+    result.volume.vol_ema_fast,
+    result.volume.vol_ema_slow,
+    result.volume.vol_trend,
     result.atr_pct
   ].some((value) => value === null);
 

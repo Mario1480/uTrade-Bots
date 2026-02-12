@@ -1135,6 +1135,30 @@ function TradePageContent() {
                     {fmtIndicator(activePrefill.indicators?.adx?.adx_14, 1)} / {fmtIndicator(activePrefill.indicators?.adx?.plus_di_14, 1)} / {fmtIndicator(activePrefill.indicators?.adx?.minus_di_14, 1)}
                   </div>
                 </div>
+                <div className="card" style={{ margin: 0, padding: 8 }}>
+                  <div style={{ fontSize: 11, color: "var(--muted)" }}>StochRSI %K / %D / value</div>
+                  <div style={{ fontWeight: 700 }}>
+                    {fmtIndicator(activePrefill.indicators?.stochrsi?.k, 1)} / {fmtIndicator(activePrefill.indicators?.stochrsi?.d, 1)} / {fmtIndicator(activePrefill.indicators?.stochrsi?.value, 1)}
+                  </div>
+                </div>
+                <div className="card" style={{ margin: 0, padding: 8 }}>
+                  <div style={{ fontSize: 11, color: "var(--muted)" }}>Volume z / rel / trend%</div>
+                  <div style={{ fontWeight: 700 }}>
+                    {fmtIndicator(activePrefill.indicators?.volume?.vol_z, 3)} / {fmtIndicator(activePrefill.indicators?.volume?.rel_vol, 3)} / {fmtIndicator(activePrefill.indicators?.volume?.vol_trend, 2)}
+                  </div>
+                  <div style={{ fontSize: 11, color: "var(--muted)", marginTop: 2 }}>
+                    EMA {fmtIndicator(activePrefill.indicators?.volume?.vol_ema_fast, 2)} / {fmtIndicator(activePrefill.indicators?.volume?.vol_ema_slow, 2)}
+                  </div>
+                </div>
+                <div className="card" style={{ margin: 0, padding: 8 }}>
+                  <div style={{ fontSize: 11, color: "var(--muted)" }}>FVG open bull / bear</div>
+                  <div style={{ fontWeight: 700 }}>
+                    {fmtIndicator(activePrefill.indicators?.fvg?.open_bullish_count, 0)} / {fmtIndicator(activePrefill.indicators?.fvg?.open_bearish_count, 0)}
+                  </div>
+                  <div style={{ fontSize: 11, color: "var(--muted)", marginTop: 2 }}>
+                    bull {fmtIndicator(activePrefill.indicators?.fvg?.nearest_bullish_gap?.dist_pct, 2)}% · bear {fmtIndicator(activePrefill.indicators?.fvg?.nearest_bearish_gap?.dist_pct, 2)}%
+                  </div>
+                </div>
               </div>
 
               <div className="card" style={{ margin: 0, padding: 8 }}>

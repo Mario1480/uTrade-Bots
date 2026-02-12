@@ -41,6 +41,10 @@ test("computeIndicators: outputs are bounded and finite on sufficient bars", () 
   assert.ok(indicators.bb.pos! >= 0 && indicators.bb.pos! <= 1);
   assert.ok(indicators.adx.adx_14 !== null);
   assert.ok(indicators.adx.adx_14! >= 0 && indicators.adx.adx_14! <= 100);
+  assert.ok(indicators.stochrsi.k !== null);
+  assert.ok(indicators.stochrsi.d !== null);
+  assert.ok(indicators.stochrsi.k! >= 0 && indicators.stochrsi.k! <= 100);
+  assert.ok(indicators.stochrsi.d! >= 0 && indicators.stochrsi.d! <= 100);
 
   const numericValues = [
     indicators.rsi_14,
@@ -57,6 +61,16 @@ test("computeIndicators: outputs are bounded and finite on sufficient bars", () 
     indicators.adx.adx_14,
     indicators.adx.plus_di_14,
     indicators.adx.minus_di_14,
+    indicators.stochrsi.k,
+    indicators.stochrsi.d,
+    indicators.stochrsi.value,
+    indicators.volume.vol_z,
+    indicators.volume.rel_vol,
+    indicators.volume.vol_ema_fast,
+    indicators.volume.vol_ema_slow,
+    indicators.volume.vol_trend,
+    indicators.fvg.nearest_bullish_gap.dist_pct,
+    indicators.fvg.nearest_bearish_gap.dist_pct,
     indicators.atr_pct
   ];
   for (const value of numericValues) {
@@ -95,6 +109,8 @@ test("computeIndicators: insufficient bars marks data gap with null indicators",
   assert.equal(indicators.macd.line, null);
   assert.equal(indicators.bb.upper, null);
   assert.equal(indicators.adx.adx_14, null);
+  assert.equal(indicators.stochrsi.k, null);
+  assert.equal(indicators.volume.rel_vol, null);
 });
 
 test("computeADX14: produces bounded values on valid fixture", () => {

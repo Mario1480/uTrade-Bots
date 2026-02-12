@@ -85,6 +85,51 @@ type PredictionDetailResponse = PredictionPrefillSource & {
       sessionStartUtcMs?: number | null;
     } | null;
     adx?: { adx_14?: number | null; plus_di_14?: number | null; minus_di_14?: number | null } | null;
+    stochrsi?: {
+      rsi_len?: number | null;
+      stoch_len?: number | null;
+      smooth_k?: number | null;
+      smooth_d?: number | null;
+      k?: number | null;
+      d?: number | null;
+      value?: number | null;
+    } | null;
+    volume?: {
+      lookback?: number | null;
+      vol_z?: number | null;
+      rel_vol?: number | null;
+      vol_ema_fast?: number | null;
+      vol_ema_slow?: number | null;
+      vol_trend?: number | null;
+    } | null;
+    fvg?: {
+      lookback?: number | null;
+      fill_rule?: "overlap" | "mid_touch";
+      open_bullish_count?: number | null;
+      open_bearish_count?: number | null;
+      nearest_bullish_gap?: {
+        upper?: number | null;
+        lower?: number | null;
+        mid?: number | null;
+        dist_pct?: number | null;
+        age_bars?: number | null;
+      } | null;
+      nearest_bearish_gap?: {
+        upper?: number | null;
+        lower?: number | null;
+        mid?: number | null;
+        dist_pct?: number | null;
+        age_bars?: number | null;
+      } | null;
+      last_created?: {
+        type?: "bullish" | "bearish" | null;
+        age_bars?: number | null;
+      } | null;
+      last_filled?: {
+        type?: "bullish" | "bearish" | null;
+        age_bars?: number | null;
+      } | null;
+    } | null;
     atr_pct?: number | null;
     dataGap?: boolean;
   } | null;
@@ -955,6 +1000,30 @@ export default function PredictionsPage() {
                   <div className="predictionIndicatorTitle">ADX (ADX / +DI / -DI)</div>
                   <div className="predictionIndicatorValue">
                     {fmtNum(indicators.adx?.adx_14, 2)} / {fmtNum(indicators.adx?.plus_di_14, 2)} / {fmtNum(indicators.adx?.minus_di_14, 2)}
+                  </div>
+                </div>
+                <div className="card predictionIndicatorCard">
+                  <div className="predictionIndicatorTitle">StochRSI (%K / %D / value)</div>
+                  <div className="predictionIndicatorValue">
+                    {fmtNum(indicators.stochrsi?.k, 1)} / {fmtNum(indicators.stochrsi?.d, 1)} / {fmtNum(indicators.stochrsi?.value, 1)}
+                  </div>
+                </div>
+                <div className="card predictionIndicatorCard">
+                  <div className="predictionIndicatorTitle">Volume (z / rel / trend%)</div>
+                  <div className="predictionIndicatorValue">
+                    {fmtNum(indicators.volume?.vol_z, 3)} / {fmtNum(indicators.volume?.rel_vol, 3)} / {fmtNum(indicators.volume?.vol_trend, 2)}
+                  </div>
+                  <div className="predictionIndicatorMeta">
+                    EMA fast/slow: {fmtNum(indicators.volume?.vol_ema_fast, 2)} / {fmtNum(indicators.volume?.vol_ema_slow, 2)}
+                  </div>
+                </div>
+                <div className="card predictionIndicatorCard">
+                  <div className="predictionIndicatorTitle">FVG (open bull / bear)</div>
+                  <div className="predictionIndicatorValue">
+                    {fmtNum(indicators.fvg?.open_bullish_count, 0)} / {fmtNum(indicators.fvg?.open_bearish_count, 0)}
+                  </div>
+                  <div className="predictionIndicatorMeta">
+                    bull dist: {fmtNum(indicators.fvg?.nearest_bullish_gap?.dist_pct, 2)}% · bear dist: {fmtNum(indicators.fvg?.nearest_bearish_gap?.dist_pct, 2)}%
                   </div>
                 </div>
                 <div className="card predictionIndicatorCard">
