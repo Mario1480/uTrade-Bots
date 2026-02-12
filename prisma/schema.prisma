@@ -630,6 +630,7 @@ model PredictionState {
   symbol              String
   marketType          String    @map("market_type")
   timeframe           String
+  signalMode          String    @default("both") @map("signal_mode")
   tsUpdated           DateTime  @map("ts_updated")
   tsPredictedFor      DateTime  @map("ts_predicted_for")
   signal              String
@@ -653,7 +654,7 @@ model PredictionState {
 
   events PredictionEvent[]
 
-  @@unique([exchange, accountId, symbol, marketType, timeframe])
+  @@unique([exchange, accountId, symbol, marketType, timeframe, signalMode])
   @@index([exchange, accountId, timeframe, tsUpdated(sort: Desc)])
   @@index([symbol, timeframe, tsUpdated(sort: Desc)])
   @@index([userId, updatedAt(sort: Desc)])

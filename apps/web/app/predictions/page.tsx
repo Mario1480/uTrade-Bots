@@ -178,6 +178,7 @@ type RunningPredictionItem = {
   directionPreference: DirectionPreference;
   confidenceTargetPct: number;
   leverage: number | null;
+  signalMode: CreateSignalMode;
   paused: boolean;
   tsCreated: string;
   nextRunAt: string;
@@ -1654,6 +1655,7 @@ export default function PredictionsPage() {
                     <td style={{ padding: "8px 6px" }}>
                       Dir: {row.directionPreference}, conf: {row.confidenceTargetPct}%
                       {row.marketType === "perp" && row.leverage ? `, lev: ${row.leverage}x` : ""}
+                      {`, mode: ${signalModeLabel(row.signalMode)}`}
                     </td>
                     <td style={{ padding: "8px 6px" }}>
                       {row.paused ? "paused" : "running"}

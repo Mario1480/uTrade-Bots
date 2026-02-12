@@ -452,7 +452,8 @@ const predictionStateQuerySchema = z.object({
   accountId: z.string().trim().min(1),
   symbol: z.string().trim().min(1),
   marketType: z.enum(["spot", "perp"]),
-  timeframe: z.enum(["5m", "15m", "1h", "4h", "1d"])
+  timeframe: z.enum(["5m", "15m", "1h", "4h", "1d"]),
+  signalMode: z.enum(["local_only", "ai_only", "both"]).optional()
 });
 
 const predictionEventsQuerySchema = z.object({
@@ -742,6 +743,20 @@ function normalizePredictionSignalMode(value: unknown): PredictionSignalMode {
 
 function readSignalMode(snapshot: Record<string, unknown>): PredictionSignalMode {
   return normalizePredictionSignalMode(snapshot.signalMode);
+}
+
+function readStateSignalMode(
+  signalModeValue: unknown,
+  snapshot: Record<string, unknown>
+): PredictionSignalMode {
+  if (
+    signalModeValue === "local_only"
+    || signalModeValue === "ai_only"
+    || signalModeValue === "both"
+  ) {
+    return signalModeValue;
+  }
+  return readSignalMode(snapshot);
 }
 
 function resolvePreferredSignalSourceForMode(
@@ -2182,6 +2197,7 @@ async function generateAutoPredictionForUser(
       symbol: canonicalSymbol,
       marketType: payload.marketType,
       timeframe: payload.timeframe,
+      signalMode,
       tsUpdated: stateTs,
       tsPredictedFor: new Date(stateTs.getTime() + timeframeToIntervalMs(payload.timeframe)),
       signal: created.prediction.signal,
@@ -3457,24 +3473,21 @@ async function findPredictionStateIdByScope(params: {
   timeframe: PredictionTimeframe;
   signalMode: PredictionSignalMode;
 }): Promise<string | null> {
-  const rows = await db.predictionState.findMany({
+  const row = await db.predictionState.findFirst({
     where: {
       userId: params.userId,
       exchange: params.exchange,
       accountId: params.accountId,
       symbol: params.symbol,
       marketType: params.marketType,
-      timeframe: params.timeframe
+      timeframe: params.timeframe,
+      signalMode: params.signalMode
     },
-    orderBy: [{ tsUpdated: "desc" }, { updatedAt: "desc" }],
-    take: 25,
     select: {
-      id: true,
-      featuresSnapshot: true
+      id: true
     }
   });
-  const matched = rows.find((row: any) => readSignalMode(asRecord(row.featuresSnapshot)) === params.signalMode);
-  return matched ? String(matched.id) : null;
+  return row ? String(row.id) : null;
 }
 
 let predictionAutoTimer: NodeJS.Timeout | null = null;
@@ -3903,6 +3916,7 @@ type PredictionRefreshTemplate = {
   symbol: string;
   marketType: PredictionMarketType;
   timeframe: PredictionTimeframe;
+  signalMode: PredictionSignalMode;
   directionPreference: DirectionPreference;
   confidenceTargetPct: number;
   leverage: number | null;
@@ -4017,6 +4031,7 @@ async function bootstrapPredictionStateFromHistory() {
         symbol,
         marketType,
         timeframe,
+        signalMode,
         tsUpdated: row.tsCreated,
         tsPredictedFor: new Date(row.tsCreated.getTime() + timeframeToIntervalMs(timeframe)),
         signal: normalizePredictionSignal(row.signal),
@@ -4068,6 +4083,7 @@ async function listPredictionRefreshTemplates(): Promise<PredictionRefreshTempla
       symbol: true,
       marketType: true,
       timeframe: true,
+      signalMode: true,
       directionPreference: true,
       confidenceTargetPct: true,
       leverage: true,
@@ -4091,6 +4107,7 @@ async function listPredictionRefreshTemplates(): Promise<PredictionRefreshTempla
       const marketType = normalizePredictionMarketType(row.marketType);
       const timeframe = normalizePredictionTimeframe(row.timeframe);
       const snapshot = asRecord(row.featuresSnapshot);
+      const signalMode = readStateSignalMode(row.signalMode, snapshot);
 
       return {
         stateId: String(row.id),
@@ -4103,6 +4120,7 @@ async function listPredictionRefreshTemplates(): Promise<PredictionRefreshTempla
         symbol,
         marketType,
         timeframe,
+        signalMode,
         directionPreference: parseDirectionPreference(
           row.directionPreference ?? snapshot.directionPreference
         ),
@@ -4120,7 +4138,10 @@ async function listPredictionRefreshTemplates(): Promise<PredictionRefreshTempla
         autoScheduleEnabled: Boolean(row.autoScheduleEnabled),
         autoSchedulePaused: Boolean(row.autoSchedulePaused),
         tsUpdated: row.tsUpdated instanceof Date ? row.tsUpdated : new Date(),
-        featureSnapshot: snapshot,
+        featureSnapshot: {
+          ...snapshot,
+          signalMode
+        },
         modelVersionBase:
           typeof row.modelVersion === "string" && row.modelVersion.trim()
             ? row.modelVersion
@@ -4368,7 +4389,7 @@ async function refreshPredictionStateForTemplate(params: {
       where: { id: template.stateId }
     });
     const prevState = prevStateRow ? readPredictionStateLike(prevStateRow) : null;
-    const signalMode = readSignalMode(template.featureSnapshot);
+    const signalMode = template.signalMode;
 
     const baselineTags = enforceNewsRiskTag(
       inferred.featureSnapshot.tags,
@@ -4565,6 +4586,7 @@ async function refreshPredictionStateForTemplate(params: {
       symbol: template.symbol,
       marketType: template.marketType,
       timeframe: template.timeframe,
+      signalMode,
       tsUpdated,
       tsPredictedFor,
       signal: selectedPrediction.signal,
@@ -6368,6 +6390,7 @@ app.post("/api/predictions/generate", requireAuth, async (req, res) => {
       symbol: normalizedSymbol,
       marketType: payload.marketType,
       timeframe: payload.timeframe,
+      signalMode,
       tsUpdated: tsDate,
       tsPredictedFor: new Date(tsDate.getTime() + timeframeToIntervalMs(payload.timeframe)),
       signal: created.prediction.signal,
@@ -6521,6 +6544,7 @@ app.get("/api/predictions", requireAuth, async (req, res) => {
         explanation: true,
         tags: true,
         featuresSnapshot: true,
+        signalMode: true,
         autoScheduleEnabled: true,
         autoSchedulePaused: true,
         confidenceTargetPct: true,
@@ -6532,6 +6556,7 @@ app.get("/api/predictions", requireAuth, async (req, res) => {
 
     const items = rows.map((row: any) => {
       const snapshot = asRecord(row.featuresSnapshot);
+      const signalMode = readStateSignalMode(row.signalMode, snapshot);
       return {
         id: row.id,
         symbol: row.symbol,
@@ -6558,7 +6583,7 @@ app.get("/api/predictions", requireAuth, async (req, res) => {
         outcomeEvaluatedAt: null,
         localPrediction: readLocalPredictionSnapshot(snapshot),
         aiPrediction: readAiPredictionSnapshot(snapshot),
-        signalMode: readSignalMode(snapshot),
+        signalMode,
         autoScheduleEnabled: Boolean(row.autoScheduleEnabled) && !Boolean(row.autoSchedulePaused),
         confidenceTargetPct:
           Number.isFinite(Number(row.confidenceTargetPct))
@@ -7091,6 +7116,7 @@ app.get("/api/predictions/running", requireAuth, async (req, res) => {
         symbol: true,
         marketType: true,
         timeframe: true,
+        signalMode: true,
         tsUpdated: true,
         tsPredictedFor: true,
         exchange: true,
@@ -7132,6 +7158,7 @@ app.get("/api/predictions/running", requireAuth, async (req, res) => {
     directionPreference: DirectionPreference;
     confidenceTargetPct: number;
     leverage: number | null;
+    signalMode: PredictionSignalMode;
     paused: boolean;
     tsCreated: string;
     nextRunAt: string;
@@ -7152,6 +7179,7 @@ app.get("/api/predictions/running", requireAuth, async (req, res) => {
 
     const timeframe = normalizePredictionTimeframe(row.timeframe);
     const marketType = normalizePredictionMarketType(row.marketType);
+    const signalMode = readStateSignalMode(row.signalMode, snapshot);
     if (!Boolean(row.autoScheduleEnabled)) continue;
 
     const paused = Boolean(row.autoSchedulePaused);
@@ -7187,6 +7215,7 @@ app.get("/api/predictions/running", requireAuth, async (req, res) => {
           && row.leverage !== undefined
           ? Math.max(1, Math.trunc(Number(row.leverage)))
           : readRequestedLeverage(snapshot) ?? null,
+      signalMode,
       paused,
       tsCreated:
         row.tsUpdated instanceof Date ? row.tsUpdated.toISOString() : new Date().toISOString(),
@@ -7218,6 +7247,7 @@ app.post("/api/predictions/:id/pause", requireAuth, async (req, res) => {
     },
     select: {
       id: true,
+      signalMode: true,
       featuresSnapshot: true,
       symbol: true,
       marketType: true,
@@ -7228,6 +7258,7 @@ app.post("/api/predictions/:id/pause", requireAuth, async (req, res) => {
 
   if (stateRow) {
     const snapshot = asRecord(stateRow.featuresSnapshot);
+    const signalMode = readStateSignalMode(stateRow.signalMode, snapshot);
     await db.predictionState.update({
       where: { id: stateRow.id },
       data: {
@@ -7247,7 +7278,7 @@ app.post("/api/predictions/:id/pause", requireAuth, async (req, res) => {
       marketType: normalizePredictionMarketType(stateRow.marketType),
       timeframe: normalizePredictionTimeframe(stateRow.timeframe),
       exchangeAccountId: typeof stateRow.accountId === "string" ? stateRow.accountId : null,
-      signalMode: readSignalMode(snapshot)
+      signalMode
     });
 
     if (templateRowIds.length > 0) {
@@ -7348,6 +7379,7 @@ app.post("/api/predictions/:id/stop", requireAuth, async (req, res) => {
     },
     select: {
       id: true,
+      signalMode: true,
       featuresSnapshot: true,
       symbol: true,
       marketType: true,
@@ -7358,6 +7390,7 @@ app.post("/api/predictions/:id/stop", requireAuth, async (req, res) => {
 
   if (stateRow) {
     const snapshot = asRecord(stateRow.featuresSnapshot);
+    const signalMode = readStateSignalMode(stateRow.signalMode, snapshot);
     await db.predictionState.update({
       where: { id: stateRow.id },
       data: {
@@ -7377,7 +7410,7 @@ app.post("/api/predictions/:id/stop", requireAuth, async (req, res) => {
       marketType: normalizePredictionMarketType(stateRow.marketType),
       timeframe: normalizePredictionTimeframe(stateRow.timeframe),
       exchangeAccountId: typeof stateRow.accountId === "string" ? stateRow.accountId : null,
-      signalMode: readSignalMode(snapshot)
+      signalMode
     });
 
     if (templateRowIds.length > 0) {
@@ -7466,6 +7499,7 @@ app.post("/api/predictions/:id/delete-schedule", requireAuth, async (req, res) =
     },
     select: {
       id: true,
+      signalMode: true,
       featuresSnapshot: true,
       symbol: true,
       marketType: true,
@@ -7481,13 +7515,14 @@ app.post("/api/predictions/:id/delete-schedule", requireAuth, async (req, res) =
     predictionTriggerDebounceState.delete(stateRow.id);
     const normalizedSymbol = normalizeSymbolInput(stateRow.symbol);
     const stateSnapshot = asRecord(stateRow.featuresSnapshot);
+    const stateSignalMode = readStateSignalMode(stateRow.signalMode, stateSnapshot);
 
     const templateRowIds = await findPredictionTemplateRowIds(user.id, {
       symbol: normalizedSymbol || stateRow.symbol,
       marketType: normalizePredictionMarketType(stateRow.marketType),
       timeframe: normalizePredictionTimeframe(stateRow.timeframe),
       exchangeAccountId: typeof stateRow.accountId === "string" ? stateRow.accountId : null,
-      signalMode: readSignalMode(stateSnapshot)
+      signalMode: stateSignalMode
     });
 
     const deletedTemplates =
@@ -7721,7 +7756,10 @@ app.get("/api/predictions/state", requireAuth, async (req, res) => {
       accountId: parsed.data.accountId,
       symbol,
       marketType: parsed.data.marketType,
-      timeframe: parsed.data.timeframe
+      timeframe: parsed.data.timeframe,
+      signalMode: parsed.data.signalMode
+        ? normalizePredictionSignalMode(parsed.data.signalMode)
+        : undefined
     },
     orderBy: [{ tsUpdated: "desc" }, { updatedAt: "desc" }]
   });
@@ -7731,6 +7769,7 @@ app.get("/api/predictions/state", requireAuth, async (req, res) => {
   }
 
   return res.json({
+    signalMode: readStateSignalMode(row.signalMode, asRecord(row.featuresSnapshot)),
     id: row.id,
     exchange: row.exchange,
     accountId: row.accountId,
