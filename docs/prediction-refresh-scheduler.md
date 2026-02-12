@@ -16,6 +16,12 @@ This implementation introduces a state/history split for predictions:
   - only on significant changes
   - only when signal/confidence/tags changed materially
   - cooldown applies between AI calls
+- Trigger probes are stabilized with hysteresis + debounce:
+  - trend/vol/RSI use enter/exit thresholds (hysteresis)
+  - trigger must stay active for 2 ticks (or debounce timeout) before firing
+- Event spam is reduced:
+  - repeated same `changeType` events are throttled
+  - frequent signal flips mark the state as unstable and can add `range_bound`
 
 ## New environment variables
 
@@ -24,7 +30,13 @@ This implementation introduces a state/history split for predictions:
 - `PREDICTION_REFRESH_MAX_RUNS_PER_CYCLE` (default: `PREDICTION_AUTO_MAX_RUNS_PER_CYCLE`)
 - `PREDICTION_REFRESH_TRIGGER_MIN_AGE_SECONDS` (default: `120`)
 - `PREDICTION_REFRESH_TRIGGER_PROBE_LIMIT` (default: `25`)
-- `PREDICTION_REFRESH_AI_COOLDOWN_SECONDS` (default: `300`)
+- `PREDICTION_REFRESH_AI_COOLDOWN_SECONDS` (legacy fallback, default: `300`)
+- `PRED_AI_COOLDOWN_SEC` (preferred AI cooldown, default: `300`)
+- `PRED_TRIGGER_DEBOUNCE_SEC` (trigger debounce window, default: `90`)
+- `PRED_HYSTERESIS_RATIO` (enter/exit ratio, default: `0.6`)
+- `PRED_EVENT_THROTTLE_SEC` (same-event throttle window, default: `180`)
+- `PRED_UNSTABLE_FLIP_LIMIT` (flip count threshold, default: `4`)
+- `PRED_UNSTABLE_FLIP_WINDOW_SECONDS` (flip lookback window, default: `1800`)
 - `PREDICTION_REFRESH_5M_SECONDS` (default: `180`)
 - `PREDICTION_REFRESH_15M_SECONDS` (default: `300`)
 - `PREDICTION_REFRESH_1H_SECONDS` (default: `600`)
@@ -38,4 +50,3 @@ This implementation introduces a state/history split for predictions:
 - `GET /api/predictions/state?...` returns one latest state row
 - `GET /api/predictions/events?stateId=...&limit=...` returns change events
 - `GET /api/predictions/:id?events=1&eventsLimit=20` supports state IDs and can include events
-

@@ -42,6 +42,11 @@ type PredictionListItem = {
   maxFavorablePct?: number | null;
   maxAdversePct?: number | null;
   outcomeEvaluatedAt?: string | null;
+  realizedReturnPct?: number | null;
+  realizedEvaluatedAt?: string | null;
+  realizedHit?: boolean | null;
+  realizedAbsError?: number | null;
+  realizedSqError?: number | null;
   exchange: string;
   accountId: string | null;
   lastUpdatedAt?: string | null;
@@ -85,6 +90,11 @@ type PredictionDetailResponse = PredictionPrefillSource & {
   } | null;
   riskFlags?: {
     dataGap?: boolean;
+  } | null;
+  realized?: {
+    realizedReturnPct: number | null;
+    evaluatedAt: string | null;
+    errorMetrics: Record<string, unknown> | null;
   } | null;
   events?: PredictionEventItem[];
 };
@@ -160,6 +170,25 @@ type PredictionActivityResponse = {
   };
 };
 
+type PredictionMetricsResponse = {
+  timeframe: PredictionTimeframe | null;
+  symbol: string | null;
+  from: string | null;
+  to: string | null;
+  bins: number;
+  evaluatedCount: number;
+  hitRate: number | null;
+  mae: number | null;
+  mse: number | null;
+  calibrationBins: Array<{
+    binFrom: number;
+    binTo: number;
+    avgConf: number | null;
+    accuracy: number | null;
+    n: number;
+  }>;
+};
+
 const TIMEFRAMES: PredictionTimeframe[] = ["5m", "15m", "1h", "4h", "1d"];
 
 function timeframeMs(value: PredictionTimeframe): number {
@@ -233,6 +262,22 @@ function fmtNum(value: unknown, decimals = 2): string {
   return parsed.toFixed(decimals);
 }
 
+function asRecord(value: unknown): Record<string, unknown> {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return {};
+  return value as Record<string, unknown>;
+}
+
+function readHitValue(value: unknown): boolean | null {
+  if (typeof value === "boolean") return value;
+  if (typeof value === "number" && Number.isFinite(value)) return value > 0;
+  if (typeof value === "string") {
+    const normalized = value.trim().toLowerCase();
+    if (normalized === "true" || normalized === "1" || normalized === "hit") return true;
+    if (normalized === "false" || normalized === "0" || normalized === "miss") return false;
+  }
+  return null;
+}
+
 function summarizeEventDelta(delta: Record<string, unknown> | null): string {
   if (!delta || typeof delta !== "object") return "No delta data";
   const parts: string[] = [];
@@ -303,6 +348,7 @@ export default function PredictionsPage() {
   const [sendingId, setSendingId] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [quality, setQuality] = useState<PredictionQualitySummary | null>(null);
+  const [metrics, setMetrics] = useState<PredictionMetricsResponse | null>(null);
   const [activity, setActivity] = useState<PredictionActivityResponse | null>(null);
   const [activityLoading, setActivityLoading] = useState(true);
   const [runningRows, setRunningRows] = useState<RunningPredictionItem[]>([]);
@@ -375,6 +421,15 @@ export default function PredictionsPage() {
     }
   }
 
+  async function loadPredictionMetrics() {
+    try {
+      const payload = await apiGet<PredictionMetricsResponse>("/api/predictions/metrics?bins=10");
+      setMetrics(payload);
+    } catch {
+      setMetrics(null);
+    }
+  }
+
   async function loadPredictionActivity() {
     setActivityLoading(true);
     try {
@@ -437,6 +492,7 @@ export default function PredictionsPage() {
     void loadPredictions();
     void loadRunningPredictions();
     void loadPredictionQuality();
+    void loadPredictionMetrics();
     void loadPredictionActivity();
     void loadAccounts();
   }, []);
@@ -616,6 +672,7 @@ export default function PredictionsPage() {
         loadPredictions(),
         loadRunningPredictions(),
         loadPredictionQuality(),
+        loadPredictionMetrics(),
         loadPredictionActivity()
       ]);
     } catch (e) {
@@ -644,6 +701,7 @@ export default function PredictionsPage() {
         loadPredictions(),
         loadRunningPredictions(),
         loadPredictionQuality(),
+        loadPredictionMetrics(),
         loadPredictionActivity()
       ]);
     } catch (e) {
@@ -669,6 +727,7 @@ export default function PredictionsPage() {
         loadPredictions(),
         loadRunningPredictions(),
         loadPredictionQuality(),
+        loadPredictionMetrics(),
         loadPredictionActivity()
       ]);
     } catch (e) {
@@ -709,6 +768,7 @@ export default function PredictionsPage() {
         loadPredictions(),
         loadRunningPredictions(),
         loadPredictionQuality(),
+        loadPredictionMetrics(),
         loadPredictionActivity()
       ]);
     } catch (e) {
@@ -742,6 +802,7 @@ export default function PredictionsPage() {
         loadPredictions(),
         loadRunningPredictions(),
         loadPredictionQuality(),
+        loadPredictionMetrics(),
         loadPredictionActivity()
       ]);
     } catch (e) {
@@ -767,6 +828,27 @@ export default function PredictionsPage() {
     const eventsExpanded = Boolean(expandedEventsByStateId[rowId]);
     const eventsLoading = eventsLoadingStateId === rowId;
     const eventsError = eventsErrorByStateId[rowId] ?? null;
+    const detailRealized = detail?.realized ?? null;
+    const detailErrorMetrics = asRecord(detailRealized?.errorMetrics);
+    const realizedReturnPct =
+      typeof row.realizedReturnPct === "number"
+        ? row.realizedReturnPct
+        : toNum(detailRealized?.realizedReturnPct);
+    const realizedEvaluatedAt =
+      row.realizedEvaluatedAt ??
+      (typeof detailRealized?.evaluatedAt === "string" ? detailRealized.evaluatedAt : null);
+    const realizedHit =
+      typeof row.realizedHit === "boolean"
+        ? row.realizedHit
+        : readHitValue(detailErrorMetrics.hit);
+    const realizedAbsError =
+      typeof row.realizedAbsError === "number"
+        ? row.realizedAbsError
+        : toNum(detailErrorMetrics.absError);
+    const realizedSqError =
+      typeof row.realizedSqError === "number"
+        ? row.realizedSqError
+        : toNum(detailErrorMetrics.sqError);
 
     const reasonBadgeClass =
       parsedReason.kind === "triggered"
@@ -814,49 +896,80 @@ export default function PredictionsPage() {
             </span>
           ) : null}
 
-          {indicators ? (
-            <div className="predictionIndicatorGrid">
-              <div className="card predictionIndicatorCard">
-                <div className="predictionIndicatorTitle">RSI (14)</div>
-                <div className="predictionIndicatorValue">{fmtNum(indicators.rsi_14, 2)}</div>
-              </div>
-              <div className="card predictionIndicatorCard">
-                <div className="predictionIndicatorTitle">MACD (line / signal / hist)</div>
-                <div className="predictionIndicatorValue">
-                  {fmtNum(indicators.macd?.line, 4)} / {fmtNum(indicators.macd?.signal, 4)} / {fmtNum(indicators.macd?.hist, 4)}
-                </div>
-              </div>
-              <div className="card predictionIndicatorCard">
-                <div className="predictionIndicatorTitle">Bollinger (width% / pos)</div>
-                <div className="predictionIndicatorValue">
-                  {fmtNum(indicators.bb?.width_pct, 2)} / {fmtNum(indicators.bb?.pos, 3)}
-                </div>
-              </div>
-              <div className="card predictionIndicatorCard">
-                <div className="predictionIndicatorTitle">VWAP (value / dist%)</div>
-                <div className="predictionIndicatorValue">
-                  {fmtNum(indicators.vwap?.value, 2)} / {fmtNum(indicators.vwap?.dist_pct, 2)}
-                </div>
-                <div className="predictionIndicatorMeta">
-                  mode: {indicators.vwap?.mode ?? "n/a"}
-                </div>
-              </div>
-              <div className="card predictionIndicatorCard">
-                <div className="predictionIndicatorTitle">ADX (ADX / +DI / -DI)</div>
-                <div className="predictionIndicatorValue">
-                  {fmtNum(indicators.adx?.adx_14, 2)} / {fmtNum(indicators.adx?.plus_di_14, 2)} / {fmtNum(indicators.adx?.minus_di_14, 2)}
-                </div>
-              </div>
-              <div className="card predictionIndicatorCard">
-                <div className="predictionIndicatorTitle">ATR %</div>
-                <div className="predictionIndicatorValue">{fmtNum(indicators.atr_pct, 4)}</div>
+          <div className="predictionIndicatorGrid">
+            <div className="card predictionIndicatorCard">
+              <div className="predictionIndicatorTitle">Evaluated</div>
+              <div className="predictionIndicatorValue">{realizedEvaluatedAt ? "yes" : "no"}</div>
+              <div className="predictionIndicatorMeta">
+                {realizedEvaluatedAt
+                  ? `at ${new Date(realizedEvaluatedAt).toLocaleString()}`
+                  : "horizon not elapsed yet"}
               </div>
             </div>
-          ) : (
-            <div style={{ color: "var(--muted)", marginTop: 8 }}>
-              No indicator data for this prediction.
+            <div className="card predictionIndicatorCard">
+              <div className="predictionIndicatorTitle">Realized return %</div>
+              <div className="predictionIndicatorValue">{fmtNum(realizedReturnPct, 4)}</div>
             </div>
-          )}
+            <div className="card predictionIndicatorCard">
+              <div className="predictionIndicatorTitle">Directional hit</div>
+              <div className="predictionIndicatorValue">
+                {realizedHit === null ? "n/a" : realizedHit ? "hit" : "miss"}
+              </div>
+            </div>
+            <div className="card predictionIndicatorCard">
+              <div className="predictionIndicatorTitle">Abs error</div>
+              <div className="predictionIndicatorValue">{fmtNum(realizedAbsError, 4)}</div>
+            </div>
+            <div className="card predictionIndicatorCard">
+              <div className="predictionIndicatorTitle">Sq error</div>
+              <div className="predictionIndicatorValue">{fmtNum(realizedSqError, 4)}</div>
+            </div>
+            {indicators ? (
+              <>
+                <div className="card predictionIndicatorCard">
+                  <div className="predictionIndicatorTitle">RSI (14)</div>
+                  <div className="predictionIndicatorValue">{fmtNum(indicators.rsi_14, 2)}</div>
+                </div>
+                <div className="card predictionIndicatorCard">
+                  <div className="predictionIndicatorTitle">MACD (line / signal / hist)</div>
+                  <div className="predictionIndicatorValue">
+                    {fmtNum(indicators.macd?.line, 4)} / {fmtNum(indicators.macd?.signal, 4)} / {fmtNum(indicators.macd?.hist, 4)}
+                  </div>
+                </div>
+                <div className="card predictionIndicatorCard">
+                  <div className="predictionIndicatorTitle">Bollinger (width% / pos)</div>
+                  <div className="predictionIndicatorValue">
+                    {fmtNum(indicators.bb?.width_pct, 2)} / {fmtNum(indicators.bb?.pos, 3)}
+                  </div>
+                </div>
+                <div className="card predictionIndicatorCard">
+                  <div className="predictionIndicatorTitle">VWAP (value / dist%)</div>
+                  <div className="predictionIndicatorValue">
+                    {fmtNum(indicators.vwap?.value, 2)} / {fmtNum(indicators.vwap?.dist_pct, 2)}
+                  </div>
+                  <div className="predictionIndicatorMeta">
+                    mode: {indicators.vwap?.mode ?? "n/a"}
+                  </div>
+                </div>
+                <div className="card predictionIndicatorCard">
+                  <div className="predictionIndicatorTitle">ADX (ADX / +DI / -DI)</div>
+                  <div className="predictionIndicatorValue">
+                    {fmtNum(indicators.adx?.adx_14, 2)} / {fmtNum(indicators.adx?.plus_di_14, 2)} / {fmtNum(indicators.adx?.minus_di_14, 2)}
+                  </div>
+                </div>
+                <div className="card predictionIndicatorCard">
+                  <div className="predictionIndicatorTitle">ATR %</div>
+                  <div className="predictionIndicatorValue">{fmtNum(indicators.atr_pct, 4)}</div>
+                </div>
+              </>
+            ) : (
+              <div className="card predictionIndicatorCard">
+                <div className="predictionIndicatorTitle">Indicators</div>
+                <div className="predictionIndicatorValue">n/a</div>
+                <div className="predictionIndicatorMeta">No indicator data for this prediction.</div>
+              </div>
+            )}
+          </div>
         </div>
 
         <div className="card predictionDetailPanel">
@@ -1099,8 +1212,8 @@ export default function PredictionsPage() {
         </div>
       </section>
 
-      <section className="card predictionsSection">
-        <div className="predictionsQualityGrid">
+	      <section className="card predictionsSection">
+	        <div className="predictionsQualityGrid">
           <div className="card" style={{ margin: 0, padding: 10 }}>
             <div style={{ color: "var(--muted)", fontSize: 12 }}>Evaluated Signals</div>
             <div style={{ fontSize: 20, fontWeight: 800 }}>{quality?.sampleSize ?? 0}</div>
@@ -1121,13 +1234,40 @@ export default function PredictionsPage() {
                 : "-"}
             </div>
           </div>
-          <div className="card" style={{ margin: 0, padding: 10 }}>
-            <div style={{ color: "var(--muted)", fontSize: 12 }}>TP / SL / Expired</div>
-            <div style={{ fontSize: 16, fontWeight: 700 }}>
-              {(quality?.tp ?? 0)} / {(quality?.sl ?? 0)} / {(quality?.expired ?? 0)}
-            </div>
-          </div>
-          <div className="card predictionActivityCard" style={{ margin: 0, padding: 10 }}>
+	          <div className="card" style={{ margin: 0, padding: 10 }}>
+	            <div style={{ color: "var(--muted)", fontSize: 12 }}>TP / SL / Expired</div>
+	            <div style={{ fontSize: 16, fontWeight: 700 }}>
+	              {(quality?.tp ?? 0)} / {(quality?.sl ?? 0)} / {(quality?.expired ?? 0)}
+	            </div>
+	          </div>
+	          <div className="card" style={{ margin: 0, padding: 10 }}>
+	            <div style={{ color: "var(--muted)", fontSize: 12 }}>Directional Hit Rate</div>
+	            <div style={{ fontSize: 20, fontWeight: 800 }}>
+	              {metrics?.hitRate !== null && metrics?.hitRate !== undefined
+	                ? `${metrics.hitRate.toFixed(2)}%`
+	                : "-"}
+	            </div>
+	            <div style={{ color: "var(--muted)", fontSize: 11 }}>
+	              Evaluated: {metrics?.evaluatedCount ?? 0}
+	            </div>
+	          </div>
+	          <div className="card" style={{ margin: 0, padding: 10 }}>
+	            <div style={{ color: "var(--muted)", fontSize: 12 }}>MAE (Move %)</div>
+	            <div style={{ fontSize: 20, fontWeight: 800 }}>
+	              {metrics?.mae !== null && metrics?.mae !== undefined
+	                ? metrics.mae.toFixed(4)
+	                : "-"}
+	            </div>
+	          </div>
+	          <div className="card" style={{ margin: 0, padding: 10 }}>
+	            <div style={{ color: "var(--muted)", fontSize: 12 }}>MSE</div>
+	            <div style={{ fontSize: 20, fontWeight: 800 }}>
+	              {metrics?.mse !== null && metrics?.mse !== undefined
+	                ? metrics.mse.toFixed(4)
+	                : "-"}
+	            </div>
+	          </div>
+	          <div className="card predictionActivityCard" style={{ margin: 0, padding: 10 }}>
             <div className="predictionActivityHeader">
               <div style={{ color: "var(--muted)", fontSize: 12 }}>AI Refresh</div>
               <span className={`badge ${activityBadgeClass}`}>
@@ -1152,14 +1292,50 @@ export default function PredictionsPage() {
                 {activityLoading ? "..." : predictionActivityReasonDetail.shortReason}
               </strong>
             </div>
-            {isPredictionActivityStale ? (
-              <div className="predictionActivityWarning">
-                No fresh signal calculation in {Math.ceil(staleAfterMs / 60000)}m.
-              </div>
-            ) : null}
-          </div>
-        </div>
-      </section>
+	            {isPredictionActivityStale ? (
+	              <div className="predictionActivityWarning">
+	                No fresh signal calculation in {Math.ceil(staleAfterMs / 60000)}m.
+	              </div>
+	            ) : null}
+	          </div>
+	        </div>
+	        <div className="predictionCalibrationWrap">
+	          <div className="predictionCalibrationHeader">
+	            <strong>Confidence Calibration (10 bins)</strong>
+	            <span style={{ color: "var(--muted)", fontSize: 12 }}>
+	              predicted confidence vs. empirical accuracy
+	            </span>
+	          </div>
+	          {!metrics || metrics.calibrationBins.filter((bin) => bin.n > 0).length === 0 ? (
+	            <div className="predictionCalibrationEmpty">No evaluated bins yet.</div>
+	          ) : (
+	            <div className="predictionCalibrationTableWrap">
+	              <table className="predictionCalibrationTable">
+	                <thead>
+	                  <tr>
+	                    <th>Bin</th>
+	                    <th>Avg conf</th>
+	                    <th>Accuracy</th>
+	                    <th>N</th>
+	                  </tr>
+	                </thead>
+	                <tbody>
+	                  {metrics.calibrationBins
+	                    .filter((bin) => bin.n > 0)
+	                    .map((bin) => (
+	                      <tr key={`${bin.binFrom}-${bin.binTo}`}>
+	                        <td>{bin.binFrom.toFixed(0)}-{bin.binTo.toFixed(0)}%</td>
+	                        <td>{bin.avgConf !== null ? `${bin.avgConf.toFixed(2)}%` : "-"}</td>
+	                        <td>{bin.accuracy !== null ? `${bin.accuracy.toFixed(2)}%` : "-"}</td>
+	                        <td>{bin.n}</td>
+	                      </tr>
+	                    ))}
+	                </tbody>
+	              </table>
+	            </div>
+	          )}
+	        </div>
+	      </section>
 
       <section className="card predictionsSection">
         <div className="predictionsRunningHeader">
@@ -1343,6 +1519,7 @@ export default function PredictionsPage() {
               void Promise.all([
                 loadPredictions(),
                 loadPredictionQuality(),
+                loadPredictionMetrics(),
                 loadPredictionActivity()
               ]);
             }}

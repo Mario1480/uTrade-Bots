@@ -57,7 +57,14 @@ export type RefreshDecision = {
 };
 
 const DEFAULT_AI_COOLDOWN_MS =
-  Math.max(30, Number(process.env.PREDICTION_REFRESH_AI_COOLDOWN_SECONDS ?? "300")) * 1000;
+  Math.max(
+    30,
+    Number(process.env.PRED_AI_COOLDOWN_SEC ?? process.env.PREDICTION_REFRESH_AI_COOLDOWN_SECONDS ?? "300")
+  ) * 1000;
+const DEFAULT_EVENT_THROTTLE_MS =
+  Math.max(0, Number(process.env.PRED_EVENT_THROTTLE_SEC ?? "180")) * 1000;
+const DEFAULT_UNSTABLE_FLIP_WINDOW_MS = 30 * 60 * 1000;
+const DEFAULT_UNSTABLE_FLIP_LIMIT = Math.max(2, Number(process.env.PRED_UNSTABLE_FLIP_LIMIT ?? "4"));
 
 const REFRESH_INTERVALS_MS: Record<PredictionTimeframe, number> = {
   "5m": Math.max(60, Number(process.env.PREDICTION_REFRESH_5M_SECONDS ?? "180")) * 1000,
@@ -246,4 +253,31 @@ export function buildEventDelta(input: {
     tagsAdded: tagDelta.added,
     tagsRemoved: tagDelta.removed
   };
+}
+
+export function shouldThrottleRepeatedEvent(input: {
+  nowMs: number;
+  recentSameEventAtMs: number | null;
+  eventThrottleMs?: number;
+}): boolean {
+  const throttleMs =
+    input.eventThrottleMs !== undefined ? Math.max(0, input.eventThrottleMs) : DEFAULT_EVENT_THROTTLE_MS;
+  if (throttleMs <= 0) return false;
+  if (input.recentSameEventAtMs === null) return false;
+  return input.nowMs - input.recentSameEventAtMs < throttleMs;
+}
+
+export function shouldMarkUnstableFlips(input: {
+  recentFlipCount: number;
+  unstableFlipLimit?: number;
+  unstableWindowMs?: number;
+  lastFlipAtMs?: number | null;
+  nowMs: number;
+}): boolean {
+  const limit = input.unstableFlipLimit ?? DEFAULT_UNSTABLE_FLIP_LIMIT;
+  const windowMs = input.unstableWindowMs ?? DEFAULT_UNSTABLE_FLIP_WINDOW_MS;
+  if (limit <= 0) return false;
+  if (input.recentFlipCount < limit) return false;
+  if (input.lastFlipAtMs === null || input.lastFlipAtMs === undefined) return true;
+  return input.nowMs - input.lastFlipAtMs <= windowMs;
 }

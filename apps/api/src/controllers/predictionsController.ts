@@ -12,6 +12,7 @@ import {
   normalizePredictionKeyDrivers,
   normalizePredictionTags
 } from "../dto/predictions.dto.js";
+import { readRealizedPayloadFromOutcomeMeta } from "../jobs/predictionEvaluatorJob.js";
 
 type PredictionDetailBot = {
   id: string;
@@ -293,10 +294,10 @@ function derivePredictionKeyDrivers(snapshot: Record<string, unknown>) {
 }
 
 function normalizeErrorMetrics(outcomeMeta: unknown): Record<string, unknown> | null {
-  const metaRecord = asRecord(outcomeMeta);
-  if (!metaRecord) return null;
-  const nested = asRecord(metaRecord.errorMetrics);
+  const realizedPayload = readRealizedPayloadFromOutcomeMeta(outcomeMeta);
+  const nested = asRecord(realizedPayload.errorMetrics);
   if (nested) return nested;
+  const metaRecord = asRecord(outcomeMeta);
   return metaRecord;
 }
 
@@ -533,6 +534,7 @@ export async function getPredictionDetailController(
     (snapshot as Record<string, unknown>).keyDrivers ?? derivePredictionKeyDrivers(snapshot)
   );
   const indicators = asRecord(snapshot.indicators) ?? null;
+  const realizedPayload = readRealizedPayloadFromOutcomeMeta(row.outcomeMeta);
 
   const dtoCandidate = {
     id: row.id,
@@ -556,8 +558,8 @@ export async function getPredictionDetailController(
       ? row.modelVersion
       : "baseline-v1",
     realized: {
-      realizedReturnPct: toNumber(row.outcomePnlPct),
-      evaluatedAt: toIsoOrNull(row.outcomeEvaluatedAt),
+      realizedReturnPct: realizedPayload.realizedReturnPct ?? toNumber(row.outcomePnlPct),
+      evaluatedAt: realizedPayload.evaluatedAt ?? toIsoOrNull(row.outcomeEvaluatedAt),
       errorMetrics: normalizeErrorMetrics(row.outcomeMeta)
     }
   };

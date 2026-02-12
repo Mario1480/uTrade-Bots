@@ -35,6 +35,11 @@ const ADMIN_LINKS = [
     href: "/admin/api-keys",
     title: "API Keys",
     description: "Store global API keys (starting with OpenAI) encrypted in DB."
+  },
+  {
+    href: "/admin/prediction-refresh",
+    title: "Prediction Refresh",
+    description: "Tune debounce, hysteresis, cooldown and event throttle for auto predictions."
   }
 ];
 

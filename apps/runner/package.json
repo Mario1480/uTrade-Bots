@@ -6,7 +6,7 @@
     "dev": "tsx src/index.ts",
     "build": "tsc -p tsconfig.json",
     "typecheck": "tsc -p tsconfig.json --noEmit",
-    "test": "tsx --test src/circuit-breaker.test.ts"
+    "test": "tsx --test src/circuit-breaker.test.ts src/prediction-gate.test.ts"
   },
   "dependencies": {
     "@mm/db": "0.0.1",

@@ -19,11 +19,21 @@ export type TriggerInput = {
   refreshIntervalMs: number;
   previousFeatureSnapshot: Record<string, unknown> | null;
   currentFeatureSnapshot: Record<string, unknown>;
+  previousTriggerState?: TriggerDebounceState | null;
+  triggerDebounceSec?: number;
+  hysteresisRatio?: number;
+};
+
+export type TriggerDebounceState = {
+  candidateReason: RefreshReason | null;
+  candidateCount: number;
+  lastTriggerCandidateAtMs: number | null;
 };
 
 export type TriggerResult = {
   refresh: boolean;
   reasons: RefreshReason[];
+  triggerState: TriggerDebounceState;
 };
 
 export type SignificantChangeType =
@@ -124,6 +134,139 @@ function rankBucket(value: number | null): "low" | "mid" | "high" | "unknown" {
   return "mid";
 }
 
+type RegimeBucket = "low" | "mid" | "high" | "unknown";
+
+const DEFAULT_HYSTERESIS_RATIO = Math.max(
+  0.2,
+  Math.min(0.95, Number(process.env.PRED_HYSTERESIS_RATIO ?? "0.6"))
+);
+const DEFAULT_TRIGGER_DEBOUNCE_SEC = Math.max(
+  0,
+  Number(process.env.PRED_TRIGGER_DEBOUNCE_SEC ?? "90")
+);
+const TREND_ENTER_EPS_BY_TF: Record<PredictionTimeframe, number> = {
+  "5m": 0.0005,
+  "15m": 0.00045,
+  "1h": 0.0004,
+  "4h": 0.00035,
+  "1d": 0.0003
+};
+const VOL_HIGH_ENTER_BY_TF: Record<PredictionTimeframe, number> = {
+  "5m": 72,
+  "15m": 74,
+  "1h": 75,
+  "4h": 76,
+  "1d": 78
+};
+const VOL_LOW_ENTER_BY_TF: Record<PredictionTimeframe, number> = {
+  "5m": 28,
+  "15m": 26,
+  "1h": 25,
+  "4h": 24,
+  "1d": 22
+};
+const RSI_HIGH_ENTER_BY_TF: Record<PredictionTimeframe, number> = {
+  "5m": 56,
+  "15m": 55,
+  "1h": 55,
+  "4h": 54,
+  "1d": 53
+};
+const RSI_LOW_ENTER_BY_TF: Record<PredictionTimeframe, number> = {
+  "5m": 44,
+  "15m": 45,
+  "1h": 45,
+  "4h": 46,
+  "1d": 47
+};
+
+function classifyTrendSignWithHysteresis(
+  timeframe: PredictionTimeframe,
+  value: number | null,
+  prevState: -1 | 0 | 1,
+  hysteresisRatio: number
+): -1 | 0 | 1 {
+  if (value === null) return 0;
+  const enter = TREND_ENTER_EPS_BY_TF[timeframe] ?? 0.0004;
+  const exit = enter * hysteresisRatio;
+
+  if (prevState === 1) {
+    if (value >= exit) return 1;
+    if (value <= -enter) return -1;
+    return 0;
+  }
+  if (prevState === -1) {
+    if (value <= -exit) return -1;
+    if (value >= enter) return 1;
+    return 0;
+  }
+  if (value >= enter) return 1;
+  if (value <= -enter) return -1;
+  return 0;
+}
+
+function classifyRankBucketWithHysteresis(
+  timeframe: PredictionTimeframe,
+  value: number | null,
+  prevState: RegimeBucket,
+  hysteresisRatio: number
+): RegimeBucket {
+  if (value === null) return "unknown";
+  const highEnter = VOL_HIGH_ENTER_BY_TF[timeframe] ?? 75;
+  const lowEnter = VOL_LOW_ENTER_BY_TF[timeframe] ?? 25;
+  const highExit = 50 + (highEnter - 50) * hysteresisRatio;
+  const lowExit = 50 - (50 - lowEnter) * hysteresisRatio;
+
+  if (prevState === "high") {
+    if (value >= highExit) return "high";
+    if (value <= lowEnter) return "low";
+    return "mid";
+  }
+  if (prevState === "low") {
+    if (value <= lowExit) return "low";
+    if (value >= highEnter) return "high";
+    return "mid";
+  }
+  if (value >= highEnter) return "high";
+  if (value <= lowEnter) return "low";
+  return "mid";
+}
+
+function classifyRsiBucketWithHysteresis(
+  timeframe: PredictionTimeframe,
+  value: number | null,
+  prevState: RegimeBucket,
+  hysteresisRatio: number
+): RegimeBucket {
+  if (value === null) return "unknown";
+  const highEnter = RSI_HIGH_ENTER_BY_TF[timeframe] ?? 55;
+  const lowEnter = RSI_LOW_ENTER_BY_TF[timeframe] ?? 45;
+  const highExit = 50 + (highEnter - 50) * hysteresisRatio;
+  const lowExit = 50 - (50 - lowEnter) * hysteresisRatio;
+
+  if (prevState === "high") {
+    if (value >= highExit) return "high";
+    if (value <= lowEnter) return "low";
+    return "mid";
+  }
+  if (prevState === "low") {
+    if (value <= lowExit) return "low";
+    if (value >= highEnter) return "high";
+    return "mid";
+  }
+  if (value >= highEnter) return "high";
+  if (value <= lowEnter) return "low";
+  return "mid";
+}
+
+function resetTriggerState(): TriggerDebounceState {
+  return {
+    candidateReason: null,
+    candidateCount: 0,
+    lastTriggerCandidateAtMs: null
+  };
+}
+
 function toTagSet(tags: string[]): Set<string> {
   const out = new Set<string>();
   for (const tag of tags) {
@@ -146,11 +289,16 @@ function changedTagSet(prev: string[], next: string[]): boolean {
 
 export function shouldRefreshTF(input: TriggerInput): TriggerResult {
   const reasons: RefreshReason[] = [];
+  const debounceState = input.previousTriggerState ?? resetTriggerState();
+  const hysteresisRatio = Math.max(
+    0.2,
+    Math.min(0.95, Number.isFinite(Number(input.hysteresisRatio)) ? Number(input.hysteresisRatio) : DEFAULT_HYSTERESIS_RATIO)
+  );
 
   const due = input.nowMs - input.lastUpdatedMs >= input.refreshIntervalMs;
   if (due) {
     reasons.push("scheduled_due");
-    return { refresh: true, reasons };
+    return { refresh: true, reasons, triggerState: resetTriggerState() };
   }
 
   const prev = asRecord(input.previousFeatureSnapshot);
@@ -158,23 +306,45 @@ export function shouldRefreshTF(input: TriggerInput): TriggerResult {
 
   const prevTrend = readFeature(prev, ["emaSpread", "ema_spread_pct"]);
   const currTrend = readFeature(curr, ["emaSpread", "ema_spread_pct"]);
-  const prevTrendSign = signBucket(prevTrend, 0.0004);
-  const currTrendSign = signBucket(currTrend, 0.0004);
+  const prevTrendSign = classifyTrendSignWithHysteresis(
+    input.timeframe,
+    prevTrend,
+    signBucket(prevTrend, 0.0004),
+    hysteresisRatio
+  );
+  const currTrendSign = classifyTrendSignWithHysteresis(
+    input.timeframe,
+    currTrend,
+    prevTrendSign,
+    hysteresisRatio
+  );
   if (prevTrendSign !== 0 && currTrendSign !== 0 && prevTrendSign !== currTrendSign) {
     reasons.push("trigger_trend_flip");
   }
 
   const prevTrendRank = readFeature(prev, ["ema_spread_abs_rank_0_100"]);
   const currTrendRank = readFeature(curr, ["ema_spread_abs_rank_0_100"]);
-  if (rankBucket(prevTrendRank) !== rankBucket(currTrendRank)) {
+  const prevTrendRegime = classifyRankBucketWithHysteresis(
+    input.timeframe,
+    prevTrendRank,
+    rankBucket(prevTrendRank),
+    hysteresisRatio
+  );
+  const currTrendRegime = classifyRankBucketWithHysteresis(
+    input.timeframe,
+    currTrendRank,
+    prevTrendRegime,
+    hysteresisRatio
+  );
+  if (prevTrendRegime !== currTrendRegime) {
     reasons.push("trigger_trend_regime");
   }
 
   const prevRsi = readFeature(prev, ["rsi", "indicators.rsi_14"]);
   const currRsi = readFeature(curr, ["rsi", "indicators.rsi_14"]);
   if (prevRsi !== null && currRsi !== null) {
-    const prevBucket = prevRsi >= 55 ? "high" : prevRsi <= 45 ? "low" : "mid";
-    const currBucket = currRsi >= 55 ? "high" : currRsi <= 45 ? "low" : "mid";
+    const prevBucket = classifyRsiBucketWithHysteresis(input.timeframe, prevRsi, "mid", hysteresisRatio);
+    const currBucket = classifyRsiBucketWithHysteresis(input.timeframe, currRsi, prevBucket, hysteresisRatio);
     if (prevBucket !== currBucket) {
       reasons.push("trigger_rsi_cross");
     }
@@ -182,7 +352,19 @@ export function shouldRefreshTF(input: TriggerInput): TriggerResult {
 
   const prevVolRank = readFeature(prev, ["atr_pct_rank_0_100"]);
   const currVolRank = readFeature(curr, ["atr_pct_rank_0_100"]);
-  if (rankBucket(prevVolRank) !== rankBucket(currVolRank)) {
+  const prevVolRegime = classifyRankBucketWithHysteresis(
+    input.timeframe,
+    prevVolRank,
+    rankBucket(prevVolRank),
+    hysteresisRatio
+  );
+  const currVolRegime = classifyRankBucketWithHysteresis(
+    input.timeframe,
+    currVolRank,
+    prevVolRegime,
+    hysteresisRatio
+  );
+  if (prevVolRegime !== currVolRegime) {
     reasons.push("trigger_vol_regime");
   }
 
@@ -212,9 +394,54 @@ export function shouldRefreshTF(input: TriggerInput): TriggerResult {
     reasons.push("trigger_data_gap");
   }
 
+  const useDebounce = input.previousTriggerState !== undefined;
+  if (!useDebounce) {
+    return {
+      refresh: reasons.length > 0,
+      reasons,
+      triggerState: resetTriggerState()
+    };
+  }
+
+  if (reasons.length === 0) {
+    return {
+      refresh: false,
+      reasons,
+      triggerState: resetTriggerState()
+    };
+  }
+
+  const primaryReason = reasons[0];
+  const sameReason = debounceState.candidateReason === primaryReason;
+  const nextState: TriggerDebounceState = {
+    candidateReason: primaryReason,
+    candidateCount: sameReason ? debounceState.candidateCount + 1 : 1,
+    lastTriggerCandidateAtMs: sameReason
+      ? (debounceState.lastTriggerCandidateAtMs ?? input.nowMs)
+      : input.nowMs
+  };
+  const debounceMs = Math.max(
+    0,
+    Number.isFinite(Number(input.triggerDebounceSec))
+      ? Number(input.triggerDebounceSec) * 1000
+      : DEFAULT_TRIGGER_DEBOUNCE_SEC * 1000
+  );
+  const candidateAgeMs = Math.max(0, input.nowMs - (nextState.lastTriggerCandidateAtMs ?? input.nowMs));
+  const debounceSatisfied =
+    debounceMs <= 0 || nextState.candidateCount >= 2 || candidateAgeMs >= debounceMs;
+
+  if (!debounceSatisfied) {
+    return {
+      refresh: false,
+      reasons: [],
+      triggerState: nextState
+    };
+  }
+
   return {
-    refresh: reasons.length > 0,
-    reasons
+    refresh: true,
+    reasons,
+    triggerState: resetTriggerState()
   };
 }
 

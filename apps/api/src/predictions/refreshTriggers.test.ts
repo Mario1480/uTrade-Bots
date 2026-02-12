@@ -30,6 +30,47 @@ test("shouldRefreshTF detects trigger-based trend flip", () => {
   assert.equal(result.reasons.includes("trigger_trend_flip"), true);
 });
 
+test("shouldRefreshTF applies debounce when trigger state is provided", () => {
+  const first = shouldRefreshTF({
+    timeframe: "5m",
+    nowMs: 100_000,
+    lastUpdatedMs: 99_000,
+    refreshIntervalMs: 300_000,
+    previousFeatureSnapshot: { emaSpread: 0.002 },
+    currentFeatureSnapshot: { emaSpread: -0.003 },
+    previousTriggerState: null,
+    triggerDebounceSec: 120
+  });
+  assert.equal(first.refresh, false);
+  assert.equal(first.triggerState.candidateCount, 1);
+
+  const second = shouldRefreshTF({
+    timeframe: "5m",
+    nowMs: 160_000,
+    lastUpdatedMs: 99_000,
+    refreshIntervalMs: 300_000,
+    previousFeatureSnapshot: { emaSpread: 0.002 },
+    currentFeatureSnapshot: { emaSpread: -0.003 },
+    previousTriggerState: first.triggerState,
+    triggerDebounceSec: 120
+  });
+  assert.equal(second.refresh, true);
+  assert.equal(second.reasons.includes("trigger_trend_flip"), true);
+});
+
+test("shouldRefreshTF hysteresis avoids noisy vol regime exits", () => {
+  const result = shouldRefreshTF({
+    timeframe: "15m",
+    nowMs: 100_000,
+    lastUpdatedMs: 95_500,
+    refreshIntervalMs: 60_000,
+    previousFeatureSnapshot: { atr_pct_rank_0_100: 80 },
+    currentFeatureSnapshot: { atr_pct_rank_0_100: 70 }
+  });
+  assert.equal(result.refresh, false);
+  assert.equal(result.reasons.includes("trigger_vol_regime"), false);
+});
+
 test("isSignificantChange detects signal flip + tag changes", () => {
   const result = isSignificantChange({
     prevState: {

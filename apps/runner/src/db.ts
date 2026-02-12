@@ -32,7 +32,44 @@ export type BotRuntimeCircuitBreakerState = {
   lastErrorMessage: string | null;
 };
 
-export type RiskEventType = "KILL_SWITCH_BLOCK" | "CIRCUIT_BREAKER_TRIPPED" | "BOT_ERROR";
+export type PredictionGateState = {
+  id: string;
+  exchange: string;
+  accountId: string;
+  userId: string;
+  symbol: string;
+  marketType: "spot" | "perp";
+  timeframe: "5m" | "15m" | "1h" | "4h" | "1d";
+  signal: "up" | "down" | "neutral";
+  confidence: number;
+  tags: string[];
+  tsUpdated: Date;
+};
+
+export type RiskEventType =
+  | "KILL_SWITCH_BLOCK"
+  | "CIRCUIT_BREAKER_TRIPPED"
+  | "BOT_ERROR"
+  | "PREDICTION_GATE_BLOCK"
+  | "PREDICTION_GATE_ALLOW"
+  | "PREDICTION_GATE_FAIL_OPEN";
+
+function normalizeSymbol(value: string): string {
+  return String(value ?? "").replace(/[^A-Za-z0-9]/g, "").toUpperCase();
+}
+
+function normalizeStringArray(value: unknown, limit = 10): string[] {
+  if (!Array.isArray(value)) return [];
+  const out: string[] = [];
+  for (const item of value) {
+    const normalized = String(item ?? "").trim();
+    if (!normalized) continue;
+    if (out.includes(normalized)) continue;
+    out.push(normalized);
+    if (out.length >= limit) break;
+  }
+  return out;
+}
 
 function mapRowToActiveBot(bot: any): ActiveFuturesBot {
   return {
@@ -150,6 +187,83 @@ export async function loadActiveFuturesBots(): Promise<ActiveFuturesBot[]> {
   });
 
   return (bots as any[]).filter(canExecuteRow).map(mapRowToActiveBot);
+}
+
+export async function loadLatestPredictionStateForGate(params: {
+  userId: string;
+  exchange: string;
+  exchangeAccountId: string;
+  symbol: string;
+  marketType: "spot" | "perp";
+  timeframe: "5m" | "15m" | "1h" | "4h" | "1d";
+}): Promise<PredictionGateState | null> {
+  const symbol = normalizeSymbol(params.symbol);
+  if (!symbol) return null;
+
+  const exchangeVariants = Array.from(
+    new Set([
+      params.exchange,
+      params.exchange.toLowerCase(),
+      params.exchange.toUpperCase()
+    ].map((entry) => entry.trim()).filter(Boolean))
+  );
+
+  const row = await db.predictionState.findFirst({
+    where: {
+      userId: params.userId,
+      accountId: params.exchangeAccountId,
+      symbol,
+      marketType: params.marketType,
+      timeframe: params.timeframe,
+      ...(exchangeVariants.length > 0 ? { exchange: { in: exchangeVariants } } : {})
+    },
+    orderBy: [{ tsUpdated: "desc" }],
+    select: {
+      id: true,
+      exchange: true,
+      accountId: true,
+      userId: true,
+      symbol: true,
+      marketType: true,
+      timeframe: true,
+      signal: true,
+      confidence: true,
+      tags: true,
+      tsUpdated: true
+    }
+  });
+
+  if (!row) return null;
+  const signalRaw = String(row.signal ?? "").trim().toLowerCase();
+  const signal: PredictionGateState["signal"] =
+    signalRaw === "up" || signalRaw === "down" ? signalRaw : "neutral";
+  const marketTypeRaw = String(row.marketType ?? "").trim().toLowerCase();
+  const marketType: PredictionGateState["marketType"] =
+    marketTypeRaw === "spot" ? "spot" : "perp";
+  const timeframeRaw = String(row.timeframe ?? "").trim();
+  if (
+    timeframeRaw !== "5m" &&
+    timeframeRaw !== "15m" &&
+    timeframeRaw !== "1h" &&
+    timeframeRaw !== "4h" &&
+    timeframeRaw !== "1d"
+  ) {
+    return null;
+  }
+
+  return {
+    id: row.id,
+    exchange: String(row.exchange ?? ""),
+    accountId: String(row.accountId ?? ""),
+    userId: String(row.userId ?? ""),
+    symbol: normalizeSymbol(String(row.symbol ?? "")),
+    marketType,
+    timeframe: timeframeRaw,
+    signal,
+    confidence: Number(row.confidence ?? 0),
+    tags: normalizeStringArray(row.tags, 10),
+    tsUpdated: row.tsUpdated
+  };
 }
 
 export async function upsertBotRuntime(params: {

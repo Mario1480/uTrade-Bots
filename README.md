@@ -101,6 +101,15 @@ AI Predictions:
   - `PREDICTION_REFRESH_4H_SECONDS`
   - `PREDICTION_REFRESH_1D_SECONDS`
   - Details: `docs/prediction-refresh-scheduler.md`
+- Evaluator v1:
+  - `PREDICTION_EVALUATOR_ENABLED`
+  - `PREDICTION_EVALUATOR_POLL_SECONDS`
+  - `PREDICTION_EVALUATOR_BATCH_SIZE`
+  - `PREDICTION_EVALUATOR_SAFETY_LAG_SECONDS`
+  - Details: `docs/prediction-evaluator.md`
+- Bot Entry Gating (Prediction filter only, no auto-trading):
+  - `PREDICTION_GATE_FAIL_OPEN` (`false` default)
+  - Gate-Config liegt je Bot in `futuresConfig.paramsJson.gating`
 
 Prediction Indicator Pack v1 (backend, deterministic from OHLCV):
 - RSI(14), MACD(12/26/9), Bollinger(20/2), ADX(14), ATR(14)/close
@@ -131,6 +140,7 @@ SMTP:
 - API Health (prod): `http://<api-domain>/health`
 - Manual Trading Desk: `/trade`
 - Predictions: `/predictions`
+- Prediction metrics API: `/api/predictions/metrics?bins=10`
 - Thresholds API (latest): `/api/thresholds/latest?exchange=bitget&symbol=BTCUSDT&marketType=perp&tf=15m`
 - Telegram Settings: `/settings/notifications`
 - Admin Backend: `/admin` (Superadmin)
@@ -144,6 +154,59 @@ Der Trading-Desk verwendet aktuell `lightweight-charts` (Node/TS, ohne native Ab
 - Polling-Refresh für neue Kerzen (MVP)
 
 Damit die Kerzen erscheinen, muss die API erreichbar sein (`/api/market/candles`) und ein gültiger Exchange-Account gewählt sein.
+
+## Bot Prediction Gate (Entry Filter)
+
+Der Runner nutzt optional ein Prediction-Gate für **Entry-Intents** (`intent.type === "open"`):
+
+- Gate blockiert oder erlaubt Entries auf Basis von `predictions_state`
+- Gate skaliert optional die Positionsgröße (`sizeMultiplier`)
+- Strategien bleiben führend; es gibt **kein** Auto-Trading nur durch Predictions
+
+Beispiel `paramsJson` für Trend-Bot:
+
+```json
+{
+  "gating": {
+    "enabled": true,
+    "timeframe": "15m",
+    "minConfidence": 70,
+    "allowSignals": ["up"],
+    "blockTags": ["news_risk", "low_liquidity"],
+    "maxAgeSec": 900,
+    "sizeMultiplier": {
+      "base": 1.0,
+      "highConfidenceThreshold": 80,
+      "highConfidenceMultiplier": 1.2,
+      "highVolMultiplier": 0.7,
+      "min": 0.1,
+      "max": 2.0
+    }
+  }
+}
+```
+
+Beispiel `paramsJson` für Mean-Reversion-Bot:
+
+```json
+{
+  "gating": {
+    "enabled": true,
+    "timeframe": "5m",
+    "minConfidence": 60,
+    "allowSignals": ["up", "down"],
+    "blockTags": ["breakout_risk", "news_risk"],
+    "maxAgeSec": 600,
+    "sizeMultiplier": {
+      "base": 0.9,
+      "highConfidenceThreshold": 85,
+      "highConfidenceMultiplier": 1.1,
+      "highVolMultiplier": 0.6
+    },
+    "failOpenOnError": false
+  }
+}
+```
 
 ## Betrieb / Logs
 

@@ -191,7 +191,11 @@ async function processRunBotJob(data: RunBotJobData | unknown) {
         workerId,
         lastHeartbeatAt: new Date(),
         lastTickAt: new Date(),
-        stateJson: { ticks, outcome: tickResult.outcome }
+        stateJson: {
+          ticks,
+          outcome: tickResult.outcome,
+          gate: tickResult.gate
+        }
       });
     } catch (error) {
       const reason = String(error);
@@ -243,7 +247,11 @@ async function runPollSupervisor() {
               reason: tickResult.reason,
               workerId,
               lastHeartbeatAt: new Date(),
-              lastTickAt: new Date()
+              lastTickAt: new Date(),
+              stateJson: {
+                outcome: tickResult.outcome,
+                gate: tickResult.gate
+              }
             });
           } catch (error) {
             errored += 1;

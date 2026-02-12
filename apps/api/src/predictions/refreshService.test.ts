@@ -5,7 +5,9 @@ import {
   buildPredictionChangeHash,
   evaluateSignificantChange,
   refreshIntervalMsForTimeframe,
+  shouldMarkUnstableFlips,
   shouldCallAiForRefresh,
+  shouldThrottleRepeatedEvent,
   type PredictionStateLike
 } from "./refreshService.js";
 
@@ -105,4 +107,48 @@ test("buildEventDelta contains tag additions/removals", () => {
 
   assert.equal(Array.isArray(delta.tagsAdded), true);
   assert.equal(Array.isArray(delta.tagsRemoved), true);
+});
+
+test("shouldThrottleRepeatedEvent throttles recent duplicate event", () => {
+  const nowMs = Date.now();
+  assert.equal(
+    shouldThrottleRepeatedEvent({
+      nowMs,
+      recentSameEventAtMs: nowMs - 60_000,
+      eventThrottleMs: 180_000
+    }),
+    true
+  );
+  assert.equal(
+    shouldThrottleRepeatedEvent({
+      nowMs,
+      recentSameEventAtMs: nowMs - 300_000,
+      eventThrottleMs: 180_000
+    }),
+    false
+  );
+});
+
+test("shouldMarkUnstableFlips turns true when frequent flips are detected", () => {
+  const nowMs = Date.now();
+  assert.equal(
+    shouldMarkUnstableFlips({
+      recentFlipCount: 4,
+      unstableFlipLimit: 4,
+      unstableWindowMs: 30 * 60 * 1000,
+      lastFlipAtMs: nowMs - 5 * 60 * 1000,
+      nowMs
+    }),
+    true
+  );
+  assert.equal(
+    shouldMarkUnstableFlips({
+      recentFlipCount: 2,
+      unstableFlipLimit: 4,
+      unstableWindowMs: 30 * 60 * 1000,
+      lastFlipAtMs: nowMs - 5 * 60 * 1000,
+      nowMs
+    }),
+    false
+  );
 });

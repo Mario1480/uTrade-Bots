@@ -877,6 +877,49 @@ a { color: inherit; }
   font-size: 11px;
 }
 
+.predictionCalibrationWrap {
+  margin-top: 10px;
+  border-top: 1px solid rgba(255, 255, 255, 0.08);
+  padding-top: 10px;
+  display: grid;
+  gap: 8px;
+}
+
+.predictionCalibrationHeader {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.predictionCalibrationEmpty {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.predictionCalibrationTableWrap {
+  overflow-x: auto;
+}
+
+.predictionCalibrationTable {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12px;
+}
+
+.predictionCalibrationTable th,
+.predictionCalibrationTable td {
+  text-align: left;
+  padding: 6px 8px;
+  border-top: 1px solid rgba(255, 255, 255, 0.08);
+  white-space: nowrap;
+}
+
+.predictionCalibrationTable thead th {
+  color: var(--muted);
+}
+
 .predictionHealthBadgeOk {
   border-color: rgba(16, 185, 129, 0.55);
   color: #10b981;
