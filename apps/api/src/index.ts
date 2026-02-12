@@ -996,6 +996,10 @@ function deriveSuggestedEntry(snapshot: Record<string, unknown>) {
     "entry"
   ]);
 
+  if (rawType === "market") {
+    return { type: "market" as const };
+  }
+
   const inferredType = rawType === "limit" || entryPrice !== null ? "limit" : "market";
   if (inferredType === "limit") {
     return {
@@ -1602,7 +1606,7 @@ function inferPredictionFromMarket(params: {
       thresholdWindowFrom: params.thresholdResolution.windowFrom,
       thresholdWindowTo: params.thresholdResolution.windowTo,
       thresholdBars: params.thresholdResolution.nBars,
-      suggestedEntryType: "limit",
+      suggestedEntryType: "market",
       suggestedEntryPrice: Number(entryPrice.toFixed(2)),
       suggestedStopLoss: Number(suggestedStopLoss.toFixed(2)),
       suggestedTakeProfit: Number(suggestedTakeProfit.toFixed(2)),
