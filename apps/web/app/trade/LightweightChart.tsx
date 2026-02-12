@@ -58,7 +58,7 @@ type LightweightChartProps = {
 
 const CHART_CANDLE_FETCH_LIMIT = 1000;
 const CHART_VISIBLE_CANDLE_COUNT = 200;
-const CHART_RIGHT_OFFSET = 8;
+const CHART_RIGHT_OFFSET = 14;
 
 type IndicatorToggleState = {
   ema5: boolean;
@@ -463,13 +463,10 @@ export function LightweightChart({
         candleSeriesRef.current?.setData(data);
         chartRef.current?.timeScale().applyOptions({ rightOffset: CHART_RIGHT_OFFSET });
         if (!initialViewportApplied && chartRef.current) {
-          if (data.length > CHART_VISIBLE_CANDLE_COUNT) {
-            const to = data.length - 1;
-            const from = Math.max(0, to - CHART_VISIBLE_CANDLE_COUNT + 1);
-            chartRef.current.timeScale().setVisibleLogicalRange({ from, to });
-          } else {
-            chartRef.current.timeScale().fitContent();
-          }
+          const visibleBars = Math.min(CHART_VISIBLE_CANDLE_COUNT, Math.max(1, data.length));
+          const to = (data.length - 1) + CHART_RIGHT_OFFSET;
+          const from = Math.max(0, to - visibleBars + 1);
+          chartRef.current.timeScale().setVisibleLogicalRange({ from, to });
           initialViewportApplied = true;
         }
         const close = data.length > 0 ? data[data.length - 1]?.close ?? null : null;
