@@ -115,6 +115,7 @@ AI Predictions:
 Economic Calendar (FMP) + News Blackout:
 - `FMP_API_KEY` (optional ENV fallback; preferred via Admin-UI)
 - `FMP_BASE_URL` (optional, default `https://financialmodelingprep.com`)
+- `ECON_NEWS_RISK_ENABLED` (`1` default, `0` disables newsRisk gating/prediction flagging)
 - `ECON_CALENDAR_REFRESH_ENABLED` (`1` default)
 - `ECON_CALENDAR_REFRESH_INTERVAL_MINUTES` (default `15`)
 - `ECON_REDIS_EVENTS_TTL_SEC`
