@@ -20,6 +20,11 @@ export type ExplainerOutput = {
   explanation: string;
   tags: string[];
   keyDrivers: { name: string; value: unknown }[];
+  aiPrediction: {
+    signal: "up" | "down" | "neutral";
+    expectedMovePct: number;
+    confidence: number;
+  };
   disclaimer: "grounded_features_only";
 };
 
@@ -50,6 +55,13 @@ const baseOutputSchema = z.object({
       value: z.unknown()
     })
   ).max(5),
+  aiPrediction: z
+    .object({
+      signal: z.enum(["up", "down", "neutral"]),
+      expectedMovePct: z.number(),
+      confidence: z.number()
+    })
+    .optional(),
   disclaimer: z.literal("grounded_features_only")
 });
 
@@ -124,6 +136,86 @@ function normalizeTags(tags: string[]): ExplainerTag[] {
   return [...deduped];
 }
 
+function clamp(value: number, min: number, max: number): number {
+  return Math.max(min, Math.min(max, value));
+}
+
+function normalizeAiPrediction(
+  value: unknown
+): { signal: "up" | "down" | "neutral"; expectedMovePct: number; confidence: number } | null {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  const record = value as Record<string, unknown>;
+  const signal = record.signal;
+  if (signal !== "up" && signal !== "down" && signal !== "neutral") return null;
+  const confidenceRaw = toNumber(record.confidence);
+  const expectedMoveRaw = toNumber(record.expectedMovePct);
+  if (confidenceRaw === null || expectedMoveRaw === null) return null;
+  const confidence = confidenceRaw <= 1 ? confidenceRaw : confidenceRaw / 100;
+  return {
+    signal,
+    confidence: Number(clamp(confidence, 0, 1).toFixed(4)),
+    expectedMovePct: Number(clamp(Math.abs(expectedMoveRaw), 0, 25).toFixed(2))
+  };
+}
+
+function deriveFallbackAiPrediction(input: {
+  featureSnapshot: Record<string, unknown>;
+  baselinePrediction?: ExplainerInput["prediction"];
+}): { signal: "up" | "down" | "neutral"; expectedMovePct: number; confidence: number } {
+  const snapshot = input.featureSnapshot ?? {};
+  const trend = pickNumberByPaths(snapshot, [
+    "emaSpread",
+    "trendScore",
+    "trend",
+    "indicators.macd.hist",
+    "tradersReality.emas.emaDistancesPct.spread_13_50_pct"
+  ]);
+  const momentum = pickNumberByPaths(snapshot, ["momentum", "indicators.vwap.dist_pct"]);
+  const rsi = pickNumberByPaths(snapshot, ["rsi", "indicators.rsi_14"]);
+  const stochK = pickNumberByPaths(snapshot, ["indicators.stochrsi.k", "indicators.stochrsi.value"]);
+  const bbPos = pickNumberByPaths(snapshot, ["indicators.bb.pos"]);
+  const atrPct = pickNumberByPaths(snapshot, ["indicators.atr_pct", "atrPct"]);
+  const baselineExpectedMove = toNumber(input.baselinePrediction?.expectedMovePct);
+
+  let score = 0;
+  if (trend !== null) {
+    if (trend > 0.0006) score += 0.9;
+    else if (trend < -0.0006) score -= 0.9;
+  }
+  if (momentum !== null) {
+    if (momentum > 0.0006) score += 0.7;
+    else if (momentum < -0.0006) score -= 0.7;
+  }
+  if (rsi !== null) {
+    if (rsi >= 70) score -= 0.55;
+    else if (rsi <= 30) score += 0.55;
+  }
+  if (stochK !== null) {
+    if (stochK >= 80) score -= 0.35;
+    else if (stochK <= 20) score += 0.35;
+  }
+  if (bbPos !== null) {
+    if (bbPos >= 0.9) score -= 0.25;
+    else if (bbPos <= 0.1) score += 0.25;
+  }
+
+  const signal: "up" | "down" | "neutral" =
+    score > 0.65 ? "up" : score < -0.65 ? "down" : "neutral";
+  const confidence = Number(clamp(0.35 + Math.min(1.5, Math.abs(score)) * 0.28, 0.2, 0.85).toFixed(4));
+  const expectedMovePct = Number(
+    clamp(
+      atrPct !== null ? atrPct * 140 : baselineExpectedMove ?? 0.8,
+      0.1,
+      6
+    ).toFixed(2)
+  );
+  return {
+    signal,
+    confidence,
+    expectedMovePct
+  };
+}
+
 function stripCodeFenceJson(raw: string): string {
   const trimmed = raw.trim();
   if (!trimmed.startsWith("```")) return trimmed;
@@ -151,7 +243,8 @@ function collectFeaturePaths(
 
 export function validateExplainerOutput(
   rawValue: unknown,
-  featureSnapshot: Record<string, unknown>
+  featureSnapshot: Record<string, unknown>,
+  baselinePrediction?: ExplainerInput["prediction"]
 ): ExplainerOutput {
   const parsed = baseOutputSchema.safeParse(rawValue);
   if (!parsed.success) {
@@ -166,6 +259,12 @@ export function validateExplainerOutput(
 
   const tags = normalizeTags(parsed.data.tags);
   const explanation = parsed.data.explanation.trim().slice(0, 400);
+  const aiPrediction =
+    normalizeAiPrediction(parsed.data.aiPrediction) ??
+    deriveFallbackAiPrediction({
+      featureSnapshot,
+      baselinePrediction
+    });
 
   return {
     explanation,
@@ -174,6 +273,7 @@ export function validateExplainerOutput(
       name: driver.name,
       value: driver.value
     })),
+    aiPrediction,
     disclaimer: "grounded_features_only"
   };
 }
@@ -351,6 +451,10 @@ export function fallbackExplain(input: ExplainerInput): ExplainerOutput {
     explanation,
     tags: normalizeTags(tags),
     keyDrivers,
+    aiPrediction: deriveFallbackAiPrediction({
+      featureSnapshot: snapshot,
+      baselinePrediction: input.prediction
+    }),
     disclaimer: "grounded_features_only"
   };
 }
@@ -373,6 +477,7 @@ function buildPromptPayload(input: ExplainerInput) {
       explanation: "string <= 400 chars",
       tags: "string[] <= 5 items, must be from tagsAllowlist",
       keyDrivers: "{name: string, value: any}[] <= 5 items, names from featureSnapshot key paths only",
+      aiPrediction: "{signal: up|down|neutral, expectedMovePct: number, confidence: number 0..1}",
       disclaimer: "grounded_features_only"
     },
     groundingRules: [
@@ -380,7 +485,8 @@ function buildPromptPayload(input: ExplainerInput) {
       "Only reference stochrsi/volume/fvg when present and non-null",
       "Only reference tradersReality fields when present and non-null",
       "Do not claim volume spikes unless rel_vol or vol_z supports it",
-      "Do not claim fair value gaps unless fvg counts or distances support it"
+      "Do not claim fair value gaps unless fvg counts or distances support it",
+      "aiPrediction must be inferred from featureSnapshot and can differ from prediction"
     ]
   };
 }
@@ -418,7 +524,7 @@ export async function generatePredictionExplanation(
       }
 
       try {
-        return validateExplainerOutput(parsedJson, input.featureSnapshot);
+        return validateExplainerOutput(parsedJson, input.featureSnapshot, input.prediction);
       } catch (error) {
         logger.warn("ai_validation_failed", {
           ai_validation_failed: true,
