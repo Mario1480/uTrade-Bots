@@ -58,6 +58,7 @@ import {
 } from "./trading.js";
 import {
   generateAndPersistPrediction,
+  type PredictionSignalMode,
   type PredictionSignalSource
 } from "./ai/predictionPipeline.js";
 import {
@@ -407,7 +408,8 @@ const predictionGenerateSchema = z.object({
   }),
   featureSnapshot: z.record(z.any()),
   botId: z.string().trim().min(1).optional(),
-  modelVersionBase: z.string().trim().min(1).optional()
+  modelVersionBase: z.string().trim().min(1).optional(),
+  signalMode: z.enum(["local_only", "ai_only", "both"]).default("both")
 });
 
 const predictionGenerateAutoSchema = z.object({
@@ -419,7 +421,8 @@ const predictionGenerateAutoSchema = z.object({
   confidenceTargetPct: z.number().min(0).max(100).default(55),
   leverage: z.number().int().min(1).max(125).optional(),
   autoSchedule: z.boolean().default(true),
-  modelVersionBase: z.string().trim().min(1).optional()
+  modelVersionBase: z.string().trim().min(1).optional(),
+  signalMode: z.enum(["local_only", "ai_only", "both"]).default("both")
 });
 
 const predictionListQuerySchema = z.object({
@@ -730,6 +733,26 @@ function readSelectedSignalSource(snapshot: Record<string, unknown>): Prediction
   return snapshot.selectedSignalSource === "ai" ? "ai" : "local";
 }
 
+function normalizePredictionSignalMode(value: unknown): PredictionSignalMode {
+  if (value === "local_only" || value === "ai_only" || value === "both") return value;
+  if (value === "local") return "local_only";
+  if (value === "ai") return "ai_only";
+  return "both";
+}
+
+function readSignalMode(snapshot: Record<string, unknown>): PredictionSignalMode {
+  return normalizePredictionSignalMode(snapshot.signalMode);
+}
+
+function resolvePreferredSignalSourceForMode(
+  mode: PredictionSignalMode,
+  fallback: PredictionSignalSource
+): PredictionSignalSource {
+  if (mode === "local_only") return "local";
+  if (mode === "ai_only") return "ai";
+  return fallback;
+}
+
 function withPredictionSnapshots(params: {
   snapshot: Record<string, unknown>;
   localPrediction: {
@@ -741,14 +764,18 @@ function withPredictionSnapshots(params: {
     signal: PredictionSignal;
     expectedMovePct: number;
     confidence: number;
-  };
+  } | null;
   selectedSignalSource: PredictionSignalSource;
+  signalMode: PredictionSignalMode;
 }): Record<string, unknown> {
   return {
     ...params.snapshot,
     localPrediction: normalizeSnapshotPrediction(asRecord(params.localPrediction)) ?? params.localPrediction,
-    aiPrediction: normalizeSnapshotPrediction(asRecord(params.aiPrediction)) ?? params.aiPrediction,
-    selectedSignalSource: params.selectedSignalSource
+    aiPrediction: params.aiPrediction
+      ? (normalizeSnapshotPrediction(asRecord(params.aiPrediction)) ?? params.aiPrediction)
+      : null,
+    selectedSignalSource: params.selectedSignalSource,
+    signalMode: params.signalMode
   };
 }
 
@@ -1963,6 +1990,7 @@ async function generateAutoPredictionForUser(
   persisted: boolean;
   prediction: { signal: PredictionSignal; expectedMovePct: number; confidence: number };
   signalSource: PredictionSignalSource;
+  signalMode: PredictionSignalMode;
   explanation: Awaited<ReturnType<typeof generateAndPersistPrediction>>["explanation"];
   modelVersion: string;
   predictionId: string | null;
@@ -2100,7 +2128,11 @@ async function generateAutoPredictionForUser(
     );
 
     const tsCreated = new Date().toISOString();
-    const selectedSignalSource = PREDICTION_PRIMARY_SIGNAL_SOURCE;
+    const signalMode = normalizePredictionSignalMode(payload.signalMode);
+    const selectedSignalSource = resolvePreferredSignalSourceForMode(
+      signalMode,
+      PREDICTION_PRIMARY_SIGNAL_SOURCE
+    );
     const created = await generateAndPersistPrediction({
       symbol: canonicalSymbol,
       marketType: payload.marketType,
@@ -2108,6 +2140,7 @@ async function generateAutoPredictionForUser(
       tsCreated,
       prediction: inferred.prediction,
       featureSnapshot: inferred.featureSnapshot,
+      signalMode,
       preferredSignalSource: selectedSignalSource,
       tracking: inferred.tracking,
       userId,
@@ -2132,15 +2165,14 @@ async function generateAutoPredictionForUser(
       featureSnapshot: featureSnapshotForState
     });
 
-    const existingState = await db.predictionState.findFirst({
-      where: {
-        exchange: account.exchange,
-        accountId: payload.exchangeAccountId,
-        symbol: canonicalSymbol,
-        marketType: payload.marketType,
-        timeframe: payload.timeframe
-      },
-      select: { id: true }
+    const existingStateId = await findPredictionStateIdByScope({
+      userId,
+      exchange: account.exchange,
+      accountId: payload.exchangeAccountId,
+      symbol: canonicalSymbol,
+      marketType: payload.marketType,
+      timeframe: payload.timeframe,
+      signalMode
     });
 
     const stateData = {
@@ -2164,7 +2196,7 @@ async function generateAutoPredictionForUser(
       keyDrivers: stateKeyDrivers,
       featuresSnapshot: featureSnapshotForState,
       modelVersion: created.modelVersion,
-      lastAiExplainedAt: stateTs,
+      lastAiExplainedAt: signalMode === "local_only" ? null : stateTs,
       lastChangeHash: stateHash,
       lastChangeReason: "manual",
       autoScheduleEnabled: payload.autoSchedule,
@@ -2174,9 +2206,9 @@ async function generateAutoPredictionForUser(
       leverage: payload.leverage ?? null
     };
 
-    const stateRow = existingState
+    const stateRow = existingStateId
       ? await db.predictionState.update({
-          where: { id: existingState.id },
+          where: { id: existingStateId },
           data: stateData,
           select: { id: true }
         })
@@ -2229,7 +2261,8 @@ async function generateAutoPredictionForUser(
       modelVersion: created.modelVersion,
       predictionId: created.rowId,
       tsCreated,
-      signalSource: created.signalSource
+      signalSource: created.signalSource,
+      signalMode
     };
   } finally {
     await adapter.close();
@@ -3267,8 +3300,9 @@ function predictionTemplateKey(parts: {
   symbol: string;
   marketType: PredictionMarketType;
   timeframe: PredictionTimeframe;
+  signalMode?: PredictionSignalMode;
 }): string {
-  return `${parts.userId}:${parts.exchangeAccountId}:${parts.symbol}:${parts.marketType}:${parts.timeframe}`;
+  return `${parts.userId}:${parts.exchangeAccountId}:${parts.symbol}:${parts.marketType}:${parts.timeframe}:${parts.signalMode ?? "both"}`;
 }
 
 function withAutoScheduleFlag(
@@ -3354,6 +3388,7 @@ async function resolvePredictionTemplateScope(userId: string, predictionId: stri
   marketType: PredictionMarketType;
   timeframe: PredictionTimeframe;
   exchangeAccountId: string | null;
+  signalMode: PredictionSignalMode;
 } | null> {
   const row = await db.prediction.findFirst({
     where: {
@@ -3378,7 +3413,8 @@ async function resolvePredictionTemplateScope(userId: string, predictionId: stri
     symbol,
     marketType: normalizePredictionMarketType(row.marketType),
     timeframe: normalizePredictionTimeframe(row.timeframe),
-    exchangeAccountId: readPrefillExchangeAccountId(snapshot)
+    exchangeAccountId: readPrefillExchangeAccountId(snapshot),
+    signalMode: readSignalMode(snapshot)
   };
 }
 
@@ -3387,6 +3423,7 @@ async function findPredictionTemplateRowIds(userId: string, scope: {
   marketType: PredictionMarketType;
   timeframe: PredictionTimeframe;
   exchangeAccountId: string | null;
+  signalMode?: PredictionSignalMode | null;
 }): Promise<string[]> {
   const rows = await db.prediction.findMany({
     where: {
@@ -3404,9 +3441,40 @@ async function findPredictionTemplateRowIds(userId: string, scope: {
   return rows
     .filter((row: any) => {
       const snapshot = asRecord(row.featuresSnapshot);
-      return readPrefillExchangeAccountId(snapshot) === scope.exchangeAccountId;
+      if (readPrefillExchangeAccountId(snapshot) !== scope.exchangeAccountId) return false;
+      if (scope.signalMode && readSignalMode(snapshot) !== scope.signalMode) return false;
+      return true;
     })
     .map((row: any) => row.id);
+}
+
+async function findPredictionStateIdByScope(params: {
+  userId: string;
+  exchange: string;
+  accountId: string;
+  symbol: string;
+  marketType: PredictionMarketType;
+  timeframe: PredictionTimeframe;
+  signalMode: PredictionSignalMode;
+}): Promise<string | null> {
+  const rows = await db.predictionState.findMany({
+    where: {
+      userId: params.userId,
+      exchange: params.exchange,
+      accountId: params.accountId,
+      symbol: params.symbol,
+      marketType: params.marketType,
+      timeframe: params.timeframe
+    },
+    orderBy: [{ tsUpdated: "desc" }, { updatedAt: "desc" }],
+    take: 25,
+    select: {
+      id: true,
+      featuresSnapshot: true
+    }
+  });
+  const matched = rows.find((row: any) => readSignalMode(asRecord(row.featuresSnapshot)) === params.signalMode);
+  return matched ? String(matched.id) : null;
 }
 
 let predictionAutoTimer: NodeJS.Timeout | null = null;
@@ -3918,17 +3986,17 @@ async function bootstrapPredictionStateFromHistory() {
       typeof featureSnapshot.prefillExchange === "string"
         ? normalizeExchangeValue(featureSnapshot.prefillExchange)
         : "bitget";
-
-    const existing = await db.predictionState.findFirst({
-      where: {
-        exchange,
-        accountId: exchangeAccountId,
-        symbol,
-        marketType,
-        timeframe
-      },
-      select: { id: true }
+    const signalMode = readSignalMode(featureSnapshot);
+    const existingId = await findPredictionStateIdByScope({
+      userId,
+      exchange,
+      accountId: exchangeAccountId,
+      symbol,
+      marketType,
+      timeframe,
+      signalMode
     });
+    const existing = existingId ? { id: existingId } : null;
     if (existing) continue;
 
     const tags = normalizeTagList(row.tags);
@@ -4300,6 +4368,7 @@ async function refreshPredictionStateForTemplate(params: {
       where: { id: template.stateId }
     });
     const prevState = prevStateRow ? readPredictionStateLike(prevStateRow) : null;
+    const signalMode = readSignalMode(template.featureSnapshot);
 
     const baselineTags = enforceNewsRiskTag(
       inferred.featureSnapshot.tags,
@@ -4331,7 +4400,7 @@ async function refreshPredictionStateForTemplate(params: {
     let explainer: ExplainerOutput;
     let aiCalled = false;
 
-    if (aiDecision.shouldCallAi) {
+    if (signalMode !== "local_only" && aiDecision.shouldCallAi) {
       try {
         explainer = await generatePredictionExplanation({
           symbol: template.symbol,
@@ -4352,6 +4421,15 @@ async function refreshPredictionStateForTemplate(params: {
           featureSnapshot: inferred.featureSnapshot
         });
       }
+    } else if (signalMode === "local_only") {
+      explainer = fallbackExplain({
+        symbol: template.symbol,
+        marketType: template.marketType,
+        timeframe: template.timeframe,
+        tsCreated,
+        prediction: inferred.prediction,
+        featureSnapshot: inferred.featureSnapshot
+      });
     } else if (
       prevState &&
       !significantForAiGate.significant &&
@@ -4380,6 +4458,7 @@ async function refreshPredictionStateForTemplate(params: {
         featureSnapshot: inferred.featureSnapshot
       });
     }
+    inferred.featureSnapshot.signalMode = signalMode;
     const localPrediction =
       normalizeSnapshotPrediction(asRecord(inferred.prediction)) ??
       {
@@ -4388,18 +4467,35 @@ async function refreshPredictionStateForTemplate(params: {
         confidence: Number(clamp(inferred.prediction.confidence, 0, 1).toFixed(4))
       };
     const aiPrediction =
-      normalizeSnapshotPrediction(asRecord(explainer.aiPrediction)) ??
-      localPrediction;
-    const selectedPrediction = selectPredictionBySource({
-      localPrediction,
-      aiPrediction,
-      source: PREDICTION_PRIMARY_SIGNAL_SOURCE
-    });
+      signalMode === "local_only"
+        ? null
+        : (normalizeSnapshotPrediction(asRecord(explainer.aiPrediction)) ?? localPrediction);
+    const selectedPrediction =
+      signalMode === "local_only"
+        ? {
+            signal: localPrediction.signal,
+            expectedMovePct: localPrediction.expectedMovePct,
+            confidence: localPrediction.confidence,
+            source: "local" as const
+          }
+        : signalMode === "ai_only"
+          ? {
+              signal: (aiPrediction ?? localPrediction).signal,
+              expectedMovePct: (aiPrediction ?? localPrediction).expectedMovePct,
+              confidence: (aiPrediction ?? localPrediction).confidence,
+              source: "ai" as const
+            }
+          : selectPredictionBySource({
+              localPrediction,
+              aiPrediction: aiPrediction ?? localPrediction,
+              source: PREDICTION_PRIMARY_SIGNAL_SOURCE
+            });
     inferred.featureSnapshot = withPredictionSnapshots({
       snapshot: inferred.featureSnapshot,
       localPrediction,
       aiPrediction,
-      selectedSignalSource: selectedPrediction.source
+      selectedSignalSource: selectedPrediction.source,
+      signalMode
     });
 
     const tags = enforceNewsRiskTag(
@@ -4449,7 +4545,9 @@ async function refreshPredictionStateForTemplate(params: {
         }
       }
     }
-    const modelVersion = `${template.modelVersionBase || "baseline-v1:auto-market-v1"} + openai-explain-v1`;
+    const modelVersion = `${template.modelVersionBase || "baseline-v1:auto-market-v1"} + ${
+      signalMode === "local_only" ? "local-explain-v1" : "openai-explain-v1"
+    }`;
     const tsUpdated = new Date(tsCreated);
     const tsPredictedFor = new Date(tsUpdated.getTime() + timeframeToIntervalMs(template.timeframe));
     const changeHash = buildPredictionChangeHash({
@@ -6209,6 +6307,7 @@ app.post("/api/predictions/generate", requireAuth, async (req, res) => {
   }
 
   const payload = parsed.data;
+  const signalMode = normalizePredictionSignalMode(payload.signalMode);
   const tsCreated = payload.tsCreated ?? new Date().toISOString();
   const tracking = derivePredictionTrackingFromSnapshot(payload.featureSnapshot, payload.timeframe);
 
@@ -6219,7 +6318,11 @@ app.post("/api/predictions/generate", requireAuth, async (req, res) => {
     tsCreated,
     prediction: payload.prediction,
     featureSnapshot: payload.featureSnapshot,
-    preferredSignalSource: PREDICTION_PRIMARY_SIGNAL_SOURCE,
+    signalMode,
+    preferredSignalSource: resolvePreferredSignalSourceForMode(
+      signalMode,
+      PREDICTION_PRIMARY_SIGNAL_SOURCE
+    ),
     tracking,
     userId: user.id,
     botId: payload.botId ?? null,
@@ -6248,21 +6351,21 @@ app.post("/api/predictions/generate", requireAuth, async (req, res) => {
       keyDrivers,
       featureSnapshot: created.featureSnapshot
     });
-    const existingState = await db.predictionState.findFirst({
-      where: {
-        exchange,
-        accountId: exchangeAccountId,
-        symbol: payload.symbol,
-        marketType: payload.marketType,
-        timeframe: payload.timeframe
-      },
-      select: { id: true }
+    const normalizedSymbol = normalizeSymbolInput(payload.symbol) ?? payload.symbol;
+    const existingStateId = await findPredictionStateIdByScope({
+      userId: user.id,
+      exchange,
+      accountId: exchangeAccountId,
+      symbol: normalizedSymbol,
+      marketType: payload.marketType,
+      timeframe: payload.timeframe,
+      signalMode
     });
     const statePayload = {
       exchange,
       accountId: exchangeAccountId,
       userId: user.id,
-      symbol: payload.symbol,
+      symbol: normalizedSymbol,
       marketType: payload.marketType,
       timeframe: payload.timeframe,
       tsUpdated: tsDate,
@@ -6279,7 +6382,7 @@ app.post("/api/predictions/generate", requireAuth, async (req, res) => {
       keyDrivers,
       featuresSnapshot: created.featureSnapshot,
       modelVersion: created.modelVersion,
-      lastAiExplainedAt: tsDate,
+      lastAiExplainedAt: signalMode === "local_only" ? null : tsDate,
       lastChangeHash: changeHash,
       lastChangeReason: "manual",
       autoScheduleEnabled: isAutoScheduleEnabled(snapshot.autoScheduleEnabled),
@@ -6288,9 +6391,9 @@ app.post("/api/predictions/generate", requireAuth, async (req, res) => {
       confidenceTargetPct: readConfidenceTarget(snapshot),
       leverage: readRequestedLeverage(snapshot)
     };
-    const stateRow = existingState
+    const stateRow = existingStateId
       ? await db.predictionState.update({
-          where: { id: existingState.id },
+          where: { id: existingStateId },
           data: statePayload,
           select: { id: true }
         })
@@ -6352,6 +6455,7 @@ app.post("/api/predictions/generate", requireAuth, async (req, res) => {
       tsCreated,
       ...created.prediction
     },
+    signalMode,
     signalSource: created.signalSource,
     explanation: created.explanation,
     modelVersion: created.modelVersion,
@@ -6382,6 +6486,7 @@ app.post("/api/predictions/generate-auto", requireAuth, async (req, res) => {
       directionPreference: payload.directionPreference,
       leverage: payload.leverage ?? null,
       autoSchedule: payload.autoSchedule,
+      signalMode: created.signalMode,
       signalSource: created.signalSource,
       explanation: created.explanation,
       modelVersion: created.modelVersion,
@@ -6453,6 +6558,7 @@ app.get("/api/predictions", requireAuth, async (req, res) => {
         outcomeEvaluatedAt: null,
         localPrediction: readLocalPredictionSnapshot(snapshot),
         aiPrediction: readAiPredictionSnapshot(snapshot),
+        signalMode: readSignalMode(snapshot),
         autoScheduleEnabled: Boolean(row.autoScheduleEnabled) && !Boolean(row.autoSchedulePaused),
         confidenceTargetPct:
           Number.isFinite(Number(row.confidenceTargetPct))
@@ -6601,6 +6707,7 @@ app.get("/api/predictions", requireAuth, async (req, res) => {
           confidence: row.confidence
         })),
       aiPrediction: readAiPredictionSnapshot(snapshot),
+      signalMode: readSignalMode(snapshot),
       autoScheduleEnabled: isAutoScheduleEnabled(snapshot.autoScheduleEnabled),
       confidenceTargetPct: readConfiguredConfidenceTarget(snapshot),
       exchange: fallbackExchange,
@@ -7139,7 +7246,8 @@ app.post("/api/predictions/:id/pause", requireAuth, async (req, res) => {
       symbol: normalizedSymbol || stateRow.symbol,
       marketType: normalizePredictionMarketType(stateRow.marketType),
       timeframe: normalizePredictionTimeframe(stateRow.timeframe),
-      exchangeAccountId: typeof stateRow.accountId === "string" ? stateRow.accountId : null
+      exchangeAccountId: typeof stateRow.accountId === "string" ? stateRow.accountId : null,
+      signalMode: readSignalMode(snapshot)
     });
 
     if (templateRowIds.length > 0) {
@@ -7187,7 +7295,8 @@ app.post("/api/predictions/:id/pause", requireAuth, async (req, res) => {
     symbol: scope.symbol,
     marketType: scope.marketType,
     timeframe: scope.timeframe,
-    exchangeAccountId: scope.exchangeAccountId
+    exchangeAccountId: scope.exchangeAccountId,
+    signalMode: scope.signalMode
   });
   const ids = templateRowIds.length > 0 ? templateRowIds : [scope.rowId];
 
@@ -7267,7 +7376,8 @@ app.post("/api/predictions/:id/stop", requireAuth, async (req, res) => {
       symbol: normalizedSymbol || stateRow.symbol,
       marketType: normalizePredictionMarketType(stateRow.marketType),
       timeframe: normalizePredictionTimeframe(stateRow.timeframe),
-      exchangeAccountId: typeof stateRow.accountId === "string" ? stateRow.accountId : null
+      exchangeAccountId: typeof stateRow.accountId === "string" ? stateRow.accountId : null,
+      signalMode: readSignalMode(snapshot)
     });
 
     if (templateRowIds.length > 0) {
@@ -7309,7 +7419,8 @@ app.post("/api/predictions/:id/stop", requireAuth, async (req, res) => {
     symbol: scope.symbol,
     marketType: scope.marketType,
     timeframe: scope.timeframe,
-    exchangeAccountId: scope.exchangeAccountId
+    exchangeAccountId: scope.exchangeAccountId,
+    signalMode: scope.signalMode
   });
   const ids = templateRowIds.length > 0 ? templateRowIds : [scope.rowId];
 
@@ -7355,6 +7466,7 @@ app.post("/api/predictions/:id/delete-schedule", requireAuth, async (req, res) =
     },
     select: {
       id: true,
+      featuresSnapshot: true,
       symbol: true,
       marketType: true,
       timeframe: true,
@@ -7368,12 +7480,14 @@ app.post("/api/predictions/:id/delete-schedule", requireAuth, async (req, res) =
     });
     predictionTriggerDebounceState.delete(stateRow.id);
     const normalizedSymbol = normalizeSymbolInput(stateRow.symbol);
+    const stateSnapshot = asRecord(stateRow.featuresSnapshot);
 
     const templateRowIds = await findPredictionTemplateRowIds(user.id, {
       symbol: normalizedSymbol || stateRow.symbol,
       marketType: normalizePredictionMarketType(stateRow.marketType),
       timeframe: normalizePredictionTimeframe(stateRow.timeframe),
-      exchangeAccountId: typeof stateRow.accountId === "string" ? stateRow.accountId : null
+      exchangeAccountId: typeof stateRow.accountId === "string" ? stateRow.accountId : null,
+      signalMode: readSignalMode(stateSnapshot)
     });
 
     const deletedTemplates =
@@ -7401,7 +7515,8 @@ app.post("/api/predictions/:id/delete-schedule", requireAuth, async (req, res) =
     symbol: scope.symbol,
     marketType: scope.marketType,
     timeframe: scope.timeframe,
-    exchangeAccountId: scope.exchangeAccountId
+    exchangeAccountId: scope.exchangeAccountId,
+    signalMode: scope.signalMode
   });
   const ids = templateRowIds.length > 0 ? templateRowIds : [scope.rowId];
 
@@ -7498,7 +7613,8 @@ app.post("/api/predictions/clear-old", requireAuth, async (req, res) => {
         exchangeAccountId,
         symbol,
         marketType: normalizePredictionMarketType(row.marketType),
-        timeframe: normalizePredictionTimeframe(row.timeframe)
+        timeframe: normalizePredictionTimeframe(row.timeframe),
+        signalMode: readSignalMode(snapshot)
       });
       if (seen.has(key)) continue;
       seen.add(key);

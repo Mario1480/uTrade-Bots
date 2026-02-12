@@ -23,6 +23,7 @@ type DirectionPreference = "long" | "short" | "either";
 type SortMode = "newest" | "confidence" | "move";
 type RunningStatusFilter = "all" | "running" | "paused";
 type SignalSource = "local" | "ai";
+type CreateSignalMode = "local_only" | "ai_only" | "both";
 
 type AiPredictionSummary = {
   signal: PredictionSignal;
@@ -58,6 +59,7 @@ type PredictionListItem = {
   accountId: string | null;
   lastUpdatedAt?: string | null;
   lastChangeReason?: string | null;
+  signalMode?: CreateSignalMode;
   localPrediction?: AiPredictionSummary | null;
   aiPrediction?: AiPredictionSummary | null;
 };
@@ -354,6 +356,12 @@ function resolveExpectedMove(row: PredictionListItem, source: SignalSource): num
   return row.expectedMovePct;
 }
 
+function signalModeLabel(mode?: CreateSignalMode): string {
+  if (mode === "local_only") return "local only";
+  if (mode === "ai_only") return "ai only";
+  return "both";
+}
+
 function fmtNum(value: unknown, decimals = 2): string {
   const parsed = toNum(value);
   if (parsed === null) return "n/a";
@@ -473,6 +481,7 @@ export default function PredictionsPage() {
   const [newMarketType, setNewMarketType] = useState<PredictionMarketType>("perp");
   const [newTimeframe, setNewTimeframe] = useState<PredictionTimeframe>("15m");
   const [newDirectionPreference, setNewDirectionPreference] = useState<DirectionPreference>("either");
+  const [newSignalMode, setNewSignalMode] = useState<CreateSignalMode>("both");
   const [newConfidenceTarget, setNewConfidenceTarget] = useState("60");
   const [newLeverage, setNewLeverage] = useState("10");
   const [newAutoSchedule, setNewAutoSchedule] = useState(true);
@@ -786,20 +795,30 @@ export default function PredictionsPage() {
           confidence: number;
           expectedMovePct: number;
         };
+        signalSource: SignalSource;
+        signalMode: CreateSignalMode;
       }>("/api/predictions/generate-auto", {
         exchangeAccountId: createAccountId,
         symbol,
         marketType: newMarketType,
         timeframe: newTimeframe,
         directionPreference: newDirectionPreference,
+        signalMode: newSignalMode,
         confidenceTargetPct,
         leverage: newMarketType === "perp" ? Math.trunc(leverage) : undefined,
         autoSchedule: newAutoSchedule
       });
+      const modeLabel =
+        response.signalMode === "local_only"
+          ? "Local only"
+          : response.signalMode === "ai_only"
+            ? "AI only"
+            : "Local + AI";
 
       setNotice(
         `Prediction created for ${symbol} (${newTimeframe}) with signal ${response.prediction.signal} ` +
-        `and confidence ${fmtConfidence(response.prediction.confidence)}.` +
+        `and confidence ${fmtConfidence(response.prediction.confidence)}. ` +
+        `Mode: ${modeLabel}, active source: ${response.signalSource.toUpperCase()}.` +
         (newAutoSchedule ? ` Auto mode is enabled (${newTimeframe} cadence).` : " Auto mode is disabled.")
       );
       await Promise.all([
@@ -1045,6 +1064,9 @@ export default function PredictionsPage() {
             Signal source: {signalSource === "ai" ? "AI" : "Local"}
             {signalSource === "ai" && !aiPrediction ? " (AI value unavailable, using local)" : ""}
           </div>
+          <div className="predictionContextReason">
+            Signal mode: {signalModeLabel(row.signalMode)}
+          </div>
 
           {dataGap ? (
             <span className="predictionDetailWarning">
@@ -1266,7 +1288,7 @@ export default function PredictionsPage() {
       </div>
 
       <section className="card predictionsSection">
-        <div className="predictionCreateTitle">Create Prediction (Local)</div>
+        <div className="predictionCreateTitle">Create Prediction</div>
         <div className="predictionCreateGrid">
           <label className="predictionCreateField">
             <div className="predictionCreateLabel">Exchange account</div>
@@ -1338,6 +1360,22 @@ export default function PredictionsPage() {
               <option value="either">either (egal)</option>
               <option value="long">long preferred</option>
               <option value="short">short preferred</option>
+            </select>
+          </label>
+
+          <label className="predictionCreateField">
+            <div className="predictionCreateLabel">Signal mode</div>
+            <div className="predictionCreateHint">
+              Bestimmt, ob nur lokal, nur AI oder beide Signale berechnet werden.
+            </div>
+            <select
+              className="input"
+              value={newSignalMode}
+              onChange={(e) => setNewSignalMode(e.target.value as CreateSignalMode)}
+            >
+              <option value="local_only">Eigene Berechnung (Local only)</option>
+              <option value="ai_only">Nur AI</option>
+              <option value="both">Beides (Local + AI)</option>
             </select>
           </label>
 
@@ -1846,6 +1884,9 @@ export default function PredictionsPage() {
                               disagreement
                             </div>
                           ) : null}
+                          <div style={{ color: "var(--muted)", fontSize: 11, marginTop: 4 }}>
+                            mode {signalModeLabel(row.signalMode)}
+                          </div>
                         </td>
                         <td style={{ padding: "8px 6px" }}>{fmtConfidence(activeConfidence)}</td>
                         <td style={{ padding: "8px 6px" }}>{activeMove.toFixed(2)}%</td>
@@ -1983,6 +2024,7 @@ export default function PredictionsPage() {
                   <div className="predictionRowCardMeta">
                     <span>{row.marketType}</span>
                     <span>{row.timeframe}</span>
+                    <span>{signalModeLabel(row.signalMode)}</span>
                     <span>{new Date(row.tsCreated).toLocaleString()}</span>
                     <span title={updatedAtIso ? new Date(updatedAtIso).toLocaleString() : "n/a"}>
                       Updated {formatRelativeTime(updatedAtIso, nowMs)}

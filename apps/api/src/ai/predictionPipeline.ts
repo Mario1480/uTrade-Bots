@@ -1,6 +1,7 @@
 import { prisma } from "@mm/db";
 import { logger } from "../logger.js";
 import {
+  fallbackExplain,
   generatePredictionExplanation,
   type ExplainerInput,
   type ExplainerOutput
@@ -9,12 +10,14 @@ import {
 const db = prisma as any;
 
 export type PredictionSignalSource = "local" | "ai";
+export type PredictionSignalMode = "local_only" | "ai_only" | "both";
 
 export type PredictionRecordInput = ExplainerInput & {
   userId?: string | null;
   botId?: string | null;
   modelVersionBase?: string;
   preferredSignalSource?: PredictionSignalSource;
+  signalMode?: PredictionSignalMode;
   tracking?: {
     entryPrice?: number | null;
     stopLossPrice?: number | null;
@@ -43,6 +46,13 @@ function normalizeSignalSource(value: unknown): PredictionSignalSource {
   return value === "ai" ? "ai" : "local";
 }
 
+function normalizeSignalMode(value: unknown): PredictionSignalMode {
+  if (value === "local_only" || value === "ai_only" || value === "both") return value;
+  if (value === "local") return "local_only";
+  if (value === "ai") return "ai_only";
+  return "both";
+}
+
 function normalizePrediction(input: {
   signal: unknown;
   expectedMovePct: unknown;
@@ -68,21 +78,51 @@ export async function generateAndPersistPrediction(
   input: PredictionRecordInput
 ): Promise<PredictionRecordResult> {
   const localPrediction = normalizePrediction(input.prediction);
+  const signalMode = normalizeSignalMode(input.signalMode);
   const preferredSignalSource = normalizeSignalSource(input.preferredSignalSource);
-  const explanation = await generatePredictionExplanation(input);
-  const aiPrediction = normalizePrediction(explanation.aiPrediction);
-  const selectedPrediction = preferredSignalSource === "ai" ? aiPrediction : localPrediction;
+  const explanation =
+    signalMode === "local_only"
+      ? fallbackExplain({
+          symbol: input.symbol,
+          marketType: input.marketType,
+          timeframe: input.timeframe,
+          tsCreated: input.tsCreated,
+          prediction: localPrediction,
+          featureSnapshot: input.featureSnapshot
+        })
+      : await generatePredictionExplanation({
+          ...input,
+          prediction: localPrediction
+        });
+  const aiPrediction =
+    signalMode === "local_only"
+      ? null
+      : normalizePrediction(explanation.aiPrediction);
+  const selectedSignalSource: PredictionSignalSource =
+    signalMode === "local_only"
+      ? "local"
+      : signalMode === "ai_only"
+        ? "ai"
+        : preferredSignalSource;
+  const selectedPrediction = selectedSignalSource === "ai" && aiPrediction ? aiPrediction : localPrediction;
   const featureSnapshot = {
     ...input.featureSnapshot,
     localPrediction,
-    aiPrediction: {
-      signal: aiPrediction.signal,
-      expectedMovePct: aiPrediction.expectedMovePct,
-      confidence: aiPrediction.confidence
-    },
-    selectedSignalSource: preferredSignalSource
+    ...(aiPrediction
+      ? {
+          aiPrediction: {
+            signal: aiPrediction.signal,
+            expectedMovePct: aiPrediction.expectedMovePct,
+            confidence: aiPrediction.confidence
+          }
+        }
+      : { aiPrediction: null }),
+    selectedSignalSource,
+    signalMode
   };
-  const modelVersion = `${input.modelVersionBase ?? "baseline-v1"} + openai-explain-v1`;
+  const modelVersion = `${input.modelVersionBase ?? "baseline-v1"} + ${
+    signalMode === "local_only" ? "local-explain-v1" : "openai-explain-v1"
+  }`;
 
   try {
     const row = await db.prediction.create({
@@ -110,7 +150,7 @@ export async function generateAndPersistPrediction(
     return {
       persisted: true,
       prediction: selectedPrediction,
-      signalSource: preferredSignalSource,
+      signalSource: selectedSignalSource,
       explanation,
       featureSnapshot,
       modelVersion,
@@ -126,7 +166,7 @@ export async function generateAndPersistPrediction(
     return {
       persisted: false,
       prediction: selectedPrediction,
-      signalSource: preferredSignalSource,
+      signalSource: selectedSignalSource,
       explanation,
       featureSnapshot,
       modelVersion,
