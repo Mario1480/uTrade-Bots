@@ -5,6 +5,8 @@ import { useEffect, useMemo, useState } from "react";
 import ExchangeAccountOverviewCard, {
 type ExchangeAccountOverview
 } from "./components/ExchangeAccountOverviewCard";
+import AlertsFeed, { type DashboardAlert } from "../components/dashboard/AlertsFeed";
+import TotalsBar, { type DashboardTotals } from "../components/dashboard/TotalsBar";
 import { ApiError, apiGet } from "../lib/api";
 
 type EconomicCalendarSummary = {
@@ -44,6 +46,15 @@ type EconomicCalendarSummary = {
   asOf: string;
 };
 
+type DashboardOverviewResponse = {
+  accounts: ExchangeAccountOverview[];
+  totals: DashboardTotals;
+};
+
+type DashboardAlertsResponse = {
+  items: DashboardAlert[];
+};
+
 function errMsg(e: unknown): string {
   if (e instanceof ApiError) return `${e.message} (HTTP ${e.status})`;
   if (e && typeof e === "object" && "message" in e) return String((e as any).message);
@@ -71,6 +82,8 @@ function DashboardSkeletonCard() {
 
 export default function Page() {
   const [overview, setOverview] = useState<ExchangeAccountOverview[]>([]);
+  const [overviewTotals, setOverviewTotals] = useState<DashboardTotals | null>(null);
+  const [alerts, setAlerts] = useState<DashboardAlert[]>([]);
   const [calendarSummary, setCalendarSummary] = useState<EconomicCalendarSummary | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
@@ -82,15 +95,28 @@ export default function Page() {
       setLoading(true);
       setError(null);
       try {
-        const [overviewResult, calendarResult] = await Promise.allSettled([
-          apiGet<ExchangeAccountOverview[]>("/dashboard/overview"),
+        const [overviewResult, alertsResult, calendarResult] = await Promise.allSettled([
+          apiGet<DashboardOverviewResponse | ExchangeAccountOverview[]>("/dashboard/overview"),
+          apiGet<DashboardAlertsResponse>("/dashboard/alerts?limit=10"),
           apiGet<EconomicCalendarSummary>("/economic-calendar/next?currency=USD&impact=high")
         ]);
         if (!mounted) return;
         if (overviewResult.status === "fulfilled") {
-          setOverview(Array.isArray(overviewResult.value) ? overviewResult.value : []);
+          const payload = overviewResult.value as DashboardOverviewResponse | ExchangeAccountOverview[];
+          if (Array.isArray(payload)) {
+            setOverview(payload);
+            setOverviewTotals(null);
+          } else {
+            setOverview(Array.isArray(payload.accounts) ? payload.accounts : []);
+            setOverviewTotals(payload.totals ?? null);
+          }
         } else {
           throw overviewResult.reason;
+        }
+        if (alertsResult.status === "fulfilled") {
+          setAlerts(Array.isArray(alertsResult.value?.items) ? alertsResult.value.items : []);
+        } else {
+          setAlerts([]);
         }
         if (calendarResult.status === "fulfilled") {
           setCalendarSummary(calendarResult.value ?? null);
@@ -116,7 +142,7 @@ export default function Page() {
     };
   }, []);
 
-  const totals = useMemo(() => {
+  const headlineStats = useMemo(() => {
     return overview.reduce(
       (acc, row) => {
         acc.accounts += 1;
@@ -148,17 +174,21 @@ export default function Page() {
       <div className="statGrid">
         <div className="card statCard">
           <div className="statLabel">Exchange Accounts</div>
-          <div className="statValue">{loading ? "…" : totals.accounts}</div>
+          <div className="statValue">{loading ? "…" : headlineStats.accounts}</div>
         </div>
         <div className="card statCard">
           <div className="statLabel">Running Bots</div>
-          <div className="statValue">{loading ? "…" : totals.running}</div>
+          <div className="statValue">{loading ? "…" : headlineStats.running}</div>
         </div>
         <div className="card statCard">
           <div className="statLabel">Bots in Error</div>
-          <div className="statValue">{loading ? "…" : totals.errors}</div>
+          <div className="statValue">{loading ? "…" : headlineStats.errors}</div>
         </div>
       </div>
+
+      <TotalsBar totals={overviewTotals} />
+
+      <AlertsFeed alerts={alerts} />
 
       <div className="card" style={{ padding: 12, marginBottom: 12 }}>
         <div style={{ fontWeight: 700, marginBottom: 4 }}>Economic Calendar (USD / high)</div>

@@ -55,3 +55,21 @@ Session VWAP runtime tuning:
 FVG runtime tuning:
 - `FVG_LOOKBACK_BARS` (default `300`)
 - `FVG_FILL_RULE` (`overlap` default, optional `mid_touch`)
+
+## TradersReality Feature Pack v1
+Predictions also include `featureSnapshot.tradersReality` (deterministic Node/TS port):
+- `emas`: EMA(5/13/50/200/800), stack flags, distance/slope percentages
+- `cloud`: EMA50 cloud (`stddev(close,100)/4`) with `price_pos`
+- `levels`: daily OHLC + classic floor pivots (`pp/r1..s3`) + `m0..m5`, previous week/month highs/lows
+- `ranges`: ADR(14), AWR(4), AMR(6), RD(15), RW(13) with high/low/50% bands and distance %
+  - default mode mirrors Pine defaults (`DO/WO/MO=false`): Hi/Lo-anchored bands
+  - optional open-anchor mode is supported internally
+- `sessions`: static UTC sessions (London/NY/Tokyo/HK/Sydney/Frankfurt/EU Brinks/US Brinks)
+- `sessions`: DST-aware UTC sessions aligned with TradersReality rules:
+  - UK DST: last Sunday March -> last Sunday October (London/EU Brinks/Frankfurt)
+  - US DST: second Sunday March -> first Sunday November (New York/US Brinks)
+  - Sydney DST: first Sunday October -> first Sunday April
+- `pvsra`: vector candle tier/color + transition patterns
+
+If history is too short for long EMAs (especially EMA800), fields are returned null-safe and
+`featureSnapshot.tradersReality.dataGap=true`.

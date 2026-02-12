@@ -23,6 +23,22 @@ const baseInput: ExplainerInput = {
     emaSpread: 0.0012,
     volatility: 0.021,
     spreadBps: 8,
+    tradersReality: {
+      emas: {
+        ema_5: 70110,
+        ema_13: 70092,
+        ema_50: 70040,
+        ema_200: 69780,
+        ema_800: 68110,
+        emaStack: { bullishStack: true, bearishStack: false },
+        emaDistancesPct: {
+          spread_13_50_pct: 0.074,
+          spread_50_200_pct: 0.372
+        }
+      },
+      cloud: { price_pos: 0.88 },
+      pvsra: { vectorTier: "high", vectorColor: "blue" }
+    },
     indicators: {
       rsi_14: 57.2,
       macd: { line: 0.1, signal: 0.08, hist: 0.02 },
@@ -90,6 +106,24 @@ test("v2 indicator keyDrivers paths are accepted", () => {
         { name: "indicators.stochrsi.k", value: 82.4 },
         { name: "indicators.volume.rel_vol", value: 1.92 },
         { name: "indicators.fvg.open_bullish_count", value: 1 }
+      ],
+      disclaimer: "grounded_features_only"
+    },
+    baseInput.featureSnapshot
+  );
+
+  assert.equal(value.keyDrivers.length, 3);
+});
+
+test("tradersReality keyDrivers paths are accepted", () => {
+  const value = validateExplainerOutput(
+    {
+      explanation: "Signal up while EMA structure remains stacked and cloud position is elevated.",
+      tags: ["trend_up"],
+      keyDrivers: [
+        { name: "tradersReality.emas.ema_50", value: 70040 },
+        { name: "tradersReality.emas.emaDistancesPct.spread_13_50_pct", value: 0.074 },
+        { name: "tradersReality.cloud.price_pos", value: 0.88 }
       ],
       disclaimer: "grounded_features_only"
     },

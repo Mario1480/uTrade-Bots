@@ -78,6 +78,7 @@ import {
   minimumCandlesForIndicators,
   type IndicatorsSnapshot
 } from "./market/indicators.js";
+import { computeTradersRealityFeatures } from "./market/tradersReality/index.js";
 import { bucketCandles, toBucketStart } from "./market/timeframe.js";
 import {
   buildPredictionMetricsSummary,
@@ -321,6 +322,10 @@ const marketCandlesQuerySchema = z.object({
   limit: z.coerce.number().int().min(20).max(1000).default(400)
 });
 
+const dashboardAlertsQuerySchema = z.object({
+  limit: z.coerce.number().int().min(1).max(100).default(20)
+});
+
 const predictionGenerateSchema = z.object({
   symbol: z.string().trim().min(1),
   marketType: z.enum(["spot", "perp"]),
@@ -426,6 +431,34 @@ type ExchangeAccountOverview = {
   alerts: { hasErrors: boolean; message?: string | null };
 };
 
+type DashboardOverviewTotals = {
+  totalEquity: number;
+  totalAvailableMargin: number;
+  totalTodayPnl: number;
+  currency: "USDT";
+  includedAccounts: number;
+};
+
+type DashboardOverviewResponse = {
+  accounts: ExchangeAccountOverview[];
+  totals: DashboardOverviewTotals;
+};
+
+type DashboardAlertSeverity = "critical" | "warning" | "info";
+type DashboardAlertType = "API_DOWN" | "SYNC_FAIL" | "BOT_ERROR" | "MARGIN_WARN" | "CIRCUIT_BREAKER";
+type DashboardAlert = {
+  id: string;
+  severity: DashboardAlertSeverity;
+  type: DashboardAlertType;
+  title: string;
+  message?: string;
+  exchange?: string;
+  exchangeAccountId?: string;
+  botId?: string;
+  ts: string;
+  link?: string;
+};
+
 const DASHBOARD_CONNECTED_WINDOW_MS =
   Number(process.env.DASHBOARD_STATUS_CONNECTED_SECONDS ?? "120") * 1000;
 const DASHBOARD_DEGRADED_WINDOW_MS =
@@ -462,6 +495,10 @@ const PREDICTION_EVALUATOR_BATCH_SIZE =
   Math.max(10, Number(process.env.PREDICTION_EVALUATOR_BATCH_SIZE ?? "100"));
 const PREDICTION_EVALUATOR_SAFETY_LAG_MS =
   Math.max(0, Number(process.env.PREDICTION_EVALUATOR_SAFETY_LAG_SECONDS ?? "120")) * 1000;
+const DASHBOARD_ALERT_STALE_SYNC_MS =
+  Math.max(5 * 60, Number(process.env.DASHBOARD_ALERT_STALE_SYNC_SECONDS ?? "1800")) * 1000;
+const DASHBOARD_MARGIN_WARN_RATIO =
+  Math.min(1, Math.max(0.01, Number(process.env.DASHBOARD_MARGIN_WARN_RATIO ?? "0.1")));
 const PREDICTION_REFRESH_ENABLED = !["0", "false", "off", "no"].includes(
   String(process.env.PREDICTION_REFRESH_ENABLED ?? "1").trim().toLowerCase()
 );
@@ -1747,6 +1784,10 @@ async function generateAutoPredictionForUser(
       marketType: payload.marketType,
       logVwapMetrics: true
     });
+    const tradersReality = computeTradersRealityFeatures(
+      alignedCandles,
+      payload.timeframe
+    );
     const ticker = normalizeTickerPayload(coerceFirstItem(tickerRaw));
     const referencePrice = ticker.mark ?? ticker.last ?? closes[closes.length - 1];
     if (!referencePrice || !Number.isFinite(referencePrice) || referencePrice <= 0) {
@@ -1805,6 +1846,11 @@ async function generateAutoPredictionForUser(
     inferred.featureSnapshot.qualityTpCount = quality.tpCount;
     inferred.featureSnapshot.qualitySlCount = quality.slCount;
     inferred.featureSnapshot.qualityExpiredCount = quality.expiredCount;
+    inferred.featureSnapshot.tradersReality = tradersReality;
+    if (tradersReality.dataGap) {
+      const riskFlags = asRecord(inferred.featureSnapshot.riskFlags) ?? {};
+      inferred.featureSnapshot.riskFlags = { ...riskFlags, dataGap: true };
+    }
     inferred.featureSnapshot = applyNewsRiskToFeatureSnapshot(
       inferred.featureSnapshot,
       newsBlackout
@@ -1963,6 +2009,22 @@ function computeConnectionStatus(
   if (ageMs <= DASHBOARD_CONNECTED_WINDOW_MS) return "connected";
   if (ageMs <= DASHBOARD_DEGRADED_WINDOW_MS) return "degraded";
   return "disconnected";
+}
+
+function toFiniteNumber(value: unknown): number | null {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+function createDashboardAlertId(parts: Array<string | null | undefined>): string {
+  const seed = parts.filter(Boolean).join("|");
+  return crypto.createHash("sha1").update(seed).digest("hex").slice(0, 16);
+}
+
+function alertSeverityRank(value: DashboardAlertSeverity): number {
+  if (value === "critical") return 3;
+  if (value === "warning") return 2;
+  return 1;
 }
 
 function toSafeUser(user: { id: string; email: string }) {
@@ -3561,11 +3623,17 @@ async function bootstrapPredictionStateFromHistory() {
     }
   });
 
+  const nowMs = Date.now();
+  let staleTemplatesDisabled = 0;
+
   for (const row of rows) {
     const userId = typeof row.userId === "string" ? row.userId : null;
     if (!userId) continue;
 
     const featureSnapshot = asRecord(row.featuresSnapshot);
+    const autoEnabled = isAutoScheduleEnabled(featureSnapshot.autoScheduleEnabled);
+    if (!autoEnabled) continue;
+    const autoPaused = isAutoSchedulePaused(featureSnapshot);
     const exchangeAccountId = readPrefillExchangeAccountId(featureSnapshot);
     if (!exchangeAccountId) continue;
 
@@ -3574,6 +3642,28 @@ async function bootstrapPredictionStateFromHistory() {
 
     const marketType = normalizePredictionMarketType(row.marketType);
     const timeframe = normalizePredictionTimeframe(row.timeframe);
+    const staleBootstrapThresholdMs = Math.max(
+      refreshIntervalMsForTimeframe(timeframe) * 2,
+      15 * 60 * 1000
+    );
+    const ageMs = nowMs - row.tsCreated.getTime();
+    if (Number.isFinite(ageMs) && ageMs > staleBootstrapThresholdMs) {
+      await db.prediction.update({
+        where: { id: row.id },
+        data: {
+          featuresSnapshot: {
+            ...featureSnapshot,
+            autoScheduleEnabled: false,
+            autoSchedulePaused: false,
+            autoScheduleDeleted: true,
+            autoScheduleDeletedReason: "stale_bootstrap_orphan",
+            autoScheduleDeletedAt: new Date().toISOString()
+          }
+        }
+      });
+      staleTemplatesDisabled += 1;
+      continue;
+    }
     const exchange =
       typeof featureSnapshot.prefillExchange === "string"
         ? normalizeExchangeValue(featureSnapshot.prefillExchange)
@@ -3629,13 +3719,20 @@ async function bootstrapPredictionStateFromHistory() {
         lastAiExplainedAt: row.tsCreated,
         lastChangeHash: changeHash,
         lastChangeReason: "bootstrap",
-        autoScheduleEnabled: isAutoScheduleEnabled(featureSnapshot.autoScheduleEnabled),
-        autoSchedulePaused: isAutoSchedulePaused(featureSnapshot),
+        autoScheduleEnabled: autoEnabled,
+        autoSchedulePaused: autoPaused,
         directionPreference: parseDirectionPreference(featureSnapshot.directionPreference),
         confidenceTargetPct: readConfidenceTarget(featureSnapshot),
         leverage: readRequestedLeverage(featureSnapshot)
       }
     });
+  }
+
+  if (staleTemplatesDisabled > 0) {
+    // eslint-disable-next-line no-console
+    console.log(
+      `[predictions:bootstrap] disabled ${staleTemplatesDisabled} stale orphan auto-template row(s)`
+    );
   }
 
   predictionStateBootstrapped = true;
@@ -3851,6 +3948,10 @@ async function refreshPredictionStateForTemplate(params: {
       marketType: template.marketType,
       logVwapMetrics: true
     });
+    const tradersReality = computeTradersRealityFeatures(
+      candles,
+      template.timeframe
+    );
     const ticker = normalizeTickerPayload(coerceFirstItem(tickerRaw));
     const referencePrice = ticker.mark ?? ticker.last ?? closes[closes.length - 1];
     if (!referencePrice || !Number.isFinite(referencePrice) || referencePrice <= 0) {
@@ -3905,6 +4006,11 @@ async function refreshPredictionStateForTemplate(params: {
     inferred.featureSnapshot.qualityTpCount = quality.tpCount;
     inferred.featureSnapshot.qualitySlCount = quality.slCount;
     inferred.featureSnapshot.qualityExpiredCount = quality.expiredCount;
+    inferred.featureSnapshot.tradersReality = tradersReality;
+    if (tradersReality.dataGap) {
+      const riskFlags = asRecord(inferred.featureSnapshot.riskFlags) ?? {};
+      inferred.featureSnapshot.riskFlags = { ...riskFlags, dataGap: true };
+    }
     inferred.featureSnapshot = applyNewsRiskToFeatureSnapshot(
       inferred.featureSnapshot,
       newsBlackout
@@ -6404,7 +6510,11 @@ app.post("/api/predictions/:id/pause", requireAuth, async (req, res) => {
     },
     select: {
       id: true,
-      featuresSnapshot: true
+      featuresSnapshot: true,
+      symbol: true,
+      marketType: true,
+      timeframe: true,
+      accountId: true
     }
   });
 
@@ -6422,6 +6532,43 @@ app.post("/api/predictions/:id/pause", requireAuth, async (req, res) => {
         }
       }
     });
+
+    const normalizedSymbol = normalizeSymbolInput(stateRow.symbol);
+    const templateRowIds = await findPredictionTemplateRowIds(user.id, {
+      symbol: normalizedSymbol || stateRow.symbol,
+      marketType: normalizePredictionMarketType(stateRow.marketType),
+      timeframe: normalizePredictionTimeframe(stateRow.timeframe),
+      exchangeAccountId: typeof stateRow.accountId === "string" ? stateRow.accountId : null
+    });
+
+    if (templateRowIds.length > 0) {
+      const rows = await db.prediction.findMany({
+        where: {
+          id: { in: templateRowIds },
+          userId: user.id
+        },
+        select: {
+          id: true,
+          featuresSnapshot: true
+        }
+      });
+
+      await Promise.all(
+        rows.map((row: any) => {
+          const snapshot = asRecord(row.featuresSnapshot);
+          return db.prediction.update({
+            where: { id: row.id },
+            data: {
+              featuresSnapshot: {
+                ...snapshot,
+                autoScheduleEnabled: true,
+                autoSchedulePaused: body.data.paused
+              }
+            }
+          });
+        })
+      );
+    }
 
     return res.json({
       ok: true,
@@ -6491,7 +6638,11 @@ app.post("/api/predictions/:id/stop", requireAuth, async (req, res) => {
     },
     select: {
       id: true,
-      featuresSnapshot: true
+      featuresSnapshot: true,
+      symbol: true,
+      marketType: true,
+      timeframe: true,
+      accountId: true
     }
   });
 
@@ -6509,6 +6660,38 @@ app.post("/api/predictions/:id/stop", requireAuth, async (req, res) => {
         }
       }
     });
+
+    const normalizedSymbol = normalizeSymbolInput(stateRow.symbol);
+    const templateRowIds = await findPredictionTemplateRowIds(user.id, {
+      symbol: normalizedSymbol || stateRow.symbol,
+      marketType: normalizePredictionMarketType(stateRow.marketType),
+      timeframe: normalizePredictionTimeframe(stateRow.timeframe),
+      exchangeAccountId: typeof stateRow.accountId === "string" ? stateRow.accountId : null
+    });
+
+    if (templateRowIds.length > 0) {
+      const rows = await db.prediction.findMany({
+        where: {
+          id: { in: templateRowIds },
+          userId: user.id
+        },
+        select: {
+          id: true,
+          featuresSnapshot: true
+        }
+      });
+
+      await Promise.all(
+        rows.map((row: any) =>
+          db.prediction.update({
+            where: { id: row.id },
+            data: {
+              featuresSnapshot: withAutoScheduleFlag(row.featuresSnapshot, false)
+            }
+          })
+        )
+      );
+    }
 
     return res.json({
       ok: true,
@@ -6564,16 +6747,47 @@ app.post("/api/predictions/:id/delete-schedule", requireAuth, async (req, res) =
     return res.status(400).json({ error: "invalid_prediction_id" });
   }
 
-  const stateDeleted = await db.predictionState.deleteMany({
+  const stateRow = await db.predictionState.findFirst({
     where: {
       id: params.data.id,
       userId: user.id
+    },
+    select: {
+      id: true,
+      symbol: true,
+      marketType: true,
+      timeframe: true,
+      accountId: true
     }
   });
-  if (stateDeleted.count > 0) {
+
+  if (stateRow) {
+    await db.predictionState.delete({
+      where: { id: stateRow.id }
+    });
+    predictionTriggerDebounceState.delete(stateRow.id);
+    const normalizedSymbol = normalizeSymbolInput(stateRow.symbol);
+
+    const templateRowIds = await findPredictionTemplateRowIds(user.id, {
+      symbol: normalizedSymbol || stateRow.symbol,
+      marketType: normalizePredictionMarketType(stateRow.marketType),
+      timeframe: normalizePredictionTimeframe(stateRow.timeframe),
+      exchangeAccountId: typeof stateRow.accountId === "string" ? stateRow.accountId : null
+    });
+
+    const deletedTemplates =
+      templateRowIds.length > 0
+        ? await db.prediction.deleteMany({
+            where: {
+              userId: user.id,
+              id: { in: templateRowIds }
+            }
+          })
+        : { count: 0 };
+
     return res.json({
       ok: true,
-      deletedCount: stateDeleted.count
+      deletedCount: 1 + deletedTemplates.count
     });
   }
 
@@ -7397,7 +7611,331 @@ app.get("/dashboard/overview", requireAuth, async (_req, res) => {
     };
   });
 
-  return res.json(overview);
+  const totals = overview.reduce<DashboardOverviewTotals>(
+    (acc, row) => {
+      const spotTotal = toFiniteNumber(row.spotBudget?.total);
+      const futuresEquity = toFiniteNumber(row.futuresBudget?.equity);
+      const availableMargin = toFiniteNumber(row.futuresBudget?.availableMargin);
+      const pnlToday = toFiniteNumber(row.pnlTodayUsd);
+
+      let contributes = false;
+
+      if (spotTotal !== null) {
+        acc.totalEquity += spotTotal;
+        contributes = true;
+      }
+      if (futuresEquity !== null) {
+        acc.totalEquity += futuresEquity;
+        contributes = true;
+      }
+      if (availableMargin !== null) {
+        acc.totalAvailableMargin += availableMargin;
+        contributes = true;
+      }
+      if (pnlToday !== null) {
+        acc.totalTodayPnl += pnlToday;
+        contributes = true;
+      }
+      if (contributes) acc.includedAccounts += 1;
+
+      return acc;
+    },
+    {
+      totalEquity: 0,
+      totalAvailableMargin: 0,
+      totalTodayPnl: 0,
+      currency: "USDT",
+      includedAccounts: 0
+    }
+  );
+
+  const response: DashboardOverviewResponse = {
+    accounts: overview,
+    totals: {
+      ...totals,
+      totalEquity: Number(totals.totalEquity.toFixed(6)),
+      totalAvailableMargin: Number(totals.totalAvailableMargin.toFixed(6)),
+      totalTodayPnl: Number(totals.totalTodayPnl.toFixed(6))
+    }
+  };
+
+  return res.json(response);
+});
+
+app.get("/dashboard/alerts", requireAuth, async (req, res) => {
+  const user = getUserFromLocals(res);
+  const parsed = dashboardAlertsQuerySchema.safeParse(req.query ?? {});
+  if (!parsed.success) {
+    return res.status(400).json({ error: "invalid_query", details: parsed.error.flatten() });
+  }
+
+  const limit = parsed.data.limit;
+  const [accounts, bots, circuitEvents] = await Promise.all([
+    db.exchangeAccount.findMany({
+      where: { userId: user.id },
+      orderBy: { createdAt: "desc" },
+      select: {
+        id: true,
+        exchange: true,
+        label: true,
+        lastUsedAt: true,
+        futuresBudgetEquity: true,
+        futuresBudgetAvailableMargin: true,
+        lastSyncErrorAt: true,
+        lastSyncErrorMessage: true
+      }
+    }),
+    db.bot.findMany({
+      where: {
+        userId: user.id,
+        exchangeAccountId: { not: null }
+      },
+      select: {
+        id: true,
+        name: true,
+        status: true,
+        lastError: true,
+        updatedAt: true,
+        exchangeAccountId: true,
+        runtime: {
+          select: {
+            updatedAt: true,
+            lastHeartbeatAt: true,
+            lastTickAt: true,
+            lastError: true,
+            lastErrorAt: true,
+            lastErrorMessage: true,
+            reason: true,
+            freeUsdt: true
+          }
+        }
+      }
+    }),
+    db.riskEvent.findMany({
+      where: {
+        type: "CIRCUIT_BREAKER_TRIPPED",
+        bot: {
+          userId: user.id
+        }
+      },
+      orderBy: { createdAt: "desc" },
+      take: Math.max(limit * 3, 30),
+      select: {
+        id: true,
+        botId: true,
+        createdAt: true,
+        message: true,
+        meta: true,
+        bot: {
+          select: {
+            id: true,
+            name: true,
+            exchangeAccountId: true,
+            exchangeAccount: {
+              select: {
+                id: true,
+                exchange: true,
+                label: true
+              }
+            }
+          }
+        }
+      }
+    })
+  ]);
+
+  const accountById = new Map(accounts.map((row: any) => [row.id, row]));
+  const aggregate = new Map<string, {
+    running: number;
+    stopped: number;
+    error: number;
+    latestSyncAt: Date | null;
+    latestRuntimeAt: Date | null;
+    latestRuntimeFreeUsdt: number | null;
+  }>();
+
+  for (const account of accounts) {
+    aggregate.set(account.id, {
+      running: 0,
+      stopped: 0,
+      error: 0,
+      latestSyncAt: null,
+      latestRuntimeAt: null,
+      latestRuntimeFreeUsdt: null
+    });
+  }
+
+  for (const bot of bots) {
+    const exchangeAccountId = bot.exchangeAccountId as string | null;
+    if (!exchangeAccountId) continue;
+    const current = aggregate.get(exchangeAccountId);
+    if (!current) continue;
+
+    if (bot.status === "running") current.running += 1;
+    else if (bot.status === "error") current.error += 1;
+    else current.stopped += 1;
+
+    const lastSyncAt = resolveLastSyncAt(bot.runtime);
+    if (lastSyncAt && (!current.latestSyncAt || lastSyncAt.getTime() > current.latestSyncAt.getTime())) {
+      current.latestSyncAt = lastSyncAt;
+    }
+
+    const runtimeUpdatedAt = bot.runtime?.updatedAt ?? null;
+    if (runtimeUpdatedAt && (!current.latestRuntimeAt || runtimeUpdatedAt.getTime() > current.latestRuntimeAt.getTime())) {
+      current.latestRuntimeAt = runtimeUpdatedAt;
+      current.latestRuntimeFreeUsdt =
+        typeof bot.runtime?.freeUsdt === "number" ? bot.runtime.freeUsdt : null;
+    }
+  }
+
+  const now = Date.now();
+  const alerts: DashboardAlert[] = [];
+
+  for (const account of accounts) {
+    const row = aggregate.get(account.id);
+    const lastSyncAt = row?.latestSyncAt ?? account.lastUsedAt ?? null;
+    const hasBotActivity = ((row?.running ?? 0) + (row?.stopped ?? 0) + (row?.error ?? 0)) > 0;
+    const status = computeConnectionStatus(lastSyncAt, hasBotActivity);
+
+    if (status === "disconnected") {
+      const ts = lastSyncAt ?? new Date(now);
+      alerts.push({
+        id: createDashboardAlertId(["API_DOWN", account.id, ts.toISOString()]),
+        severity: "critical",
+        type: "API_DOWN",
+        title: `${account.exchange.toUpperCase()} · API disconnected`,
+        message: `No healthy sync for account "${account.label}".`,
+        exchange: account.exchange,
+        exchangeAccountId: account.id,
+        ts: ts.toISOString(),
+        link: `/settings/exchange-accounts`
+      });
+    } else if (lastSyncAt && now - lastSyncAt.getTime() > DASHBOARD_ALERT_STALE_SYNC_MS) {
+      alerts.push({
+        id: createDashboardAlertId(["SYNC_FAIL", account.id, String(lastSyncAt.getTime())]),
+        severity: "warning",
+        type: "SYNC_FAIL",
+        title: `${account.exchange.toUpperCase()} · Sync stale`,
+        message: `Last successful sync is older than ${Math.round(DASHBOARD_ALERT_STALE_SYNC_MS / 60000)} minutes.`,
+        exchange: account.exchange,
+        exchangeAccountId: account.id,
+        ts: lastSyncAt.toISOString(),
+        link: `/settings/exchange-accounts`
+      });
+    }
+
+    if (account.lastSyncErrorMessage) {
+      const ts = account.lastSyncErrorAt ?? lastSyncAt ?? new Date(now);
+      alerts.push({
+        id: createDashboardAlertId(["SYNC_FAIL", account.id, account.lastSyncErrorMessage, ts.toISOString()]),
+        severity: status === "disconnected" ? "critical" : "warning",
+        type: "SYNC_FAIL",
+        title: `${account.exchange.toUpperCase()} · Sync error`,
+        message: account.lastSyncErrorMessage.slice(0, 220),
+        exchange: account.exchange,
+        exchangeAccountId: account.id,
+        ts: ts.toISOString(),
+        link: `/settings/exchange-accounts`
+      });
+    }
+
+    const equity = toFiniteNumber(account.futuresBudgetEquity);
+    const availableMargin = toFiniteNumber(
+      row?.latestRuntimeFreeUsdt !== null && row?.latestRuntimeFreeUsdt !== undefined
+        ? row.latestRuntimeFreeUsdt
+        : account.futuresBudgetAvailableMargin
+    );
+
+    if (
+      equity !== null &&
+      equity > 0 &&
+      availableMargin !== null &&
+      availableMargin >= 0 &&
+      availableMargin / equity < DASHBOARD_MARGIN_WARN_RATIO
+    ) {
+      const ts = row?.latestRuntimeAt ?? lastSyncAt ?? new Date(now);
+      const ratioPct = Math.max(0, Math.round((availableMargin / equity) * 100));
+      alerts.push({
+        id: createDashboardAlertId(["MARGIN_WARN", account.id, String(ts.getTime()), String(ratioPct)]),
+        severity: "warning",
+        type: "MARGIN_WARN",
+        title: `${account.exchange.toUpperCase()} · Low available margin`,
+        message: `Available margin is at ${ratioPct}% of equity.`,
+        exchange: account.exchange,
+        exchangeAccountId: account.id,
+        ts: ts.toISOString(),
+        link: `/trade?exchangeAccountId=${encodeURIComponent(account.id)}`
+      });
+    }
+  }
+
+  for (const bot of bots) {
+    if (bot.status !== "error") continue;
+    const accountId = typeof bot.exchangeAccountId === "string" ? bot.exchangeAccountId : null;
+    const account = accountId ? (accountById.get(accountId) as any) : null;
+    const ts = bot.runtime?.lastErrorAt ?? bot.runtime?.updatedAt ?? bot.updatedAt ?? new Date(now);
+    const message =
+      bot.runtime?.lastErrorMessage ??
+      bot.lastError ??
+      bot.runtime?.lastError ??
+      `Bot "${bot.name}" reported an execution error.`;
+    alerts.push({
+      id: createDashboardAlertId(["BOT_ERROR", bot.id, ts.toISOString(), message]),
+      severity: "warning",
+      type: "BOT_ERROR",
+      title: `Bot error · ${bot.name}`,
+      message: String(message).slice(0, 220),
+      exchange: account?.exchange,
+      exchangeAccountId: accountId ?? undefined,
+      botId: bot.id,
+      ts: ts.toISOString(),
+      link: accountId
+        ? `/bots?exchangeAccountId=${encodeURIComponent(accountId)}&status=error`
+        : `/bots?status=error`
+    });
+  }
+
+  const circuitAlertByBot = new Map<string, DashboardAlert>();
+  for (const event of circuitEvents) {
+    if (circuitAlertByBot.has(event.botId)) continue;
+    const account = event.bot?.exchangeAccount ?? null;
+    const messageFromMeta =
+      event.meta && typeof event.meta === "object" && "reason" in (event.meta as any)
+        ? String((event.meta as any).reason ?? "")
+        : "";
+    const message =
+      event.message ??
+      (messageFromMeta || `Circuit breaker triggered for bot "${event.bot?.name ?? event.botId}".`);
+    const alert: DashboardAlert = {
+      id: createDashboardAlertId(["CIRCUIT_BREAKER", event.botId, event.createdAt.toISOString()]),
+      severity: "critical",
+      type: "CIRCUIT_BREAKER",
+      title: `Circuit breaker tripped · ${event.bot?.name ?? event.botId}`,
+      message: message.slice(0, 220),
+      exchange: account?.exchange ?? undefined,
+      exchangeAccountId: account?.id ?? undefined,
+      botId: event.botId,
+      ts: event.createdAt.toISOString(),
+      link: account?.id
+        ? `/bots?exchangeAccountId=${encodeURIComponent(account.id)}&status=error`
+        : `/bots?status=error`
+    };
+    circuitAlertByBot.set(event.botId, alert);
+  }
+
+  for (const alert of circuitAlertByBot.values()) {
+    alerts.push(alert);
+  }
+
+  alerts.sort((a, b) => {
+    const severityDiff = alertSeverityRank(b.severity) - alertSeverityRank(a.severity);
+    if (severityDiff !== 0) return severityDiff;
+    return new Date(b.ts).getTime() - new Date(a.ts).getTime();
+  });
+
+  return res.json({
+    items: alerts.slice(0, limit)
+  });
 });
 
 app.post("/exchange-accounts", requireAuth, async (req, res) => {

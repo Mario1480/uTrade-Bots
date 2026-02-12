@@ -60,7 +60,8 @@ type GenerateDeps = {
 const SYSTEM_MESSAGE =
   "You are a trading assistant. You must only use the provided JSON featureSnapshot. " +
   "If a value is missing, say 'unknown' or omit it. Do not mention news unless featureSnapshot contains a 'newsRisk' flag. " +
-  "You may reference indicators only when values exist under featureSnapshot.indicators (including stochrsi, volume, fvg). " +
+  "You may reference indicators only when values exist under featureSnapshot.indicators (including stochrsi, volume, fvg) " +
+  "or under featureSnapshot.tradersReality (emas, cloud, levels, ranges, sessions, pvsra). " +
   "Do not claim volume spikes or fair value gaps unless those fields explicitly support it. " +
   "Never mention TradingView.";
 
@@ -201,7 +202,9 @@ export function fallbackExplain(input: ExplainerInput): ExplainerOutput {
     "trend",
     "ema_slope",
     "indicators.macd.hist",
-    "indicators.vwap.dist_pct"
+    "indicators.vwap.dist_pct",
+    "tradersReality.emas.emaDistancesPct.spread_13_50_pct",
+    "tradersReality.emas.emaDistancesPct.spread_50_200_pct"
   ]);
   const adx = pickNumberByPaths(snapshot, ["adx", "trendStrength", "indicators.adx.adx_14"]);
   const breakoutProb = pickNumberByPaths(snapshot, ["breakoutProb", "breakoutRisk", "breakout_score"]);
@@ -215,6 +218,8 @@ export function fallbackExplain(input: ExplainerInput): ExplainerOutput {
   const volZ = pickNumberByPaths(snapshot, ["indicators.volume.vol_z"]);
   const relVol = pickNumberByPaths(snapshot, ["indicators.volume.rel_vol"]);
   const volTrend = pickNumberByPaths(snapshot, ["indicators.volume.vol_trend"]);
+  const trPvsraTier = getByPath(snapshot, "tradersReality.pvsra.vectorTier");
+  const trCloudPos = pickNumberByPaths(snapshot, ["tradersReality.cloud.price_pos"]);
   const openBullishGaps = pickNumberByPaths(snapshot, ["indicators.fvg.open_bullish_count"]);
   const openBearishGaps = pickNumberByPaths(snapshot, ["indicators.fvg.open_bearish_count"]);
   const nearestBullGapDist = pickNumberByPaths(snapshot, ["indicators.fvg.nearest_bullish_gap.dist_pct"]);
@@ -251,6 +256,12 @@ export function fallbackExplain(input: ExplainerInput): ExplainerOutput {
   }
   if (volTrend !== null && Math.abs(volTrend) < 0.2 && stochRsiD !== null && stochRsiK !== null) {
     tags.push("range_bound");
+  }
+  if (trCloudPos !== null && (trCloudPos <= 0.1 || trCloudPos >= 0.9)) {
+    tags.push("mean_reversion");
+  }
+  if (trPvsraTier === "extreme") {
+    tags.push("breakout_risk");
   }
   if (bbPos !== null && (bbPos >= 0.9 || bbPos <= 0.1)) tags.push("mean_reversion");
   if ((spreadBps !== null && spreadBps >= 25) || (liquidity !== null && liquidity <= 0.35)) {
@@ -304,6 +315,15 @@ export function fallbackExplain(input: ExplainerInput): ExplainerOutput {
     "indicators.fvg.nearest_bearish_gap.dist_pct",
     "indicators.vwap.dist_pct",
     "indicators.adx.adx_14",
+    "tradersReality.emas.ema_50",
+    "tradersReality.emas.ema_200",
+    "tradersReality.emas.ema_800",
+    "tradersReality.emas.emaDistancesPct.spread_13_50_pct",
+    "tradersReality.cloud.price_pos",
+    "tradersReality.ranges.distancesPct.dist_to_adrHigh_pct",
+    "tradersReality.ranges.distancesPct.dist_to_adrLow_pct",
+    "tradersReality.pvsra.vectorTier",
+    "tradersReality.pvsra.vectorColor",
     "emaSpread",
     "atrPct",
     "volatility",
@@ -358,6 +378,7 @@ function buildPromptPayload(input: ExplainerInput) {
     groundingRules: [
       "Only reference values that exist in featureSnapshot",
       "Only reference stochrsi/volume/fvg when present and non-null",
+      "Only reference tradersReality fields when present and non-null",
       "Do not claim volume spikes unless rel_vol or vol_z supports it",
       "Do not claim fair value gaps unless fvg counts or distances support it"
     ]

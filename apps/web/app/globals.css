@@ -152,6 +152,96 @@ a { color: inherit; }
   color: #fca5a5;
 }
 
+.dashboardTotalsBar {
+  margin-top: 12px;
+}
+
+.dashboardTotalsMeta {
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.dashboardAlertsCard {
+  padding: 12px;
+  margin-bottom: 12px;
+}
+
+.dashboardAlertsTitle {
+  font-weight: 700;
+  margin-bottom: 8px;
+}
+
+.dashboardAlertsEmpty {
+  font-size: 13px;
+  color: var(--muted);
+}
+
+.dashboardAlertsList {
+  display: grid;
+  gap: 8px;
+}
+
+.dashboardAlertLink {
+  text-decoration: none;
+  color: inherit;
+}
+
+.dashboardAlertItem {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 8px;
+  display: grid;
+  gap: 4px;
+  transition: border-color 120ms ease, background-color 120ms ease;
+}
+
+.dashboardAlertLink:hover .dashboardAlertItem {
+  border-color: rgba(255, 193, 7, 0.5);
+  background-color: rgba(255, 255, 255, 0.02);
+}
+
+.dashboardAlertItem-critical {
+  border-left: 3px solid rgba(239, 68, 68, 0.8);
+}
+
+.dashboardAlertItem-warning {
+  border-left: 3px solid rgba(245, 158, 11, 0.8);
+}
+
+.dashboardAlertItem-info {
+  border-left: 3px solid rgba(56, 189, 248, 0.75);
+}
+
+.dashboardAlertTop {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+.dashboardAlertBadge {
+  letter-spacing: 0.02em;
+}
+
+.dashboardAlertTime {
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.dashboardAlertText {
+  font-weight: 600;
+  font-size: 13px;
+}
+
+.dashboardAlertMessage {
+  font-size: 12px;
+  color: var(--muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
 .botGrid {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
@@ -1477,6 +1567,47 @@ a { color: inherit; }
   .container {
     padding: 18px 12px 48px;
   }
+  .statGrid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 10px;
+  }
+  .statCard {
+    padding: 12px;
+  }
+  .statValue {
+    font-size: 20px;
+  }
+  .dashboardTotalsBar {
+    margin-top: 8px;
+  }
+  .dashboardTotalsMeta {
+    font-size: 11px;
+  }
+  .dashboardAlertsCard {
+    padding: 10px;
+    margin-bottom: 10px;
+  }
+  .dashboardAlertsTitle {
+    margin-bottom: 6px;
+    font-size: 14px;
+  }
+  .dashboardAlertItem {
+    padding: 7px;
+    gap: 3px;
+  }
+  .dashboardAlertBadge {
+    padding: 4px 8px;
+    font-size: 11px;
+  }
+  .dashboardAlertTime {
+    font-size: 11px;
+  }
+  .dashboardAlertText {
+    font-size: 12px;
+  }
+  .dashboardAlertMessage {
+    font-size: 11px;
+  }
   .appHeaderInner {
     flex-direction: column;
     align-items: stretch;
@@ -1588,6 +1719,12 @@ a { color: inherit; }
   .homeGrid,
   .gridTwoCol {
     gap: 12px;
+  }
+}
+
+@media (max-width: 520px) {
+  .statGrid {
+    grid-template-columns: 1fr;
   }
 }
 
