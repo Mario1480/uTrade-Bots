@@ -12,6 +12,11 @@ type ExchangeAccount = {
   apiKeyMasked: string;
 };
 
+type StrategyKey = "dummy" | "prediction_copier";
+type CopierTimeframe = "5m" | "15m" | "1h" | "4h";
+type CopierOrderType = "market" | "limit";
+type CopierSizingType = "fixed_usd" | "equity_pct" | "risk_pct";
+
 function errMsg(e: unknown): string {
   if (e instanceof ApiError) return `${e.message} (HTTP ${e.status})`;
   if (e && typeof e === "object" && "message" in e) return String((e as any).message);
@@ -24,10 +29,17 @@ export default function NewBotPage() {
   const [name, setName] = useState("");
   const [symbol, setSymbol] = useState("BTCUSDT");
   const [exchangeAccountId, setExchangeAccountId] = useState("");
-  const [strategyKey, setStrategyKey] = useState("dummy");
+  const [strategyKey, setStrategyKey] = useState<StrategyKey>("dummy");
   const [marginMode, setMarginMode] = useState<"isolated" | "cross">("isolated");
   const [leverage, setLeverage] = useState(1);
   const [tickMs, setTickMs] = useState(1000);
+  const [copierTimeframe, setCopierTimeframe] = useState<CopierTimeframe>("15m");
+  const [copierMinConfidence, setCopierMinConfidence] = useState(70);
+  const [copierMaxPredictionAgeSec, setCopierMaxPredictionAgeSec] = useState(600);
+  const [copierOrderType, setCopierOrderType] = useState<CopierOrderType>("market");
+  const [copierSizingType, setCopierSizingType] = useState<CopierSizingType>("fixed_usd");
+  const [copierSizingValue, setCopierSizingValue] = useState(100);
+  const [copierBlockTags, setCopierBlockTags] = useState("news_risk,data_gap,low_liquidity");
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -63,15 +75,44 @@ export default function NewBotPage() {
     setSaving(true);
     setError(null);
     try {
+      const cleanedSymbol = symbol.trim().toUpperCase();
+      const predictionCopierParams =
+        strategyKey === "prediction_copier"
+          ? {
+              timeframe: copierTimeframe,
+              minConfidence: copierMinConfidence,
+              maxPredictionAgeSec: copierMaxPredictionAgeSec,
+              symbols: [cleanedSymbol],
+              positionSizing: {
+                type: copierSizingType,
+                value: copierSizingValue
+              },
+              filters: {
+                blockTags: copierBlockTags
+                  .split(",")
+                  .map((item) => item.trim())
+                  .filter(Boolean)
+              },
+              execution: {
+                orderType: copierOrderType
+              }
+            }
+          : null;
+
       const created = await apiPost<{ id: string }>("/bots", {
         name: name.trim(),
-        symbol: symbol.trim(),
+        symbol: cleanedSymbol,
         exchangeAccountId,
         strategyKey,
         marginMode,
         leverage,
         tickMs,
-        paramsJson: {}
+        paramsJson:
+          strategyKey === "prediction_copier"
+            ? {
+                predictionCopier: predictionCopierParams
+              }
+            : {}
       });
       router.push(`/bots/${created.id}`);
     } catch (e) {
@@ -126,7 +167,10 @@ export default function NewBotPage() {
             <div style={{ display: "grid", gridTemplateColumns: "repeat(2, minmax(0, 1fr))", gap: 10 }}>
               <label style={{ display: "grid", gap: 6 }}>
                 <span style={{ fontSize: 12, color: "var(--muted)" }}>Strategy</span>
-                <input className="input" value={strategyKey} onChange={(e) => setStrategyKey(e.target.value)} />
+                <select className="input" value={strategyKey} onChange={(e) => setStrategyKey(e.target.value as StrategyKey)}>
+                  <option value="dummy">dummy</option>
+                  <option value="prediction_copier">prediction_copier</option>
+                </select>
               </label>
               <label style={{ display: "grid", gap: 6 }}>
                 <span style={{ fontSize: 12, color: "var(--muted)" }}>Margin Mode</span>
@@ -144,6 +188,83 @@ export default function NewBotPage() {
                 <input className="input" type="number" min={100} max={60_000} value={tickMs} onChange={(e) => setTickMs(Number(e.target.value || 1000))} />
               </label>
             </div>
+
+            {strategyKey === "prediction_copier" ? (
+              <div className="card" style={{ padding: 12, display: "grid", gap: 10 }}>
+                <div style={{ fontSize: 13, fontWeight: 600 }}>Prediction Copier Settings</div>
+                <div style={{ fontSize: 12, color: "var(--muted)" }}>
+                  Kopiert Signale aus <code>predictions_state</code> (enter/exit) mit Risk-Filter.
+                </div>
+                <div style={{ display: "grid", gridTemplateColumns: "repeat(2, minmax(0, 1fr))", gap: 10 }}>
+                  <label style={{ display: "grid", gap: 6 }}>
+                    <span style={{ fontSize: 12, color: "var(--muted)" }}>Prediction TF</span>
+                    <select className="input" value={copierTimeframe} onChange={(e) => setCopierTimeframe(e.target.value as CopierTimeframe)}>
+                      <option value="5m">5m</option>
+                      <option value="15m">15m</option>
+                      <option value="1h">1h</option>
+                      <option value="4h">4h</option>
+                    </select>
+                  </label>
+                  <label style={{ display: "grid", gap: 6 }}>
+                    <span style={{ fontSize: 12, color: "var(--muted)" }}>Min confidence (%)</span>
+                    <input
+                      className="input"
+                      type="number"
+                      min={0}
+                      max={100}
+                      value={copierMinConfidence}
+                      onChange={(e) => setCopierMinConfidence(Number(e.target.value || 0))}
+                    />
+                  </label>
+                  <label style={{ display: "grid", gap: 6 }}>
+                    <span style={{ fontSize: 12, color: "var(--muted)" }}>Max prediction age (sec)</span>
+                    <input
+                      className="input"
+                      type="number"
+                      min={30}
+                      max={86_400}
+                      value={copierMaxPredictionAgeSec}
+                      onChange={(e) => setCopierMaxPredictionAgeSec(Number(e.target.value || 600))}
+                    />
+                  </label>
+                  <label style={{ display: "grid", gap: 6 }}>
+                    <span style={{ fontSize: 12, color: "var(--muted)" }}>Order type</span>
+                    <select className="input" value={copierOrderType} onChange={(e) => setCopierOrderType(e.target.value as CopierOrderType)}>
+                      <option value="market">market</option>
+                      <option value="limit">limit</option>
+                    </select>
+                  </label>
+                  <label style={{ display: "grid", gap: 6 }}>
+                    <span style={{ fontSize: 12, color: "var(--muted)" }}>Sizing type</span>
+                    <select className="input" value={copierSizingType} onChange={(e) => setCopierSizingType(e.target.value as CopierSizingType)}>
+                      <option value="fixed_usd">fixed_usd</option>
+                      <option value="equity_pct">equity_pct</option>
+                      <option value="risk_pct">risk_pct</option>
+                    </select>
+                  </label>
+                  <label style={{ display: "grid", gap: 6 }}>
+                    <span style={{ fontSize: 12, color: "var(--muted)" }}>Sizing value</span>
+                    <input
+                      className="input"
+                      type="number"
+                      min={0.01}
+                      step="0.01"
+                      value={copierSizingValue}
+                      onChange={(e) => setCopierSizingValue(Number(e.target.value || 100))}
+                    />
+                  </label>
+                </div>
+                <label style={{ display: "grid", gap: 6 }}>
+                  <span style={{ fontSize: 12, color: "var(--muted)" }}>Block tags (comma separated)</span>
+                  <input
+                    className="input"
+                    value={copierBlockTags}
+                    onChange={(e) => setCopierBlockTags(e.target.value)}
+                    placeholder="news_risk,data_gap,low_liquidity"
+                  />
+                </label>
+              </div>
+            ) : null}
 
             <button className="btn btnPrimary" type="submit" disabled={!canCreate}>
               {saving ? "Creating..." : "Create Bot"}
