@@ -22,6 +22,13 @@ type PredictionMarketType = "spot" | "perp";
 type DirectionPreference = "long" | "short" | "either";
 type SortMode = "newest" | "confidence" | "move";
 type RunningStatusFilter = "all" | "running" | "paused";
+type SignalSource = "local" | "ai";
+
+type AiPredictionSummary = {
+  signal: PredictionSignal;
+  expectedMovePct: number;
+  confidence: number;
+};
 
 type PredictionListItem = {
   id: string;
@@ -51,6 +58,7 @@ type PredictionListItem = {
   accountId: string | null;
   lastUpdatedAt?: string | null;
   lastChangeReason?: string | null;
+  aiPrediction?: AiPredictionSummary | null;
 };
 
 type PredictionEventItem = {
@@ -68,6 +76,7 @@ type PredictionEventItem = {
 type PredictionDetailResponse = PredictionPrefillSource & {
   id: string;
   expectedMovePct: number;
+  featureSnapshot?: Record<string, unknown>;
   indicators?: {
     rsi_14?: number | null;
     macd?: { line?: number | null; signal?: number | null; hist?: number | null } | null;
@@ -301,6 +310,38 @@ function toNum(value: unknown): number | null {
   return Number.isFinite(parsed) ? parsed : null;
 }
 
+function readAiPrediction(value: unknown): AiPredictionSummary | null {
+  const raw = asRecord(value);
+  const signal =
+    raw.signal === "up" || raw.signal === "down" || raw.signal === "neutral"
+      ? raw.signal
+      : null;
+  const expectedMoveRaw = toNum(raw.expectedMovePct);
+  const confidenceRaw = toNum(raw.confidence);
+  if (!signal || expectedMoveRaw === null || confidenceRaw === null) return null;
+  const normalizedConfidence = confidenceRaw <= 1 ? confidenceRaw : confidenceRaw / 100;
+  return {
+    signal,
+    expectedMovePct: Math.max(0, Math.min(25, Math.abs(expectedMoveRaw))),
+    confidence: Math.max(0, Math.min(1, normalizedConfidence))
+  };
+}
+
+function resolveSignal(row: PredictionListItem, source: SignalSource): PredictionSignal {
+  if (source === "ai" && row.aiPrediction) return row.aiPrediction.signal;
+  return row.signal;
+}
+
+function resolveConfidence(row: PredictionListItem, source: SignalSource): number {
+  if (source === "ai" && row.aiPrediction) return row.aiPrediction.confidence;
+  return row.confidence;
+}
+
+function resolveExpectedMove(row: PredictionListItem, source: SignalSource): number {
+  if (source === "ai" && row.aiPrediction) return row.aiPrediction.expectedMovePct;
+  return row.expectedMovePct;
+}
+
 function fmtNum(value: unknown, decimals = 2): string {
   const parsed = toNum(value);
   if (parsed === null) return "n/a";
@@ -413,6 +454,7 @@ export default function PredictionsPage() {
   const [filterSymbol, setFilterSymbol] = useState("");
   const [filterSignal, setFilterSignal] = useState<PredictionSignal | "all">("all");
   const [filterTimeframe, setFilterTimeframe] = useState<PredictionTimeframe | "all">("all");
+  const [signalSource, setSignalSource] = useState<SignalSource>("local");
   const [sortMode, setSortMode] = useState<SortMode>("newest");
 
   const [newSymbol, setNewSymbol] = useState("BTCUSDT");
@@ -437,7 +479,14 @@ export default function PredictionsPage() {
     setError(null);
     try {
       const payload = await apiGet<{ items: PredictionListItem[] }>("/api/predictions?limit=100");
-      setRows(Array.isArray(payload.items) ? payload.items : []);
+      setRows(
+        Array.isArray(payload.items)
+          ? payload.items.map((row) => ({
+              ...row,
+              aiPrediction: readAiPrediction((row as Record<string, unknown>).aiPrediction)
+            }))
+          : []
+      );
     } catch (e) {
       setError(errMsg(e));
     } finally {
@@ -561,23 +610,30 @@ export default function PredictionsPage() {
 
     const next = rows.filter((row) => {
       if (symbolSearch && !row.symbol.toUpperCase().includes(symbolSearch)) return false;
-      if (filterSignal !== "all" && row.signal !== filterSignal) return false;
+      if (filterSignal !== "all" && resolveSignal(row, signalSource) !== filterSignal) return false;
       if (filterTimeframe !== "all" && row.timeframe !== filterTimeframe) return false;
       return true;
     });
 
     next.sort((a, b) => {
       if (sortMode === "confidence") {
-        return (b.confidence <= 1 ? b.confidence * 100 : b.confidence) - (a.confidence <= 1 ? a.confidence * 100 : a.confidence);
+        return (
+          (resolveConfidence(b, signalSource) <= 1
+            ? resolveConfidence(b, signalSource) * 100
+            : resolveConfidence(b, signalSource)) -
+          (resolveConfidence(a, signalSource) <= 1
+            ? resolveConfidence(a, signalSource) * 100
+            : resolveConfidence(a, signalSource))
+        );
       }
       if (sortMode === "move") {
-        return Math.abs(b.expectedMovePct) - Math.abs(a.expectedMovePct);
+        return Math.abs(resolveExpectedMove(b, signalSource)) - Math.abs(resolveExpectedMove(a, signalSource));
       }
       return new Date(b.tsCreated).getTime() - new Date(a.tsCreated).getTime();
     });
 
     return next;
-  }, [filterSignal, filterSymbol, filterTimeframe, rows, sortMode]);
+  }, [filterSignal, filterSymbol, filterTimeframe, rows, signalSource, sortMode]);
 
   const filteredRunningRows = useMemo(() => {
     if (runningStatusFilter === "all") return runningRows;
@@ -592,11 +648,22 @@ export default function PredictionsPage() {
     setSendingId(id);
     try {
       const detail = await apiGet<PredictionDetailResponse>(`/api/predictions/${id}`);
+      const row = rows.find((item) => item.id === id);
+      const aiPrediction =
+        row?.aiPrediction ?? readAiPrediction(asRecord(detail.featureSnapshot).aiPrediction);
       if (!detail.accountId) {
         throw new Error("No exchange account available for this prediction.");
       }
-
-      const built = buildTradeDeskPrefillPayload(detail);
+      const detailForPrefill: PredictionDetailResponse =
+        signalSource === "ai" && aiPrediction
+          ? {
+              ...detail,
+              signal: aiPrediction.signal,
+              confidence: aiPrediction.confidence,
+              expectedMovePct: aiPrediction.expectedMovePct
+            }
+          : detail;
+      const built = buildTradeDeskPrefillPayload(detailForPrefill);
       sessionStorage.setItem(TRADE_DESK_PREFILL_SESSION_KEY, JSON.stringify(built.payload));
       if (built.info) {
         setNotice(built.info);
@@ -861,6 +928,11 @@ export default function PredictionsPage() {
     const rowId = row.id;
     const detail = detailsById[rowId];
     const indicators = detail?.indicators ?? null;
+    const detailSnapshot = asRecord(detail?.featureSnapshot);
+    const aiPrediction = row.aiPrediction ?? readAiPrediction(detailSnapshot.aiPrediction);
+    const activeSignal = signalSource === "ai" && aiPrediction ? aiPrediction.signal : row.signal;
+    const activeConfidence = signalSource === "ai" && aiPrediction ? aiPrediction.confidence : row.confidence;
+    const activeMove = signalSource === "ai" && aiPrediction ? aiPrediction.expectedMovePct : row.expectedMovePct;
     const loadingDetail = detailsLoadingId === rowId;
     const dataGap = Boolean(indicators?.dataGap || detail?.riskFlags?.dataGap);
     const updatedAtIso = row.lastUpdatedAt ?? row.tsCreated;
@@ -934,6 +1006,10 @@ export default function PredictionsPage() {
           <div className="predictionContextReason">
             Reason: {manualReason.shortReason}
           </div>
+          <div className="predictionContextReason">
+            Signal source: {signalSource === "ai" ? "AI" : "Local"}
+            {signalSource === "ai" && !aiPrediction ? " (AI value unavailable, using local)" : ""}
+          </div>
 
           {dataGap ? (
             <span className="predictionDetailWarning">
@@ -942,6 +1018,22 @@ export default function PredictionsPage() {
           ) : null}
 
           <div className="predictionIndicatorGrid">
+            <div className="card predictionIndicatorCard">
+              <div className="predictionIndicatorTitle">Selected signal</div>
+              <div className="predictionIndicatorValue">{activeSignal}</div>
+              <div className="predictionIndicatorMeta">
+                conf {fmtConfidence(activeConfidence)} · move {activeMove.toFixed(2)}%
+              </div>
+            </div>
+            <div className="card predictionIndicatorCard">
+              <div className="predictionIndicatorTitle">Local vs AI signal</div>
+              <div className="predictionIndicatorValue">
+                {row.signal} / {aiPrediction?.signal ?? "n/a"}
+              </div>
+              <div className="predictionIndicatorMeta">
+                local {fmtConfidence(row.confidence)} · ai {aiPrediction ? fmtConfidence(aiPrediction.confidence) : "n/a"}
+              </div>
+            </div>
             <div className="card predictionIndicatorCard">
               <div className="predictionIndicatorTitle">Evaluated</div>
               <div className="predictionIndicatorValue">{realizedEvaluatedAt ? "yes" : "no"}</div>
@@ -1576,6 +1668,10 @@ export default function PredictionsPage() {
               <option key={tf} value={tf}>{tf}</option>
             ))}
           </select>
+          <select className="input" value={signalSource} onChange={(e) => setSignalSource(e.target.value as SignalSource)}>
+            <option value="local">Signal Source: Local</option>
+            <option value="ai">Signal Source: AI (fallback local)</option>
+          </select>
           <select className="input" value={sortMode} onChange={(e) => setSortMode(e.target.value as SortMode)}>
             <option value="newest">Sort: Newest</option>
             <option value="confidence">Sort: Confidence</option>
@@ -1641,7 +1737,12 @@ export default function PredictionsPage() {
               </thead>
               <tbody>
                 {filteredRows.map((row) => {
-                  const confidencePct = confidenceToPct(row.confidence);
+                  const activeSignal = resolveSignal(row, signalSource);
+                  const activeConfidence = resolveConfidence(row, signalSource);
+                  const activeMove = resolveExpectedMove(row, signalSource);
+                  const aiComparisonAvailable = Boolean(row.aiPrediction);
+                  const aiDisagrees = aiComparisonAvailable && row.aiPrediction!.signal !== row.signal;
+                  const confidencePct = confidenceToPct(activeConfidence);
                   const targetPct =
                     typeof row.confidenceTargetPct === "number" &&
                     Number.isFinite(row.confidenceTargetPct)
@@ -1676,10 +1777,25 @@ export default function PredictionsPage() {
                         <td style={{ padding: "8px 6px" }}>{row.marketType}</td>
                         <td style={{ padding: "8px 6px" }}>{row.timeframe}</td>
                         <td style={{ padding: "8px 6px" }}>
-                          <span className="badge" style={signalBadgeStyle(row.signal)}>{row.signal}</span>
+                          <span className="badge" style={signalBadgeStyle(activeSignal)}>{activeSignal}</span>
+                          {aiComparisonAvailable ? (
+                            <div style={{ color: "var(--muted)", fontSize: 11, marginTop: 4 }}>
+                              local {row.signal} / ai {row.aiPrediction?.signal}
+                            </div>
+                          ) : null}
+                          {signalSource === "ai" && !aiComparisonAvailable ? (
+                            <div style={{ color: "var(--muted)", fontSize: 11, marginTop: 4 }}>
+                              ai n/a, using local
+                            </div>
+                          ) : null}
+                          {aiDisagrees ? (
+                            <div style={{ color: "#f59e0b", fontSize: 11, marginTop: 4 }}>
+                              disagreement
+                            </div>
+                          ) : null}
                         </td>
-                        <td style={{ padding: "8px 6px" }}>{fmtConfidence(row.confidence)}</td>
-                        <td style={{ padding: "8px 6px" }}>{row.expectedMovePct.toFixed(2)}%</td>
+                        <td style={{ padding: "8px 6px" }}>{fmtConfidence(activeConfidence)}</td>
+                        <td style={{ padding: "8px 6px" }}>{activeMove.toFixed(2)}%</td>
                         <td style={{ padding: "8px 6px" }}>
                           <div>{row.autoScheduleEnabled ? "enabled" : "off"}</div>
                           <div style={{ color: "var(--muted)", fontSize: 12 }}>
@@ -1732,7 +1848,7 @@ export default function PredictionsPage() {
                         <td style={{ padding: "8px 6px" }}>{new Date(row.tsCreated).toLocaleString()}</td>
                         <td style={{ padding: "8px 6px" }}>
                           <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
-                            {row.signal === "neutral" ? (
+                            {activeSignal === "neutral" ? (
                               <span style={{ color: "var(--muted)", fontSize: 12 }}>
                                 No trade setup
                               </span>
@@ -1777,7 +1893,10 @@ export default function PredictionsPage() {
 
           <div className="predictionsMobileList">
             {filteredRows.map((row) => {
-              const confidencePct = confidenceToPct(row.confidence);
+              const activeSignal = resolveSignal(row, signalSource);
+              const activeConfidence = resolveConfidence(row, signalSource);
+              const activeMove = resolveExpectedMove(row, signalSource);
+              const confidencePct = confidenceToPct(activeConfidence);
               const targetPct =
                 typeof row.confidenceTargetPct === "number" &&
                 Number.isFinite(row.confidenceTargetPct)
@@ -1805,7 +1924,7 @@ export default function PredictionsPage() {
                 <div key={`${row.id}_mobile`} className="card predictionRowCard">
                   <div className="predictionRowCardHeader">
                     <div className="predictionRowCardSymbol">{row.symbol}</div>
-                    <span className="badge" style={signalBadgeStyle(row.signal)}>{row.signal}</span>
+                    <span className="badge" style={signalBadgeStyle(activeSignal)}>{activeSignal}</span>
                   </div>
 
                   <div className="predictionRowCardMeta">
@@ -1820,11 +1939,11 @@ export default function PredictionsPage() {
                   <div className="predictionRowCardStats">
                     <div className="predictionRowCardStat">
                       <div className="predictionRowCardStatLabel">Confidence</div>
-                      <div className="predictionRowCardStatValue">{fmtConfidence(row.confidence)}</div>
+                      <div className="predictionRowCardStatValue">{fmtConfidence(activeConfidence)}</div>
                     </div>
                     <div className="predictionRowCardStat">
                       <div className="predictionRowCardStatLabel">Move</div>
-                      <div className="predictionRowCardStatValue">{row.expectedMovePct.toFixed(2)}%</div>
+                      <div className="predictionRowCardStatValue">{activeMove.toFixed(2)}%</div>
                     </div>
                     <div className="predictionRowCardStat">
                       <div className="predictionRowCardStatLabel">Outcome</div>
@@ -1866,7 +1985,7 @@ export default function PredictionsPage() {
                   </div>
 
                   <div className="predictionRowCardActions">
-                    {row.signal === "neutral" ? (
+                    {activeSignal === "neutral" ? (
                       <span style={{ color: "var(--muted)", fontSize: 12 }}>
                         No trade setup
                       </span>
