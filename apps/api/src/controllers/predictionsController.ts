@@ -220,6 +220,10 @@ function deriveSuggestedEntry(snapshot: Record<string, unknown>) {
     "entry"
   ]);
 
+  if (rawType === "market") {
+    return { type: "market" as const };
+  }
+
   const inferredType = rawType === "limit" || entryPrice !== null ? "limit" : "market";
   if (inferredType === "limit") {
     return {
