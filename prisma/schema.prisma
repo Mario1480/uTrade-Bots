@@ -561,6 +561,41 @@ model FeatureThreshold {
   @@map("feature_thresholds")
 }
 
+model EconomicCalendarConfig {
+  key        String   @id @default("default")
+  enabled    Boolean  @default(true)
+  impactMin  String   @default("high") @map("impact_min")
+  currencies String?
+  preMinutes Int      @default(30) @map("pre_minutes")
+  postMinutes Int     @default(30) @map("post_minutes")
+  provider   String   @default("fmp")
+  createdAt  DateTime @default(now()) @map("created_at")
+  updatedAt  DateTime @updatedAt @map("updated_at")
+
+  @@map("economic_calendar_config")
+}
+
+model EconomicEvent {
+  id        String   @id @default(cuid())
+  sourceId  String   @map("source_id")
+  ts        DateTime
+  country   String
+  currency  String
+  title     String
+  impact    String
+  forecast  Float?
+  previous  Float?
+  actual    Float?
+  source    String   @default("fmp")
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  @@unique([source, sourceId])
+  @@index([ts])
+  @@index([currency, ts])
+  @@map("economic_events")
+}
+
 model PredictionState {
   id                String   @id @default(uuid())
   exchange          String

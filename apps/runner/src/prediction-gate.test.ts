@@ -131,6 +131,34 @@ test("evaluateGate denies blocked tags and unsupported signal", () => {
   assert.equal(disallowed.reason, "signal_not_allowed");
 });
 
+test("evaluateGate blocks news_risk tag case-insensitive", () => {
+  const policy = readPredictionGatePolicy({
+    gating: {
+      enabled: true,
+      blockTags: ["news_risk"]
+    }
+  });
+  const result = evaluateGate(
+    policy,
+    {
+      id: "state-6",
+      exchange: "bitget",
+      accountId: "acc-1",
+      userId: "user-1",
+      symbol: "BTCUSDT",
+      marketType: "perp",
+      timeframe: "15m",
+      signal: "up",
+      confidence: 90,
+      tags: ["News_Risk"],
+      tsUpdated: new Date("2026-02-12T12:00:00.000Z")
+    },
+    new Date("2026-02-12T12:00:30.000Z").getTime()
+  );
+  assert.equal(result.allow, false);
+  assert.equal(result.reason, "blocked_tag:news_risk");
+});
+
 test("evaluateGate allows and computes multiplier", () => {
   const policy = readPredictionGatePolicy({
     gating: {
@@ -191,4 +219,3 @@ test("applySizeMultiplierToIntent scales open-intent sizing fields only", () => 
   );
   assert.equal(closeIntent.type, "close");
 });
-

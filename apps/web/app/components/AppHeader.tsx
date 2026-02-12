@@ -34,6 +34,7 @@ export default function AppHeader() {
         <nav id="appNav" className={`appNav ${menuOpen ? "appNavOpen" : ""}`}>
           <Link href="/dashboard" className="btn">Dashboard</Link>
           <Link href="/predictions" className="btn">Ai Predictions</Link>
+          <Link href="/calendar" className="btn">Calendar</Link>
           <Link href="/trade" className="btn">Manual Trading</Link>
           <Link href="/bots" className="btn">Bots</Link>
           <Link href="/settings" className="btn">Settings</Link>

@@ -3,9 +3,46 @@
 import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 import ExchangeAccountOverviewCard, {
-  type ExchangeAccountOverview
+type ExchangeAccountOverview
 } from "./components/ExchangeAccountOverviewCard";
 import { ApiError, apiGet } from "../lib/api";
+
+type EconomicCalendarSummary = {
+  currency: string;
+  impactMin: "low" | "medium" | "high";
+  blackoutActive: boolean;
+  activeWindow: {
+    from: string;
+    to: string;
+    event: {
+      id: string;
+      title: string;
+      ts: string;
+      impact: "low" | "medium" | "high";
+      currency: string;
+      country: string;
+      sourceId: string;
+      forecast: number | null;
+      previous: number | null;
+      actual: number | null;
+      source: string;
+    };
+  } | null;
+  nextEvent: {
+    id: string;
+    title: string;
+    ts: string;
+    impact: "low" | "medium" | "high";
+    currency: string;
+    country: string;
+    sourceId: string;
+    forecast: number | null;
+    previous: number | null;
+    actual: number | null;
+    source: string;
+  } | null;
+  asOf: string;
+};
 
 function errMsg(e: unknown): string {
   if (e instanceof ApiError) return `${e.message} (HTTP ${e.status})`;
@@ -34,6 +71,7 @@ function DashboardSkeletonCard() {
 
 export default function Page() {
   const [overview, setOverview] = useState<ExchangeAccountOverview[]>([]);
+  const [calendarSummary, setCalendarSummary] = useState<EconomicCalendarSummary | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
 
@@ -44,9 +82,21 @@ export default function Page() {
       setLoading(true);
       setError(null);
       try {
-        const data = await apiGet<ExchangeAccountOverview[]>("/dashboard/overview");
+        const [overviewResult, calendarResult] = await Promise.allSettled([
+          apiGet<ExchangeAccountOverview[]>("/dashboard/overview"),
+          apiGet<EconomicCalendarSummary>("/economic-calendar/next?currency=USD&impact=high")
+        ]);
         if (!mounted) return;
-        setOverview(Array.isArray(data) ? data : []);
+        if (overviewResult.status === "fulfilled") {
+          setOverview(Array.isArray(overviewResult.value) ? overviewResult.value : []);
+        } else {
+          throw overviewResult.reason;
+        }
+        if (calendarResult.status === "fulfilled") {
+          setCalendarSummary(calendarResult.value ?? null);
+        } else {
+          setCalendarSummary(null);
+        }
       } catch (e) {
         if (!mounted) return;
         setError(errMsg(e));
@@ -89,6 +139,7 @@ export default function Page() {
         </div>
         <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
           <Link href="/predictions" className="btn">Predictions</Link>
+          <Link href="/calendar" className="btn">Calendar</Link>
           <Link href="/trade" className="btn">Manual Trading</Link>
           <Link href="/bots/new" className="btn btnPrimary">New Futures Bot</Link>
         </div>
@@ -107,6 +158,27 @@ export default function Page() {
           <div className="statLabel">Bots in Error</div>
           <div className="statValue">{loading ? "…" : totals.errors}</div>
         </div>
+      </div>
+
+      <div className="card" style={{ padding: 12, marginBottom: 12 }}>
+        <div style={{ fontWeight: 700, marginBottom: 4 }}>Economic Calendar (USD / high)</div>
+        {calendarSummary ? (
+          calendarSummary.blackoutActive && calendarSummary.activeWindow ? (
+            <div style={{ fontSize: 13, color: "#ef4444" }}>
+              Blackout active until {new Date(calendarSummary.activeWindow.to).toLocaleString()} ·{" "}
+              {calendarSummary.activeWindow.event.title}
+            </div>
+          ) : calendarSummary.nextEvent ? (
+            <div style={{ fontSize: 13, color: "var(--muted)" }}>
+              Next event: {calendarSummary.nextEvent.title} at{" "}
+              {new Date(calendarSummary.nextEvent.ts).toLocaleString()}
+            </div>
+          ) : (
+            <div style={{ fontSize: 13, color: "var(--muted)" }}>No upcoming high-impact events.</div>
+          )
+        ) : (
+          <div style={{ fontSize: 13, color: "var(--muted)" }}>Loading calendar status…</div>
+        )}
       </div>
 
       {error ? (

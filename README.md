@@ -112,6 +112,15 @@ AI Predictions:
   - `PREDICTION_GATE_FAIL_OPEN` (`false` default)
   - Gate-Config liegt je Bot in `futuresConfig.paramsJson.gating`
 
+Economic Calendar (FMP) + News Blackout:
+- `FMP_API_KEY` (optional ENV fallback; preferred via Admin-UI)
+- `FMP_BASE_URL` (optional, default `https://financialmodelingprep.com`)
+- `ECON_CALENDAR_REFRESH_ENABLED` (`1` default)
+- `ECON_CALENDAR_REFRESH_INTERVAL_MINUTES` (default `15`)
+- `ECON_REDIS_EVENTS_TTL_SEC`
+- `ECON_REDIS_NEXT_TTL_SEC`
+- `ECON_REDIS_BLACKOUT_TTL_SEC`
+
 Prediction Indicator Pack v1 (backend, deterministic from OHLCV):
 - RSI(14), MACD(12/26/9), Bollinger(20/2), ADX(14), ATR(14)/close
 - VWAP:
@@ -141,11 +150,18 @@ SMTP:
 - API Health (prod): `http://<api-domain>/health`
 - Manual Trading Desk: `/trade`
 - Predictions: `/predictions`
+- Economic Calendar: `/calendar`
 - Prediction metrics API: `/api/predictions/metrics?bins=10`
 - Thresholds API (latest): `/api/thresholds/latest?exchange=bitget&symbol=BTCUSDT&marketType=perp&tf=15m`
+- Economic Calendar API:
+  - `GET /economic-calendar?from=YYYY-MM-DD&to=YYYY-MM-DD&impact=high&currency=USD`
+  - `GET /economic-calendar/next?currency=USD&impact=high`
+  - `GET /economic-calendar/config`
+  - `PUT /economic-calendar/config` (superadmin)
 - Telegram Settings: `/settings/notifications`
 - Admin Backend: `/admin` (Superadmin)
 - Global OpenAI Key (encrypted DB): `/admin/api-keys`
+- Global FMP Key (encrypted DB): `/admin/api-keys`
 
 ## Manual Trading Desk Chart
 

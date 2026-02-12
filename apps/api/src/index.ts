@@ -87,7 +87,9 @@ import {
   readRealizedPayloadFromOutcomeMeta,
   type PredictionEvaluatorSample
 } from "./jobs/predictionEvaluatorJob.js";
+import { createEconomicCalendarRefreshJob } from "./jobs/economicCalendarRefreshJob.js";
 import { registerPredictionDetailRoute } from "./routes/predictions.js";
+import { registerEconomicCalendarRoutes } from "./routes/economic-calendar.js";
 import {
   buildEventDelta,
   buildPredictionChangeHash,
@@ -99,8 +101,14 @@ import {
   type PredictionStateLike
 } from "./predictions/refreshService.js";
 import { shouldRefreshTF, type TriggerDebounceState } from "./predictions/refreshTriggers.js";
+import {
+  applyNewsRiskToFeatureSnapshot,
+  evaluateNewsRiskForSymbol
+} from "./services/economicCalendar/index.js";
+import { fetchFmpEconomicEvents } from "./services/economicCalendar/providers/fmp.js";
 
 const db = prisma as any;
+const economicCalendarRefreshJob = createEconomicCalendarRefreshJob(db);
 
 const app = express();
 app.set("trust proxy", 1);
@@ -242,10 +250,19 @@ const adminSmtpTestSchema = z.object({
 
 const adminApiKeysSchema = z.object({
   openaiApiKey: z.string().trim().min(10).max(500).optional(),
-  clearOpenaiApiKey: z.boolean().default(false)
-}).refine((value) => value.clearOpenaiApiKey || Boolean(value.openaiApiKey), {
-  message: "openaiApiKey is required unless clearOpenaiApiKey is true"
-});
+  clearOpenaiApiKey: z.boolean().default(false),
+  fmpApiKey: z.string().trim().min(10).max(500).optional(),
+  clearFmpApiKey: z.boolean().default(false)
+}).refine(
+  (value) =>
+    value.clearOpenaiApiKey ||
+    Boolean(value.openaiApiKey) ||
+    value.clearFmpApiKey ||
+    Boolean(value.fmpApiKey),
+  {
+    message: "Provide openaiApiKey/fmpApiKey or set a clear flag."
+  }
+);
 
 const adminPredictionRefreshSchema = z.object({
   triggerDebounceSec: z.number().int().min(0).max(3600),
@@ -655,6 +672,7 @@ type StoredSmtpSettings = {
 
 type StoredApiKeysSettings = {
   openaiApiKeyEnc: string | null;
+  fmpApiKeyEnc: string | null;
 };
 
 type StoredPredictionRefreshSettings = {
@@ -675,7 +693,7 @@ type PredictionRefreshSettingsPublic = {
   unstableFlipWindowSeconds: number;
 };
 
-type OpenAiKeySource = "env" | "db" | "none";
+type ApiKeySource = "env" | "db" | "none";
 
 function parseStoredSmtpSettings(value: unknown): StoredSmtpSettings {
   const record = parseJsonObject(value);
@@ -719,8 +737,13 @@ function parseStoredApiKeysSettings(value: unknown): StoredApiKeysSettings {
     typeof record.openaiApiKeyEnc === "string" && record.openaiApiKeyEnc.trim()
       ? record.openaiApiKeyEnc.trim()
       : null;
+  const fmpApiKeyEnc =
+    typeof record.fmpApiKeyEnc === "string" && record.fmpApiKeyEnc.trim()
+      ? record.fmpApiKeyEnc.trim()
+      : null;
   return {
-    openaiApiKeyEnc
+    openaiApiKeyEnc,
+    fmpApiKeyEnc
   };
 }
 
@@ -765,6 +788,7 @@ function toEffectivePredictionRefreshSettings(
 
 function toPublicApiKeysSettings(value: StoredApiKeysSettings) {
   let openaiApiKeyMasked: string | null = null;
+  let fmpApiKeyMasked: string | null = null;
   if (value.openaiApiKeyEnc) {
     try {
       const decrypted = decryptSecret(value.openaiApiKeyEnc);
@@ -773,15 +797,25 @@ function toPublicApiKeysSettings(value: StoredApiKeysSettings) {
       openaiApiKeyMasked = "****";
     }
   }
+  if (value.fmpApiKeyEnc) {
+    try {
+      const decrypted = decryptSecret(value.fmpApiKeyEnc);
+      fmpApiKeyMasked = maskSecret(decrypted);
+    } catch {
+      fmpApiKeyMasked = "****";
+    }
+  }
   return {
     openaiApiKeyMasked,
-    hasOpenAiApiKey: Boolean(value.openaiApiKeyEnc)
+    hasOpenAiApiKey: Boolean(value.openaiApiKeyEnc),
+    fmpApiKeyMasked,
+    hasFmpApiKey: Boolean(value.fmpApiKeyEnc)
   };
 }
 
 function resolveEffectiveOpenAiApiKey(
   settings: StoredApiKeysSettings
-): { apiKey: string | null; source: OpenAiKeySource; decryptError: boolean } {
+): { apiKey: string | null; source: ApiKeySource; decryptError: boolean } {
   const envApiKey = process.env.AI_API_KEY?.trim() ?? "";
   if (envApiKey) {
     return { apiKey: envApiKey, source: "env", decryptError: false };
@@ -793,6 +827,29 @@ function resolveEffectiveOpenAiApiKey(
 
   try {
     const decrypted = decryptSecret(settings.openaiApiKeyEnc).trim();
+    if (!decrypted) {
+      return { apiKey: null, source: "none", decryptError: false };
+    }
+    return { apiKey: decrypted, source: "db", decryptError: false };
+  } catch {
+    return { apiKey: null, source: "db", decryptError: true };
+  }
+}
+
+function resolveEffectiveFmpApiKey(
+  settings: StoredApiKeysSettings
+): { apiKey: string | null; source: ApiKeySource; decryptError: boolean } {
+  const envApiKey = process.env.FMP_API_KEY?.trim() ?? "";
+  if (envApiKey) {
+    return { apiKey: envApiKey, source: "env", decryptError: false };
+  }
+
+  if (!settings.fmpApiKeyEnc) {
+    return { apiKey: null, source: "none", decryptError: false };
+  }
+
+  try {
+    const decrypted = decryptSecret(settings.fmpApiKeyEnc).trim();
     if (!decrypted) {
       return { apiKey: null, source: "none", decryptError: false };
     }
@@ -1729,6 +1786,11 @@ async function generateAutoPredictionForUser(
       payload.timeframe,
       payload.marketType
     );
+    const newsBlackout = await evaluateNewsRiskForSymbol({
+      db,
+      symbol: canonicalSymbol,
+      now: new Date()
+    });
 
     inferred.featureSnapshot.autoScheduleEnabled = payload.autoSchedule;
     inferred.featureSnapshot.autoSchedulePaused = false;
@@ -1743,6 +1805,10 @@ async function generateAutoPredictionForUser(
     inferred.featureSnapshot.qualityTpCount = quality.tpCount;
     inferred.featureSnapshot.qualitySlCount = quality.slCount;
     inferred.featureSnapshot.qualityExpiredCount = quality.expiredCount;
+    inferred.featureSnapshot = applyNewsRiskToFeatureSnapshot(
+      inferred.featureSnapshot,
+      newsBlackout
+    );
 
     const tsCreated = new Date().toISOString();
     const created = await generateAndPersistPrediction({
@@ -1758,10 +1824,11 @@ async function generateAutoPredictionForUser(
       modelVersionBase: payload.modelVersionBase ?? "baseline-v1:auto-market-v1"
     });
 
-    const stateTags = normalizeTagList(
+    const stateTags = enforceNewsRiskTag(
       created.explanation.tags.length > 0
         ? created.explanation.tags
-        : inferred.featureSnapshot.tags
+        : inferred.featureSnapshot.tags,
+      inferred.featureSnapshot
     );
     const stateKeyDrivers = normalizeKeyDriverList(created.explanation.keyDrivers);
     const stateTs = new Date(tsCreated);
@@ -2910,6 +2977,16 @@ function normalizeTagList(value: unknown): string[] {
     .slice(0, 5);
 }
 
+function enforceNewsRiskTag(tags: unknown, featureSnapshot: unknown): string[] {
+  const snapshot = asRecord(featureSnapshot);
+  const hasNewsRisk = asBoolean(snapshot.newsRisk, false) || asBoolean(snapshot.news_risk, false);
+  const normalized = normalizeTagList(tags).filter((tag) => tag !== "news_risk");
+  if (hasNewsRisk) {
+    normalized.unshift("news_risk");
+  }
+  return normalized.slice(0, 5);
+}
+
 function normalizeKeyDriverList(
   value: unknown
 ): Array<{ name: string; value: unknown }> {
@@ -3809,6 +3886,11 @@ async function refreshPredictionStateForTemplate(params: {
       template.timeframe,
       template.marketType
     );
+    const newsBlackout = await evaluateNewsRiskForSymbol({
+      db,
+      symbol: template.symbol,
+      now: new Date()
+    });
 
     inferred.featureSnapshot.autoScheduleEnabled = template.autoScheduleEnabled;
     inferred.featureSnapshot.autoSchedulePaused = template.autoSchedulePaused;
@@ -3823,13 +3905,20 @@ async function refreshPredictionStateForTemplate(params: {
     inferred.featureSnapshot.qualityTpCount = quality.tpCount;
     inferred.featureSnapshot.qualitySlCount = quality.slCount;
     inferred.featureSnapshot.qualityExpiredCount = quality.expiredCount;
+    inferred.featureSnapshot = applyNewsRiskToFeatureSnapshot(
+      inferred.featureSnapshot,
+      newsBlackout
+    );
 
     const prevStateRow = await db.predictionState.findUnique({
       where: { id: template.stateId }
     });
     const prevState = prevStateRow ? readPredictionStateLike(prevStateRow) : null;
 
-    const baselineTags = normalizeTagList(inferred.featureSnapshot.tags);
+    const baselineTags = enforceNewsRiskTag(
+      inferred.featureSnapshot.tags,
+      inferred.featureSnapshot
+    );
     const significant = evaluateSignificantChange({
       prev: prevState,
       next: {
@@ -3900,7 +3989,10 @@ async function refreshPredictionStateForTemplate(params: {
       });
     }
 
-    const tags = normalizeTagList(explainer.tags.length > 0 ? explainer.tags : baselineTags);
+    const tags = enforceNewsRiskTag(
+      explainer.tags.length > 0 ? explainer.tags : baselineTags,
+      inferred.featureSnapshot
+    );
     const keyDrivers = normalizeKeyDriverList(explainer.keyDrivers);
     const changeReasons = significant.reasons.length > 0 ? [...significant.reasons] : [params.reason];
     if (significant.significant && significant.changeType === "signal_flip") {
@@ -5211,11 +5303,13 @@ app.get("/admin/settings/api-keys", requireAuth, async (_req, res) => {
   });
   const settings = parseStoredApiKeysSettings(row?.value);
   const envConfigured = Boolean(process.env.AI_API_KEY?.trim());
+  const fmpEnvConfigured = Boolean(process.env.FMP_API_KEY?.trim());
 
   return res.json({
     ...toPublicApiKeysSettings(settings),
     updatedAt: row?.updatedAt ?? null,
-    envOverride: envConfigured
+    envOverride: envConfigured,
+    envOverrideFmp: fmpEnvConfigured
   });
 });
 
@@ -5310,6 +5404,94 @@ app.get("/admin/settings/api-keys/status", requireAuth, async (_req, res) => {
   }
 });
 
+app.get("/admin/settings/api-keys/fmp-status", requireAuth, async (_req, res) => {
+  if (!(await requireSuperadmin(res))) return;
+
+  const row = await db.globalSetting.findUnique({
+    where: { key: GLOBAL_SETTING_API_KEYS_KEY },
+    select: { value: true }
+  });
+  const settings = parseStoredApiKeysSettings(row?.value);
+  const resolved = resolveEffectiveFmpApiKey(settings);
+  const checkedAt = new Date().toISOString();
+
+  if (resolved.decryptError) {
+    return res.json({
+      ok: false,
+      status: "error",
+      source: resolved.source,
+      checkedAt,
+      message: "Stored FMP key could not be decrypted."
+    });
+  }
+
+  if (!resolved.apiKey) {
+    return res.json({
+      ok: false,
+      status: "missing_key",
+      source: resolved.source,
+      checkedAt,
+      message: "No FMP API key configured."
+    });
+  }
+
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 8_000);
+  const startedAt = Date.now();
+
+  try {
+    await fetchFmpEconomicEvents({
+      apiKey: resolved.apiKey,
+      baseUrl: process.env.FMP_BASE_URL,
+      from: "2026-01-01",
+      to: "2026-01-02",
+      signal: controller.signal
+    });
+
+    return res.json({
+      ok: true,
+      status: "ok",
+      source: resolved.source,
+      checkedAt,
+      latencyMs: Date.now() - startedAt,
+      message: "FMP connection is healthy."
+    });
+  } catch (error) {
+    const isAbort = error instanceof Error && error.name === "AbortError";
+    const raw = String(error ?? "").trim();
+    const normalizedReason = raw.startsWith("Error: ") ? raw.slice(7) : raw;
+    let message = isAbort ? "Connection timed out." : normalizedReason;
+    let httpStatus: number | undefined;
+
+    const httpMatch = normalizedReason.match(/^http_(\d{3})$/i);
+    if (httpMatch) {
+      httpStatus = Number(httpMatch[1]);
+      if (httpStatus === 401) {
+        message = "FMP authentication failed (401). Verify API key.";
+      } else if (httpStatus === 402) {
+        message =
+          "FMP returned 402 (payment/plan required). Check your FMP subscription tier for Economic Calendar endpoints.";
+      } else if (httpStatus === 403) {
+        message = "FMP request forbidden (403). Check key permissions/IP restrictions.";
+      } else {
+        message = `fmp_http_${httpStatus}`;
+      }
+    }
+
+    return res.json({
+      ok: false,
+      status: "error",
+      source: resolved.source,
+      checkedAt,
+      latencyMs: Date.now() - startedAt,
+      ...(httpStatus ? { httpStatus } : {}),
+      message
+    });
+  } finally {
+    clearTimeout(timeout);
+  }
+});
+
 app.put("/admin/settings/api-keys", requireAuth, async (req, res) => {
   if (!(await requireSuperadmin(res))) return;
   const parsed = adminApiKeysSchema.safeParse(req.body ?? {});
@@ -5323,7 +5505,12 @@ app.put("/admin/settings/api-keys", requireAuth, async (req, res) => {
       ? null
       : parsed.data.openaiApiKey
         ? encryptSecret(parsed.data.openaiApiKey)
-        : existing.openaiApiKeyEnc
+        : existing.openaiApiKeyEnc,
+    fmpApiKeyEnc: parsed.data.clearFmpApiKey
+      ? null
+      : parsed.data.fmpApiKey
+        ? encryptSecret(parsed.data.fmpApiKey)
+        : existing.fmpApiKeyEnc
   };
 
   const updated = await setGlobalSettingValue(GLOBAL_SETTING_API_KEYS_KEY, nextValue);
@@ -5429,10 +5616,11 @@ app.post("/api/predictions/generate", requireAuth, async (req, res) => {
       typeof snapshot.prefillExchange === "string" && snapshot.prefillExchange.trim()
         ? normalizeExchangeValue(snapshot.prefillExchange)
         : "bitget";
-    const tags = normalizeTagList(
+    const tags = enforceNewsRiskTag(
       created.explanation.tags.length > 0
         ? created.explanation.tags
-        : payload.featureSnapshot.tags
+        : payload.featureSnapshot.tags,
+      payload.featureSnapshot
     );
     const keyDrivers = normalizeKeyDriverList(created.explanation.keyDrivers);
     const tsDate = new Date(tsCreated);
@@ -6679,6 +6867,10 @@ app.get("/api/predictions/events", requireAuth, async (req, res) => {
 });
 
 registerPredictionDetailRoute(app, db);
+registerEconomicCalendarRoutes(app, {
+  db,
+  requireSuperadmin
+});
 
 app.get("/api/symbols", requireAuth, async (req, res) => {
   const user = getUserFromLocals(res);
@@ -7958,6 +8150,7 @@ async function startApiServer() {
     startPredictionAutoScheduler();
     startPredictionOutcomeEvalScheduler();
     startPredictionPerformanceEvalScheduler();
+    economicCalendarRefreshJob.start();
   });
 }
 
@@ -7969,6 +8162,7 @@ process.on("SIGTERM", () => {
   stopPredictionAutoScheduler();
   stopPredictionOutcomeEvalScheduler();
   stopPredictionPerformanceEvalScheduler();
+  economicCalendarRefreshJob.stop();
   marketWss.close();
   userWss.close();
   server.close();
@@ -7981,6 +8175,7 @@ process.on("SIGINT", () => {
   stopPredictionAutoScheduler();
   stopPredictionOutcomeEvalScheduler();
   stopPredictionPerformanceEvalScheduler();
+  economicCalendarRefreshJob.stop();
   marketWss.close();
   userWss.close();
   server.close();
