@@ -54,6 +54,9 @@ type LightweightChartProps = {
   prefill: TradeDeskPrefillPayload | null;
 };
 
+const CHART_CANDLE_LIMIT = 200;
+const CHART_RIGHT_OFFSET = 8;
+
 function toChartData(items: CandleApiItem[]): CandlestickData[] {
   const out: CandlestickData[] = [];
   for (const row of items) {
@@ -89,8 +92,8 @@ export function LightweightChart({
   const [status, setStatus] = useState<"loading" | "ready" | "error">("loading");
   const [statusMessage, setStatusMessage] = useState<string>("Loading candles...");
   const [lastClose, setLastClose] = useState<number | null>(null);
-  const [showUpMarkers, setShowUpMarkers] = useState(true);
-  const [showDownMarkers, setShowDownMarkers] = useState(true);
+  const [showUpMarkers, setShowUpMarkers] = useState(false);
+  const [showDownMarkers, setShowDownMarkers] = useState(false);
 
   const normalizedTimeframe = useMemo(() => {
     if (timeframe === "1m" || timeframe === "5m" || timeframe === "15m" || timeframe === "1h" || timeframe === "4h" || timeframe === "1d") {
@@ -118,7 +121,8 @@ export function LightweightChart({
       timeScale: {
         borderColor: "rgba(148,163,184,.25)",
         timeVisible: true,
-        secondsVisible: false
+        secondsVisible: false,
+        rightOffset: CHART_RIGHT_OFFSET
       },
       crosshair: {
         vertLine: { color: "rgba(255,255,255,.22)", width: 1 },
@@ -158,12 +162,13 @@ export function LightweightChart({
     const fetchCandles = async () => {
       try {
         const payload = await apiGet<CandlesResponse>(
-          `/api/market/candles?exchangeAccountId=${encodeURIComponent(exchangeAccountId)}&symbol=${encodeURIComponent(symbol)}&timeframe=${encodeURIComponent(normalizedTimeframe)}&limit=400`
+          `/api/market/candles?exchangeAccountId=${encodeURIComponent(exchangeAccountId)}&symbol=${encodeURIComponent(symbol)}&timeframe=${encodeURIComponent(normalizedTimeframe)}&limit=${CHART_CANDLE_LIMIT}`
         );
         if (!active) return;
         const data = toChartData(payload.items);
         candleSeriesRef.current?.setData(data);
         chartRef.current?.timeScale().fitContent();
+        chartRef.current?.timeScale().applyOptions({ rightOffset: CHART_RIGHT_OFFSET });
         const close = data.length > 0 ? data[data.length - 1]?.close ?? null : null;
         setLastClose(close ?? null);
         setStatus("ready");

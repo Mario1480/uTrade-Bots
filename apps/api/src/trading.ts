@@ -20,6 +20,7 @@ export type TradingSettings = {
   exchangeAccountId: string | null;
   symbol: string | null;
   timeframe: string | null;
+  marginMode: "isolated" | "cross" | null;
 };
 
 export type NormalizedOrder = {
@@ -280,11 +281,16 @@ export async function getTradingSettings(userId: string): Promise<TradingSetting
   const timeframe = typeof payload.timeframe === "string" && payload.timeframe.trim()
     ? payload.timeframe
     : null;
+  const marginMode =
+    payload.marginMode === "isolated" || payload.marginMode === "cross"
+      ? payload.marginMode
+      : null;
 
   return {
     exchangeAccountId,
     symbol,
-    timeframe
+    timeframe,
+    marginMode
   };
 }
 
@@ -312,6 +318,12 @@ export async function saveTradingSettings(
         ? current.timeframe
         : input.timeframe
           ? input.timeframe
+          : null,
+    marginMode:
+      input.marginMode === undefined
+        ? current.marginMode
+        : input.marginMode === "isolated" || input.marginMode === "cross"
+          ? input.marginMode
           : null
   };
 

@@ -17,6 +17,17 @@ export type ParsedPredictionChangeReason = {
 };
 
 const SIGNAL_CHANGE_RE = /signal:(up|down|neutral)->(up|down|neutral)/i;
+const CONFIDENCE_DELTA_RE = /confidence_delta:([+-]?\d+(?:\.\d+)?)/i;
+
+const REASON_LABEL_MAP: Record<string, string> = {
+  scheduled_due: "Scheduled refresh",
+  tags_changed: "Tags changed",
+  trend_rank_bucket_changed: "Trend regime changed",
+  vol_rank_bucket_changed: "Volatility regime changed",
+  atr_rank_bucket_changed: "ATR regime changed",
+  manual_create: "Manual create",
+  bootstrap: "Bootstrap import"
+};
 
 function normalizeConfidencePct(value: number): number {
   if (!Number.isFinite(value)) return 0;
@@ -24,10 +35,56 @@ function normalizeConfidencePct(value: number): number {
   return Math.max(0, Math.min(100, normalized));
 }
 
-function normalizeReasonText(reason: string): string {
-  const compact = reason.replace(/\s+/g, " ").trim();
-  if (compact.startsWith("trigger:")) return compact.slice("trigger:".length).trim() || "triggered";
-  return compact;
+function humanizeToken(value: string): string {
+  const trimmed = value.trim();
+  if (!trimmed) return "";
+  const mapped = REASON_LABEL_MAP[trimmed];
+  if (mapped) return mapped;
+  return trimmed
+    .replace(/_/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function formatConfidenceDelta(raw: string): string | null {
+  const match = raw.match(CONFIDENCE_DELTA_RE);
+  if (!match) return null;
+  const value = Number(match[1]);
+  if (!Number.isFinite(value)) return "Confidence changed";
+  const sign = value > 0 ? "+" : "";
+  return `Confidence ${sign}${value.toFixed(1)}`;
+}
+
+function buildHumanReason(raw: string, signalFlip: PredictionSignalFlip | null): string {
+  const tokens = raw.split(",").map((token) => token.trim()).filter(Boolean);
+  if (tokens.length === 0) return "n/a";
+
+  const rendered: string[] = [];
+  for (const token of tokens) {
+    if (token.startsWith("signal:")) {
+      if (signalFlip) {
+        rendered.push(`Signal ${signalFlip.from.toUpperCase()}->${signalFlip.to.toUpperCase()}`);
+      } else {
+        rendered.push("Signal changed");
+      }
+      continue;
+    }
+
+    if (token.startsWith("confidence_delta:")) {
+      rendered.push(formatConfidenceDelta(token) ?? "Confidence changed");
+      continue;
+    }
+
+    if (token.startsWith("trigger:")) {
+      const triggerReason = token.slice("trigger:".length).trim();
+      rendered.push(`Trigger: ${humanizeToken(triggerReason) || "condition met"}`);
+      continue;
+    }
+
+    rendered.push(humanizeToken(token));
+  }
+
+  return rendered.filter(Boolean).join(" • ");
 }
 
 export function parsePredictionChangeReason(
@@ -76,9 +133,7 @@ export function parsePredictionChangeReason(
     kind = "triggered";
   }
 
-  const shortReasonBase = signalFlip
-    ? `signal ${signalFlip.from}->${signalFlip.to}`
-    : normalizeReasonText(raw);
+  const shortReasonBase = buildHumanReason(raw, signalFlip);
   const shortReason =
     shortReasonBase.length > 80 ? `${shortReasonBase.slice(0, 77)}...` : shortReasonBase;
 

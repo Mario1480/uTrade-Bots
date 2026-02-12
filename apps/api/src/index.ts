@@ -160,7 +160,8 @@ const botCreateSchema = z.object({
 const tradingSettingsSchema = z.object({
   exchangeAccountId: z.string().trim().min(1).nullable().optional(),
   symbol: z.string().trim().min(1).nullable().optional(),
-  timeframe: z.string().trim().min(1).nullable().optional()
+  timeframe: z.string().trim().min(1).nullable().optional(),
+  marginMode: z.enum(["isolated", "cross"]).nullable().optional()
 });
 
 const alertsSettingsSchema = z.object({
@@ -591,6 +592,8 @@ type StoredApiKeysSettings = {
   openaiApiKeyEnc: string | null;
 };
 
+type OpenAiKeySource = "env" | "db" | "none";
+
 function parseStoredSmtpSettings(value: unknown): StoredSmtpSettings {
   const record = parseJsonObject(value);
   const host = typeof record.host === "string" && record.host.trim() ? record.host.trim() : null;
@@ -652,6 +655,29 @@ function toPublicApiKeysSettings(value: StoredApiKeysSettings) {
     openaiApiKeyMasked,
     hasOpenAiApiKey: Boolean(value.openaiApiKeyEnc)
   };
+}
+
+function resolveEffectiveOpenAiApiKey(
+  settings: StoredApiKeysSettings
+): { apiKey: string | null; source: OpenAiKeySource; decryptError: boolean } {
+  const envApiKey = process.env.AI_API_KEY?.trim() ?? "";
+  if (envApiKey) {
+    return { apiKey: envApiKey, source: "env", decryptError: false };
+  }
+
+  if (!settings.openaiApiKeyEnc) {
+    return { apiKey: null, source: "none", decryptError: false };
+  }
+
+  try {
+    const decrypted = decryptSecret(settings.openaiApiKeyEnc).trim();
+    if (!decrypted) {
+      return { apiKey: null, source: "none", decryptError: false };
+    }
+    return { apiKey: decrypted, source: "db", decryptError: false };
+  } catch {
+    return { apiKey: null, source: "db", decryptError: true };
+  }
 }
 
 async function ensureWorkspaceMembership(userId: string, userEmail: string) {
@@ -2392,12 +2418,12 @@ async function notifyTradablePrediction(params: {
   const shortExplanation = explanation.length > 180 ? `${explanation.slice(0, 177)}...` : explanation;
 
   const lines = [
-    "uTrade tradable signal",
+    "🆕 SIGNAL ALERT",
     `${params.symbol} (${params.marketType}, ${params.timeframe})`,
     `Signal: ${signalLabel}`,
     `Confidence: ${confidencePct.toFixed(1)}% (target ${params.confidenceTargetPct.toFixed(0)}%)`,
     `Expected move: ${params.expectedMovePct.toFixed(2)}%`,
-    `Exchange: ${params.exchange} / ${params.exchangeAccountLabel}`,
+    `Exchange: ${params.exchangeAccountLabel}`,
     `Source: ${params.source}`,
     params.predictionId ? `Prediction ID: ${params.predictionId}` : null,
     shortExplanation ? `Reason: ${shortExplanation}` : null
@@ -2767,6 +2793,18 @@ async function findPredictionTemplateRowIds(userId: string, scope: {
 
 let predictionAutoTimer: NodeJS.Timeout | null = null;
 let predictionAutoRunning = false;
+let predictionAutoLastCycleStartedAt: Date | null = null;
+let predictionAutoLastCycleFinishedAt: Date | null = null;
+let predictionAutoLastCycleDurationMs: number | null = null;
+let predictionAutoLastCycleRefreshed = 0;
+let predictionAutoLastCycleSignificant = 0;
+let predictionAutoLastCycleAiCalls = 0;
+let predictionAutoLastSuccessfulCycleAt: Date | null = null;
+let predictionAutoLastRefreshedAt: Date | null = null;
+let predictionAutoLastSignificantAt: Date | null = null;
+let predictionAutoLastAiCallAt: Date | null = null;
+let predictionAutoLastErrorAt: Date | null = null;
+let predictionAutoLastError: string | null = null;
 let predictionOutcomeEvalTimer: NodeJS.Timeout | null = null;
 let predictionOutcomeEvalRunning = false;
 
@@ -3040,9 +3078,6 @@ async function bootstrapPredictionStateFromHistory() {
 
 async function listPredictionRefreshTemplates(): Promise<PredictionRefreshTemplate[]> {
   const rows = await db.predictionState.findMany({
-    where: {
-      userId: { not: null }
-    },
     orderBy: [{ tsUpdated: "asc" }, { updatedAt: "asc" }],
     take: PREDICTION_REFRESH_SCAN_LIMIT,
     select: {
@@ -3530,6 +3565,12 @@ async function runPredictionAutoCycle() {
   if (!PREDICTION_AUTO_ENABLED || !PREDICTION_REFRESH_ENABLED) return;
   if (predictionAutoRunning) return;
 
+  const cycleStartedMs = Date.now();
+  predictionAutoLastCycleStartedAt = new Date(cycleStartedMs);
+  let refreshed = 0;
+  let significantCount = 0;
+  let aiCallCount = 0;
+
   predictionAutoRunning = true;
   try {
     await bootstrapPredictionStateFromHistory();
@@ -3539,9 +3580,6 @@ async function runPredictionAutoCycle() {
     );
 
     const now = Date.now();
-    let refreshed = 0;
-    let significantCount = 0;
-    let aiCallCount = 0;
 
     const dueTemplates = active.filter((template) => {
       const intervalMs = refreshIntervalMsForTimeframe(template.timeframe);
@@ -3588,7 +3626,27 @@ async function runPredictionAutoCycle() {
           `significant=${significantCount}, ai_called=${aiCallCount}`
       );
     }
+    const finishedAt = new Date();
+    predictionAutoLastCycleFinishedAt = finishedAt;
+    predictionAutoLastCycleDurationMs = Date.now() - cycleStartedMs;
+    predictionAutoLastCycleRefreshed = refreshed;
+    predictionAutoLastCycleSignificant = significantCount;
+    predictionAutoLastCycleAiCalls = aiCallCount;
+    predictionAutoLastSuccessfulCycleAt = finishedAt;
+    predictionAutoLastError = null;
+    predictionAutoLastErrorAt = null;
+    if (refreshed > 0) predictionAutoLastRefreshedAt = finishedAt;
+    if (significantCount > 0) predictionAutoLastSignificantAt = finishedAt;
+    if (aiCallCount > 0) predictionAutoLastAiCallAt = finishedAt;
   } catch (error) {
+    const finishedAt = new Date();
+    predictionAutoLastCycleFinishedAt = finishedAt;
+    predictionAutoLastCycleDurationMs = Date.now() - cycleStartedMs;
+    predictionAutoLastCycleRefreshed = refreshed;
+    predictionAutoLastCycleSignificant = significantCount;
+    predictionAutoLastCycleAiCalls = aiCallCount;
+    predictionAutoLastError = String(error);
+    predictionAutoLastErrorAt = finishedAt;
     // eslint-disable-next-line no-console
     console.error("[predictions:refresh] scheduler cycle failed", String(error));
   } finally {
@@ -4582,6 +4640,97 @@ app.get("/admin/settings/api-keys", requireAuth, async (_req, res) => {
   });
 });
 
+app.get("/admin/settings/api-keys/status", requireAuth, async (_req, res) => {
+  if (!(await requireSuperadmin(res))) return;
+
+  const row = await db.globalSetting.findUnique({
+    where: { key: GLOBAL_SETTING_API_KEYS_KEY },
+    select: { value: true }
+  });
+  const settings = parseStoredApiKeysSettings(row?.value);
+  const resolved = resolveEffectiveOpenAiApiKey(settings);
+  const checkedAt = new Date().toISOString();
+
+  if (resolved.decryptError) {
+    return res.json({
+      ok: false,
+      status: "error",
+      source: resolved.source,
+      checkedAt,
+      message: "Stored OpenAI key could not be decrypted."
+    });
+  }
+
+  if (!resolved.apiKey) {
+    return res.json({
+      ok: false,
+      status: "missing_key",
+      source: resolved.source,
+      checkedAt,
+      message: "No OpenAI API key configured."
+    });
+  }
+
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 8_000);
+  const startedAt = Date.now();
+
+  try {
+    const response = await fetch("https://api.openai.com/v1/models", {
+      method: "GET",
+      headers: {
+        Authorization: `Bearer ${resolved.apiKey}`
+      },
+      signal: controller.signal
+    });
+
+    let payload: any = null;
+    try {
+      payload = await response.json();
+    } catch {
+      payload = null;
+    }
+
+    if (response.ok) {
+      return res.json({
+        ok: true,
+        status: "ok",
+        source: resolved.source,
+        checkedAt,
+        latencyMs: Date.now() - startedAt,
+        message: "OpenAI connection is healthy."
+      });
+    }
+
+    const providerMessage =
+      typeof payload?.error?.message === "string" && payload.error.message.trim()
+        ? payload.error.message.trim()
+        : `openai_http_${response.status}`;
+
+    return res.json({
+      ok: false,
+      status: "error",
+      source: resolved.source,
+      checkedAt,
+      latencyMs: Date.now() - startedAt,
+      httpStatus: response.status,
+      message: providerMessage
+    });
+  } catch (error) {
+    const isAbort = error instanceof Error && error.name === "AbortError";
+    return res.json({
+      ok: false,
+      status: "error",
+      source: resolved.source,
+      checkedAt,
+      latencyMs: Date.now() - startedAt,
+      message: isAbort ? "Connection timed out." : String(error)
+    });
+  } finally {
+    clearTimeout(timeout);
+  }
+});
+
 app.put("/admin/settings/api-keys", requireAuth, async (req, res) => {
   if (!(await requireSuperadmin(res))) return;
   const parsed = adminApiKeysSchema.safeParse(req.body ?? {});
@@ -5053,6 +5202,124 @@ app.get("/api/predictions/quality", requireAuth, async (req, res) => {
     invalid,
     winRatePct,
     avgOutcomePnlPct
+  });
+});
+
+app.get("/api/predictions/activity", requireAuth, async (req, res) => {
+  const user = getUserFromLocals(res);
+  const activeWhere = {
+    userId: user.id,
+    autoScheduleEnabled: true,
+    autoSchedulePaused: false
+  };
+
+  const [
+    latestState,
+    latestEvent,
+    latestAiState,
+    activeSchedules,
+    pausedSchedules,
+    activeTimeframes,
+    nextDueAgg
+  ] = await Promise.all([
+    db.predictionState.findFirst({
+      where: { userId: user.id },
+      orderBy: [{ tsUpdated: "desc" }, { updatedAt: "desc" }],
+      select: {
+        tsUpdated: true,
+        lastChangeReason: true
+      }
+    }),
+    db.predictionEvent.findFirst({
+      where: { state: { userId: user.id } },
+      orderBy: [{ tsCreated: "desc" }],
+      select: {
+        tsCreated: true,
+        changeType: true,
+        reason: true
+      }
+    }),
+    db.predictionState.findFirst({
+      where: {
+        userId: user.id,
+        lastAiExplainedAt: { not: null }
+      },
+      orderBy: [{ lastAiExplainedAt: "desc" }],
+      select: {
+        lastAiExplainedAt: true
+      }
+    }),
+    db.predictionState.count({
+      where: activeWhere
+    }),
+    db.predictionState.count({
+      where: {
+        userId: user.id,
+        autoScheduleEnabled: true,
+        autoSchedulePaused: true
+      }
+    }),
+    db.predictionState.findMany({
+      where: activeWhere,
+      select: { timeframe: true },
+      take: Math.max(200, PREDICTION_REFRESH_SCAN_LIMIT)
+    }),
+    db.predictionState.aggregate({
+      where: activeWhere,
+      _min: { tsPredictedFor: true }
+    })
+  ]);
+
+  const pollSeconds = Math.max(1, Math.round(PREDICTION_AUTO_POLL_MS / 1000));
+  const fallbackStaleAfterMs = Math.max(10 * 60 * 1000, pollSeconds * 1000 * 6);
+  const activeIntervals = activeTimeframes
+    .map((row: any) => refreshIntervalMsForTimeframe(normalizePredictionTimeframe(row.timeframe)))
+    .filter((value: number) => Number.isFinite(value) && value > 0);
+  const staleAfterMs = activeIntervals.length > 0
+    ? Math.max(fallbackStaleAfterMs, Math.max(...activeIntervals) * 2)
+    : fallbackStaleAfterMs;
+
+  return res.json({
+    scheduler: {
+      enabled: PREDICTION_AUTO_ENABLED && PREDICTION_REFRESH_ENABLED,
+      running: predictionAutoRunning,
+      pollSeconds,
+      lastCycleStartedAt: predictionAutoLastCycleStartedAt?.toISOString() ?? null,
+      lastCycleFinishedAt: predictionAutoLastCycleFinishedAt?.toISOString() ?? null,
+      lastCycleDurationMs: predictionAutoLastCycleDurationMs,
+      lastCycleRefreshed: predictionAutoLastCycleRefreshed,
+      lastCycleSignificant: predictionAutoLastCycleSignificant,
+      lastCycleAiCalls: predictionAutoLastCycleAiCalls,
+      lastSuccessfulCycleAt: predictionAutoLastSuccessfulCycleAt?.toISOString() ?? null,
+      lastRefreshedAt: predictionAutoLastRefreshedAt?.toISOString() ?? null,
+      lastSignificantAt: predictionAutoLastSignificantAt?.toISOString() ?? null,
+      lastAiCallAt: predictionAutoLastAiCallAt?.toISOString() ?? null,
+      lastError: predictionAutoLastError,
+      lastErrorAt: predictionAutoLastErrorAt?.toISOString() ?? null
+    },
+    user: {
+      activeSchedules,
+      pausedSchedules,
+      latestSignalCalculatedAt:
+        latestState?.tsUpdated instanceof Date ? latestState.tsUpdated.toISOString() : null,
+      latestStateReason:
+        typeof latestState?.lastChangeReason === "string" ? latestState.lastChangeReason : null,
+      latestStateEventAt:
+        latestEvent?.tsCreated instanceof Date ? latestEvent.tsCreated.toISOString() : null,
+      latestStateEventType:
+        typeof latestEvent?.changeType === "string" ? latestEvent.changeType : null,
+      latestStateEventReason:
+        typeof latestEvent?.reason === "string" ? latestEvent.reason : null,
+      latestAiExplainedAt:
+        latestAiState?.lastAiExplainedAt instanceof Date
+          ? latestAiState.lastAiExplainedAt.toISOString()
+          : null,
+      nextDueAt:
+        nextDueAgg?._min?.tsPredictedFor instanceof Date
+          ? nextDueAgg._min.tsPredictedFor.toISOString()
+          : null,
+      staleAfterMs
+    }
   });
 });
 

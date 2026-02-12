@@ -17,6 +17,16 @@ type ApiKeysSettingsResponse = {
   envOverride: boolean;
 };
 
+type ApiKeyHealthResponse = {
+  ok: boolean;
+  status: "ok" | "missing_key" | "error";
+  source: "env" | "db" | "none";
+  checkedAt: string;
+  latencyMs?: number;
+  httpStatus?: number;
+  message: string;
+};
+
 export default function AdminApiKeysPage() {
   const [loading, setLoading] = useState(true);
   const [isSuperadmin, setIsSuperadmin] = useState(false);
@@ -28,6 +38,26 @@ export default function AdminApiKeysPage() {
   const [hasOpenAiApiKey, setHasOpenAiApiKey] = useState(false);
   const [updatedAt, setUpdatedAt] = useState<string | null>(null);
   const [envOverride, setEnvOverride] = useState(false);
+  const [healthLoading, setHealthLoading] = useState(false);
+  const [health, setHealth] = useState<ApiKeyHealthResponse | null>(null);
+
+  async function loadHealthStatus() {
+    setHealthLoading(true);
+    try {
+      const res = await apiGet<ApiKeyHealthResponse>("/admin/settings/api-keys/status");
+      setHealth(res);
+    } catch (e) {
+      setHealth({
+        ok: false,
+        status: "error",
+        source: "none",
+        checkedAt: new Date().toISOString(),
+        message: errMsg(e)
+      });
+    } finally {
+      setHealthLoading(false);
+    }
+  }
 
   async function loadAll() {
     setLoading(true);
@@ -47,6 +77,7 @@ export default function AdminApiKeysPage() {
       setUpdatedAt(res.updatedAt ?? null);
       setEnvOverride(Boolean(res.envOverride));
       setOpenaiApiKey("");
+      await loadHealthStatus();
     } catch (e) {
       setError(errMsg(e));
     } finally {
@@ -76,6 +107,7 @@ export default function AdminApiKeysPage() {
       setHasOpenAiApiKey(Boolean(res.hasOpenAiApiKey));
       setUpdatedAt(res.updatedAt ?? null);
       setNotice("OpenAI API key saved.");
+      await loadHealthStatus();
     } catch (e) {
       setError(errMsg(e));
     }
@@ -95,6 +127,7 @@ export default function AdminApiKeysPage() {
       setHasOpenAiApiKey(Boolean(res.hasOpenAiApiKey));
       setUpdatedAt(res.updatedAt ?? null);
       setNotice("OpenAI API key removed.");
+      await loadHealthStatus();
     } catch (e) {
       setError(errMsg(e));
     }
@@ -136,6 +169,40 @@ export default function AdminApiKeysPage() {
           <div style={{ fontSize: 12, color: "var(--muted)", marginBottom: 8 }}>
             Last updated: {updatedAt ? new Date(updatedAt).toLocaleString() : "never"}
           </div>
+          <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap", marginBottom: 10 }}>
+            <span
+              className={`badge ${
+                health?.status === "ok"
+                  ? "badgeOk"
+                  : health?.status === "missing_key"
+                    ? "badgeWarn"
+                    : "badgeDanger"
+              }`}
+              title={health?.message ?? "Status not checked yet."}
+            >
+              OpenAI status:{" "}
+              {healthLoading
+                ? "checking..."
+                : health?.status === "ok"
+                  ? "OK"
+                  : health?.status === "missing_key"
+                    ? "missing key"
+                    : "error"}
+            </span>
+            <span style={{ fontSize: 12, color: "var(--muted)" }}>
+              Source: {health?.source ?? (envOverride ? "env" : hasOpenAiApiKey ? "db" : "none")}
+              {typeof health?.latencyMs === "number" ? ` · ${health.latencyMs}ms` : ""}
+              {health?.checkedAt ? ` · checked ${new Date(health.checkedAt).toLocaleString()}` : ""}
+            </span>
+            <button className="btn" type="button" onClick={() => void loadHealthStatus()} disabled={healthLoading}>
+              {healthLoading ? "Checking..." : "Refresh status"}
+            </button>
+          </div>
+          {health?.message ? (
+            <div style={{ fontSize: 12, color: "var(--muted)", marginBottom: 10 }}>
+              {health.message}
+            </div>
+          ) : null}
           {envOverride ? (
             <div style={{ fontSize: 12, color: "#f59e0b", marginBottom: 10 }}>
               ENV `AI_API_KEY` is still set. Remove it from `.env.prod` if you want DB-only key handling.

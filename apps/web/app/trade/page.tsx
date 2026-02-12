@@ -23,6 +23,7 @@ type TradingSettings = {
   exchangeAccountId: string | null;
   symbol: string | null;
   timeframe: string | null;
+  marginMode: MarginModeValue | null;
 };
 
 type SymbolItem = {
@@ -192,7 +193,7 @@ function TradePageContent() {
   const [ticker, setTicker] = useState<TickerState | null>(null);
 
   const [orderType, setOrderType] = useState<OrderTypeValue>("limit");
-  const [marginMode, setMarginMode] = useState<MarginModeValue>("cross");
+  const [marginMode, setMarginMode] = useState<MarginModeValue>("isolated");
   const [entryMode, setEntryMode] = useState<EntryModeValue>("open");
   const [leverage, setLeverage] = useState("10");
   const [qty, setQty] = useState("0.001");
@@ -214,7 +215,6 @@ function TradePageContent() {
   const [activePrefill, setActivePrefill] = useState<TradeDeskPrefillPayload | null>(null);
   const [prefillInfo, setPrefillInfo] = useState<string | null>(null);
   const [prefillContextExpanded, setPrefillContextExpanded] = useState(true);
-  const [prefillActionNotice, setPrefillActionNotice] = useState<string | null>(null);
 
   const marketWsRef = useRef<WebSocket | null>(null);
   const userWsRef = useRef<WebSocket | null>(null);
@@ -384,7 +384,7 @@ function TradePageContent() {
 
   function resetTicketDefaults() {
     setOrderType("limit");
-    setMarginMode("cross");
+    setMarginMode("isolated");
     setEntryMode("open");
     setLeverage("10");
     setQtyInputMode("quantity");
@@ -396,7 +396,6 @@ function TradePageContent() {
     setTakeProfitPrice("");
     setStopLossPrice("");
     setPrefillInfo(null);
-    setPrefillActionNotice(null);
   }
 
   function applyPrefillTicket(prefill: TradeDeskPrefillPayload) {
@@ -453,35 +452,6 @@ function TradePageContent() {
     setPrefillInfo(null);
   }
 
-  async function copyPrefillSummary() {
-    if (!activePrefill) return;
-    const lines = [
-      `Prediction ${activePrefill.predictionId}`,
-      `${activePrefill.symbol} ${activePrefill.marketType} ${activePrefill.timeframe}`,
-      `Signal: ${activePrefill.signal}`,
-      `Side: ${activePrefill.side ?? "manual"}`,
-      `Confidence: ${fmtConfidence(activePrefill.confidence)}`,
-      typeof activePrefill.expectedMovePct === "number"
-        ? `Expected move: ${activePrefill.expectedMovePct.toFixed(2)}%`
-        : null,
-      activePrefill.tags?.length ? `Tags: ${activePrefill.tags.slice(0, 5).join(", ")}` : null,
-      activePrefill.explanation ? `Explanation: ${activePrefill.explanation}` : null,
-      activePrefill.keyDrivers?.length
-        ? `Key drivers: ${activePrefill.keyDrivers
-            .slice(0, 5)
-            .map((driver) => `${driver.name}=${String(driver.value)}`)
-            .join("; ")}`
-        : null
-    ].filter(Boolean).join("\n");
-
-    try {
-      await navigator.clipboard.writeText(lines);
-      setPrefillActionNotice("Prediction summary copied.");
-    } catch {
-      setPrefillActionNotice("Clipboard access failed.");
-    }
-  }
-
   async function persistSettings(next: Partial<TradingSettings>) {
     try {
       await apiPost<TradingSettings>("/api/trading/settings", next);
@@ -523,6 +493,12 @@ function TradePageContent() {
         setTimeframe(prefillPayload.timeframe);
       } else if (settings.timeframe && TIMEFRAMES.includes(settings.timeframe as any)) {
         setTimeframe(settings.timeframe);
+      }
+
+      if (settings.marginMode === "isolated" || settings.marginMode === "cross") {
+        setMarginMode(settings.marginMode);
+      } else {
+        setMarginMode("isolated");
       }
 
       if (prefillPayload?.symbol) {
@@ -1070,7 +1046,6 @@ function TradePageContent() {
               >
                 {prefillContextExpanded ? "Hide context" : "Show context"}
               </button>
-              <button className="btn" onClick={() => void copyPrefillSummary()} type="button">Copy Summary</button>
               <Link href="/predictions" className="btn">Back to Prediction</Link>
               <button className="btn" onClick={clearPrefill} type="button">Clear Prefill</button>
             </div>
@@ -1078,11 +1053,6 @@ function TradePageContent() {
           <div style={{ marginTop: 8, fontSize: 12, color: "var(--muted)" }}>
             Prediction ID: {activePrefill.predictionId}
           </div>
-          {prefillActionNotice ? (
-            <div style={{ marginTop: 8, fontSize: 12, color: "var(--muted)" }}>
-              {prefillActionNotice}
-            </div>
-          ) : null}
           {prefillInfo ? (
             <div style={{ marginTop: 8, fontSize: 12, color: "#f59e0b" }}>{prefillInfo}</div>
           ) : null}
@@ -1257,14 +1227,20 @@ function TradePageContent() {
                   <div className="tradeOrderModeSwitch">
                     <button
                       className={`tradeOrderModeBtn ${marginMode === "isolated" ? "tradeOrderModeBtnActive" : ""}`}
-                      onClick={() => setMarginMode("isolated")}
+                      onClick={() => {
+                        setMarginMode("isolated");
+                        void persistSettings({ marginMode: "isolated" });
+                      }}
                       type="button"
                     >
                       Isolated
                     </button>
                     <button
                       className={`tradeOrderModeBtn ${marginMode === "cross" ? "tradeOrderModeBtnActive" : ""}`}
-                      onClick={() => setMarginMode("cross")}
+                      onClick={() => {
+                        setMarginMode("cross");
+                        void persistSettings({ marginMode: "cross" });
+                      }}
                       type="button"
                     >
                       Cross

@@ -10,7 +10,6 @@ import {
   type PredictionPrefillSource
 } from "../../src/schemas/tradeDeskPrefill";
 import {
-  buildPredictionCopySummary,
   formatRelativeTime,
   isRecentTimestamp,
   parsePredictionChangeReason,
@@ -129,6 +128,38 @@ type PredictionQualitySummary = {
   avgOutcomePnlPct: number | null;
 };
 
+type PredictionActivityResponse = {
+  scheduler: {
+    enabled: boolean;
+    running: boolean;
+    pollSeconds: number;
+    lastCycleStartedAt: string | null;
+    lastCycleFinishedAt: string | null;
+    lastCycleDurationMs: number | null;
+    lastCycleRefreshed: number;
+    lastCycleSignificant: number;
+    lastCycleAiCalls: number;
+    lastSuccessfulCycleAt: string | null;
+    lastRefreshedAt: string | null;
+    lastSignificantAt: string | null;
+    lastAiCallAt: string | null;
+    lastError: string | null;
+    lastErrorAt: string | null;
+  };
+  user: {
+    activeSchedules: number;
+    pausedSchedules: number;
+    latestSignalCalculatedAt: string | null;
+    latestStateReason: string | null;
+    latestStateEventAt: string | null;
+    latestStateEventType: string | null;
+    latestStateEventReason: string | null;
+    latestAiExplainedAt: string | null;
+    nextDueAt: string | null;
+    staleAfterMs: number;
+  };
+};
+
 const TIMEFRAMES: PredictionTimeframe[] = ["5m", "15m", "1h", "4h", "1d"];
 
 function timeframeMs(value: PredictionTimeframe): number {
@@ -234,6 +265,33 @@ function formatFlipLabel(flip: PredictionSignalFlip | null): string {
   return `${flip.from.toUpperCase()}->${flip.to.toUpperCase()}`;
 }
 
+function describeManualReason(params: {
+  parsedReason: ReturnType<typeof parsePredictionChangeReason>;
+  autoEnabled: boolean;
+}): { label: string; shortReason: string; rawReason: string | null } {
+  if (params.parsedReason.kind !== "manual") {
+    return {
+      label: params.parsedReason.label,
+      shortReason: params.parsedReason.shortReason,
+      rawReason: params.parsedReason.raw
+    };
+  }
+
+  if (params.autoEnabled) {
+    return {
+      label: "Manual",
+      shortReason: "manual (waiting for first auto refresh)",
+      rawReason: "manual_waiting_first_auto_refresh"
+    };
+  }
+
+  return {
+    label: "Manual",
+    shortReason: "manual (one-off)",
+    rawReason: "manual_one_off"
+  };
+}
+
 export default function PredictionsPage() {
   const router = useRouter();
 
@@ -245,6 +303,8 @@ export default function PredictionsPage() {
   const [sendingId, setSendingId] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [quality, setQuality] = useState<PredictionQualitySummary | null>(null);
+  const [activity, setActivity] = useState<PredictionActivityResponse | null>(null);
+  const [activityLoading, setActivityLoading] = useState(true);
   const [runningRows, setRunningRows] = useState<RunningPredictionItem[]>([]);
   const [runningLoading, setRunningLoading] = useState(true);
   const [runningActionId, setRunningActionId] = useState<string | null>(null);
@@ -315,6 +375,18 @@ export default function PredictionsPage() {
     }
   }
 
+  async function loadPredictionActivity() {
+    setActivityLoading(true);
+    try {
+      const payload = await apiGet<PredictionActivityResponse>("/api/predictions/activity");
+      setActivity(payload);
+    } catch {
+      setActivity(null);
+    } finally {
+      setActivityLoading(false);
+    }
+  }
+
   async function loadAccounts() {
     try {
       const payload = await apiGet<{ items: ExchangeAccountItem[] }>("/exchange-accounts");
@@ -365,6 +437,7 @@ export default function PredictionsPage() {
     void loadPredictions();
     void loadRunningPredictions();
     void loadPredictionQuality();
+    void loadPredictionActivity();
     void loadAccounts();
   }, []);
 
@@ -490,26 +563,6 @@ export default function PredictionsPage() {
     }
   }
 
-  async function copyRowSummary(row: PredictionListItem) {
-    const summary = buildPredictionCopySummary({
-      symbol: row.symbol,
-      timeframe: row.timeframe,
-      signal: row.signal,
-      confidence: row.confidence,
-      expectedMovePct: row.expectedMovePct,
-      lastUpdatedAt: row.lastUpdatedAt ?? row.tsCreated,
-      lastChangeReason: row.lastChangeReason ?? null,
-      tags: row.tags,
-      nowMs
-    });
-    try {
-      await navigator.clipboard.writeText(summary);
-      setNotice("Summary copied.");
-    } catch {
-      setActionError("Copy failed. Clipboard access denied.");
-    }
-  }
-
   async function createPrediction() {
     setActionError(null);
     setNotice(null);
@@ -559,8 +612,12 @@ export default function PredictionsPage() {
         `and confidence ${fmtConfidence(response.prediction.confidence)}.` +
         (newAutoSchedule ? ` Auto mode is enabled (${newTimeframe} cadence).` : " Auto mode is disabled.")
       );
-      await Promise.all([loadPredictions(), loadRunningPredictions()]);
-      await loadPredictionQuality();
+      await Promise.all([
+        loadPredictions(),
+        loadRunningPredictions(),
+        loadPredictionQuality(),
+        loadPredictionActivity()
+      ]);
     } catch (e) {
       setActionError(errMsg(e));
     } finally {
@@ -583,8 +640,12 @@ export default function PredictionsPage() {
           ? `Prediction paused (${response.updatedCount} template rows updated).`
           : `Prediction resumed (${response.updatedCount} template rows updated).`
       );
-      await Promise.all([loadPredictions(), loadRunningPredictions()]);
-      await loadPredictionQuality();
+      await Promise.all([
+        loadPredictions(),
+        loadRunningPredictions(),
+        loadPredictionQuality(),
+        loadPredictionActivity()
+      ]);
     } catch (e) {
       setActionError(errMsg(e));
     } finally {
@@ -604,8 +665,12 @@ export default function PredictionsPage() {
     try {
       const response = await apiPost<{ deletedCount: number }>(`/api/predictions/${id}/delete-schedule`, {});
       setNotice(`Auto prediction deleted (${response.deletedCount} rows removed).`);
-      await Promise.all([loadPredictions(), loadRunningPredictions()]);
-      await loadPredictionQuality();
+      await Promise.all([
+        loadPredictions(),
+        loadRunningPredictions(),
+        loadPredictionQuality(),
+        loadPredictionActivity()
+      ]);
     } catch (e) {
       setActionError(errMsg(e));
     } finally {
@@ -640,8 +705,12 @@ export default function PredictionsPage() {
         `Cleared ${response.deletedCount} old prediction(s) older than ${response.olderThanDays} day(s). ` +
         `Preserved running templates: ${response.preservedCount}.`
       );
-      await Promise.all([loadPredictions(), loadRunningPredictions()]);
-      await loadPredictionQuality();
+      await Promise.all([
+        loadPredictions(),
+        loadRunningPredictions(),
+        loadPredictionQuality(),
+        loadPredictionActivity()
+      ]);
     } catch (e) {
       setActionError(errMsg(e));
     } finally {
@@ -669,8 +738,12 @@ export default function PredictionsPage() {
         { ids: filteredRows.map((row) => row.id) }
       );
       setNotice(`Deleted ${response.deletedCount} listed prediction(s).`);
-      await Promise.all([loadPredictions(), loadRunningPredictions()]);
-      await loadPredictionQuality();
+      await Promise.all([
+        loadPredictions(),
+        loadRunningPredictions(),
+        loadPredictionQuality(),
+        loadPredictionActivity()
+      ]);
     } catch (e) {
       setActionError(errMsg(e));
     } finally {
@@ -686,6 +759,10 @@ export default function PredictionsPage() {
     const dataGap = Boolean(indicators?.dataGap || detail?.riskFlags?.dataGap);
     const updatedAtIso = row.lastUpdatedAt ?? row.tsCreated;
     const parsedReason = parsePredictionChangeReason(row.lastChangeReason ?? null);
+    const manualReason = describeManualReason({
+      parsedReason,
+      autoEnabled: Boolean(row.autoScheduleEnabled)
+    });
     const events = eventsByStateId[rowId] ?? detail?.events ?? [];
     const eventsExpanded = Boolean(expandedEventsByStateId[rowId]);
     const eventsLoading = eventsLoadingStateId === rowId;
@@ -713,15 +790,10 @@ export default function PredictionsPage() {
         <div className="card predictionDetailPanel">
           <div className="predictionDetailHeader">
             <strong>Prediction Context</strong>
-            <div className="predictionDetailHeaderActions">
-              <button className="btn predictionMiniBtn" type="button" onClick={() => void copyRowSummary(row)}>
-                Copy Summary
-              </button>
-            </div>
           </div>
 
           <div className="predictionContextRow">
-            <span className={`badge ${reasonBadgeClass}`}>{parsedReason.label}</span>
+            <span className={`badge ${reasonBadgeClass}`}>{manualReason.label}</span>
             {parsedReason.signalFlip ? (
               <span className="badge predictionFlipBadge">FLIP {formatFlipLabel(parsedReason.signalFlip)}</span>
             ) : null}
@@ -733,7 +805,7 @@ export default function PredictionsPage() {
             </span>
           </div>
           <div className="predictionContextReason">
-            Reason: {parsedReason.raw ?? "n/a"}
+            Reason: {manualReason.shortReason}
           </div>
 
           {dataGap ? (
@@ -842,6 +914,32 @@ export default function PredictionsPage() {
       </div>
     );
   }
+
+  const predictionActivityReason = parsePredictionChangeReason(activity?.user.latestStateReason ?? null);
+  const predictionActivityReasonDetail = describeManualReason({
+    parsedReason: predictionActivityReason,
+    autoEnabled: (activity?.user.activeSchedules ?? 0) > 0
+  });
+  const activeSchedules = activity?.user.activeSchedules ?? 0;
+  const staleAfterMs = Number.isFinite(Number(activity?.user.staleAfterMs))
+    ? Number(activity?.user.staleAfterMs)
+    : 15 * 60 * 1000;
+  const latestSignalCalculatedAt = activity?.user.latestSignalCalculatedAt ?? null;
+  const isPredictionActivityStale =
+    activeSchedules > 0 &&
+    !isRecentTimestamp(latestSignalCalculatedAt, nowMs, Math.max(staleAfterMs, 60_000));
+  const schedulerStatusLabel = !activity
+    ? "unknown"
+    : !activity.scheduler.enabled
+      ? "disabled"
+      : activity.scheduler.running
+        ? "running"
+        : "idle";
+  const activityBadgeClass = !activity || !activity.scheduler.enabled
+    ? "predictionHealthBadgeIdle"
+    : isPredictionActivityStale
+      ? "predictionHealthBadgeWarn"
+      : "predictionHealthBadgeOk";
 
   return (
     <div className="predictionsWrap">
@@ -1029,6 +1127,37 @@ export default function PredictionsPage() {
               {(quality?.tp ?? 0)} / {(quality?.sl ?? 0)} / {(quality?.expired ?? 0)}
             </div>
           </div>
+          <div className="card predictionActivityCard" style={{ margin: 0, padding: 10 }}>
+            <div className="predictionActivityHeader">
+              <div style={{ color: "var(--muted)", fontSize: 12 }}>AI Refresh</div>
+              <span className={`badge ${activityBadgeClass}`}>
+                {activityLoading ? "loading" : schedulerStatusLabel}
+              </span>
+            </div>
+            <div className="predictionActivityLine">
+              <span>Last calc</span>
+              <strong title={latestSignalCalculatedAt ? new Date(latestSignalCalculatedAt).toLocaleString() : "n/a"}>
+                {activityLoading ? "..." : formatRelativeTime(latestSignalCalculatedAt, nowMs)}
+              </strong>
+            </div>
+            <div className="predictionActivityLine">
+              <span>Last cycle</span>
+              <strong title={activity?.scheduler.lastCycleFinishedAt ? new Date(activity.scheduler.lastCycleFinishedAt).toLocaleString() : "n/a"}>
+                {activityLoading ? "..." : formatRelativeTime(activity?.scheduler.lastCycleFinishedAt ?? null, nowMs)}
+              </strong>
+            </div>
+            <div className="predictionActivityLine">
+              <span>Reason</span>
+              <strong title={predictionActivityReasonDetail.rawReason ?? "n/a"}>
+                {activityLoading ? "..." : predictionActivityReasonDetail.shortReason}
+              </strong>
+            </div>
+            {isPredictionActivityStale ? (
+              <div className="predictionActivityWarning">
+                No fresh signal calculation in {Math.ceil(staleAfterMs / 60000)}m.
+              </div>
+            ) : null}
+          </div>
         </div>
       </section>
 
@@ -1051,7 +1180,9 @@ export default function PredictionsPage() {
             <button
               className="btn"
               type="button"
-              onClick={() => void loadRunningPredictions()}
+              onClick={() => {
+                void Promise.all([loadRunningPredictions(), loadPredictionActivity()]);
+              }}
               disabled={runningLoading}
             >
               {runningLoading ? "Refreshing..." : "Refresh"}
@@ -1209,7 +1340,11 @@ export default function PredictionsPage() {
             className="btn"
             type="button"
             onClick={() => {
-              void Promise.all([loadPredictions(), loadPredictionQuality()]);
+              void Promise.all([
+                loadPredictions(),
+                loadPredictionQuality(),
+                loadPredictionActivity()
+              ]);
             }}
             disabled={loading}
           >
@@ -1271,6 +1406,10 @@ export default function PredictionsPage() {
                   const loadingDetail = detailsLoadingId === row.id;
                   const updatedAtIso = row.lastUpdatedAt ?? row.tsCreated;
                   const changeReason = parsePredictionChangeReason(row.lastChangeReason ?? null);
+                  const manualReason = describeManualReason({
+                    parsedReason: changeReason,
+                    autoEnabled: Boolean(row.autoScheduleEnabled)
+                  });
                   const flipRecently =
                     Boolean(changeReason.signalFlip) && isRecentTimestamp(updatedAtIso, nowMs, 15 * 60 * 1000);
                   const reasonBadgeClass =
@@ -1332,15 +1471,15 @@ export default function PredictionsPage() {
                         <td style={{ padding: "8px 6px", maxWidth: 200 }}>
                           <div className="predictionChangeCell">
                             <div className="predictionChangeBadges">
-                              <span className={`badge ${reasonBadgeClass}`}>{changeReason.label}</span>
+                              <span className={`badge ${reasonBadgeClass}`}>{manualReason.label}</span>
                               {changeReason.signalFlip ? (
                                 <span className="badge predictionFlipBadge">
                                   FLIP {formatFlipLabel(changeReason.signalFlip)}
                                 </span>
                               ) : null}
                             </div>
-                            <div className="predictionChangeText" title={changeReason.raw ?? "n/a"}>
-                              {changeReason.shortReason}
+                            <div className="predictionChangeText" title={manualReason.rawReason ?? "n/a"}>
+                              {manualReason.shortReason}
                             </div>
                           </div>
                         </td>
@@ -1373,13 +1512,6 @@ export default function PredictionsPage() {
                             >
                               {expanded ? "Hide details" : "Details"}
                             </button>
-                            <button
-                              className="btn"
-                              type="button"
-                              onClick={() => void copyRowSummary(row)}
-                            >
-                              Copy
-                            </button>
                           </div>
                         </td>
                       </tr>
@@ -1410,6 +1542,10 @@ export default function PredictionsPage() {
               const loadingDetail = detailsLoadingId === row.id;
               const updatedAtIso = row.lastUpdatedAt ?? row.tsCreated;
               const changeReason = parsePredictionChangeReason(row.lastChangeReason ?? null);
+              const manualReason = describeManualReason({
+                parsedReason: changeReason,
+                autoEnabled: Boolean(row.autoScheduleEnabled)
+              });
               const reasonBadgeClass =
                 changeReason.kind === "triggered"
                   ? "predictionReasonBadgeTrigger"
@@ -1459,7 +1595,7 @@ export default function PredictionsPage() {
                   </div>
 
                   <div style={{ display: "flex", gap: 4, flexWrap: "wrap", marginBottom: 6 }}>
-                    <span className={`badge ${reasonBadgeClass}`}>{changeReason.label}</span>
+                    <span className={`badge ${reasonBadgeClass}`}>{manualReason.label}</span>
                     {changeReason.signalFlip ? (
                       <span className="badge predictionFlipBadge">
                         FLIP {formatFlipLabel(changeReason.signalFlip)}
@@ -1468,6 +1604,10 @@ export default function PredictionsPage() {
                     {row.tags.slice(0, 4).map((tag) => (
                       <span key={`${row.id}_m_${tag}`} className="badge">{tag}</span>
                     ))}
+                  </div>
+
+                  <div className="predictionRowCardText" title={manualReason.rawReason ?? "n/a"}>
+                    {manualReason.shortReason}
                   </div>
 
                   <div className="predictionRowCardText">
@@ -1505,13 +1645,6 @@ export default function PredictionsPage() {
                       disabled={loadingDetail && !expanded}
                     >
                       {expanded ? "Hide details" : "Details"}
-                    </button>
-                    <button
-                      className="btn"
-                      type="button"
-                      onClick={() => void copyRowSummary(row)}
-                    >
-                      Copy
                     </button>
                   </div>
 

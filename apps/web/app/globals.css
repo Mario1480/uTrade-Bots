@@ -837,6 +837,61 @@ a { color: inherit; }
   gap: 8px;
 }
 
+.predictionActivityCard {
+  display: grid;
+  gap: 6px;
+}
+
+.predictionActivityHeader {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 8px;
+}
+
+.predictionActivityLine {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 8px;
+  font-size: 12px;
+}
+
+.predictionActivityLine span {
+  color: var(--muted);
+}
+
+.predictionActivityLine strong {
+  font-weight: 700;
+  text-align: right;
+  min-width: 0;
+  max-width: 68%;
+  white-space: normal;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+  line-height: 1.25;
+}
+
+.predictionActivityWarning {
+  color: #f59e0b;
+  font-size: 11px;
+}
+
+.predictionHealthBadgeOk {
+  border-color: rgba(16, 185, 129, 0.55);
+  color: #10b981;
+}
+
+.predictionHealthBadgeWarn {
+  border-color: rgba(245, 158, 11, 0.55);
+  color: #f59e0b;
+}
+
+.predictionHealthBadgeIdle {
+  border-color: rgba(148, 163, 184, 0.4);
+  color: #cbd5e1;
+}
+
 .predictionsRunningHeader {
   display: flex;
   justify-content: space-between;
