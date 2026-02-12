@@ -61,6 +61,7 @@ model Bot {
   alerts             BotAlert[]
   manualTrades       ManualTradeLog[]
   metrics            BotMetric[]
+  tradeStates        BotTradeState[]
 }
 
 model FuturesBotConfig {
@@ -207,6 +208,31 @@ model BotRuntime {
   dexStatus     String?
   dexDiffBps    Float?
   dexLastUpdate DateTime?
+}
+
+model BotTradeState {
+  id                 String   @id @default(cuid())
+  botId              String   @map("bot_id")
+  symbol             String
+  lastPredictionHash String?  @map("last_prediction_hash")
+  lastSignal         String?  @map("last_signal")
+  lastSignalTs       DateTime? @map("last_signal_ts")
+  lastTradeTs        DateTime? @map("last_trade_ts")
+  dailyTradeCount    Int      @default(0) @map("daily_trade_count")
+  dailyResetUtc      DateTime @map("daily_reset_utc")
+  openSide           String?  @map("open_side")
+  openQty            Float?   @map("open_qty")
+  openEntryPrice     Float?   @map("open_entry_price")
+  openTs             DateTime? @map("open_ts")
+  createdAt          DateTime @default(now()) @map("created_at")
+  updatedAt          DateTime @updatedAt @map("updated_at")
+
+  bot Bot @relation(fields: [botId], references: [id], onDelete: Cascade)
+
+  @@unique([botId, symbol])
+  @@index([botId])
+  @@index([botId, dailyResetUtc])
+  @@map("bot_trade_state")
 }
 
 model RiskEvent {
@@ -508,34 +534,34 @@ model RunnerStatus {
 }
 
 model Prediction {
-  id               String   @id @default(cuid())
-  userId           String?
-  botId            String?
-  symbol           String
-  marketType       String
-  timeframe        String
-  tsCreated        DateTime
-  signal           String
-  expectedMovePct  Float
-  confidence       Float
-  explanation      String
-  tags             Json
-  featuresSnapshot Json
-  entryPrice       Float?
-  stopLossPrice    Float?
-  takeProfitPrice  Float?
-  horizonMs        Int?
-  outcomeStatus    String   @default("pending")
-  outcomeResult    String?
-  outcomeReason    String?
-  outcomePnlPct    Float?
-  maxFavorablePct  Float?
-  maxAdversePct    Float?
+  id                 String    @id @default(cuid())
+  userId             String?
+  botId              String?
+  symbol             String
+  marketType         String
+  timeframe          String
+  tsCreated          DateTime
+  signal             String
+  expectedMovePct    Float
+  confidence         Float
+  explanation        String
+  tags               Json
+  featuresSnapshot   Json
+  entryPrice         Float?
+  stopLossPrice      Float?
+  takeProfitPrice    Float?
+  horizonMs          Int?
+  outcomeStatus      String    @default("pending")
+  outcomeResult      String?
+  outcomeReason      String?
+  outcomePnlPct      Float?
+  maxFavorablePct    Float?
+  maxAdversePct      Float?
   outcomeEvaluatedAt DateTime?
-  outcomeMeta      Json?
-  modelVersion     String
-  createdAt        DateTime @default(now())
-  updatedAt        DateTime @updatedAt
+  outcomeMeta        Json?
+  modelVersion       String
+  createdAt          DateTime  @default(now())
+  updatedAt          DateTime  @updatedAt
 
   @@index([symbol, timeframe, tsCreated])
   @@index([userId, createdAt])
@@ -562,15 +588,15 @@ model FeatureThreshold {
 }
 
 model EconomicCalendarConfig {
-  key        String   @id @default("default")
-  enabled    Boolean  @default(true)
-  impactMin  String   @default("high") @map("impact_min")
-  currencies String?
-  preMinutes Int      @default(30) @map("pre_minutes")
-  postMinutes Int     @default(30) @map("post_minutes")
-  provider   String   @default("fmp")
-  createdAt  DateTime @default(now()) @map("created_at")
-  updatedAt  DateTime @updatedAt @map("updated_at")
+  key         String   @id @default("default")
+  enabled     Boolean  @default(true)
+  impactMin   String   @default("high") @map("impact_min")
+  currencies  String?
+  preMinutes  Int      @default(30) @map("pre_minutes")
+  postMinutes Int      @default(30) @map("post_minutes")
+  provider    String   @default("fmp")
+  createdAt   DateTime @default(now()) @map("created_at")
+  updatedAt   DateTime @updatedAt @map("updated_at")
 
   @@map("economic_calendar_config")
 }
@@ -597,33 +623,33 @@ model EconomicEvent {
 }
 
 model PredictionState {
-  id                String   @id @default(uuid())
-  exchange          String
-  accountId         String   @map("account_id")
-  userId            String   @map("user_id")
-  symbol            String
-  marketType        String   @map("market_type")
-  timeframe         String
-  tsUpdated         DateTime @map("ts_updated")
-  tsPredictedFor    DateTime @map("ts_predicted_for")
-  signal            String
-  expectedMovePct   Float?   @map("expected_move_pct")
-  confidence        Float
-  tags              Json
-  explanation       String?
-  keyDrivers        Json     @map("key_drivers")
-  featuresSnapshot  Json     @map("features_snapshot")
-  modelVersion      String   @map("model_version")
-  lastAiExplainedAt DateTime? @map("last_ai_explained_at")
-  lastChangeHash    String?  @map("last_change_hash")
-  lastChangeReason  String?  @map("last_change_reason")
-  autoScheduleEnabled Boolean @default(true) @map("auto_schedule_enabled")
-  autoSchedulePaused Boolean  @default(false) @map("auto_schedule_paused")
-  directionPreference String? @map("direction_preference")
-  confidenceTargetPct Float?  @map("confidence_target_pct")
-  leverage          Int?
-  createdAt         DateTime @default(now()) @map("created_at")
-  updatedAt         DateTime @updatedAt @map("updated_at")
+  id                  String    @id @default(uuid())
+  exchange            String
+  accountId           String    @map("account_id")
+  userId              String    @map("user_id")
+  symbol              String
+  marketType          String    @map("market_type")
+  timeframe           String
+  tsUpdated           DateTime  @map("ts_updated")
+  tsPredictedFor      DateTime  @map("ts_predicted_for")
+  signal              String
+  expectedMovePct     Float?    @map("expected_move_pct")
+  confidence          Float
+  tags                Json
+  explanation         String?
+  keyDrivers          Json      @map("key_drivers")
+  featuresSnapshot    Json      @map("features_snapshot")
+  modelVersion        String    @map("model_version")
+  lastAiExplainedAt   DateTime? @map("last_ai_explained_at")
+  lastChangeHash      String?   @map("last_change_hash")
+  lastChangeReason    String?   @map("last_change_reason")
+  autoScheduleEnabled Boolean   @default(true) @map("auto_schedule_enabled")
+  autoSchedulePaused  Boolean   @default(false) @map("auto_schedule_paused")
+  directionPreference String?   @map("direction_preference")
+  confidenceTargetPct Float?    @map("confidence_target_pct")
+  leverage            Int?
+  createdAt           DateTime  @default(now()) @map("created_at")
+  updatedAt           DateTime  @updatedAt @map("updated_at")
 
   events PredictionEvent[]
 
@@ -635,19 +661,36 @@ model PredictionState {
 }
 
 model PredictionEvent {
-  id            String   @id @default(uuid())
-  stateId       String   @map("state_id")
-  tsCreated     DateTime @default(now()) @map("ts_created")
-  changeType    String   @map("change_type")
-  prevSnapshot  Json?    @map("prev_snapshot")
-  newSnapshot   Json?    @map("new_snapshot")
-  delta         Json?
-  horizonEvalRef String? @map("horizon_eval_ref")
-  modelVersion  String   @map("model_version")
-  reason        String?
+  id             String   @id @default(uuid())
+  stateId        String   @map("state_id")
+  tsCreated      DateTime @default(now()) @map("ts_created")
+  changeType     String   @map("change_type")
+  prevSnapshot   Json?    @map("prev_snapshot")
+  newSnapshot    Json?    @map("new_snapshot")
+  delta          Json?
+  horizonEvalRef String?  @map("horizon_eval_ref")
+  modelVersion   String   @map("model_version")
+  reason         String?
 
   state PredictionState @relation(fields: [stateId], references: [id], onDelete: Cascade)
 
   @@index([stateId, tsCreated(sort: Desc)])
   @@map("predictions_events")
+}
+
+model IndicatorSetting {
+  id         String   @id @default(uuid())
+  scopeType  String   @map("scope_type")
+  exchange   String?
+  accountId  String?  @map("account_id")
+  symbol     String?
+  timeframe  String?
+  configJson Json     @map("config_json")
+  createdAt  DateTime @default(now()) @map("created_at")
+  updatedAt  DateTime @updatedAt @map("updated_at")
+
+  @@unique([scopeType, exchange, accountId, symbol, timeframe])
+  @@index([scopeType])
+  @@index([exchange, accountId, symbol, timeframe])
+  @@map("indicator_settings")
 }

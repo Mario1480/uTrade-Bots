@@ -75,11 +75,22 @@ import {
 } from "./prediction-thresholds.js";
 import {
   computeIndicators,
-  minimumCandlesForIndicators,
+  minimumCandlesForIndicatorsWithSettings,
   type IndicatorsSnapshot
 } from "./market/indicators.js";
 import { computeTradersRealityFeatures } from "./market/tradersReality/index.js";
 import { bucketCandles, toBucketStart } from "./market/timeframe.js";
+import {
+  DEFAULT_INDICATOR_SETTINGS,
+  indicatorSettingsUpsertSchema,
+  mergeIndicatorSettings,
+  normalizeIndicatorSettingsPatch,
+  type IndicatorSettingsConfig
+} from "./dto/indicatorSettings.dto.js";
+import {
+  clearIndicatorSettingsCache,
+  resolveIndicatorSettings
+} from "./config/indicatorSettingsResolver.js";
 import {
   buildPredictionMetricsSummary,
   computeDirectionalRealizedReturnPct,
@@ -165,6 +176,39 @@ const exchangeCreateSchema = z.object({
   }
 });
 
+const predictionCopierSettingsSchema = z.object({
+  timeframe: z.enum(["5m", "15m", "1h", "4h"]).optional(),
+  minConfidence: z.number().min(0).max(100).optional(),
+  maxPredictionAgeSec: z.number().int().min(30).max(86_400).optional(),
+  symbols: z.array(z.string().trim().min(1)).max(100).optional(),
+  positionSizing: z.object({
+    type: z.enum(["fixed_usd", "equity_pct", "risk_pct"]).optional(),
+    value: z.number().positive().optional()
+  }).optional(),
+  risk: z.object({
+    maxOpenPositions: z.number().int().min(1).max(100).optional(),
+    maxDailyTrades: z.number().int().min(1).max(10_000).optional(),
+    cooldownSecAfterTrade: z.number().int().min(0).max(86_400).optional(),
+    maxNotionalPerSymbolUsd: z.number().positive().optional(),
+    maxTotalNotionalUsd: z.number().positive().optional(),
+    maxLeverage: z.number().int().min(1).max(125).optional(),
+    stopLossPct: z.number().positive().max(95).nullable().optional(),
+    takeProfitPct: z.number().positive().max(500).nullable().optional(),
+    timeStopMin: z.number().int().positive().max(10_080).nullable().optional()
+  }).optional(),
+  filters: z.object({
+    blockTags: z.array(z.string().trim().min(1)).max(50).optional(),
+    requireTags: z.array(z.string().trim().min(1)).max(50).nullable().optional(),
+    allowSignals: z.array(z.enum(["up", "down", "neutral"])).max(3).optional(),
+    minExpectedMovePct: z.number().nonnegative().nullable().optional()
+  }).optional(),
+  execution: z.object({
+    orderType: z.enum(["market", "limit"]).optional(),
+    limitOffsetBps: z.number().nonnegative().max(500).optional(),
+    reduceOnlyOnExit: z.boolean().optional()
+  }).optional()
+});
+
 const botCreateSchema = z.object({
   name: z.string().trim().min(1),
   symbol: z.string().trim().min(1),
@@ -174,6 +218,21 @@ const botCreateSchema = z.object({
   leverage: z.number().int().min(1).max(125).default(1),
   tickMs: z.number().int().min(100).max(60_000).default(1000),
   paramsJson: z.record(z.any()).default({})
+}).superRefine((value, ctx) => {
+  if (value.strategyKey !== "prediction_copier") return;
+
+  const root =
+    value.paramsJson && typeof value.paramsJson.predictionCopier === "object" && value.paramsJson.predictionCopier
+      ? value.paramsJson.predictionCopier
+      : value.paramsJson;
+  const parsed = predictionCopierSettingsSchema.safeParse(root);
+  if (parsed.success) return;
+
+  ctx.addIssue({
+    code: z.ZodIssueCode.custom,
+    path: ["paramsJson"],
+    message: "invalid prediction_copier configuration"
+  });
 });
 
 const tradingSettingsSchema = z.object({
@@ -272,6 +331,13 @@ const adminPredictionRefreshSchema = z.object({
   hysteresisRatio: z.number().min(0.2).max(0.95),
   unstableFlipLimit: z.number().int().min(2).max(20),
   unstableFlipWindowSeconds: z.number().int().min(60).max(86400)
+});
+
+const adminIndicatorSettingsResolvedQuerySchema = z.object({
+  exchange: z.string().trim().optional(),
+  accountId: z.string().trim().optional(),
+  symbol: z.string().trim().optional(),
+  timeframe: z.enum(["5m", "15m", "1h", "4h", "1d"]).optional()
 });
 
 const placeOrderSchema = z.object({
@@ -626,6 +692,67 @@ function asBoolean(value: unknown, fallback = false): boolean {
 function parseJsonObject(value: unknown): Record<string, unknown> {
   if (!value || typeof value !== "object" || Array.isArray(value)) return {};
   return value as Record<string, unknown>;
+}
+
+function normalizeIndicatorSettingExchange(value: unknown): string | null {
+  if (typeof value !== "string") return null;
+  const normalized = value.trim().toLowerCase();
+  return normalized.length > 0 ? normalized : null;
+}
+
+function normalizeIndicatorSettingAccountId(value: unknown): string | null {
+  if (typeof value !== "string") return null;
+  const normalized = value.trim();
+  return normalized.length > 0 ? normalized : null;
+}
+
+function normalizeIndicatorSettingSymbol(value: unknown): string | null {
+  if (typeof value !== "string") return null;
+  const normalized = normalizeSymbolInput(value);
+  return normalized ?? null;
+}
+
+function normalizeIndicatorSettingTimeframe(value: unknown): string | null {
+  if (typeof value !== "string") return null;
+  const normalized = value.trim();
+  return normalized.length > 0 ? normalized : null;
+}
+
+function toIndicatorComputeSettings(config: IndicatorSettingsConfig) {
+  return {
+    enabledPacks: {
+      indicatorsV1: config.enabledPacks.indicatorsV1,
+      indicatorsV2: config.enabledPacks.indicatorsV2
+    },
+    stochrsi: {
+      rsiLen: config.indicatorsV2.stochrsi.rsiLen,
+      stochLen: config.indicatorsV2.stochrsi.stochLen,
+      smoothK: config.indicatorsV2.stochrsi.smoothK,
+      smoothD: config.indicatorsV2.stochrsi.smoothD
+    },
+    volume: {
+      lookback: config.indicatorsV2.volume.lookback,
+      emaFast: config.indicatorsV2.volume.emaFast,
+      emaSlow: config.indicatorsV2.volume.emaSlow
+    },
+    fvg: {
+      lookback: config.indicatorsV2.fvg.lookback,
+      fillRule: config.indicatorsV2.fvg.fillRule
+    }
+  };
+}
+
+function toTradersRealityComputeSettings(config: IndicatorSettingsConfig) {
+  return {
+    enabled: config.enabledPacks.tradersReality,
+    adrLen: config.tradersReality.adrLen,
+    awrLen: config.tradersReality.awrLen,
+    amrLen: config.tradersReality.amrLen,
+    rdLen: config.tradersReality.rdLen,
+    rwLen: config.tradersReality.rwLen,
+    openingRangeMinutes: config.tradersReality.openingRangeMin,
+    sessionsUseDST: config.tradersReality.sessionsUseDST
+  };
 }
 
 function normalizeExchangeValue(value: string): string {
@@ -1752,9 +1879,21 @@ async function generateAutoPredictionForUser(
     if (!canonicalSymbol) {
       throw new ManualTradingError("symbol_required", 400, "symbol_required");
     }
+    const indicatorSettingsResolution = await resolveIndicatorSettings({
+      db,
+      exchange: account.exchange,
+      accountId: payload.exchangeAccountId,
+      symbol: canonicalSymbol,
+      timeframe: payload.timeframe
+    });
+    const indicatorComputeSettings = toIndicatorComputeSettings(indicatorSettingsResolution.config);
+    const tradersRealitySettings = toTradersRealityComputeSettings(indicatorSettingsResolution.config);
 
     const exchangeSymbol = await adapter.toExchangeSymbol(canonicalSymbol);
-    const candleLookback = Math.max(120, minimumCandlesForIndicators(payload.timeframe));
+    const candleLookback = Math.max(
+      120,
+      minimumCandlesForIndicatorsWithSettings(payload.timeframe, indicatorComputeSettings)
+    );
     const [tickerRaw, candlesRaw] = await Promise.all([
       adapter.marketApi.getTicker(exchangeSymbol, adapter.productType),
       adapter.marketApi.getCandles({
@@ -1782,11 +1921,13 @@ async function generateAutoPredictionForUser(
       exchange: account.exchange,
       symbol: canonicalSymbol,
       marketType: payload.marketType,
-      logVwapMetrics: true
+      logVwapMetrics: true,
+      settings: indicatorComputeSettings
     });
     const tradersReality = computeTradersRealityFeatures(
       alignedCandles,
-      payload.timeframe
+      payload.timeframe,
+      tradersRealitySettings
     );
     const ticker = normalizeTickerPayload(coerceFirstItem(tickerRaw));
     const referencePrice = ticker.mark ?? ticker.last ?? closes[closes.length - 1];
@@ -1847,6 +1988,10 @@ async function generateAutoPredictionForUser(
     inferred.featureSnapshot.qualitySlCount = quality.slCount;
     inferred.featureSnapshot.qualityExpiredCount = quality.expiredCount;
     inferred.featureSnapshot.tradersReality = tradersReality;
+    inferred.featureSnapshot.meta = {
+      ...(asRecord(inferred.featureSnapshot.meta) ?? {}),
+      indicatorSettingsHash: indicatorSettingsResolution.hash
+    };
     if (tradersReality.dataGap) {
       const riskFlags = asRecord(inferred.featureSnapshot.riskFlags) ?? {};
       inferred.featureSnapshot.riskFlags = { ...riskFlags, dataGap: true };
@@ -3829,9 +3974,20 @@ async function probePredictionRefreshTrigger(
     const account = await resolveTradingAccount(template.userId, template.exchangeAccountId);
     adapter = createBitgetAdapter(account);
     await adapter.contractCache.warmup();
+    const indicatorSettingsResolution = await resolveIndicatorSettings({
+      db,
+      exchange: template.exchange,
+      accountId: template.exchangeAccountId,
+      symbol: template.symbol,
+      timeframe: template.timeframe
+    });
+    const indicatorComputeSettings = toIndicatorComputeSettings(indicatorSettingsResolution.config);
 
     const exchangeSymbol = await adapter.toExchangeSymbol(template.symbol);
-    const lookback = Math.max(80, minimumCandlesForIndicators(template.timeframe));
+    const lookback = Math.max(
+      80,
+      minimumCandlesForIndicatorsWithSettings(template.timeframe, indicatorComputeSettings)
+    );
     const candlesRaw = await adapter.marketApi.getCandles({
       symbol: exchangeSymbol,
       productType: adapter.productType,
@@ -3850,7 +4006,8 @@ async function probePredictionRefreshTrigger(
       exchange: template.exchange,
       symbol: template.symbol,
       marketType: template.marketType,
-      logVwapMetrics: false
+      logVwapMetrics: false,
+      settings: indicatorComputeSettings
     });
     const tickerRaw = await adapter.marketApi.getTicker(exchangeSymbol, adapter.productType);
     const ticker = normalizeTickerPayload(coerceFirstItem(tickerRaw));
@@ -3921,9 +4078,21 @@ async function refreshPredictionStateForTemplate(params: {
     const account = await resolveTradingAccount(template.userId, template.exchangeAccountId);
     adapter = createBitgetAdapter(account);
     await adapter.contractCache.warmup();
+    const indicatorSettingsResolution = await resolveIndicatorSettings({
+      db,
+      exchange: account.exchange,
+      accountId: template.exchangeAccountId,
+      symbol: template.symbol,
+      timeframe: template.timeframe
+    });
+    const indicatorComputeSettings = toIndicatorComputeSettings(indicatorSettingsResolution.config);
+    const tradersRealitySettings = toTradersRealityComputeSettings(indicatorSettingsResolution.config);
 
     const exchangeSymbol = await adapter.toExchangeSymbol(template.symbol);
-    const candleLookback = Math.max(160, minimumCandlesForIndicators(template.timeframe));
+    const candleLookback = Math.max(
+      160,
+      minimumCandlesForIndicatorsWithSettings(template.timeframe, indicatorComputeSettings)
+    );
     const [tickerRaw, candlesRaw] = await Promise.all([
       adapter.marketApi.getTicker(exchangeSymbol, adapter.productType),
       adapter.marketApi.getCandles({
@@ -3946,11 +4115,13 @@ async function refreshPredictionStateForTemplate(params: {
       exchange: account.exchange,
       symbol: template.symbol,
       marketType: template.marketType,
-      logVwapMetrics: true
+      logVwapMetrics: true,
+      settings: indicatorComputeSettings
     });
     const tradersReality = computeTradersRealityFeatures(
       candles,
-      template.timeframe
+      template.timeframe,
+      tradersRealitySettings
     );
     const ticker = normalizeTickerPayload(coerceFirstItem(tickerRaw));
     const referencePrice = ticker.mark ?? ticker.last ?? closes[closes.length - 1];
@@ -4007,6 +4178,10 @@ async function refreshPredictionStateForTemplate(params: {
     inferred.featureSnapshot.qualitySlCount = quality.slCount;
     inferred.featureSnapshot.qualityExpiredCount = quality.expiredCount;
     inferred.featureSnapshot.tradersReality = tradersReality;
+    inferred.featureSnapshot.meta = {
+      ...(asRecord(inferred.featureSnapshot.meta) ?? {}),
+      indicatorSettingsHash: indicatorSettingsResolution.hash
+    };
     if (tradersReality.dataGap) {
       const riskFlags = asRecord(inferred.featureSnapshot.riskFlags) ?? {};
       inferred.featureSnapshot.riskFlags = { ...riskFlags, dataGap: true };
@@ -5672,6 +5847,199 @@ app.put("/admin/settings/prediction-refresh", requireAuth, async (req, res) => {
     source: "db",
     defaults: toEffectivePredictionRefreshSettings(null)
   });
+});
+
+app.get("/api/admin/indicator-settings", requireAuth, async (_req, res) => {
+  if (!(await requireSuperadmin(res))) return;
+  if (!db.indicatorSetting || typeof db.indicatorSetting.findMany !== "function") {
+    return res.status(503).json({ error: "indicator_settings_not_ready" });
+  }
+
+  const rows = await db.indicatorSetting.findMany({
+    orderBy: { updatedAt: "desc" }
+  });
+
+  return res.json({
+    items: rows.map((row: any) => {
+      const configPatch = normalizeIndicatorSettingsPatch(row.configJson);
+      const configEffective = mergeIndicatorSettings(DEFAULT_INDICATOR_SETTINGS, configPatch);
+      return {
+        id: row.id,
+        scopeType: row.scopeType,
+        exchange: row.exchange,
+        accountId: row.accountId,
+        symbol: row.symbol,
+        timeframe: row.timeframe,
+        configPatch,
+        configEffective,
+        createdAt: row.createdAt,
+        updatedAt: row.updatedAt
+      };
+    })
+  });
+});
+
+app.get("/api/admin/indicator-settings/resolved", requireAuth, async (req, res) => {
+  if (!(await requireSuperadmin(res))) return;
+  const parsed = adminIndicatorSettingsResolvedQuerySchema.safeParse(req.query ?? {});
+  if (!parsed.success) {
+    return res.status(400).json({ error: "invalid_query", details: parsed.error.flatten() });
+  }
+
+  const resolved = await resolveIndicatorSettings({
+    db,
+    exchange: normalizeIndicatorSettingExchange(parsed.data.exchange),
+    accountId: normalizeIndicatorSettingAccountId(parsed.data.accountId),
+    symbol: normalizeIndicatorSettingSymbol(parsed.data.symbol),
+    timeframe: normalizeIndicatorSettingTimeframe(parsed.data.timeframe)
+  });
+
+  return res.json({
+    ...resolved,
+    defaults: DEFAULT_INDICATOR_SETTINGS
+  });
+});
+
+app.post("/api/admin/indicator-settings", requireAuth, async (req, res) => {
+  if (!(await requireSuperadmin(res))) return;
+  if (!db.indicatorSetting || typeof db.indicatorSetting.findMany !== "function") {
+    return res.status(503).json({ error: "indicator_settings_not_ready" });
+  }
+  const parsed = indicatorSettingsUpsertSchema.safeParse(req.body ?? {});
+  if (!parsed.success) {
+    return res.status(400).json({ error: "invalid_payload", details: parsed.error.flatten() });
+  }
+
+  const configPatch = normalizeIndicatorSettingsPatch(parsed.data.config);
+  const keyFields = {
+    scopeType: parsed.data.scopeType,
+    exchange: normalizeIndicatorSettingExchange(parsed.data.exchange),
+    accountId: normalizeIndicatorSettingAccountId(parsed.data.accountId),
+    symbol: normalizeIndicatorSettingSymbol(parsed.data.symbol),
+    timeframe: normalizeIndicatorSettingTimeframe(parsed.data.timeframe)
+  };
+
+  const existing = await db.indicatorSetting.findFirst({
+    where: keyFields,
+    select: { id: true }
+  });
+  if (existing) {
+    return res.status(409).json({
+      error: "duplicate_scope",
+      message: "An entry for this scope already exists."
+    });
+  }
+
+  const created = await db.indicatorSetting.create({
+    data: {
+      ...keyFields,
+      configJson: configPatch
+    }
+  });
+  clearIndicatorSettingsCache();
+
+  return res.status(201).json({
+    id: created.id,
+    scopeType: created.scopeType,
+    exchange: created.exchange,
+    accountId: created.accountId,
+    symbol: created.symbol,
+    timeframe: created.timeframe,
+    configPatch,
+    configEffective: mergeIndicatorSettings(DEFAULT_INDICATOR_SETTINGS, configPatch),
+    createdAt: created.createdAt,
+    updatedAt: created.updatedAt
+  });
+});
+
+app.put("/api/admin/indicator-settings/:id", requireAuth, async (req, res) => {
+  if (!(await requireSuperadmin(res))) return;
+  if (!db.indicatorSetting || typeof db.indicatorSetting.findMany !== "function") {
+    return res.status(503).json({ error: "indicator_settings_not_ready" });
+  }
+  const id = String(req.params.id ?? "").trim();
+  if (!id) {
+    return res.status(400).json({ error: "invalid_id" });
+  }
+  const parsed = indicatorSettingsUpsertSchema.safeParse(req.body ?? {});
+  if (!parsed.success) {
+    return res.status(400).json({ error: "invalid_payload", details: parsed.error.flatten() });
+  }
+
+  const current = await db.indicatorSetting.findUnique({
+    where: { id },
+    select: { id: true }
+  });
+  if (!current) {
+    return res.status(404).json({ error: "not_found" });
+  }
+
+  const configPatch = normalizeIndicatorSettingsPatch(parsed.data.config);
+  const keyFields = {
+    scopeType: parsed.data.scopeType,
+    exchange: normalizeIndicatorSettingExchange(parsed.data.exchange),
+    accountId: normalizeIndicatorSettingAccountId(parsed.data.accountId),
+    symbol: normalizeIndicatorSettingSymbol(parsed.data.symbol),
+    timeframe: normalizeIndicatorSettingTimeframe(parsed.data.timeframe)
+  };
+  const duplicate = await db.indicatorSetting.findFirst({
+    where: {
+      ...keyFields,
+      NOT: { id }
+    },
+    select: { id: true }
+  });
+  if (duplicate) {
+    return res.status(409).json({
+      error: "duplicate_scope",
+      message: "An entry for this scope already exists."
+    });
+  }
+
+  const updated = await db.indicatorSetting.update({
+    where: { id },
+    data: {
+      ...keyFields,
+      configJson: configPatch
+    }
+  });
+  clearIndicatorSettingsCache();
+
+  return res.json({
+    id: updated.id,
+    scopeType: updated.scopeType,
+    exchange: updated.exchange,
+    accountId: updated.accountId,
+    symbol: updated.symbol,
+    timeframe: updated.timeframe,
+    configPatch,
+    configEffective: mergeIndicatorSettings(DEFAULT_INDICATOR_SETTINGS, configPatch),
+    createdAt: updated.createdAt,
+    updatedAt: updated.updatedAt
+  });
+});
+
+app.delete("/api/admin/indicator-settings/:id", requireAuth, async (req, res) => {
+  if (!(await requireSuperadmin(res))) return;
+  if (!db.indicatorSetting || typeof db.indicatorSetting.findMany !== "function") {
+    return res.status(503).json({ error: "indicator_settings_not_ready" });
+  }
+  const id = String(req.params.id ?? "").trim();
+  if (!id) {
+    return res.status(400).json({ error: "invalid_id" });
+  }
+
+  const existing = await db.indicatorSetting.findUnique({
+    where: { id },
+    select: { id: true }
+  });
+  if (!existing) {
+    return res.status(404).json({ error: "not_found" });
+  }
+
+  await db.indicatorSetting.delete({ where: { id } });
+  clearIndicatorSettingsCache();
+  return res.json({ ok: true });
 });
 
 app.get("/api/trading/settings", requireAuth, async (_req, res) => {

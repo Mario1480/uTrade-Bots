@@ -163,6 +163,7 @@ SMTP:
 - Admin Backend: `/admin` (Superadmin)
 - Global OpenAI Key (encrypted DB): `/admin/api-keys`
 - Global FMP Key (encrypted DB): `/admin/api-keys`
+- Indicator Settings (global/account/symbol/tf overrides): `/admin/indicator-settings`
 
 ## Manual Trading Desk Chart
 
@@ -199,6 +200,52 @@ Beispiel `paramsJson` für Trend-Bot:
       "highVolMultiplier": 0.7,
       "min": 0.1,
       "max": 2.0
+    }
+  }
+}
+```
+
+## Bot v1: Prediction Copier (Perp, enter_exit)
+
+Der Runner unterstützt jetzt zusätzlich `strategyKey: "prediction_copier"`:
+- liest Signale aus `predictions_state` (pro `exchange/account/symbol/timeframe`)
+- **enter_exit** Logik:
+  - Entry auf frische `up/down` Signale
+  - Exit bei `signal_flip`, `neutral` oder Confidence-Drop
+  - kein sofortiges Reverse im selben Tick (Cooldown + neuer `prediction_hash` nötig)
+- persistenter Bot-State in `bot_trade_state` (Idempotenz + Daily-Counter)
+
+Beispiel `paramsJson`:
+
+```json
+{
+  "predictionCopier": {
+    "timeframe": "15m",
+    "minConfidence": 70,
+    "maxPredictionAgeSec": 600,
+    "symbols": ["BTCUSDT"],
+    "positionSizing": { "type": "fixed_usd", "value": 100 },
+    "risk": {
+      "maxOpenPositions": 3,
+      "maxDailyTrades": 20,
+      "cooldownSecAfterTrade": 120,
+      "maxNotionalPerSymbolUsd": 500,
+      "maxTotalNotionalUsd": 1500,
+      "maxLeverage": 3,
+      "stopLossPct": null,
+      "takeProfitPct": null,
+      "timeStopMin": null
+    },
+    "filters": {
+      "blockTags": ["news_risk", "data_gap", "low_liquidity"],
+      "requireTags": null,
+      "allowSignals": ["up", "down"],
+      "minExpectedMovePct": null
+    },
+    "execution": {
+      "orderType": "market",
+      "limitOffsetBps": 2,
+      "reduceOnlyOnExit": true
     }
   }
 }

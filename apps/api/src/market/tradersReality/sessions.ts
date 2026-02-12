@@ -160,7 +160,8 @@ function isSydneyDstActive(dayStartMs: number): boolean {
   return dayStartMs >= start && dayStartMs < end;
 }
 
-function isDstActive(region: DstRegion, dayStartMs: number): boolean {
+function isDstActive(region: DstRegion, dayStartMs: number, useDst: boolean): boolean {
+  if (!useDst) return false;
   if (!region) return false;
   if (region === "uk") return isUkDstActive(dayStartMs);
   if (region === "ny") return isNyDstActive(dayStartMs);
@@ -178,8 +179,12 @@ function parseTimeRangeUtc(range: string): { startMinute: number; endMinute: num
   return { startMinute: start, endMinute: end };
 }
 
-function buildWindowCandidate(dayStartMs: number, def: SessionDefinition): SessionWindowCandidate {
-  const dstActive = def.dstRegion ? isDstActive(def.dstRegion, dayStartMs) : false;
+function buildWindowCandidate(
+  dayStartMs: number,
+  def: SessionDefinition,
+  useDst: boolean
+): SessionWindowCandidate {
+  const dstActive = def.dstRegion ? isDstActive(def.dstRegion, dayStartMs, useDst) : false;
   const range = dstActive && def.dstUtc ? def.dstUtc : def.standardUtc;
   const parsed = parseTimeRangeUtc(range);
   const startMs = dayStartMs + (parsed.startMinute * 60 * 1000);
@@ -194,11 +199,11 @@ function buildWindowCandidate(dayStartMs: number, def: SessionDefinition): Sessi
   };
 }
 
-function resolveSessionWindow(nowMs: number, def: SessionDefinition): SessionWindow {
+function resolveSessionWindow(nowMs: number, def: SessionDefinition, useDst: boolean): SessionWindow {
   const dayStart = startOfUtcDay(nowMs);
-  const yesterday = buildWindowCandidate(dayStart - DAY_MS, def);
-  const today = buildWindowCandidate(dayStart, def);
-  const tomorrow = buildWindowCandidate(dayStart + DAY_MS, def);
+  const yesterday = buildWindowCandidate(dayStart - DAY_MS, def, useDst);
+  const today = buildWindowCandidate(dayStart, def, useDst);
+  const tomorrow = buildWindowCandidate(dayStart + DAY_MS, def, useDst);
   const candidates = [yesterday, today, tomorrow].sort((a, b) => a.startMs - b.startMs);
 
   const active = candidates.find((item) => nowMs >= item.startMs && nowMs < item.endMs);
@@ -227,11 +232,12 @@ function resolveSessionWindow(nowMs: number, def: SessionDefinition): SessionWin
 
 export function computeTradersRealitySessions(
   candles: Candle[],
-  options: { openingRangeMinutes?: number } = {}
+  options: { openingRangeMinutes?: number; useDst?: boolean } = {}
 ): TradersRealitySessionsSnapshot {
   const openingRangeMinutes = Number.isFinite(options.openingRangeMinutes)
     ? Math.max(1, Math.trunc(options.openingRangeMinutes as number))
     : OPENING_RANGE_MINUTES_DEFAULT;
+  const useDst = options.useDst ?? true;
   const sorted = candles
     .filter((row): row is Candle & { ts: number } => row.ts !== null && Number.isFinite(row.ts))
     .sort((a, b) => (a.ts as number) - (b.ts as number));
@@ -240,7 +246,7 @@ export function computeTradersRealitySessions(
   let activeSession: string | null = null;
 
   for (const def of SESSION_DEFS) {
-    const window = resolveSessionWindow(nowMs, def);
+    const window = resolveSessionWindow(nowMs, def, useDst);
     const inWindow = sorted.filter(
       (row) => (row.ts as number) >= window.startMs && (row.ts as number) < window.endMs
     );

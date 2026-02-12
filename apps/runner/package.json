@@ -6,12 +6,13 @@
     "dev": "tsx src/index.ts",
     "build": "tsc -p tsconfig.json",
     "typecheck": "tsc -p tsconfig.json --noEmit",
-    "test": "tsx --test src/circuit-breaker.test.ts src/prediction-gate.test.ts"
+    "test": "tsx --test src/circuit-breaker.test.ts src/prediction-gate.test.ts src/prediction-copier.test.ts"
   },
   "dependencies": {
     "@mm/db": "0.0.1",
     "@mm/futures-core": "0.0.1",
     "@mm/futures-engine": "0.0.1",
+    "@mm/futures-exchange": "0.0.1",
     "@mm/orchestrator": "0.0.1",
     "@mm/strategies": "0.0.1",
     "dotenv": "^16.4.5",

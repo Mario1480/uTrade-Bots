@@ -1376,6 +1376,7 @@ resolve-pkg-maps@^1.0.0:
     "@mm/db" "0.0.1"
     "@mm/futures-core" "0.0.1"
     "@mm/futures-engine" "0.0.1"
+    "@mm/futures-exchange" "0.0.1"
     "@mm/orchestrator" "0.0.1"
     "@mm/strategies" "0.0.1"
     dotenv "^16.4.5"

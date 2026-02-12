@@ -41,9 +41,25 @@ export type PredictionGateState = {
   marketType: "spot" | "perp";
   timeframe: "5m" | "15m" | "1h" | "4h" | "1d";
   signal: "up" | "down" | "neutral";
+  expectedMovePct?: number | null;
   confidence: number;
   tags: string[];
   tsUpdated: Date;
+};
+
+export type BotTradeState = {
+  botId: string;
+  symbol: string;
+  lastPredictionHash: string | null;
+  lastSignal: "up" | "down" | "neutral" | null;
+  lastSignalTs: Date | null;
+  lastTradeTs: Date | null;
+  dailyTradeCount: number;
+  dailyResetUtc: Date;
+  openSide: "long" | "short" | null;
+  openQty: number | null;
+  openEntryPrice: number | null;
+  openTs: Date | null;
 };
 
 export type RiskEventType =
@@ -52,7 +68,9 @@ export type RiskEventType =
   | "BOT_ERROR"
   | "PREDICTION_GATE_BLOCK"
   | "PREDICTION_GATE_ALLOW"
-  | "PREDICTION_GATE_FAIL_OPEN";
+  | "PREDICTION_GATE_FAIL_OPEN"
+  | "PREDICTION_COPIER_DECISION"
+  | "PREDICTION_COPIER_TRADE";
 
 function normalizeSymbol(value: string): string {
   return String(value ?? "").replace(/[^A-Za-z0-9]/g, "").toUpperCase();
@@ -69,6 +87,10 @@ function normalizeStringArray(value: unknown, limit = 10): string[] {
     if (out.length >= limit) break;
   }
   return out;
+}
+
+function normalizeUtcDayStart(date: Date): Date {
+  return new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate(), 0, 0, 0, 0));
 }
 
 function mapRowToActiveBot(bot: any): ActiveFuturesBot {
@@ -227,6 +249,7 @@ export async function loadLatestPredictionStateForGate(params: {
       marketType: true,
       timeframe: true,
       signal: true,
+      expectedMovePct: true,
       confidence: true,
       tags: true,
       tsUpdated: true
@@ -260,10 +283,177 @@ export async function loadLatestPredictionStateForGate(params: {
     marketType,
     timeframe: timeframeRaw,
     signal,
+    expectedMovePct: Number.isFinite(Number(row.expectedMovePct)) ? Number(row.expectedMovePct) : null,
     confidence: Number(row.confidence ?? 0),
     tags: normalizeStringArray(row.tags, 10),
     tsUpdated: row.tsUpdated
   };
+}
+
+function mapBotTradeStateRow(row: any): BotTradeState {
+  const signalRaw = String(row?.lastSignal ?? "").trim().toLowerCase();
+  const openSideRaw = String(row?.openSide ?? "").trim().toLowerCase();
+  return {
+    botId: String(row?.botId ?? ""),
+    symbol: normalizeSymbol(String(row?.symbol ?? "")),
+    lastPredictionHash:
+      typeof row?.lastPredictionHash === "string" && row.lastPredictionHash.trim().length > 0
+        ? row.lastPredictionHash.trim()
+        : null,
+    lastSignal: signalRaw === "up" || signalRaw === "down" || signalRaw === "neutral" ? signalRaw : null,
+    lastSignalTs: row?.lastSignalTs instanceof Date ? row.lastSignalTs : null,
+    lastTradeTs: row?.lastTradeTs instanceof Date ? row.lastTradeTs : null,
+    dailyTradeCount: Number(row?.dailyTradeCount ?? 0) || 0,
+    dailyResetUtc: row?.dailyResetUtc instanceof Date ? row.dailyResetUtc : normalizeUtcDayStart(new Date()),
+    openSide: openSideRaw === "long" || openSideRaw === "short" ? openSideRaw : null,
+    openQty: Number.isFinite(Number(row?.openQty)) ? Number(row.openQty) : null,
+    openEntryPrice: Number.isFinite(Number(row?.openEntryPrice)) ? Number(row.openEntryPrice) : null,
+    openTs: row?.openTs instanceof Date ? row.openTs : null
+  };
+}
+
+export async function loadBotTradeState(params: {
+  botId: string;
+  symbol: string;
+  now?: Date;
+}): Promise<BotTradeState> {
+  const symbol = normalizeSymbol(params.symbol);
+  const now = params.now ?? new Date();
+  const dayStart = normalizeUtcDayStart(now);
+
+  let row = await db.botTradeState.findUnique({
+    where: {
+      botId_symbol: {
+        botId: params.botId,
+        symbol
+      }
+    }
+  });
+
+  if (!row) {
+    row = await db.botTradeState.create({
+      data: {
+        botId: params.botId,
+        symbol,
+        dailyResetUtc: dayStart
+      }
+    });
+    return mapBotTradeStateRow(row);
+  }
+
+  const currentDayStart = normalizeUtcDayStart(row.dailyResetUtc instanceof Date ? row.dailyResetUtc : dayStart);
+  if (currentDayStart.getTime() === dayStart.getTime()) {
+    return mapBotTradeStateRow(row);
+  }
+
+  row = await db.botTradeState.update({
+    where: {
+      botId_symbol: {
+        botId: params.botId,
+        symbol
+      }
+    },
+    data: {
+      dailyTradeCount: 0,
+      dailyResetUtc: dayStart
+    }
+  });
+
+  return mapBotTradeStateRow(row);
+}
+
+export async function upsertBotTradeState(params: {
+  botId: string;
+  symbol: string;
+  lastPredictionHash?: string | null;
+  lastSignal?: "up" | "down" | "neutral" | null;
+  lastSignalTs?: Date | null;
+  lastTradeTs?: Date | null;
+  dailyTradeCount?: number;
+  dailyResetUtc?: Date;
+  openSide?: "long" | "short" | null;
+  openQty?: number | null;
+  openEntryPrice?: number | null;
+  openTs?: Date | null;
+}) {
+  const symbol = normalizeSymbol(params.symbol);
+  const dayStart = normalizeUtcDayStart(params.dailyResetUtc ?? new Date());
+
+  const updateData: any = {};
+  const createData: any = {
+    botId: params.botId,
+    symbol,
+    dailyResetUtc: dayStart
+  };
+
+  if ("lastPredictionHash" in params) {
+    updateData.lastPredictionHash = params.lastPredictionHash ?? null;
+    createData.lastPredictionHash = params.lastPredictionHash ?? null;
+  }
+  if ("lastSignal" in params) {
+    updateData.lastSignal = params.lastSignal ?? null;
+    createData.lastSignal = params.lastSignal ?? null;
+  }
+  if ("lastSignalTs" in params) {
+    updateData.lastSignalTs = params.lastSignalTs ?? null;
+    createData.lastSignalTs = params.lastSignalTs ?? null;
+  }
+  if ("lastTradeTs" in params) {
+    updateData.lastTradeTs = params.lastTradeTs ?? null;
+    createData.lastTradeTs = params.lastTradeTs ?? null;
+  }
+  if ("dailyTradeCount" in params) {
+    updateData.dailyTradeCount = Math.max(0, Math.trunc(Number(params.dailyTradeCount ?? 0)));
+    createData.dailyTradeCount = Math.max(0, Math.trunc(Number(params.dailyTradeCount ?? 0)));
+  }
+  if ("dailyResetUtc" in params) {
+    updateData.dailyResetUtc = dayStart;
+    createData.dailyResetUtc = dayStart;
+  }
+  if ("openSide" in params) {
+    updateData.openSide = params.openSide ?? null;
+    createData.openSide = params.openSide ?? null;
+  }
+  if ("openQty" in params) {
+    updateData.openQty = params.openQty ?? null;
+    createData.openQty = params.openQty ?? null;
+  }
+  if ("openEntryPrice" in params) {
+    updateData.openEntryPrice = params.openEntryPrice ?? null;
+    createData.openEntryPrice = params.openEntryPrice ?? null;
+  }
+  if ("openTs" in params) {
+    updateData.openTs = params.openTs ?? null;
+    createData.openTs = params.openTs ?? null;
+  }
+
+  await db.botTradeState.upsert({
+    where: {
+      botId_symbol: {
+        botId: params.botId,
+        symbol
+      }
+    },
+    update: updateData,
+    create: createData
+  });
+}
+
+export async function getBotDailyTradeCount(params: {
+  botId: string;
+  now?: Date;
+}): Promise<number> {
+  const dayStart = normalizeUtcDayStart(params.now ?? new Date());
+  const result = await db.botTradeState.aggregate({
+    where: {
+      botId: params.botId,
+      dailyResetUtc: dayStart
+    },
+    _sum: {
+      dailyTradeCount: true
+    }
+  });
+  return Number(result?._sum?.dailyTradeCount ?? 0) || 0;
 }
 
 export async function upsertBotRuntime(params: {

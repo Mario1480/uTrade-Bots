@@ -37,6 +37,11 @@ const ADMIN_LINKS = [
     description: "Store global API keys (starting with OpenAI) encrypted in DB."
   },
   {
+    href: "/admin/indicator-settings",
+    title: "Indicator Settings",
+    description: "Configure feature packs and indicator params with scoped overrides."
+  },
+  {
     href: "/admin/prediction-refresh",
     title: "Prediction Refresh",
     description: "Tune debounce, hysteresis, cooldown and event throttle for auto predictions."

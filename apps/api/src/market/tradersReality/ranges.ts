@@ -49,6 +49,11 @@ type RangeModes = {
   amrUseOpen: boolean;
   rdUseOpen: boolean;
   rwUseOpen: boolean;
+  adrLen: number;
+  awrLen: number;
+  amrLen: number;
+  rdLen: number;
+  rwLen: number;
 };
 
 const DEFAULT_MODES: RangeModes = {
@@ -56,7 +61,12 @@ const DEFAULT_MODES: RangeModes = {
   awrUseOpen: false,
   amrUseOpen: false,
   rdUseOpen: false,
-  rwUseOpen: false
+  rwUseOpen: false,
+  adrLen: 14,
+  awrLen: 4,
+  amrLen: 6,
+  rdLen: 15,
+  rwLen: 13
 };
 
 function round(value: number | null, decimals = 6): number | null {
@@ -132,7 +142,15 @@ export function computeTradersRealityRanges(
   candles: Candle[],
   options: Partial<RangeModes> = {}
 ): TradersRealityRangesSnapshot {
-  const modes: RangeModes = { ...DEFAULT_MODES, ...options };
+  const modes: RangeModes = {
+    ...DEFAULT_MODES,
+    ...options,
+    adrLen: Math.max(1, Math.trunc(options.adrLen ?? DEFAULT_MODES.adrLen)),
+    awrLen: Math.max(1, Math.trunc(options.awrLen ?? DEFAULT_MODES.awrLen)),
+    amrLen: Math.max(1, Math.trunc(options.amrLen ?? DEFAULT_MODES.amrLen)),
+    rdLen: Math.max(1, Math.trunc(options.rdLen ?? DEFAULT_MODES.rdLen)),
+    rwLen: Math.max(1, Math.trunc(options.rwLen ?? DEFAULT_MODES.rwLen))
+  };
   const daily = aggregateDaily(candles);
   const weekly = aggregateWeekly(candles);
   const monthly = aggregateMonthly(candles);
@@ -142,11 +160,11 @@ export function computeTradersRealityRanges(
   const currentWeek = weekly.length > 0 ? weekly[weekly.length - 1] : null;
   const currentMonth = monthly.length > 0 ? monthly[monthly.length - 1] : null;
 
-  const adrValue = average(completedRanges(daily, 14));
-  const awrValue = average(completedRanges(weekly, 4));
-  const amrValue = average(completedRanges(monthly, 6));
-  const rdValue = average(completedRanges(daily, 15));
-  const rwValue = average(completedRanges(weekly, 13));
+  const adrValue = average(completedRanges(daily, modes.adrLen));
+  const awrValue = average(completedRanges(weekly, modes.awrLen));
+  const amrValue = average(completedRanges(monthly, modes.amrLen));
+  const rdValue = average(completedRanges(daily, modes.rdLen));
+  const rwValue = average(completedRanges(weekly, modes.rwLen));
 
   const adr = buildBand(currentDay, adrValue, modes.adrUseOpen);
   const awr = buildBand(currentWeek, awrValue, modes.awrUseOpen);

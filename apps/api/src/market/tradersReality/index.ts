@@ -32,6 +32,17 @@ export type TradersRealitySnapshot = {
   dataGap: boolean;
 };
 
+export type TradersRealityComputeOptions = {
+  enabled?: boolean;
+  adrLen?: number;
+  awrLen?: number;
+  amrLen?: number;
+  rdLen?: number;
+  rwLen?: number;
+  openingRangeMinutes?: number;
+  sessionsUseDST?: boolean;
+};
+
 function emptySnapshot(tf: Timeframe): TradersRealitySnapshot {
   return {
     timeframe: tf,
@@ -140,8 +151,14 @@ function emptySnapshot(tf: Timeframe): TradersRealitySnapshot {
 
 export function computeTradersRealityFeatures(
   candles: Candle[],
-  timeframe: Timeframe
+  timeframe: Timeframe,
+  options: TradersRealityComputeOptions = {}
 ): TradersRealitySnapshot {
+  if (options.enabled === false) {
+    const snapshot = emptySnapshot(timeframe);
+    snapshot.dataGap = false;
+    return snapshot;
+  }
   const sorted = candles
     .filter((row): row is Candle & { ts: number } => row.ts !== null && Number.isFinite(row.ts))
     .sort((a, b) => (a.ts as number) - (b.ts as number));
@@ -151,9 +168,16 @@ export function computeTradersRealityFeatures(
 
   const emaCloud = computeTradersRealityEmaSnapshot(sorted);
   const levels = computeTradersRealityLevels(sorted);
-  const ranges = computeTradersRealityRanges(sorted);
+  const ranges = computeTradersRealityRanges(sorted, {
+    adrLen: options.adrLen,
+    awrLen: options.awrLen,
+    amrLen: options.amrLen,
+    rdLen: options.rdLen,
+    rwLen: options.rwLen
+  });
   const sessions = computeTradersRealitySessions(sorted, {
-    openingRangeMinutes: 30
+    openingRangeMinutes: options.openingRangeMinutes ?? 30,
+    useDst: options.sessionsUseDST ?? true
   });
   const pvsra = computeTradersRealityPvsra(sorted);
 

@@ -23,6 +23,7 @@ import {
   recordPredictionGateDecision,
   type PredictionGateResult
 } from "./prediction-gate.js";
+import { runPredictionCopierTick } from "./prediction-copier.js";
 
 const noopExchange = {
   async getAccountState() {
@@ -85,6 +86,19 @@ function toReason(strategyKey: string, intent: TradeIntent, engineResult: Engine
 }
 
 export async function loopOnce(bot: ActiveFuturesBot, workerId?: string): Promise<LoopTickResult> {
+  if (bot.strategyKey === "prediction_copier") {
+    const copierResult = await runPredictionCopierTick(bot, workerId);
+    await writeBotTick({
+      botId: bot.id,
+      status: "running",
+      reason: copierResult.reason,
+      intent: copierResult.intent,
+      workerId: workerId ?? null
+    });
+    await markExchangeAccountUsed(bot.exchangeAccountId);
+    return copierResult;
+  }
+
   const strategyIntent = await DummyStrategy.onTick({
     nowMs: Date.now(),
     symbol: bot.symbol

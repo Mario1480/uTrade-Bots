@@ -66,17 +66,40 @@ export type IndicatorsSnapshot = {
   dataGap: boolean;
 };
 
-const STOCHRSI_RSI_LEN = 14;
-const STOCHRSI_STOCH_LEN = 14;
-const STOCHRSI_SMOOTH_K = 3;
-const STOCHRSI_SMOOTH_D = 3;
-const STOCHRSI_REQUIRED_BARS =
-  STOCHRSI_RSI_LEN + STOCHRSI_STOCH_LEN + STOCHRSI_SMOOTH_K + STOCHRSI_SMOOTH_D + 50;
+type IndicatorsComputeSettings = {
+  enabledPacks?: {
+    indicatorsV1?: boolean;
+    indicatorsV2?: boolean;
+  };
+  stochrsi?: {
+    rsiLen?: number;
+    stochLen?: number;
+    smoothK?: number;
+    smoothD?: number;
+  };
+  volume?: {
+    lookback?: number;
+    emaFast?: number;
+    emaSlow?: number;
+  };
+  fvg?: {
+    lookback?: number;
+    fillRule?: FvgFillRule;
+  };
+};
 
-const VOLUME_LOOKBACK = 100;
-const VOLUME_EMA_FAST = 10;
-const VOLUME_EMA_SLOW = 30;
-const INTRADAY_MIN_BARS = Math.max(200, STOCHRSI_REQUIRED_BARS, VOLUME_LOOKBACK + 20);
+const DEFAULT_STOCHRSI = {
+  rsiLen: 14,
+  stochLen: 14,
+  smoothK: 3,
+  smoothD: 3
+};
+const DEFAULT_VOLUME = {
+  lookback: 100,
+  emaFast: 10,
+  emaSlow: 30
+};
+const DEFAULT_V2_ENABLED = true;
 const DAILY_MIN_BARS = 220;
 const ADX_PERIOD = 14;
 const VWAP_ROLLING_LEN_DAILY = 20;
@@ -92,6 +115,50 @@ const FVG_FILL_RULE: FvgFillRule =
 function toFinite(value: unknown): number | null {
   const parsed = Number(value);
   return Number.isFinite(parsed) ? parsed : null;
+}
+
+function toPositiveInt(value: unknown, fallback: number, min = 1, max = 5000): number {
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed)) return fallback;
+  return Math.min(max, Math.max(min, Math.trunc(parsed)));
+}
+
+function normalizeSettings(settings: IndicatorsComputeSettings | undefined) {
+  const stoch = settings?.stochrsi ?? {};
+  const volume = settings?.volume ?? {};
+  const enabledPacks = settings?.enabledPacks ?? {};
+
+  const stochrsi = {
+    rsiLen: toPositiveInt(stoch.rsiLen, DEFAULT_STOCHRSI.rsiLen, 2, 200),
+    stochLen: toPositiveInt(stoch.stochLen, DEFAULT_STOCHRSI.stochLen, 2, 200),
+    smoothK: toPositiveInt(stoch.smoothK, DEFAULT_STOCHRSI.smoothK, 1, 50),
+    smoothD: toPositiveInt(stoch.smoothD, DEFAULT_STOCHRSI.smoothD, 1, 50)
+  };
+  const volumeCfg = {
+    lookback: toPositiveInt(volume.lookback, DEFAULT_VOLUME.lookback, 10, 2000),
+    emaFast: toPositiveInt(volume.emaFast, DEFAULT_VOLUME.emaFast, 2, 200),
+    emaSlow: toPositiveInt(volume.emaSlow, DEFAULT_VOLUME.emaSlow, 2, 400)
+  };
+  if (volumeCfg.emaFast >= volumeCfg.emaSlow) {
+    volumeCfg.emaFast = Math.max(2, volumeCfg.emaSlow - 1);
+  }
+  const stochrsiRequiredBars =
+    stochrsi.rsiLen + stochrsi.stochLen + stochrsi.smoothK + stochrsi.smoothD + 50;
+
+  return {
+    enabledV1: enabledPacks.indicatorsV1 ?? true,
+    enabledV2: enabledPacks.indicatorsV2 ?? DEFAULT_V2_ENABLED,
+    stochrsi,
+    stochrsiRequiredBars,
+    volume: volumeCfg,
+    fvg: {
+      lookback: toPositiveInt(settings?.fvg?.lookback, FVG_LOOKBACK_BARS, 20, 5000),
+      fillRule:
+        settings?.fvg?.fillRule === "mid_touch"
+          ? "mid_touch"
+          : FVG_FILL_RULE
+    } as { lookback: number; fillRule: FvgFillRule }
+  };
 }
 
 function round(value: number | null, decimals = 6): number | null {
@@ -153,22 +220,31 @@ function emaLatest(values: number[], period: number): number | null {
   return ema;
 }
 
-function computeStochRsi(values: number[]): {
+function computeStochRsi(
+  values: number[],
+  params: {
+    rsiLen: number;
+    stochLen: number;
+    smoothK: number;
+    smoothD: number;
+    requiredBars: number;
+  }
+): {
   k: number | null;
   d: number | null;
   value: number | null;
 } {
-  if (values.length < STOCHRSI_REQUIRED_BARS) {
+  if (values.length < params.requiredBars) {
     return { k: null, d: null, value: null };
   }
-  const rsiSeries = RSI.calculate({ values, period: STOCHRSI_RSI_LEN });
-  if (rsiSeries.length < STOCHRSI_STOCH_LEN + STOCHRSI_SMOOTH_K + STOCHRSI_SMOOTH_D) {
+  const rsiSeries = RSI.calculate({ values, period: params.rsiLen });
+  if (rsiSeries.length < params.stochLen + params.smoothK + params.smoothD) {
     return { k: null, d: null, value: null };
   }
 
   const rawStoch: number[] = [];
-  for (let i = STOCHRSI_STOCH_LEN - 1; i < rsiSeries.length; i += 1) {
-    const window = rsiSeries.slice(i - STOCHRSI_STOCH_LEN + 1, i + 1);
+  for (let i = params.stochLen - 1; i < rsiSeries.length; i += 1) {
+    const window = rsiSeries.slice(i - params.stochLen + 1, i + 1);
     const low = Math.min(...window);
     const high = Math.max(...window);
     if (!Number.isFinite(low) || !Number.isFinite(high)) continue;
@@ -180,8 +256,8 @@ function computeStochRsi(values: number[]): {
     }
   }
 
-  const kSeries = smaSeries(rawStoch, STOCHRSI_SMOOTH_K);
-  const dSeries = smaSeries(kSeries, STOCHRSI_SMOOTH_D);
+  const kSeries = smaSeries(rawStoch, params.smoothK);
+  const dSeries = smaSeries(kSeries, params.smoothD);
   const k = kSeries.length > 0 ? kSeries[kSeries.length - 1] : null;
   const d = dSeries.length > 0 ? dSeries[dSeries.length - 1] : null;
 
@@ -192,7 +268,14 @@ function computeStochRsi(values: number[]): {
   };
 }
 
-function computeVolumeFeatures(candles: Candle[]): {
+function computeVolumeFeatures(
+  candles: Candle[],
+  params: {
+    lookback: number;
+    emaFast: number;
+    emaSlow: number;
+  }
+): {
   vol_z: number | null;
   rel_vol: number | null;
   vol_ema_fast: number | null;
@@ -203,7 +286,7 @@ function computeVolumeFeatures(candles: Candle[]): {
     const parsed = Number(row.volume);
     return Number.isFinite(parsed) && parsed >= 0 ? parsed : 0;
   });
-  if (volumes.length < VOLUME_LOOKBACK) {
+  if (volumes.length < params.lookback) {
     return {
       vol_z: null,
       rel_vol: null,
@@ -213,13 +296,13 @@ function computeVolumeFeatures(candles: Candle[]): {
     };
   }
 
-  const tail = volumes.slice(-VOLUME_LOOKBACK);
+  const tail = volumes.slice(-params.lookback);
   const volLast = tail[tail.length - 1];
   const volMean = mean(tail);
   const volStd = std(tail);
   const volSma = volMean;
-  const volFast = emaLatest(volumes, VOLUME_EMA_FAST);
-  const volSlow = emaLatest(volumes, VOLUME_EMA_SLOW);
+  const volFast = emaLatest(volumes, params.emaFast);
+  const volSlow = emaLatest(volumes, params.emaSlow);
 
   const volZ = volMean === null || volStd === null
     ? null
@@ -241,7 +324,11 @@ function computeVolumeFeatures(candles: Candle[]): {
   };
 }
 
-function emptyIndicators(mode: "session_utc" | "rolling_20", dataGap: boolean): IndicatorsSnapshot {
+function emptyIndicators(
+  mode: "session_utc" | "rolling_20",
+  dataGap: boolean,
+  settings: ReturnType<typeof normalizeSettings>
+): IndicatorsSnapshot {
   return {
     rsi_14: null,
     macd: { line: null, signal: null, hist: null },
@@ -249,16 +336,16 @@ function emptyIndicators(mode: "session_utc" | "rolling_20", dataGap: boolean): 
     vwap: { value: null, dist_pct: null, mode, sessionStartUtcMs: null },
     adx: { adx_14: null, plus_di_14: null, minus_di_14: null },
     stochrsi: {
-      rsi_len: STOCHRSI_RSI_LEN,
-      stoch_len: STOCHRSI_STOCH_LEN,
-      smooth_k: STOCHRSI_SMOOTH_K,
-      smooth_d: STOCHRSI_SMOOTH_D,
+      rsi_len: settings.stochrsi.rsiLen,
+      stoch_len: settings.stochrsi.stochLen,
+      smooth_k: settings.stochrsi.smoothK,
+      smooth_d: settings.stochrsi.smoothD,
       k: null,
       d: null,
       value: null
     },
     volume: {
-      lookback: VOLUME_LOOKBACK,
+      lookback: settings.volume.lookback,
       vol_z: null,
       rel_vol: null,
       vol_ema_fast: null,
@@ -266,8 +353,8 @@ function emptyIndicators(mode: "session_utc" | "rolling_20", dataGap: boolean): 
       vol_trend: null
     },
     fvg: {
-      lookback: FVG_LOOKBACK_BARS,
-      fill_rule: FVG_FILL_RULE,
+      lookback: settings.fvg.lookback,
+      fill_rule: settings.fvg.fillRule,
       open_bullish_count: 0,
       open_bearish_count: 0,
       nearest_bullish_gap: { upper: null, lower: null, mid: null, dist_pct: null, age_bars: null },
@@ -281,7 +368,20 @@ function emptyIndicators(mode: "session_utc" | "rolling_20", dataGap: boolean): 
 }
 
 export function minimumCandlesForIndicators(tf: Timeframe): number {
-  return tf === "1d" ? DAILY_MIN_BARS : INTRADAY_MIN_BARS;
+  return minimumCandlesForIndicatorsWithSettings(tf, undefined);
+}
+
+export function minimumCandlesForIndicatorsWithSettings(
+  tf: Timeframe,
+  settings: IndicatorsComputeSettings | undefined
+): number {
+  const normalized = normalizeSettings(settings);
+  const intradayMinBars = Math.max(
+    200,
+    normalized.stochrsiRequiredBars,
+    normalized.volume.lookback + 20
+  );
+  return tf === "1d" ? DAILY_MIN_BARS : intradayMinBars;
 }
 
 function computeADX14Manual(candles: Candle[]): { adx_14: number | null; plus_di_14: number | null; minus_di_14: number | null } {
@@ -403,14 +503,19 @@ export function computeIndicators(
     marketType?: "spot" | "perp";
     vwapCacheTtlMs?: number;
     logVwapMetrics?: boolean;
+    settings?: IndicatorsComputeSettings;
   } = {}
 ): IndicatorsSnapshot {
+  const settings = normalizeSettings(context.settings);
   const vwapMode: "session_utc" | "rolling_20" = tf === "1d" ? "rolling_20" : "session_utc";
   const bucketedMeta = bucketCandlesWithMeta(candles, tf);
   const bucketedCandles = bucketedMeta.candles;
-  const minBars = minimumCandlesForIndicators(tf);
+  if (!settings.enabledV1) {
+    return emptyIndicators(vwapMode, true, settings);
+  }
+  const minBars = minimumCandlesForIndicatorsWithSettings(tf, context.settings);
   if (bucketedCandles.length < minBars) {
-    return emptyIndicators(vwapMode, true);
+    return emptyIndicators(vwapMode, true, settings);
   }
 
   const closes = bucketedCandles.map((row) => row.close);
@@ -454,12 +559,31 @@ export function computeIndicators(
     : null;
 
   const adx = computeADX14(bucketedCandles);
-  const stochRsi = computeStochRsi(closes);
-  const volumeFeatures = computeVolumeFeatures(bucketedCandles);
-  const fvg = computeFVGSummary(bucketedCandles, {
-    lookbackBars: FVG_LOOKBACK_BARS,
-    fillRule: FVG_FILL_RULE
-  });
+  const stochRsi = settings.enabledV2
+    ? computeStochRsi(closes, {
+        rsiLen: settings.stochrsi.rsiLen,
+        stochLen: settings.stochrsi.stochLen,
+        smoothK: settings.stochrsi.smoothK,
+        smoothD: settings.stochrsi.smoothD,
+        requiredBars: settings.stochrsiRequiredBars
+      })
+    : { k: null, d: null, value: null };
+  const volumeFeatures = settings.enabledV2
+    ? computeVolumeFeatures(bucketedCandles, {
+        lookback: settings.volume.lookback,
+        emaFast: settings.volume.emaFast,
+        emaSlow: settings.volume.emaSlow
+      })
+    : { vol_z: null, rel_vol: null, vol_ema_fast: null, vol_ema_slow: null, vol_trend: null };
+  const fvg = settings.enabledV2
+    ? computeFVGSummary(bucketedCandles, {
+        lookbackBars: settings.fvg.lookback,
+        fillRule: settings.fvg.fillRule
+      })
+    : computeFVGSummary([], {
+        lookbackBars: settings.fvg.lookback,
+        fillRule: settings.fvg.fillRule
+      });
 
   let vwapValue: number | null = null;
   let vwapDistPct: number | null = null;
@@ -522,16 +646,16 @@ export function computeIndicators(
       minus_di_14: round(toFinite(adx.minus_di_14), 4)
     },
     stochrsi: {
-      rsi_len: STOCHRSI_RSI_LEN,
-      stoch_len: STOCHRSI_STOCH_LEN,
-      smooth_k: STOCHRSI_SMOOTH_K,
-      smooth_d: STOCHRSI_SMOOTH_D,
+      rsi_len: settings.stochrsi.rsiLen,
+      stoch_len: settings.stochrsi.stochLen,
+      smooth_k: settings.stochrsi.smoothK,
+      smooth_d: settings.stochrsi.smoothD,
       k: round(toFinite(stochRsi.k), 4),
       d: round(toFinite(stochRsi.d), 4),
       value: round(toFinite(stochRsi.value), 4)
     },
     volume: {
-      lookback: VOLUME_LOOKBACK,
+      lookback: settings.volume.lookback,
       vol_z: round(toFinite(volumeFeatures.vol_z), 6),
       rel_vol: round(toFinite(volumeFeatures.rel_vol), 6),
       vol_ema_fast: round(toFinite(volumeFeatures.vol_ema_fast), 6),

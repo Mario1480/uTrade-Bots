@@ -9,7 +9,8 @@
     "test:ai": "tsx --test src/ai/predictionExplainer.test.ts",
     "test:predictions-detail": "tsx --test src/dto/predictions.dto.test.ts src/controllers/predictionsController.test.ts",
     "test:predictions-refresh": "tsx --test src/predictions/refreshTriggers.test.ts src/predictions/refreshService.test.ts",
-    "test:predictions-evaluator": "tsx --test src/jobs/predictionEvaluatorJob.test.ts"
+    "test:predictions-evaluator": "tsx --test src/jobs/predictionEvaluatorJob.test.ts",
+    "test:indicator-settings": "tsx --test src/dto/indicatorSettings.dto.test.ts src/config/indicatorSettingsResolver.test.ts"
   },
   "dependencies": {
     "@mm/db": "0.0.1",
