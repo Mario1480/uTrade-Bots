@@ -689,6 +689,43 @@ function asBoolean(value: unknown, fallback = false): boolean {
   return fallback;
 }
 
+type AiPredictionSnapshot = {
+  signal: PredictionSignal;
+  expectedMovePct: number;
+  confidence: number;
+};
+
+function readAiPredictionSnapshot(snapshot: Record<string, unknown>): AiPredictionSnapshot | null {
+  const raw = asRecord(snapshot.aiPrediction);
+  const signal =
+    raw.signal === "up" || raw.signal === "down" || raw.signal === "neutral"
+      ? raw.signal
+      : null;
+  const expectedMoveRaw = Number(raw.expectedMovePct);
+  const confidenceRaw = Number(raw.confidence);
+  if (!signal || !Number.isFinite(expectedMoveRaw) || !Number.isFinite(confidenceRaw)) return null;
+  const confidenceNormalized = confidenceRaw <= 1 ? confidenceRaw : confidenceRaw / 100;
+  return {
+    signal,
+    expectedMovePct: Number(clamp(Math.abs(expectedMoveRaw), 0, 25).toFixed(2)),
+    confidence: Number(clamp(confidenceNormalized, 0, 1).toFixed(4))
+  };
+}
+
+function withAiPredictionSnapshot(
+  snapshot: Record<string, unknown>,
+  prediction: ExplainerOutput["aiPrediction"]
+): Record<string, unknown> {
+  return {
+    ...snapshot,
+    aiPrediction: {
+      signal: prediction.signal,
+      expectedMovePct: Number(clamp(Math.abs(prediction.expectedMovePct), 0, 25).toFixed(2)),
+      confidence: Number(clamp(prediction.confidence, 0, 1).toFixed(4))
+    }
+  };
+}
+
 function parseJsonObject(value: unknown): Record<string, unknown> {
   if (!value || typeof value !== "object" || Array.isArray(value)) return {};
   return value as Record<string, unknown>;
@@ -2014,12 +2051,13 @@ async function generateAutoPredictionForUser(
       botId: null,
       modelVersionBase: payload.modelVersionBase ?? "baseline-v1:auto-market-v1"
     });
+    const featureSnapshotForState = created.featureSnapshot;
 
     const stateTags = enforceNewsRiskTag(
       created.explanation.tags.length > 0
         ? created.explanation.tags
-        : inferred.featureSnapshot.tags,
-      inferred.featureSnapshot
+        : featureSnapshotForState.tags,
+      featureSnapshotForState
     );
     const stateKeyDrivers = normalizeKeyDriverList(created.explanation.keyDrivers);
     const stateTs = new Date(tsCreated);
@@ -2028,7 +2066,7 @@ async function generateAutoPredictionForUser(
       confidence: inferred.prediction.confidence,
       tags: stateTags,
       keyDrivers: stateKeyDrivers,
-      featureSnapshot: inferred.featureSnapshot
+      featureSnapshot: featureSnapshotForState
     });
 
     const existingState = await db.predictionState.findFirst({
@@ -2061,7 +2099,7 @@ async function generateAutoPredictionForUser(
       tags: stateTags,
       explanation: created.explanation.explanation,
       keyDrivers: stateKeyDrivers,
-      featuresSnapshot: inferred.featureSnapshot,
+      featuresSnapshot: featureSnapshotForState,
       modelVersion: created.modelVersion,
       lastAiExplainedAt: stateTs,
       lastChangeHash: stateHash,
@@ -4257,6 +4295,12 @@ async function refreshPredictionStateForTemplate(params: {
         explanation: prevState.explanation,
         tags: prevState.tags,
         keyDrivers: prevState.keyDrivers,
+        aiPrediction:
+          readAiPredictionSnapshot(prevState.featureSnapshot) ?? {
+            signal: inferred.prediction.signal,
+            expectedMovePct: Number(clamp(Math.abs(inferred.prediction.expectedMovePct), 0, 25).toFixed(2)),
+            confidence: Number(clamp(inferred.prediction.confidence, 0, 1).toFixed(4))
+          },
         disclaimer: "grounded_features_only"
       };
     } else {
@@ -4269,6 +4313,10 @@ async function refreshPredictionStateForTemplate(params: {
         featureSnapshot: inferred.featureSnapshot
       });
     }
+    inferred.featureSnapshot = withAiPredictionSnapshot(
+      inferred.featureSnapshot,
+      explainer.aiPrediction
+    );
 
     const tags = enforceNewsRiskTag(
       explainer.tags.length > 0 ? explainer.tags : baselineTags,
@@ -6083,7 +6131,7 @@ app.post("/api/predictions/generate", requireAuth, async (req, res) => {
     modelVersionBase: payload.modelVersionBase
   });
 
-  const snapshot = asRecord(payload.featureSnapshot);
+  const snapshot = asRecord(created.featureSnapshot);
   const exchangeAccountId = readPrefillExchangeAccountId(snapshot);
   if (exchangeAccountId) {
     const exchange =
@@ -6093,8 +6141,8 @@ app.post("/api/predictions/generate", requireAuth, async (req, res) => {
     const tags = enforceNewsRiskTag(
       created.explanation.tags.length > 0
         ? created.explanation.tags
-        : payload.featureSnapshot.tags,
-      payload.featureSnapshot
+        : created.featureSnapshot.tags,
+      created.featureSnapshot
     );
     const keyDrivers = normalizeKeyDriverList(created.explanation.keyDrivers);
     const tsDate = new Date(tsCreated);
@@ -6103,7 +6151,7 @@ app.post("/api/predictions/generate", requireAuth, async (req, res) => {
       confidence: payload.prediction.confidence,
       tags,
       keyDrivers,
-      featureSnapshot: payload.featureSnapshot
+      featureSnapshot: created.featureSnapshot
     });
     const existingState = await db.predictionState.findFirst({
       where: {
@@ -6134,7 +6182,7 @@ app.post("/api/predictions/generate", requireAuth, async (req, res) => {
       tags,
       explanation: created.explanation.explanation,
       keyDrivers,
-      featuresSnapshot: payload.featureSnapshot,
+      featuresSnapshot: created.featureSnapshot,
       modelVersion: created.modelVersion,
       lastAiExplainedAt: tsDate,
       lastChangeHash: changeHash,
@@ -6178,21 +6226,21 @@ app.post("/api/predictions/generate", requireAuth, async (req, res) => {
   await notifyTradablePrediction({
     userId: user.id,
     exchange:
-      typeof payload.featureSnapshot.prefillExchange === "string" &&
-      payload.featureSnapshot.prefillExchange.trim()
-        ? payload.featureSnapshot.prefillExchange.trim().toLowerCase()
+      typeof snapshot.prefillExchange === "string" &&
+      snapshot.prefillExchange.trim()
+        ? snapshot.prefillExchange.trim().toLowerCase()
         : "bitget",
     exchangeAccountLabel:
-      typeof payload.featureSnapshot.prefillExchangeAccountId === "string" &&
-      payload.featureSnapshot.prefillExchangeAccountId.trim()
-        ? payload.featureSnapshot.prefillExchangeAccountId.trim()
+      typeof snapshot.prefillExchangeAccountId === "string" &&
+      snapshot.prefillExchangeAccountId.trim()
+        ? snapshot.prefillExchangeAccountId.trim()
         : "n/a",
     symbol: payload.symbol,
     marketType: payload.marketType,
     timeframe: payload.timeframe,
     signal: payload.prediction.signal,
     confidence: payload.prediction.confidence,
-    confidenceTargetPct: readConfidenceTarget(payload.featureSnapshot),
+    confidenceTargetPct: readConfidenceTarget(snapshot),
     expectedMovePct: payload.prediction.expectedMovePct,
     predictionId: created.rowId,
     explanation: created.explanation.explanation,
@@ -6269,6 +6317,7 @@ app.get("/api/predictions", requireAuth, async (req, res) => {
         confidence: true,
         explanation: true,
         tags: true,
+        featuresSnapshot: true,
         autoScheduleEnabled: true,
         autoSchedulePaused: true,
         confidenceTargetPct: true,
@@ -6278,47 +6327,51 @@ app.get("/api/predictions", requireAuth, async (req, res) => {
       }
     });
 
-    const items = rows.map((row: any) => ({
-      id: row.id,
-      symbol: row.symbol,
-      marketType: normalizePredictionMarketType(row.marketType),
-      timeframe: normalizePredictionTimeframe(row.timeframe),
-      tsCreated:
-        row.tsUpdated instanceof Date ? row.tsUpdated.toISOString() : new Date().toISOString(),
-      signal: normalizePredictionSignal(row.signal),
-      expectedMovePct: Number.isFinite(Number(row.expectedMovePct))
-        ? Number(row.expectedMovePct)
-        : 0,
-      confidence: Number.isFinite(Number(row.confidence)) ? Number(row.confidence) : 0,
-      explanation: typeof row.explanation === "string" ? row.explanation : "",
-      tags: normalizeTagList(row.tags),
-      entryPrice: null,
-      stopLossPrice: null,
-      takeProfitPrice: null,
-      horizonMs: timeframeToIntervalMs(normalizePredictionTimeframe(row.timeframe)) * PREDICTION_OUTCOME_HORIZON_BARS,
-      outcomeStatus: "pending",
-      outcomeResult: null,
-      outcomePnlPct: null,
-      maxFavorablePct: null,
-      maxAdversePct: null,
-      outcomeEvaluatedAt: null,
-      autoScheduleEnabled: Boolean(row.autoScheduleEnabled) && !Boolean(row.autoSchedulePaused),
-      confidenceTargetPct:
-        Number.isFinite(Number(row.confidenceTargetPct))
-        && row.confidenceTargetPct !== null
-        && row.confidenceTargetPct !== undefined
-          ? Number(row.confidenceTargetPct)
-          : 55,
-      exchange:
-        typeof row.exchange === "string" && row.exchange.trim()
-          ? row.exchange
-          : "bitget",
-      accountId: typeof row.accountId === "string" ? row.accountId : null,
-      lastUpdatedAt:
-        row.tsUpdated instanceof Date ? row.tsUpdated.toISOString() : null,
-      lastChangeReason:
-        typeof row.lastChangeReason === "string" ? row.lastChangeReason : null
-    }));
+    const items = rows.map((row: any) => {
+      const snapshot = asRecord(row.featuresSnapshot);
+      return {
+        id: row.id,
+        symbol: row.symbol,
+        marketType: normalizePredictionMarketType(row.marketType),
+        timeframe: normalizePredictionTimeframe(row.timeframe),
+        tsCreated:
+          row.tsUpdated instanceof Date ? row.tsUpdated.toISOString() : new Date().toISOString(),
+        signal: normalizePredictionSignal(row.signal),
+        expectedMovePct: Number.isFinite(Number(row.expectedMovePct))
+          ? Number(row.expectedMovePct)
+          : 0,
+        confidence: Number.isFinite(Number(row.confidence)) ? Number(row.confidence) : 0,
+        explanation: typeof row.explanation === "string" ? row.explanation : "",
+        tags: normalizeTagList(row.tags),
+        entryPrice: null,
+        stopLossPrice: null,
+        takeProfitPrice: null,
+        horizonMs: timeframeToIntervalMs(normalizePredictionTimeframe(row.timeframe)) * PREDICTION_OUTCOME_HORIZON_BARS,
+        outcomeStatus: "pending",
+        outcomeResult: null,
+        outcomePnlPct: null,
+        maxFavorablePct: null,
+        maxAdversePct: null,
+        outcomeEvaluatedAt: null,
+        aiPrediction: readAiPredictionSnapshot(snapshot),
+        autoScheduleEnabled: Boolean(row.autoScheduleEnabled) && !Boolean(row.autoSchedulePaused),
+        confidenceTargetPct:
+          Number.isFinite(Number(row.confidenceTargetPct))
+          && row.confidenceTargetPct !== null
+          && row.confidenceTargetPct !== undefined
+            ? Number(row.confidenceTargetPct)
+            : 55,
+        exchange:
+          typeof row.exchange === "string" && row.exchange.trim()
+            ? row.exchange
+            : "bitget",
+        accountId: typeof row.accountId === "string" ? row.accountId : null,
+        lastUpdatedAt:
+          row.tsUpdated instanceof Date ? row.tsUpdated.toISOString() : null,
+        lastChangeReason:
+          typeof row.lastChangeReason === "string" ? row.lastChangeReason : null
+      };
+    });
 
     return res.json({ items });
   }
@@ -6441,6 +6494,7 @@ app.get("/api/predictions", requireAuth, async (req, res) => {
       realizedHit,
       realizedAbsError: Number.isFinite(realizedAbsError) ? realizedAbsError : null,
       realizedSqError: Number.isFinite(realizedSqError) ? realizedSqError : null,
+      aiPrediction: readAiPredictionSnapshot(snapshot),
       autoScheduleEnabled: isAutoScheduleEnabled(snapshot.autoScheduleEnabled),
       confidenceTargetPct: readConfiguredConfidenceTarget(snapshot),
       exchange: fallbackExchange,
