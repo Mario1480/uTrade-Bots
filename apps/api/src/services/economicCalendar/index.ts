@@ -24,6 +24,9 @@ const DEFAULT_PROVIDER = "fmp";
 const REDIS_EVENTS_TTL_SEC = Math.max(300, Number(process.env.ECON_REDIS_EVENTS_TTL_SEC ?? "21600"));
 const REDIS_NEXT_TTL_SEC = Math.max(30, Number(process.env.ECON_REDIS_NEXT_TTL_SEC ?? "300"));
 const REDIS_BLACKOUT_TTL_SEC = Math.max(30, Number(process.env.ECON_REDIS_BLACKOUT_TTL_SEC ?? "120"));
+const ECON_NEWS_RISK_ENABLED = !["0", "false", "off", "no"].includes(
+  String(process.env.ECON_NEWS_RISK_ENABLED ?? "1").trim().toLowerCase()
+);
 
 const memoryCache = new Map<string, { expiresAt: number; value: unknown }>();
 type RedisClientLike = {
@@ -415,6 +418,29 @@ export async function getEconomicCalendarNextSummary(params: {
   const currency = params.currency.trim().toUpperCase() || "USD";
   const impactMin = normalizeImpact(params.impact ?? config.impactMin);
 
+  if (!ECON_NEWS_RISK_ENABLED || !config.enabled) {
+    return {
+      currency,
+      impactMin,
+      blackoutActive: false,
+      activeWindow: null,
+      nextEvent: null,
+      asOf: now.toISOString()
+    };
+  }
+
+  const apiKey = await resolveEffectiveFmpApiKey(params.db);
+  if (!apiKey) {
+    return {
+      currency,
+      impactMin,
+      blackoutActive: false,
+      activeWindow: null,
+      nextEvent: null,
+      asOf: now.toISOString()
+    };
+  }
+
   const cacheKey = nextCacheKey(currency, impactMin);
   const cached = await redisGetJson<EconomicNextSummary>(cacheKey);
   if (cached) return cached;
@@ -495,6 +521,23 @@ export async function evaluateNewsRiskForSymbol(params: {
 }): Promise<EconomicBlackoutResult> {
   const now = params.now ?? new Date();
   const currency = symbolToMacroCurrency(params.symbol);
+  if (!ECON_NEWS_RISK_ENABLED) {
+    return {
+      newsRisk: false,
+      currency,
+      nextEvent: null,
+      activeWindow: null
+    };
+  }
+  const apiKey = await resolveEffectiveFmpApiKey(params.db);
+  if (!apiKey) {
+    return {
+      newsRisk: false,
+      currency,
+      nextEvent: null,
+      activeWindow: null
+    };
+  }
   try {
     const summary = await getEconomicCalendarNextSummary({
       db: params.db,
@@ -552,7 +595,7 @@ export async function refreshEconomicCalendarData(params: {
   const windowFrom = parseDateKey(windowFromDate);
   const windowTo = parseDateKey(windowToDate);
 
-  if (!config.enabled) {
+  if (!ECON_NEWS_RISK_ENABLED || !config.enabled) {
     return {
       fetchedCount: 0,
       upsertedCount: 0,
@@ -564,16 +607,46 @@ export async function refreshEconomicCalendarData(params: {
 
   const apiKey = await resolveEffectiveFmpApiKey(params.db);
   if (!apiKey) {
-    throw new Error("fmp_api_key_missing");
+    logger.info("economic_calendar_refresh_skipped_no_api_key", {
+      window_from: windowFrom,
+      window_to: windowTo
+    });
+    return {
+      fetchedCount: 0,
+      upsertedCount: 0,
+      windowFrom,
+      windowTo,
+      currencies
+    };
   }
 
-  const fetched = await fetchFmpEconomicEvents({
-    apiKey,
-    baseUrl: process.env.FMP_BASE_URL,
-    from: windowFrom,
-    to: windowTo,
-    currencies
-  });
+  let fetched: EconomicEventNormalized[] = [];
+  try {
+    fetched = await fetchFmpEconomicEvents({
+      apiKey,
+      baseUrl: process.env.FMP_BASE_URL,
+      from: windowFrom,
+      to: windowTo,
+      currencies
+    });
+  } catch (error) {
+    const reason = String(error ?? "");
+    if (reason.includes("http_402") || reason.includes("http_403")) {
+      logger.warn("economic_calendar_refresh_disabled_provider_access", {
+        reason,
+        window_from: windowFrom,
+        window_to: windowTo
+      });
+      return {
+        fetchedCount: 0,
+        upsertedCount: 0,
+        windowFrom,
+        windowTo,
+        currencies
+      };
+    }
+    throw error;
+  }
 
   let upsertedCount = 0;
   for (const event of fetched) {
