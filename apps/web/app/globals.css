@@ -867,6 +867,8 @@ a { color: inherit; }
   width: 100%;
   max-width: 1320px;
   margin: 0 auto;
+  display: grid;
+  gap: 12px;
 }
 
 .predictionsHeaderActions {
@@ -883,11 +885,64 @@ a { color: inherit; }
 
 .predictionsSection {
   padding: 12px;
-  margin-bottom: 12px;
+  margin-bottom: 0;
+}
+
+.predictionQuickStatsSection {
+  padding-top: 10px;
+  padding-bottom: 10px;
+}
+
+.predictionQuickStatsGrid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
+  gap: 8px;
+}
+
+.predictionQuickStat {
+  border: 1px solid rgba(255, 193, 7, 0.22);
+  border-radius: 8px;
+  padding: 8px 10px;
+  background: rgba(255, 255, 255, 0.02);
+}
+
+.predictionQuickStatLabel {
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.predictionQuickStatValue {
+  margin-top: 3px;
+  font-weight: 800;
+  font-size: 20px;
+  line-height: 1.1;
+}
+
+.predictionQuickStatMeta {
+  font-size: 12px;
+  color: var(--muted);
+  font-weight: 500;
+}
+
+.predictionQuickStatValueWarn {
+  color: #f59e0b;
+}
+
+.predictionCreateTitle,
+.predictionsListTitle {
+  font-size: 18px;
+  font-weight: 700;
+  line-height: 1.2;
+  letter-spacing: 0.01em;
 }
 
 .predictionCreateTitle {
-  font-weight: 700;
+  margin-bottom: 6px;
+}
+
+.predictionsSectionHint {
+  color: var(--muted);
+  font-size: 12px;
   margin-bottom: 10px;
 }
 
@@ -914,6 +969,29 @@ a { color: inherit; }
   line-height: 1.25;
 }
 
+.predictionSubCard {
+  margin-top: 10px;
+  padding: 10px;
+  border-color: rgba(255, 193, 7, 0.35);
+  background: rgba(8, 16, 32, 0.45);
+}
+
+.predictionSubCardHeader {
+  margin-bottom: 10px;
+  display: grid;
+  gap: 2px;
+}
+
+.predictionSubCardTitle {
+  font-size: 14px;
+  font-weight: 700;
+}
+
+.predictionSubCardHint {
+  font-size: 11px;
+  color: var(--muted);
+}
+
 .predictionAutoToggle {
   display: flex;
   align-items: center;
@@ -925,46 +1003,6 @@ a { color: inherit; }
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
   gap: 8px;
-}
-
-.predictionActivityCard {
-  display: grid;
-  gap: 6px;
-}
-
-.predictionActivityHeader {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  gap: 8px;
-}
-
-.predictionActivityLine {
-  display: flex;
-  justify-content: space-between;
-  align-items: flex-start;
-  gap: 8px;
-  font-size: 12px;
-}
-
-.predictionActivityLine span {
-  color: var(--muted);
-}
-
-.predictionActivityLine strong {
-  font-weight: 700;
-  text-align: right;
-  min-width: 0;
-  max-width: 68%;
-  white-space: normal;
-  overflow-wrap: anywhere;
-  word-break: break-word;
-  line-height: 1.25;
-}
-
-.predictionActivityWarning {
-  color: #f59e0b;
-  font-size: 11px;
 }
 
 .predictionCalibrationWrap {
@@ -1010,21 +1048,6 @@ a { color: inherit; }
   color: var(--muted);
 }
 
-.predictionHealthBadgeOk {
-  border-color: rgba(16, 185, 129, 0.55);
-  color: #10b981;
-}
-
-.predictionHealthBadgeWarn {
-  border-color: rgba(245, 158, 11, 0.55);
-  color: #f59e0b;
-}
-
-.predictionHealthBadgeIdle {
-  border-color: rgba(148, 163, 184, 0.4);
-  color: #cbd5e1;
-}
-
 .predictionsRunningHeader {
   display: flex;
   justify-content: space-between;
@@ -1038,23 +1061,149 @@ a { color: inherit; }
   display: flex;
   gap: 8px;
   align-items: center;
+  flex-wrap: nowrap;
+}
+
+.predictionAlert {
+  padding: 12px;
+  margin-bottom: 0;
+}
+
+.predictionAlertError {
+  border-color: rgba(239, 68, 68, 0.9);
+  background: rgba(239, 68, 68, 0.07);
+}
+
+.predictionAlertWarn {
+  border-color: rgba(245, 158, 11, 0.8);
+  background: rgba(245, 158, 11, 0.07);
+}
+
+.predictionsRunningDesktopTable {
+  display: block;
+}
+
+.predictionsRunningMobileList {
+  display: none;
+}
+
+.predictionRunningCard {
+  margin: 0 0 8px;
+  padding: 10px;
+  display: grid;
+  gap: 7px;
+}
+
+.predictionRunningCard:last-child {
+  margin-bottom: 0;
+}
+
+.predictionRunningCardHeader {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 8px;
+}
+
+.predictionRunningCardSymbol {
+  font-weight: 800;
+  font-size: 15px;
+}
+
+.predictionRunningCardMeta {
+  color: var(--muted);
+  font-size: 12px;
+  display: flex;
+  gap: 8px;
   flex-wrap: wrap;
 }
 
-.predictionsCleanupRow {
-  margin-top: 12px;
-  padding-top: 12px;
-  border-top: 1px solid rgba(255,255,255,.08);
+.predictionRunningCardLine {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 10px;
+  font-size: 12px;
+}
+
+.predictionRunningCardLine span {
+  color: var(--muted);
+}
+
+.predictionRunningCardLine strong {
+  text-align: right;
+  font-size: 12px;
+  line-height: 1.25;
+}
+
+.predictionRunningCardActions {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 6px;
+}
+
+.predictionRunningBadgeActive {
+  border-color: rgba(16, 185, 129, 0.6);
+  color: #10b981;
+}
+
+.predictionRunningBadgePaused {
+  border-color: rgba(148, 163, 184, 0.5);
+  color: #cbd5e1;
+}
+
+.predictionsListHeader {
+  margin-bottom: 10px;
+  display: grid;
+  gap: 2px;
+}
+
+.predictionsListHint {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.predictionsFiltersGrid {
+  margin-top: 8px;
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: 8px;
+}
+
+.predictionsFiltersHeader {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+.predictionsFiltersSummary {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.predictionsFiltersActions {
   display: flex;
   gap: 8px;
   align-items: center;
   flex-wrap: wrap;
 }
 
-.predictionsFiltersGrid {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
-  gap: 8px;
+.predictionsListContent {
+  margin-top: 12px;
+  padding: 12px 10px 0;
+  border-top: 1px solid rgba(255, 193, 7, 0.28);
+  border-radius: 10px;
+  background: linear-gradient(
+    180deg,
+    rgba(255, 193, 7, 0.05) 0%,
+    rgba(255, 255, 255, 0) 56%
+  );
+}
+
+.predictionsListState {
+  padding: 4px 2px 8px;
 }
 
 .predictionsDesktopTableWrap {
@@ -1144,6 +1293,45 @@ a { color: inherit; }
 
 .predictionRowCardDetail {
   margin-top: 8px;
+}
+
+.predictionRowStateReady td {
+  background: rgba(16, 185, 129, 0.04);
+}
+
+.predictionRowStateWarn td {
+  background: rgba(245, 158, 11, 0.06);
+}
+
+.predictionRowStateBlocked td {
+  background: rgba(148, 163, 184, 0.06);
+}
+
+.predictionRowCardStateReady {
+  border-color: rgba(16, 185, 129, 0.5);
+}
+
+.predictionRowCardStateWarn {
+  border-color: rgba(245, 158, 11, 0.55);
+}
+
+.predictionRowCardStateBlocked {
+  border-color: rgba(148, 163, 184, 0.45);
+}
+
+.predictionActionBadgeReady {
+  border-color: rgba(16, 185, 129, 0.6);
+  color: #10b981;
+}
+
+.predictionActionBadgeWarn {
+  border-color: rgba(245, 158, 11, 0.65);
+  color: #f59e0b;
+}
+
+.predictionActionBadgeBlocked {
+  border-color: rgba(148, 163, 184, 0.55);
+  color: #cbd5e1;
 }
 
 .predictionRowFlipRecent {
@@ -1561,6 +1749,17 @@ a { color: inherit; }
   .adminCards {
     display: grid;
   }
+  .predictionsRunningDesktopTable {
+    display: none;
+  }
+  .predictionsRunningMobileList {
+    display: grid;
+    gap: 8px;
+  }
+  .predictionRunningCardActions .btn {
+    width: 100%;
+    justify-content: center;
+  }
 }
 
 @media (max-width: 700px) {
@@ -1647,11 +1846,78 @@ a { color: inherit; }
     width: 100%;
     justify-content: flex-start;
   }
+  .predictionsWrap {
+    gap: 10px;
+  }
+  .predictionsSection {
+    padding: 10px;
+  }
+  .predictionCreateTitle,
+  .predictionsListTitle {
+    font-size: 17px;
+  }
+  .predictionsSectionHint {
+    font-size: 11px;
+    margin-bottom: 8px;
+  }
   .predictionCreateGrid {
     grid-template-columns: 1fr;
   }
   .predictionCreateHint {
     min-height: 0;
+  }
+  .predictionSubCard {
+    margin-top: 9px;
+    padding: 9px;
+  }
+  .predictionSubCardHeader {
+    margin-bottom: 8px;
+  }
+  .predictionsRunningHeader {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 6px;
+  }
+  .predictionsRunningActions {
+    width: 100%;
+    justify-content: flex-start;
+  }
+  .predictionsRunningActions .input {
+    flex: 1 1 auto;
+    min-width: 0;
+  }
+  .predictionQuickStatsGrid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+  .predictionQuickStatValue {
+    font-size: 18px;
+  }
+  .predictionsFiltersHeader {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+  .predictionsFiltersActions {
+    width: 100%;
+  }
+  .predictionsFiltersActions .btn {
+    width: 100%;
+    justify-content: center;
+  }
+  .predictionsFiltersGrid {
+    grid-template-columns: 1fr;
+    gap: 7px;
+  }
+  .predictionsListHeader {
+    margin-bottom: 6px;
+  }
+  .predictionsListContent {
+    margin-top: 8px;
+    padding: 10px 0 0;
+    border-radius: 0;
+    background: none;
+  }
+  .predictionsListState {
+    padding: 2px 0 6px;
   }
   .predictionsDesktopTableWrap {
     display: none;

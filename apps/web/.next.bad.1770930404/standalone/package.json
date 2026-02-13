@@ -1,0 +1,26 @@
+{
+  "name": "market-maker",
+  "private": true,
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
+  "scripts": {
+    "dev:runner": "npm -w apps/runner run dev",
+    "build": "npm -ws run build",
+    "typecheck": "npm -ws run typecheck",
+    "db:up": "docker compose up -d postgres",
+    "db:down": "docker compose down",
+    "db:migrate": "npx prisma migrate dev",
+    "db:generate": "npx prisma generate",
+    "dev:api": "npm -w apps/api run dev",
+    "dev:web": "npm -w apps/web run dev"
+  },
+  "devDependencies": {
+    "@prisma/client": "^6.19.1",
+    "@types/node": "^22.19.7",
+    "@types/ws": "^8.18.1",
+    "prisma": "^6.0.0",
+    "typescript": "^5.6.3"
+  }
+}

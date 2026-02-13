@@ -430,15 +430,6 @@ const predictionListQuerySchema = z.object({
   mode: z.enum(["state", "history"]).default("state")
 });
 
-const predictionClearOldSchema = z.object({
-  olderThanDays: z.coerce.number().int().min(1).max(3650).default(30),
-  keepRunningTemplates: z.boolean().default(true)
-});
-
-const predictionDeleteManySchema = z.object({
-  ids: z.array(z.string().trim().min(1)).min(1).max(500)
-});
-
 const predictionPauseSchema = z.object({
   paused: z.boolean().default(true)
 });
@@ -3492,18 +3483,6 @@ async function findPredictionStateIdByScope(params: {
 
 let predictionAutoTimer: NodeJS.Timeout | null = null;
 let predictionAutoRunning = false;
-let predictionAutoLastCycleStartedAt: Date | null = null;
-let predictionAutoLastCycleFinishedAt: Date | null = null;
-let predictionAutoLastCycleDurationMs: number | null = null;
-let predictionAutoLastCycleRefreshed = 0;
-let predictionAutoLastCycleSignificant = 0;
-let predictionAutoLastCycleAiCalls = 0;
-let predictionAutoLastSuccessfulCycleAt: Date | null = null;
-let predictionAutoLastRefreshedAt: Date | null = null;
-let predictionAutoLastSignificantAt: Date | null = null;
-let predictionAutoLastAiCallAt: Date | null = null;
-let predictionAutoLastErrorAt: Date | null = null;
-let predictionAutoLastError: string | null = null;
 const predictionTriggerDebounceState = new Map<string, TriggerDebounceState>();
 let predictionRefreshRuntimeSettings: PredictionRefreshSettingsPublic =
   toEffectivePredictionRefreshSettings(null);
@@ -4755,8 +4734,6 @@ async function runPredictionAutoCycle() {
   if (!PREDICTION_AUTO_ENABLED || !PREDICTION_REFRESH_ENABLED) return;
   if (predictionAutoRunning) return;
 
-  const cycleStartedMs = Date.now();
-  predictionAutoLastCycleStartedAt = new Date(cycleStartedMs);
   let refreshed = 0;
   let significantCount = 0;
   let aiCallCount = 0;
@@ -4826,27 +4803,7 @@ async function runPredictionAutoCycle() {
           `significant=${significantCount}, ai_called=${aiCallCount}`
       );
     }
-    const finishedAt = new Date();
-    predictionAutoLastCycleFinishedAt = finishedAt;
-    predictionAutoLastCycleDurationMs = Date.now() - cycleStartedMs;
-    predictionAutoLastCycleRefreshed = refreshed;
-    predictionAutoLastCycleSignificant = significantCount;
-    predictionAutoLastCycleAiCalls = aiCallCount;
-    predictionAutoLastSuccessfulCycleAt = finishedAt;
-    predictionAutoLastError = null;
-    predictionAutoLastErrorAt = null;
-    if (refreshed > 0) predictionAutoLastRefreshedAt = finishedAt;
-    if (significantCount > 0) predictionAutoLastSignificantAt = finishedAt;
-    if (aiCallCount > 0) predictionAutoLastAiCallAt = finishedAt;
   } catch (error) {
-    const finishedAt = new Date();
-    predictionAutoLastCycleFinishedAt = finishedAt;
-    predictionAutoLastCycleDurationMs = Date.now() - cycleStartedMs;
-    predictionAutoLastCycleRefreshed = refreshed;
-    predictionAutoLastCycleSignificant = significantCount;
-    predictionAutoLastCycleAiCalls = aiCallCount;
-    predictionAutoLastError = String(error);
-    predictionAutoLastErrorAt = finishedAt;
     // eslint-disable-next-line no-console
     console.error("[predictions:refresh] scheduler cycle failed", String(error));
   } finally {
@@ -6949,124 +6906,6 @@ app.get("/api/predictions/metrics", requireAuth, async (req, res) => {
   });
 });
 
-app.get("/api/predictions/activity", requireAuth, async (req, res) => {
-  const user = getUserFromLocals(res);
-  const activeWhere = {
-    userId: user.id,
-    autoScheduleEnabled: true,
-    autoSchedulePaused: false
-  };
-
-  const [
-    latestState,
-    latestEvent,
-    latestAiState,
-    activeSchedules,
-    pausedSchedules,
-    activeTimeframes,
-    nextDueAgg
-  ] = await Promise.all([
-    db.predictionState.findFirst({
-      where: { userId: user.id },
-      orderBy: [{ tsUpdated: "desc" }, { updatedAt: "desc" }],
-      select: {
-        tsUpdated: true,
-        lastChangeReason: true
-      }
-    }),
-    db.predictionEvent.findFirst({
-      where: { state: { userId: user.id } },
-      orderBy: [{ tsCreated: "desc" }],
-      select: {
-        tsCreated: true,
-        changeType: true,
-        reason: true
-      }
-    }),
-    db.predictionState.findFirst({
-      where: {
-        userId: user.id,
-        lastAiExplainedAt: { not: null }
-      },
-      orderBy: [{ lastAiExplainedAt: "desc" }],
-      select: {
-        lastAiExplainedAt: true
-      }
-    }),
-    db.predictionState.count({
-      where: activeWhere
-    }),
-    db.predictionState.count({
-      where: {
-        userId: user.id,
-        autoScheduleEnabled: true,
-        autoSchedulePaused: true
-      }
-    }),
-    db.predictionState.findMany({
-      where: activeWhere,
-      select: { timeframe: true },
-      take: Math.max(200, PREDICTION_REFRESH_SCAN_LIMIT)
-    }),
-    db.predictionState.aggregate({
-      where: activeWhere,
-      _min: { tsPredictedFor: true }
-    })
-  ]);
-
-  const pollSeconds = Math.max(1, Math.round(PREDICTION_AUTO_POLL_MS / 1000));
-  const fallbackStaleAfterMs = Math.max(10 * 60 * 1000, pollSeconds * 1000 * 6);
-  const activeIntervals = activeTimeframes
-    .map((row: any) => refreshIntervalMsForTimeframe(normalizePredictionTimeframe(row.timeframe)))
-    .filter((value: number) => Number.isFinite(value) && value > 0);
-  const staleAfterMs = activeIntervals.length > 0
-    ? Math.max(fallbackStaleAfterMs, Math.max(...activeIntervals) * 2)
-    : fallbackStaleAfterMs;
-
-  return res.json({
-    scheduler: {
-      enabled: PREDICTION_AUTO_ENABLED && PREDICTION_REFRESH_ENABLED,
-      running: predictionAutoRunning,
-      pollSeconds,
-      lastCycleStartedAt: predictionAutoLastCycleStartedAt?.toISOString() ?? null,
-      lastCycleFinishedAt: predictionAutoLastCycleFinishedAt?.toISOString() ?? null,
-      lastCycleDurationMs: predictionAutoLastCycleDurationMs,
-      lastCycleRefreshed: predictionAutoLastCycleRefreshed,
-      lastCycleSignificant: predictionAutoLastCycleSignificant,
-      lastCycleAiCalls: predictionAutoLastCycleAiCalls,
-      lastSuccessfulCycleAt: predictionAutoLastSuccessfulCycleAt?.toISOString() ?? null,
-      lastRefreshedAt: predictionAutoLastRefreshedAt?.toISOString() ?? null,
-      lastSignificantAt: predictionAutoLastSignificantAt?.toISOString() ?? null,
-      lastAiCallAt: predictionAutoLastAiCallAt?.toISOString() ?? null,
-      lastError: predictionAutoLastError,
-      lastErrorAt: predictionAutoLastErrorAt?.toISOString() ?? null
-    },
-    user: {
-      activeSchedules,
-      pausedSchedules,
-      latestSignalCalculatedAt:
-        latestState?.tsUpdated instanceof Date ? latestState.tsUpdated.toISOString() : null,
-      latestStateReason:
-        typeof latestState?.lastChangeReason === "string" ? latestState.lastChangeReason : null,
-      latestStateEventAt:
-        latestEvent?.tsCreated instanceof Date ? latestEvent.tsCreated.toISOString() : null,
-      latestStateEventType:
-        typeof latestEvent?.changeType === "string" ? latestEvent.changeType : null,
-      latestStateEventReason:
-        typeof latestEvent?.reason === "string" ? latestEvent.reason : null,
-      latestAiExplainedAt:
-        latestAiState?.lastAiExplainedAt instanceof Date
-          ? latestAiState.lastAiExplainedAt.toISOString()
-          : null,
-      nextDueAt:
-        nextDueAgg?._min?.tsPredictedFor instanceof Date
-          ? nextDueAgg._min.tsPredictedFor.toISOString()
-          : null,
-      staleAfterMs
-    }
-  });
-});
-
 app.get("/api/thresholds/latest", requireAuth, async (req, res) => {
   const parsed = thresholdsLatestQuerySchema.safeParse(req.query ?? {});
   if (!parsed.success) {
@@ -7565,175 +7404,6 @@ app.post("/api/predictions/:id/delete-schedule", requireAuth, async (req, res) =
   return res.json({
     ok: true,
     deletedCount: deleted.count
-  });
-});
-
-app.post("/api/predictions/clear-old", requireAuth, async (req, res) => {
-  const user = getUserFromLocals(res);
-  const parsed = predictionClearOldSchema.safeParse(req.body ?? {});
-  if (!parsed.success) {
-    return res.status(400).json({ error: "invalid_payload", details: parsed.error.flatten() });
-  }
-
-  const olderThanDays = parsed.data.olderThanDays;
-  const keepRunningTemplates = parsed.data.keepRunningTemplates;
-  const cutoff = new Date(Date.now() - olderThanDays * 24 * 60 * 60 * 1000);
-
-  const stateRowsForUser = await db.predictionState.findMany({
-    where: { userId: user.id },
-    select: {
-      id: true,
-      autoScheduleEnabled: true,
-      updatedAt: true
-    }
-  });
-  const preservedStateIds = new Set(
-    keepRunningTemplates
-      ? stateRowsForUser
-          .filter((row: any) => Boolean(row.autoScheduleEnabled))
-          .map((row: any) => String(row.id))
-      : []
-  );
-  const staleStateIds = stateRowsForUser
-    .filter((row: any) => row.updatedAt instanceof Date && row.updatedAt < cutoff)
-    .map((row: any) => String(row.id))
-    .filter((id: string) => !preservedStateIds.has(id));
-
-  const stateDeleteResult =
-    staleStateIds.length > 0
-      ? await db.predictionState.deleteMany({
-          where: {
-            userId: user.id,
-            id: { in: staleStateIds }
-          }
-        })
-      : { count: 0 };
-
-  const userStateIds = stateRowsForUser.map((row: any) => String(row.id));
-  const staleEventDeleteResult =
-    userStateIds.length > 0
-      ? await db.predictionEvent.deleteMany({
-          where: {
-            stateId: { in: userStateIds },
-            tsCreated: { lt: cutoff }
-          }
-        })
-      : { count: 0 };
-
-  const preservedIds = new Set<string>();
-  if (keepRunningTemplates) {
-    const rows = await db.prediction.findMany({
-      where: { userId: user.id },
-      orderBy: [{ tsCreated: "desc" }, { createdAt: "desc" }],
-      select: {
-        id: true,
-        symbol: true,
-        marketType: true,
-        timeframe: true,
-        featuresSnapshot: true
-      }
-    });
-
-    const seen = new Set<string>();
-    for (const row of rows) {
-      const snapshot = asRecord(row.featuresSnapshot);
-      const exchangeAccountId = readPrefillExchangeAccountId(snapshot);
-      if (!exchangeAccountId) continue;
-
-      const symbol = normalizeSymbolInput(row.symbol);
-      if (!symbol) continue;
-
-      const key = predictionTemplateKey({
-        userId: user.id,
-        exchangeAccountId,
-        symbol,
-        marketType: normalizePredictionMarketType(row.marketType),
-        timeframe: normalizePredictionTimeframe(row.timeframe),
-        signalMode: readSignalMode(snapshot)
-      });
-      if (seen.has(key)) continue;
-      seen.add(key);
-
-      if (isAutoScheduleEnabled(snapshot.autoScheduleEnabled)) {
-        preservedIds.add(row.id);
-      }
-    }
-  }
-
-  const oldRows = await db.prediction.findMany({
-    where: {
-      userId: user.id,
-      tsCreated: { lt: cutoff }
-    },
-    select: { id: true }
-  });
-
-  const deleteIds = oldRows
-    .map((row: any) => row.id)
-    .filter((id: string) => !preservedIds.has(id));
-
-  if (deleteIds.length === 0) {
-    return res.json({
-      ok: true,
-      olderThanDays,
-      cutoffIso: cutoff.toISOString(),
-      deletedCount: 0,
-      preservedCount: preservedIds.size,
-      deletedStateCount: stateDeleteResult.count,
-      deletedEventCount: staleEventDeleteResult.count
-    });
-  }
-
-  const deleted = await db.prediction.deleteMany({
-    where: {
-      userId: user.id,
-      id: { in: deleteIds }
-    }
-  });
-
-  return res.json({
-    ok: true,
-    olderThanDays,
-    cutoffIso: cutoff.toISOString(),
-    deletedCount: deleted.count,
-    preservedCount: preservedIds.size,
-    deletedStateCount: stateDeleteResult.count,
-    deletedEventCount: staleEventDeleteResult.count
-  });
-});
-
-app.post("/api/predictions/delete-many", requireAuth, async (req, res) => {
-  const user = getUserFromLocals(res);
-  const parsed = predictionDeleteManySchema.safeParse(req.body ?? {});
-  if (!parsed.success) {
-    return res.status(400).json({ error: "invalid_payload", details: parsed.error.flatten() });
-  }
-
-  const uniqueIds = Array.from(new Set(parsed.data.ids));
-  if (uniqueIds.length === 0) {
-    return res.json({ ok: true, deletedCount: 0 });
-  }
-
-  const [deletedStates, deletedHistory] = await Promise.all([
-    db.predictionState.deleteMany({
-      where: {
-        userId: user.id,
-        id: { in: uniqueIds }
-      }
-    }),
-    db.prediction.deleteMany({
-      where: {
-        userId: user.id,
-        id: { in: uniqueIds }
-      }
-    })
-  ]);
-
-  const deletedCount = (deletedStates?.count ?? 0) + (deletedHistory?.count ?? 0);
-
-  return res.json({
-    ok: true,
-    deletedCount
   });
 });
 

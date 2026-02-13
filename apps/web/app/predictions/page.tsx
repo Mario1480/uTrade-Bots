@@ -24,6 +24,7 @@ type SortMode = "newest" | "confidence" | "move";
 type RunningStatusFilter = "all" | "running" | "paused";
 type SignalSource = "local" | "ai";
 type CreateSignalMode = "local_only" | "ai_only" | "both";
+type PredictionActionState = "ready" | "disagreement" | "below_target" | "neutral" | "no_account";
 
 type AiPredictionSummary = {
   signal: PredictionSignal;
@@ -194,46 +195,6 @@ type PredictionQualitySummary = {
   invalid: number;
   winRatePct: number | null;
   avgOutcomePnlPct: number | null;
-  comparison24h?: {
-    sampleSize: number;
-    localHits: number;
-    aiHits: number;
-    localHitRatePct: number | null;
-    aiHitRatePct: number | null;
-    deltaAiVsLocalPct: number | null;
-  } | null;
-};
-
-type PredictionActivityResponse = {
-  scheduler: {
-    enabled: boolean;
-    running: boolean;
-    pollSeconds: number;
-    lastCycleStartedAt: string | null;
-    lastCycleFinishedAt: string | null;
-    lastCycleDurationMs: number | null;
-    lastCycleRefreshed: number;
-    lastCycleSignificant: number;
-    lastCycleAiCalls: number;
-    lastSuccessfulCycleAt: string | null;
-    lastRefreshedAt: string | null;
-    lastSignificantAt: string | null;
-    lastAiCallAt: string | null;
-    lastError: string | null;
-    lastErrorAt: string | null;
-  };
-  user: {
-    activeSchedules: number;
-    pausedSchedules: number;
-    latestSignalCalculatedAt: string | null;
-    latestStateReason: string | null;
-    latestStateEventAt: string | null;
-    latestStateEventType: string | null;
-    latestStateEventReason: string | null;
-    latestAiExplainedAt: string | null;
-    nextDueAt: string | null;
-    staleAfterMs: number;
-  };
 };
 
 type PredictionMetricsResponse = {
@@ -363,6 +324,78 @@ function signalModeLabel(mode?: CreateSignalMode): string {
   return "both";
 }
 
+function canSendToDesk(row: PredictionListItem, source: SignalSource): boolean {
+  if (!row.accountId) return false;
+  const signal = resolveSignal(row, source);
+  if (signal === "neutral") return false;
+  const confidencePct = confidenceToPct(resolveConfidence(row, source));
+  const targetPct =
+    typeof row.confidenceTargetPct === "number" && Number.isFinite(row.confidenceTargetPct)
+      ? Math.max(0, Math.min(100, row.confidenceTargetPct))
+      : 0;
+  return confidencePct >= targetPct;
+}
+
+function resolvePredictionActionState(
+  row: PredictionListItem,
+  source: SignalSource
+): { state: PredictionActionState; label: string; canSend: boolean } {
+  const targetPct =
+    typeof row.confidenceTargetPct === "number" && Number.isFinite(row.confidenceTargetPct)
+      ? Math.max(0, Math.min(100, row.confidenceTargetPct))
+      : 0;
+  const signal = resolveSignal(row, source);
+  const confidencePct = confidenceToPct(resolveConfidence(row, source));
+  const localSignal = row.localPrediction?.signal ?? row.signal;
+  const aiDisagrees = Boolean(row.aiPrediction) && row.aiPrediction!.signal !== localSignal;
+  const canSend = canSendToDesk(row, source);
+
+  if (!row.accountId) return { state: "no_account", label: "No account", canSend };
+  if (signal === "neutral") return { state: "neutral", label: "No trade setup", canSend };
+  if (confidencePct < targetPct) {
+    return {
+      state: "below_target",
+      label: `Below confidence target (${targetPct.toFixed(0)}%)`,
+      canSend
+    };
+  }
+  if (aiDisagrees) return { state: "disagreement", label: "Local/AI disagreement", canSend };
+  return { state: "ready", label: "Ready to send", canSend };
+}
+
+function rowStateClass(state: PredictionActionState): string {
+  if (state === "ready") return "predictionRowStateReady";
+  if (state === "disagreement" || state === "below_target") return "predictionRowStateWarn";
+  return "predictionRowStateBlocked";
+}
+
+function mobileCardStateClass(state: PredictionActionState): string {
+  if (state === "ready") return "predictionRowCardStateReady";
+  if (state === "disagreement" || state === "below_target") return "predictionRowCardStateWarn";
+  return "predictionRowCardStateBlocked";
+}
+
+function actionStateBadgeClass(state: PredictionActionState): string {
+  if (state === "ready") return "predictionActionBadgeReady";
+  if (state === "disagreement" || state === "below_target") return "predictionActionBadgeWarn";
+  return "predictionActionBadgeBlocked";
+}
+
+type PredictionAlertTone = "error" | "warning";
+
+function PredictionAlert(props: {
+  title: string;
+  message: string;
+  tone: PredictionAlertTone;
+}) {
+  const toneClass = props.tone === "error" ? "predictionAlertError" : "predictionAlertWarn";
+  return (
+    <div className={`card predictionAlert ${toneClass}`} role={props.tone === "error" ? "alert" : "status"}>
+      <strong>{props.title}:</strong> {props.message}
+    </div>
+  );
+}
+
 function fmtNum(value: unknown, decimals = 2): string {
   const parsed = toNum(value);
   if (parsed === null) return "n/a";
@@ -456,15 +489,10 @@ export default function PredictionsPage() {
   const [notice, setNotice] = useState<string | null>(null);
   const [quality, setQuality] = useState<PredictionQualitySummary | null>(null);
   const [metrics, setMetrics] = useState<PredictionMetricsResponse | null>(null);
-  const [activity, setActivity] = useState<PredictionActivityResponse | null>(null);
-  const [activityLoading, setActivityLoading] = useState(true);
   const [runningRows, setRunningRows] = useState<RunningPredictionItem[]>([]);
   const [runningLoading, setRunningLoading] = useState(true);
   const [runningActionId, setRunningActionId] = useState<string | null>(null);
   const [runningStatusFilter, setRunningStatusFilter] = useState<RunningStatusFilter>("all");
-  const [clearOldDays, setClearOldDays] = useState("30");
-  const [clearingOld, setClearingOld] = useState(false);
-  const [clearingListed, setClearingListed] = useState(false);
 
   const [accounts, setAccounts] = useState<ExchangeAccountItem[]>([]);
   const [createAccountId, setCreateAccountId] = useState("");
@@ -547,18 +575,6 @@ export default function PredictionsPage() {
     }
   }
 
-  async function loadPredictionActivity() {
-    setActivityLoading(true);
-    try {
-      const payload = await apiGet<PredictionActivityResponse>("/api/predictions/activity");
-      setActivity(payload);
-    } catch {
-      setActivity(null);
-    } finally {
-      setActivityLoading(false);
-    }
-  }
-
   async function loadAccounts() {
     try {
       const payload = await apiGet<{ items: ExchangeAccountItem[] }>("/exchange-accounts");
@@ -610,7 +626,6 @@ export default function PredictionsPage() {
     void loadRunningPredictions();
     void loadPredictionQuality();
     void loadPredictionMetrics();
-    void loadPredictionActivity();
     void loadAccounts();
   }, []);
 
@@ -664,6 +679,32 @@ export default function PredictionsPage() {
       runningStatusFilter === "paused" ? row.paused : !row.paused
     );
   }, [runningRows, runningStatusFilter]);
+
+  const actionableRowsCount = useMemo(
+    () => filteredRows.filter((row) => canSendToDesk(row, signalSource)).length,
+    [filteredRows, signalSource]
+  );
+  const autoEnabledRowsCount = useMemo(
+    () => filteredRows.filter((row) => Boolean(row.autoScheduleEnabled)).length,
+    [filteredRows]
+  );
+  const aiDisagreementRowsCount = useMemo(
+    () =>
+      filteredRows.filter((row) => {
+        const localSignal = row.localPrediction?.signal ?? row.signal;
+        return Boolean(row.aiPrediction) && row.aiPrediction!.signal !== localSignal;
+      }).length,
+    [filteredRows]
+  );
+  const activeFiltersCount = useMemo(() => {
+    let count = 0;
+    if (filterSymbol.trim()) count += 1;
+    if (filterSignal !== "all") count += 1;
+    if (filterTimeframe !== "all") count += 1;
+    if (signalSource !== "local") count += 1;
+    if (sortMode !== "newest") count += 1;
+    return count;
+  }, [filterSignal, filterSymbol, filterTimeframe, signalSource, sortMode]);
 
   async function sendToDesk(id: string) {
     setActionError(null);
@@ -826,8 +867,7 @@ export default function PredictionsPage() {
         loadPredictions(),
         loadRunningPredictions(),
         loadPredictionQuality(),
-        loadPredictionMetrics(),
-        loadPredictionActivity()
+        loadPredictionMetrics()
       ]);
     } catch (e) {
       setActionError(errMsg(e));
@@ -855,8 +895,7 @@ export default function PredictionsPage() {
         loadPredictions(),
         loadRunningPredictions(),
         loadPredictionQuality(),
-        loadPredictionMetrics(),
-        loadPredictionActivity()
+        loadPredictionMetrics()
       ]);
     } catch (e) {
       setActionError(errMsg(e));
@@ -881,8 +920,7 @@ export default function PredictionsPage() {
         loadPredictions(),
         loadRunningPredictions(),
         loadPredictionQuality(),
-        loadPredictionMetrics(),
-        loadPredictionActivity()
+        loadPredictionMetrics()
       ]);
     } catch (e) {
       setActionError(errMsg(e));
@@ -891,79 +929,12 @@ export default function PredictionsPage() {
     }
   }
 
-  async function clearOldPredictions() {
-    const olderThanDays = Number(clearOldDays);
-    if (!Number.isFinite(olderThanDays) || olderThanDays < 1 || olderThanDays > 3650) {
-      setActionError("Please enter a valid day count between 1 and 3650.");
-      return;
-    }
-
-    const confirmed = window.confirm(
-      `Delete predictions older than ${Math.trunc(olderThanDays)} day(s)? Active auto templates will be kept.`
-    );
-    if (!confirmed) return;
-
-    setActionError(null);
-    setNotice(null);
-    setClearingOld(true);
-    try {
-      const response = await apiPost<{ deletedCount: number; olderThanDays: number; preservedCount: number }>(
-        "/api/predictions/clear-old",
-        {
-          olderThanDays: Math.trunc(olderThanDays),
-          keepRunningTemplates: true
-        }
-      );
-      setNotice(
-        `Cleared ${response.deletedCount} old prediction(s) older than ${response.olderThanDays} day(s). ` +
-        `Preserved running templates: ${response.preservedCount}.`
-      );
-      await Promise.all([
-        loadPredictions(),
-        loadRunningPredictions(),
-        loadPredictionQuality(),
-        loadPredictionMetrics(),
-        loadPredictionActivity()
-      ]);
-    } catch (e) {
-      setActionError(errMsg(e));
-    } finally {
-      setClearingOld(false);
-    }
-  }
-
-  async function clearListedPredictions() {
-    if (filteredRows.length === 0) {
-      setActionError("No filtered predictions to delete.");
-      return;
-    }
-
-    const confirmed = window.confirm(
-      `Delete ${filteredRows.length} currently listed prediction(s)?`
-    );
-    if (!confirmed) return;
-
-    setActionError(null);
-    setNotice(null);
-    setClearingListed(true);
-    try {
-      const response = await apiPost<{ deletedCount: number }>(
-        "/api/predictions/delete-many",
-        { ids: filteredRows.map((row) => row.id) }
-      );
-      setNotice(`Deleted ${response.deletedCount} listed prediction(s).`);
-      await Promise.all([
-        loadPredictions(),
-        loadRunningPredictions(),
-        loadPredictionQuality(),
-        loadPredictionMetrics(),
-        loadPredictionActivity()
-      ]);
-    } catch (e) {
-      setActionError(errMsg(e));
-    } finally {
-      setClearingListed(false);
-    }
+  function resetFilters() {
+    setFilterSymbol("");
+    setFilterSignal("all");
+    setFilterTimeframe("all");
+    setSignalSource("local");
+    setSortMode("newest");
   }
 
   function renderIndicatorDetail(row: PredictionListItem) {
@@ -1247,37 +1218,11 @@ export default function PredictionsPage() {
     );
   }
 
-  const predictionActivityReason = parsePredictionChangeReason(activity?.user.latestStateReason ?? null);
-  const predictionActivityReasonDetail = describeManualReason({
-    parsedReason: predictionActivityReason,
-    autoEnabled: (activity?.user.activeSchedules ?? 0) > 0
-  });
-  const activeSchedules = activity?.user.activeSchedules ?? 0;
-  const staleAfterMs = Number.isFinite(Number(activity?.user.staleAfterMs))
-    ? Number(activity?.user.staleAfterMs)
-    : 15 * 60 * 1000;
-  const latestSignalCalculatedAt = activity?.user.latestSignalCalculatedAt ?? null;
-  const isPredictionActivityStale =
-    activeSchedules > 0 &&
-    !isRecentTimestamp(latestSignalCalculatedAt, nowMs, Math.max(staleAfterMs, 60_000));
-  const schedulerStatusLabel = !activity
-    ? "unknown"
-    : !activity.scheduler.enabled
-      ? "disabled"
-      : activity.scheduler.running
-        ? "running"
-        : "idle";
-  const activityBadgeClass = !activity || !activity.scheduler.enabled
-    ? "predictionHealthBadgeIdle"
-    : isPredictionActivityStale
-      ? "predictionHealthBadgeWarn"
-      : "predictionHealthBadgeOk";
-
   return (
     <div className="predictionsWrap">
       <div className="dashboardHeader">
         <div>
-          <h2 style={{ margin: 0 }}>Ai Predictions</h2>
+          <h2 style={{ margin: 0 }}>AI Predictions</h2>
           <div style={{ fontSize: 13, color: "var(--muted)" }}>
             Select a prediction and prefill the Manual Trading Desk ticket.
           </div>
@@ -1288,8 +1233,41 @@ export default function PredictionsPage() {
         </div>
       </div>
 
+      <section className="card predictionsSection predictionQuickStatsSection">
+        <div className="predictionQuickStatsGrid">
+          <div className="predictionQuickStat">
+            <div className="predictionQuickStatLabel">Listed</div>
+            <div className="predictionQuickStatValue">
+              {filteredRows.length}
+              <span className="predictionQuickStatMeta"> / {rows.length} total</span>
+            </div>
+          </div>
+          <div className="predictionQuickStat">
+            <div className="predictionQuickStatLabel">Actionable Now</div>
+            <div className="predictionQuickStatValue">{actionableRowsCount}</div>
+          </div>
+          <div className="predictionQuickStat">
+            <div className="predictionQuickStatLabel">Auto Enabled</div>
+            <div className="predictionQuickStatValue">{autoEnabledRowsCount}</div>
+          </div>
+          <div className="predictionQuickStat">
+            <div className="predictionQuickStatLabel">Local/AI Disagreements</div>
+            <div
+              className={`predictionQuickStatValue ${
+                aiDisagreementRowsCount > 0 ? "predictionQuickStatValueWarn" : ""
+              }`}
+            >
+              {aiDisagreementRowsCount}
+            </div>
+          </div>
+        </div>
+      </section>
+
       <section className="card predictionsSection">
         <div className="predictionCreateTitle">Create Prediction</div>
+        <div className="predictionsSectionHint">
+          Configure a one-off prediction or enable auto scheduling for continuous updates.
+        </div>
         <div className="predictionCreateGrid">
           <label className="predictionCreateField">
             <div className="predictionCreateLabel">Exchange account</div>
@@ -1445,302 +1423,202 @@ export default function PredictionsPage() {
             {creating ? "Creating..." : "Create Prediction"}
           </button>
         </div>
+
+        <div className="card predictionSubCard">
+          <div className="predictionSubCardHeader">
+            <div className="predictionSubCardTitle">Auto Prediction Schedules</div>
+            <div className="predictionSubCardHint">
+              Manage active schedules created with the form above.
+            </div>
+          </div>
+          <div className="predictionsRunningHeader">
+            <div style={{ fontWeight: 700 }}>
+              Running Auto Predictions ({filteredRunningRows.length}/{runningRows.length})
+            </div>
+            <div className="predictionsRunningActions">
+              <select
+                className="input"
+                value={runningStatusFilter}
+                onChange={(e) => setRunningStatusFilter(e.target.value as RunningStatusFilter)}
+                style={{ minWidth: 150 }}
+              >
+                <option value="all">Status: all</option>
+                <option value="running">Status: running</option>
+                <option value="paused">Status: paused</option>
+              </select>
+              <button
+                className="btn"
+                type="button"
+                onClick={() => {
+                  void loadRunningPredictions();
+                }}
+                disabled={runningLoading}
+              >
+                {runningLoading ? "Refreshing..." : "Refresh"}
+              </button>
+            </div>
+          </div>
+
+          {runningLoading ? (
+            <div style={{ color: "var(--muted)" }}>Loading running schedules…</div>
+          ) : runningRows.length === 0 ? (
+            <div style={{ color: "var(--muted)" }}>
+              No running auto-predictions. Enable <code>Auto schedule</code> when creating a prediction.
+            </div>
+          ) : filteredRunningRows.length === 0 ? (
+            <div style={{ color: "var(--muted)" }}>
+              No entries for selected status filter.
+            </div>
+          ) : (
+            <>
+            <div className="predictionsRunningDesktopTable" style={{ overflowX: "auto" }}>
+              <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
+                <thead>
+                  <tr style={{ textAlign: "left", color: "var(--muted)" }}>
+                    <th style={{ padding: "8px 6px" }}>Pair</th>
+                    <th style={{ padding: "8px 6px" }}>TF</th>
+                    <th style={{ padding: "8px 6px" }}>Market</th>
+                    <th style={{ padding: "8px 6px" }}>Account</th>
+                    <th style={{ padding: "8px 6px" }}>Prefs</th>
+                    <th style={{ padding: "8px 6px" }}>Status</th>
+                    <th style={{ padding: "8px 6px" }}>Next run</th>
+                    <th style={{ padding: "8px 6px" }}>Actions</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {filteredRunningRows.map((row) => (
+                    <tr key={row.id} style={{ borderTop: "1px solid rgba(255,255,255,.06)" }}>
+                      <td style={{ padding: "8px 6px", fontWeight: 700 }}>{row.symbol}</td>
+                      <td style={{ padding: "8px 6px" }}>{row.timeframe}</td>
+                      <td style={{ padding: "8px 6px" }}>{row.marketType}</td>
+                      <td style={{ padding: "8px 6px" }}>
+                        {row.exchange.toUpperCase()} - {row.label}
+                      </td>
+                      <td style={{ padding: "8px 6px" }}>
+                        Dir: {row.directionPreference}, conf: {row.confidenceTargetPct}%
+                        {row.marketType === "perp" && row.leverage ? `, lev: ${row.leverage}x` : ""}
+                        {`, mode: ${signalModeLabel(row.signalMode)}`}
+                      </td>
+                      <td style={{ padding: "8px 6px" }}>
+                        {row.paused ? "paused" : "running"}
+                      </td>
+                      <td style={{ padding: "8px 6px" }}>
+                        {row.paused ? "paused" : row.dueInSec <= 0 ? "due now" : `in ${fmtMs(row.dueInSec * 1000)}`}
+                      </td>
+                      <td style={{ padding: "8px 6px", display: "flex", gap: 6, flexWrap: "wrap" }}>
+                        <button
+                          className="btn"
+                          type="button"
+                          disabled={runningActionId === row.id}
+                          onClick={() => void togglePausePrediction(row)}
+                        >
+                          {row.paused ? "Resume" : "Pause prediction"}
+                        </button>
+                        <button
+                          className="btn"
+                          type="button"
+                          disabled={runningActionId === row.id}
+                          onClick={() => void deleteRunningPrediction(row.id)}
+                        >
+                          Delete
+                        </button>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+            <div className="predictionsRunningMobileList">
+              {filteredRunningRows.map((row) => (
+                <div key={`${row.id}_mobile`} className="card predictionRunningCard">
+                  <div className="predictionRunningCardHeader">
+                    <div className="predictionRunningCardSymbol">{row.symbol}</div>
+                    <span className={`badge ${row.paused ? "predictionRunningBadgePaused" : "predictionRunningBadgeActive"}`}>
+                      {row.paused ? "paused" : "running"}
+                    </span>
+                  </div>
+                  <div className="predictionRunningCardMeta">
+                    <span>{row.timeframe}</span>
+                    <span>{row.marketType}</span>
+                    <span>{row.exchange.toUpperCase()}</span>
+                  </div>
+                  <div className="predictionRunningCardLine">
+                    <span>Account</span>
+                    <strong>{row.label}</strong>
+                  </div>
+                  <div className="predictionRunningCardLine">
+                    <span>Prefs</span>
+                    <strong>
+                      {row.directionPreference}, {row.confidenceTargetPct}%
+                      {row.marketType === "perp" && row.leverage ? `, ${row.leverage}x` : ""}
+                    </strong>
+                  </div>
+                  <div className="predictionRunningCardLine">
+                    <span>Mode</span>
+                    <strong>{signalModeLabel(row.signalMode)}</strong>
+                  </div>
+                  <div className="predictionRunningCardLine">
+                    <span>Next run</span>
+                    <strong>{row.paused ? "paused" : row.dueInSec <= 0 ? "due now" : `in ${fmtMs(row.dueInSec * 1000)}`}</strong>
+                  </div>
+                  <div className="predictionRunningCardActions">
+                    <button
+                      className="btn"
+                      type="button"
+                      disabled={runningActionId === row.id}
+                      onClick={() => void togglePausePrediction(row)}
+                    >
+                      {row.paused ? "Resume" : "Pause prediction"}
+                    </button>
+                    <button
+                      className="btn"
+                      type="button"
+                      disabled={runningActionId === row.id}
+                      onClick={() => void deleteRunningPrediction(row.id)}
+                    >
+                      Delete
+                    </button>
+                  </div>
+                </div>
+              ))}
+            </div>
+            </>
+          )}
+        </div>
+
       </section>
 
-	      <section className="card predictionsSection">
-	        <div className="predictionsQualityGrid">
-          <div className="card" style={{ margin: 0, padding: 10 }}>
-            <div style={{ color: "var(--muted)", fontSize: 12 }}>Evaluated Signals</div>
-            <div style={{ fontSize: 20, fontWeight: 800 }}>{quality?.sampleSize ?? 0}</div>
-          </div>
-          <div className="card" style={{ margin: 0, padding: 10 }}>
-            <div style={{ color: "var(--muted)", fontSize: 12 }}>TP Win Rate</div>
-            <div style={{ fontSize: 20, fontWeight: 800 }}>
-              {quality?.winRatePct !== null && quality?.winRatePct !== undefined
-                ? `${quality.winRatePct.toFixed(2)}%`
-                : "-"}
-            </div>
-          </div>
-          <div className="card" style={{ margin: 0, padding: 10 }}>
-            <div style={{ color: "var(--muted)", fontSize: 12 }}>Avg Outcome PnL</div>
-            <div style={{ fontSize: 20, fontWeight: 800 }}>
-              {quality?.avgOutcomePnlPct !== null && quality?.avgOutcomePnlPct !== undefined
-                ? `${quality.avgOutcomePnlPct.toFixed(2)}%`
-                : "-"}
-            </div>
-          </div>
-	          <div className="card" style={{ margin: 0, padding: 10 }}>
-	            <div style={{ color: "var(--muted)", fontSize: 12 }}>TP / SL / Expired</div>
-	            <div style={{ fontSize: 16, fontWeight: 700 }}>
-	              {(quality?.tp ?? 0)} / {(quality?.sl ?? 0)} / {(quality?.expired ?? 0)}
-	            </div>
-	          </div>
-	          <div className="card" style={{ margin: 0, padding: 10 }}>
-	            <div style={{ color: "var(--muted)", fontSize: 12 }}>Directional Hit Rate</div>
-	            <div style={{ fontSize: 20, fontWeight: 800 }}>
-	              {metrics?.hitRate !== null && metrics?.hitRate !== undefined
-	                ? `${metrics.hitRate.toFixed(2)}%`
-	                : "-"}
-	            </div>
-	            <div style={{ color: "var(--muted)", fontSize: 11 }}>
-	              Evaluated: {metrics?.evaluatedCount ?? 0}
-	            </div>
-	          </div>
-	          <div className="card" style={{ margin: 0, padding: 10 }}>
-	            <div style={{ color: "var(--muted)", fontSize: 12 }}>MAE (Move %)</div>
-	            <div style={{ fontSize: 20, fontWeight: 800 }}>
-	              {metrics?.mae !== null && metrics?.mae !== undefined
-	                ? metrics.mae.toFixed(4)
-	                : "-"}
-	            </div>
-	          </div>
-          <div className="card" style={{ margin: 0, padding: 10 }}>
-            <div style={{ color: "var(--muted)", fontSize: 12 }}>MSE</div>
-            <div style={{ fontSize: 20, fontWeight: 800 }}>
-              {metrics?.mse !== null && metrics?.mse !== undefined
-                ? metrics.mse.toFixed(4)
-                : "-"}
-            </div>
-          </div>
-          <div className="card" style={{ margin: 0, padding: 10 }}>
-            <div style={{ color: "var(--muted)", fontSize: 12 }}>24h Hit Rate Local / AI</div>
-            <div style={{ fontSize: 18, fontWeight: 800 }}>
-              {quality?.comparison24h?.localHitRatePct !== null
-              && quality?.comparison24h?.localHitRatePct !== undefined
-              && quality?.comparison24h?.aiHitRatePct !== null
-              && quality?.comparison24h?.aiHitRatePct !== undefined
-                ? `${quality.comparison24h.localHitRatePct.toFixed(2)}% / ${quality.comparison24h.aiHitRatePct.toFixed(2)}%`
-                : "-"}
-            </div>
-            <div style={{ color: "var(--muted)", fontSize: 11 }}>
-              Δ AI-Local: {quality?.comparison24h?.deltaAiVsLocalPct !== null
-              && quality?.comparison24h?.deltaAiVsLocalPct !== undefined
-                ? `${quality.comparison24h.deltaAiVsLocalPct >= 0 ? "+" : ""}${quality.comparison24h.deltaAiVsLocalPct.toFixed(2)} pp`
-                : "n/a"} · N={quality?.comparison24h?.sampleSize ?? 0}
-            </div>
-          </div>
-          <div className="card predictionActivityCard" style={{ margin: 0, padding: 10 }}>
-            <div className="predictionActivityHeader">
-              <div style={{ color: "var(--muted)", fontSize: 12 }}>AI Refresh</div>
-              <span className={`badge ${activityBadgeClass}`}>
-                {activityLoading ? "loading" : schedulerStatusLabel}
-              </span>
-            </div>
-            <div className="predictionActivityLine">
-              <span>Last calc</span>
-              <strong title={latestSignalCalculatedAt ? new Date(latestSignalCalculatedAt).toLocaleString() : "n/a"}>
-                {activityLoading ? "..." : formatRelativeTime(latestSignalCalculatedAt, nowMs)}
-              </strong>
-            </div>
-            <div className="predictionActivityLine">
-              <span>Last cycle</span>
-              <strong title={activity?.scheduler.lastCycleFinishedAt ? new Date(activity.scheduler.lastCycleFinishedAt).toLocaleString() : "n/a"}>
-                {activityLoading ? "..." : formatRelativeTime(activity?.scheduler.lastCycleFinishedAt ?? null, nowMs)}
-              </strong>
-            </div>
-            <div className="predictionActivityLine">
-              <span>Reason</span>
-              <strong title={predictionActivityReasonDetail.rawReason ?? "n/a"}>
-                {activityLoading ? "..." : predictionActivityReasonDetail.shortReason}
-              </strong>
-            </div>
-	            {isPredictionActivityStale ? (
-	              <div className="predictionActivityWarning">
-	                No fresh signal calculation in {Math.ceil(staleAfterMs / 60000)}m.
-	              </div>
-	            ) : null}
-	          </div>
-	        </div>
-	        <div className="predictionCalibrationWrap">
-	          <div className="predictionCalibrationHeader">
-	            <strong>Confidence Calibration (10 bins)</strong>
-	            <span style={{ color: "var(--muted)", fontSize: 12 }}>
-	              predicted confidence vs. empirical accuracy
-	            </span>
-	          </div>
-	          {!metrics || metrics.calibrationBins.filter((bin) => bin.n > 0).length === 0 ? (
-	            <div className="predictionCalibrationEmpty">No evaluated bins yet.</div>
-	          ) : (
-	            <div className="predictionCalibrationTableWrap">
-	              <table className="predictionCalibrationTable">
-	                <thead>
-	                  <tr>
-	                    <th>Bin</th>
-	                    <th>Avg conf</th>
-	                    <th>Accuracy</th>
-	                    <th>N</th>
-	                  </tr>
-	                </thead>
-	                <tbody>
-	                  {metrics.calibrationBins
-	                    .filter((bin) => bin.n > 0)
-	                    .map((bin) => (
-	                      <tr key={`${bin.binFrom}-${bin.binTo}`}>
-	                        <td>{bin.binFrom.toFixed(0)}-{bin.binTo.toFixed(0)}%</td>
-	                        <td>{bin.avgConf !== null ? `${bin.avgConf.toFixed(2)}%` : "-"}</td>
-	                        <td>{bin.accuracy !== null ? `${bin.accuracy.toFixed(2)}%` : "-"}</td>
-	                        <td>{bin.n}</td>
-	                      </tr>
-	                    ))}
-	                </tbody>
-	              </table>
-	            </div>
-	          )}
-	        </div>
-	      </section>
+      {error ? <PredictionAlert tone="error" title="Load error" message={error} /> : null}
+
+      {actionError ? <PredictionAlert tone="error" title="Action failed" message={actionError} /> : null}
+
+      {detailsError ? <PredictionAlert tone="error" title="Detail load failed" message={detailsError} /> : null}
+
+      {notice ? <PredictionAlert tone="warning" title="Notice" message={notice} /> : null}
 
       <section className="card predictionsSection">
-        <div className="predictionsRunningHeader">
-          <div style={{ fontWeight: 700 }}>
-            Running Auto Predictions ({filteredRunningRows.length}/{runningRows.length})
+        <div className="predictionsListHeader">
+          <div className="predictionsListTitle">Prediction Feed</div>
+          <div className="predictionsListHint">
+            Review generated signals, filter the list, and open details or send ready setups to the Trading Desk.
           </div>
-          <div className="predictionsRunningActions">
-            <select
-              className="input"
-              value={runningStatusFilter}
-              onChange={(e) => setRunningStatusFilter(e.target.value as RunningStatusFilter)}
-              style={{ minWidth: 150 }}
-            >
-              <option value="all">Status: all</option>
-              <option value="running">Status: running</option>
-              <option value="paused">Status: paused</option>
-            </select>
+        </div>
+        <div className="predictionsFiltersHeader">
+          <div className="predictionsFiltersSummary">
+            {filteredRows.length} listed, {actionableRowsCount} actionable
+            {activeFiltersCount > 0 ? `, ${activeFiltersCount} active filter(s)` : ""}
+          </div>
+          <div className="predictionsFiltersActions">
             <button
               className="btn"
               type="button"
-              onClick={() => {
-                void Promise.all([loadRunningPredictions(), loadPredictionActivity()]);
-              }}
-              disabled={runningLoading}
+              onClick={resetFilters}
+              disabled={activeFiltersCount === 0}
             >
-              {runningLoading ? "Refreshing..." : "Refresh"}
+              Reset filters
             </button>
           </div>
         </div>
-
-        {runningLoading ? (
-          <div style={{ color: "var(--muted)" }}>Loading running schedules…</div>
-        ) : runningRows.length === 0 ? (
-          <div style={{ color: "var(--muted)" }}>
-            No running auto-predictions. Enable <code>Auto schedule</code> when creating a prediction.
-          </div>
-        ) : filteredRunningRows.length === 0 ? (
-          <div style={{ color: "var(--muted)" }}>
-            No entries for selected status filter.
-          </div>
-        ) : (
-          <div style={{ overflowX: "auto" }}>
-            <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
-              <thead>
-                <tr style={{ textAlign: "left", color: "var(--muted)" }}>
-                  <th style={{ padding: "8px 6px" }}>Pair</th>
-                  <th style={{ padding: "8px 6px" }}>TF</th>
-                  <th style={{ padding: "8px 6px" }}>Market</th>
-                  <th style={{ padding: "8px 6px" }}>Account</th>
-                  <th style={{ padding: "8px 6px" }}>Prefs</th>
-                  <th style={{ padding: "8px 6px" }}>Status</th>
-                  <th style={{ padding: "8px 6px" }}>Next run</th>
-                  <th style={{ padding: "8px 6px" }}>Actions</th>
-                </tr>
-              </thead>
-              <tbody>
-                {filteredRunningRows.map((row) => (
-                  <tr key={row.id} style={{ borderTop: "1px solid rgba(255,255,255,.06)" }}>
-                    <td style={{ padding: "8px 6px", fontWeight: 700 }}>{row.symbol}</td>
-                    <td style={{ padding: "8px 6px" }}>{row.timeframe}</td>
-                    <td style={{ padding: "8px 6px" }}>{row.marketType}</td>
-                    <td style={{ padding: "8px 6px" }}>
-                      {row.exchange.toUpperCase()} - {row.label}
-                    </td>
-                    <td style={{ padding: "8px 6px" }}>
-                      Dir: {row.directionPreference}, conf: {row.confidenceTargetPct}%
-                      {row.marketType === "perp" && row.leverage ? `, lev: ${row.leverage}x` : ""}
-                      {`, mode: ${signalModeLabel(row.signalMode)}`}
-                    </td>
-                    <td style={{ padding: "8px 6px" }}>
-                      {row.paused ? "paused" : "running"}
-                    </td>
-                    <td style={{ padding: "8px 6px" }}>
-                      {row.paused ? "paused" : row.dueInSec <= 0 ? "due now" : `in ${fmtMs(row.dueInSec * 1000)}`}
-                    </td>
-                    <td style={{ padding: "8px 6px", display: "flex", gap: 6, flexWrap: "wrap" }}>
-                      <button
-                        className="btn"
-                        type="button"
-                        disabled={runningActionId === row.id}
-                        onClick={() => void togglePausePrediction(row)}
-                      >
-                        {row.paused ? "Resume" : "Pause prediction"}
-                      </button>
-                      <button
-                        className="btn"
-                        type="button"
-                        disabled={runningActionId === row.id}
-                        onClick={() => void deleteRunningPrediction(row.id)}
-                      >
-                        Delete
-                      </button>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        )}
-
-        <div className="predictionsCleanupRow">
-          <label style={{ display: "flex", alignItems: "center", gap: 6 }}>
-            <span style={{ color: "var(--muted)", fontSize: 12 }}>Older than (days)</span>
-            <input
-              className="input"
-              type="number"
-              min="1"
-              max="3650"
-              step="1"
-              value={clearOldDays}
-              onChange={(e) => setClearOldDays(e.target.value)}
-              style={{ width: 120 }}
-            />
-          </label>
-          <button
-            className="btn"
-            type="button"
-            disabled={clearingOld}
-            onClick={() => void clearOldPredictions()}
-          >
-            {clearingOld ? "Clearing..." : "Clear old predictions"}
-          </button>
-          <span style={{ color: "var(--muted)", fontSize: 12 }}>
-            Deletes historical rows but keeps active schedule templates.
-          </span>
-        </div>
-      </section>
-
-      {error ? (
-        <div className="card" style={{ padding: 12, borderColor: "#ef4444", marginBottom: 12 }}>
-          <strong>Load error:</strong> {error}
-        </div>
-      ) : null}
-
-      {actionError ? (
-        <div className="card" style={{ padding: 12, borderColor: "#ef4444", marginBottom: 12 }}>
-          <strong>Action failed:</strong> {actionError}
-        </div>
-      ) : null}
-
-      {detailsError ? (
-        <div className="card" style={{ padding: 12, borderColor: "#ef4444", marginBottom: 12 }}>
-          <strong>Detail load failed:</strong> {detailsError}
-        </div>
-      ) : null}
-
-      {notice ? (
-        <div className="card" style={{ padding: 12, borderColor: "#f59e0b", marginBottom: 12 }}>
-          <strong>Notice:</strong> {notice}
-        </div>
-      ) : null}
-
-      <section className="card predictionsSection">
         <div className="predictionsFiltersGrid">
           <input
             className="input"
@@ -1776,37 +1654,27 @@ export default function PredictionsPage() {
               void Promise.all([
                 loadPredictions(),
                 loadPredictionQuality(),
-                loadPredictionMetrics(),
-                loadPredictionActivity()
+                loadPredictionMetrics()
               ]);
             }}
             disabled={loading}
           >
             {loading ? "Refreshing..." : "Refresh"}
           </button>
-          <button
-            className="btn"
-            type="button"
-            onClick={() => void clearListedPredictions()}
-            disabled={clearingListed || filteredRows.length === 0}
-            title={filteredRows.length === 0 ? "No rows match current filters" : "Delete currently listed rows"}
-          >
-            {clearingListed ? "Deleting..." : `Clear listed (${filteredRows.length})`}
-          </button>
         </div>
-      </section>
 
-      {loading ? (
-        <div className="card" style={{ padding: 14 }}>Loading predictions…</div>
-      ) : filteredRows.length === 0 ? (
-        <div className="card" style={{ padding: 14 }}>
-          <div style={{ fontWeight: 700, marginBottom: 8 }}>No predictions found</div>
-          <div style={{ color: "var(--muted)" }}>
-            Adjust filters or create a new prediction above.
-          </div>
-        </div>
-      ) : (
-        <section className="card" style={{ padding: 12 }}>
+        <div className="predictionsListContent">
+          {loading ? (
+            <div className="predictionsListState">Loading predictions…</div>
+          ) : filteredRows.length === 0 ? (
+            <div className="predictionsListState">
+              <div style={{ fontWeight: 700, marginBottom: 8 }}>No predictions found</div>
+              <div style={{ color: "var(--muted)" }}>
+                Adjust filters or create a new prediction above.
+              </div>
+            </div>
+          ) : (
+            <>
           <div className="predictionsDesktopTableWrap" style={{ overflowX: "auto" }}>
             <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
               <thead>
@@ -1835,13 +1703,7 @@ export default function PredictionsPage() {
                   const localComparisonSignal = row.localPrediction?.signal ?? row.signal;
                   const aiComparisonAvailable = Boolean(row.aiPrediction);
                   const aiDisagrees = aiComparisonAvailable && row.aiPrediction!.signal !== localComparisonSignal;
-                  const confidencePct = confidenceToPct(activeConfidence);
-                  const targetPct =
-                    typeof row.confidenceTargetPct === "number" &&
-                    Number.isFinite(row.confidenceTargetPct)
-                      ? Math.max(0, Math.min(100, row.confidenceTargetPct))
-                      : 0;
-                  const belowTarget = confidencePct < targetPct;
+                  const actionState = resolvePredictionActionState(row, signalSource);
                   const expanded = expandedDetailId === row.id;
                   const loadingDetail = detailsLoadingId === row.id;
                   const updatedAtIso = row.lastUpdatedAt ?? row.tsCreated;
@@ -1863,7 +1725,7 @@ export default function PredictionsPage() {
                   return (
                     <Fragment key={row.id}>
                       <tr
-                        className={flipRecently ? "predictionRowFlipRecent" : undefined}
+                        className={`${flipRecently ? "predictionRowFlipRecent " : ""}${rowStateClass(actionState.state)}`}
                         style={{ borderTop: "1px solid rgba(255,255,255,.06)" }}
                       >
                         <td style={{ padding: "8px 6px", fontWeight: 700 }}>{row.symbol}</td>
@@ -1944,24 +1806,19 @@ export default function PredictionsPage() {
                         <td style={{ padding: "8px 6px" }}>{new Date(row.tsCreated).toLocaleString()}</td>
                         <td style={{ padding: "8px 6px" }}>
                           <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
-                            {activeSignal === "neutral" ? (
-                              <span style={{ color: "var(--muted)", fontSize: 12 }}>
-                                No trade setup
-                              </span>
-                            ) : belowTarget ? (
-                              <span style={{ color: "var(--muted)", fontSize: 12 }}>
-                                Below confidence target ({targetPct.toFixed(0)}%)
-                              </span>
-                            ) : (
+                            <span className={`badge ${actionStateBadgeClass(actionState.state)}`}>
+                              {actionState.label}
+                            </span>
+                            {actionState.state === "ready" ? (
                               <button
                                 className="btn btnPrimary"
                                 onClick={() => void sendToDesk(row.id)}
-                                disabled={sendingId === row.id || !row.accountId}
+                                disabled={sendingId === row.id || !actionState.canSend}
                                 title={row.accountId ? "Prefill trade ticket" : "Create an exchange account first"}
                               >
                                 {sendingId === row.id ? "Sending..." : "Send to Trading Desk"}
                               </button>
-                            )}
+                            ) : null}
                             <button
                               className="btn"
                               type="button"
@@ -1992,13 +1849,7 @@ export default function PredictionsPage() {
               const activeSignal = resolveSignal(row, signalSource);
               const activeConfidence = resolveConfidence(row, signalSource);
               const activeMove = resolveExpectedMove(row, signalSource);
-              const confidencePct = confidenceToPct(activeConfidence);
-              const targetPct =
-                typeof row.confidenceTargetPct === "number" &&
-                Number.isFinite(row.confidenceTargetPct)
-                  ? Math.max(0, Math.min(100, row.confidenceTargetPct))
-                  : 0;
-              const belowTarget = confidencePct < targetPct;
+              const actionState = resolvePredictionActionState(row, signalSource);
               const expanded = expandedDetailId === row.id;
               const loadingDetail = detailsLoadingId === row.id;
               const updatedAtIso = row.lastUpdatedAt ?? row.tsCreated;
@@ -2017,7 +1868,10 @@ export default function PredictionsPage() {
                       : "predictionReasonBadgeUnknown";
 
               return (
-                <div key={`${row.id}_mobile`} className="card predictionRowCard">
+                <div
+                  key={`${row.id}_mobile`}
+                  className={`card predictionRowCard ${mobileCardStateClass(actionState.state)}`}
+                >
                   <div className="predictionRowCardHeader">
                     <div className="predictionRowCardSymbol">{row.symbol}</div>
                     <span className="badge" style={signalBadgeStyle(activeSignal)}>{activeSignal}</span>
@@ -2082,24 +1936,19 @@ export default function PredictionsPage() {
                   </div>
 
                   <div className="predictionRowCardActions">
-                    {activeSignal === "neutral" ? (
-                      <span style={{ color: "var(--muted)", fontSize: 12 }}>
-                        No trade setup
-                      </span>
-                    ) : belowTarget ? (
-                      <span style={{ color: "var(--muted)", fontSize: 12 }}>
-                        Below confidence target ({targetPct.toFixed(0)}%)
-                      </span>
-                    ) : (
+                    <span className={`badge ${actionStateBadgeClass(actionState.state)}`}>
+                      {actionState.label}
+                    </span>
+                    {actionState.state === "ready" ? (
                       <button
                         className="btn btnPrimary"
                         onClick={() => void sendToDesk(row.id)}
-                        disabled={sendingId === row.id || !row.accountId}
+                        disabled={sendingId === row.id || !actionState.canSend}
                         title={row.accountId ? "Prefill trade ticket" : "Create an exchange account first"}
                       >
                         {sendingId === row.id ? "Sending..." : "Send to Trading Desk"}
                       </button>
-                    )}
+                    ) : null}
                     <button
                       className="btn"
                       type="button"
@@ -2119,8 +1968,108 @@ export default function PredictionsPage() {
               );
             })}
           </div>
-        </section>
-      )}
+            </>
+          )}
+        </div>
+      </section>
+
+      <section className="card predictionsSection">
+        <div className="predictionCreateTitle">Performance & Calibration</div>
+        <div className="predictionsSectionHint">
+          Historical quality of generated predictions.
+        </div>
+        <div className="predictionsQualityGrid">
+          <div className="card" style={{ margin: 0, padding: 10 }}>
+            <div style={{ color: "var(--muted)", fontSize: 12 }}>Evaluated Signals</div>
+            <div style={{ fontSize: 20, fontWeight: 800 }}>{quality?.sampleSize ?? 0}</div>
+          </div>
+          <div className="card" style={{ margin: 0, padding: 10 }}>
+            <div style={{ color: "var(--muted)", fontSize: 12 }}>TP Win Rate</div>
+            <div style={{ fontSize: 20, fontWeight: 800 }}>
+              {quality?.winRatePct !== null && quality?.winRatePct !== undefined
+                ? `${quality.winRatePct.toFixed(2)}%`
+                : "-"}
+            </div>
+          </div>
+          <div className="card" style={{ margin: 0, padding: 10 }}>
+            <div style={{ color: "var(--muted)", fontSize: 12 }}>Avg Outcome PnL</div>
+            <div style={{ fontSize: 20, fontWeight: 800 }}>
+              {quality?.avgOutcomePnlPct !== null && quality?.avgOutcomePnlPct !== undefined
+                ? `${quality.avgOutcomePnlPct.toFixed(2)}%`
+                : "-"}
+            </div>
+          </div>
+          <div className="card" style={{ margin: 0, padding: 10 }}>
+            <div style={{ color: "var(--muted)", fontSize: 12 }}>TP / SL / Expired</div>
+            <div style={{ fontSize: 16, fontWeight: 700 }}>
+              {(quality?.tp ?? 0)} / {(quality?.sl ?? 0)} / {(quality?.expired ?? 0)}
+            </div>
+          </div>
+          <div className="card" style={{ margin: 0, padding: 10 }}>
+            <div style={{ color: "var(--muted)", fontSize: 12 }}>Directional Hit Rate</div>
+            <div style={{ fontSize: 20, fontWeight: 800 }}>
+              {metrics?.hitRate !== null && metrics?.hitRate !== undefined
+                ? `${metrics.hitRate.toFixed(2)}%`
+                : "-"}
+            </div>
+            <div style={{ color: "var(--muted)", fontSize: 11 }}>
+              Evaluated: {metrics?.evaluatedCount ?? 0}
+            </div>
+          </div>
+          <div className="card" style={{ margin: 0, padding: 10 }}>
+            <div style={{ color: "var(--muted)", fontSize: 12 }}>MAE (Move %)</div>
+            <div style={{ fontSize: 20, fontWeight: 800 }}>
+              {metrics?.mae !== null && metrics?.mae !== undefined
+                ? metrics.mae.toFixed(4)
+                : "-"}
+            </div>
+          </div>
+          <div className="card" style={{ margin: 0, padding: 10 }}>
+            <div style={{ color: "var(--muted)", fontSize: 12 }}>MSE</div>
+            <div style={{ fontSize: 20, fontWeight: 800 }}>
+              {metrics?.mse !== null && metrics?.mse !== undefined
+                ? metrics.mse.toFixed(4)
+                : "-"}
+            </div>
+          </div>
+        </div>
+        <div className="predictionCalibrationWrap">
+          <div className="predictionCalibrationHeader">
+            <strong>Confidence Calibration (10 bins)</strong>
+            <span style={{ color: "var(--muted)", fontSize: 12 }}>
+              predicted confidence vs. empirical accuracy
+            </span>
+          </div>
+          {!metrics || metrics.calibrationBins.filter((bin) => bin.n > 0).length === 0 ? (
+            <div className="predictionCalibrationEmpty">No evaluated bins yet.</div>
+          ) : (
+            <div className="predictionCalibrationTableWrap">
+              <table className="predictionCalibrationTable">
+                <thead>
+                  <tr>
+                    <th>Bin</th>
+                    <th>Avg conf</th>
+                    <th>Accuracy</th>
+                    <th>N</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {metrics.calibrationBins
+                    .filter((bin) => bin.n > 0)
+                    .map((bin) => (
+                      <tr key={`${bin.binFrom}-${bin.binTo}`}>
+                        <td>{bin.binFrom.toFixed(0)}-{bin.binTo.toFixed(0)}%</td>
+                        <td>{bin.avgConf !== null ? `${bin.avgConf.toFixed(2)}%` : "-"}</td>
+                        <td>{bin.accuracy !== null ? `${bin.accuracy.toFixed(2)}%` : "-"}</td>
+                        <td>{bin.n}</td>
+                      </tr>
+                    ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </div>
+      </section>
     </div>
   );
 }
