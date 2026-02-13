@@ -56,8 +56,8 @@ FVG runtime tuning:
 - `FVG_LOOKBACK_BARS` (default `300`)
 - `FVG_FILL_RULE` (`overlap` default, optional `mid_touch`)
 
-## TradersReality Feature Pack v1
-Predictions also include `featureSnapshot.tradersReality` (deterministic Node/TS port):
+## Advanced Indicators Feature Pack v1
+Predictions also include `featureSnapshot.advancedIndicators` (deterministic Node/TS port):
 - `emas`: EMA(5/13/50/200/800), stack flags, distance/slope percentages
 - `cloud`: EMA50 cloud (`stddev(close,100)/4`) with `price_pos`
 - `levels`: daily OHLC + classic floor pivots (`pp/r1..s3`) + `m0..m5`, previous week/month highs/lows
@@ -72,4 +72,4 @@ Predictions also include `featureSnapshot.tradersReality` (deterministic Node/TS
 - `pvsra`: vector candle tier/color + transition patterns
 
 If history is too short for long EMAs (especially EMA800), fields are returned null-safe and
-`featureSnapshot.tradersReality.dataGap=true`.
+`featureSnapshot.advancedIndicators.dataGap=true`.

@@ -1,4 +1,4 @@
-import type { Candle } from "../../../timeframe.js";
+import type { Candle } from "../timeframe.js";
 import {
   aggregateDaily,
   aggregateMonthly,
@@ -16,7 +16,7 @@ type RangeBand = {
   low50: NullableNumber;
 };
 
-export type TradersRealityRangesSnapshot = {
+export type RangesSnapshot = {
   adr: RangeBand;
   awr: RangeBand;
   amr: RangeBand;
@@ -138,10 +138,10 @@ function completedRanges(
     .filter((value) => Number.isFinite(value) && value >= 0);
 }
 
-export function computeTradersRealityRanges(
+export function computeRanges(
   candles: Candle[],
   options: Partial<RangeModes> = {}
-): TradersRealityRangesSnapshot {
+): RangesSnapshot {
   const modes: RangeModes = {
     ...DEFAULT_MODES,
     ...options,

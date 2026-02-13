@@ -25,7 +25,7 @@ const fvgSchema = z.object({
   fillRule: z.enum(["overlap", "mid_touch"]).default("overlap")
 });
 
-const tradersRealitySchema = z.object({
+const advancedIndicatorsSchema = z.object({
   adrLen: positiveInt(1, 365).default(14),
   awrLen: positiveInt(1, 52).default(4),
   amrLen: positiveInt(1, 24).default(6),
@@ -53,7 +53,7 @@ export const indicatorSettingsConfigSchema = z.object({
   enabledPacks: z.object({
     indicatorsV1: z.boolean().default(true),
     indicatorsV2: z.boolean().default(true),
-    tradersReality: z.boolean().default(true),
+    advancedIndicators: z.boolean().default(true),
     liquiditySweeps: z.boolean().default(true)
   }),
   indicatorsV2: z.object({
@@ -61,7 +61,7 @@ export const indicatorSettingsConfigSchema = z.object({
     volume: volumeSchema,
     fvg: fvgSchema
   }),
-  tradersReality: tradersRealitySchema,
+  advancedIndicators: advancedIndicatorsSchema,
   liquiditySweeps: liquiditySweepsSchema,
   aiGating: aiGatingSchema
 });
@@ -136,7 +136,7 @@ export const DEFAULT_INDICATOR_SETTINGS: IndicatorSettingsConfig = {
   enabledPacks: {
     indicatorsV1: true,
     indicatorsV2: true,
-    tradersReality: true,
+    advancedIndicators: true,
     liquiditySweeps: true
   },
   indicatorsV2: {
@@ -156,7 +156,7 @@ export const DEFAULT_INDICATOR_SETTINGS: IndicatorSettingsConfig = {
       fillRule: "overlap"
     }
   },
-  tradersReality: {
+  advancedIndicators: {
     adrLen: 14,
     awrLen: 4,
     amrLen: 6,
@@ -179,8 +179,33 @@ export const DEFAULT_INDICATOR_SETTINGS: IndicatorSettingsConfig = {
   }
 };
 
+function normalizeLegacyAdvancedIndicatorsKey(value: unknown): unknown {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return value;
+  const record = { ...(value as Record<string, unknown>) };
+
+  if (record.advancedIndicators === undefined && record.tradersReality !== undefined) {
+    record.advancedIndicators = record.tradersReality;
+  }
+
+  if (
+    record.enabledPacks &&
+    typeof record.enabledPacks === "object" &&
+    !Array.isArray(record.enabledPacks)
+  ) {
+    const enabledPacks = { ...(record.enabledPacks as Record<string, unknown>) };
+    if (enabledPacks.advancedIndicators === undefined && enabledPacks.tradersReality !== undefined) {
+      enabledPacks.advancedIndicators = enabledPacks.tradersReality;
+    }
+    record.enabledPacks = enabledPacks;
+  }
+
+  return record;
+}
+
 export function normalizeIndicatorSettingsPatch(value: unknown): IndicatorSettingsPatch {
-  const parsed = indicatorSettingsPatchSchema.safeParse(value ?? {});
+  const parsed = indicatorSettingsPatchSchema.safeParse(
+    normalizeLegacyAdvancedIndicatorsKey(value ?? {})
+  );
   return parsed.success ? parsed.data : {};
 }
 
@@ -192,7 +217,7 @@ export function mergeIndicatorSettings(
     enabledPacks: {
       indicatorsV1: patch.enabledPacks?.indicatorsV1 ?? base.enabledPacks.indicatorsV1,
       indicatorsV2: patch.enabledPacks?.indicatorsV2 ?? base.enabledPacks.indicatorsV2,
-      tradersReality: patch.enabledPacks?.tradersReality ?? base.enabledPacks.tradersReality,
+      advancedIndicators: patch.enabledPacks?.advancedIndicators ?? base.enabledPacks.advancedIndicators,
       liquiditySweeps: patch.enabledPacks?.liquiditySweeps ?? base.enabledPacks.liquiditySweeps
     },
     indicatorsV2: {
@@ -212,15 +237,15 @@ export function mergeIndicatorSettings(
         fillRule: patch.indicatorsV2?.fvg?.fillRule ?? base.indicatorsV2.fvg.fillRule
       }
     },
-    tradersReality: {
-      adrLen: patch.tradersReality?.adrLen ?? base.tradersReality.adrLen,
-      awrLen: patch.tradersReality?.awrLen ?? base.tradersReality.awrLen,
-      amrLen: patch.tradersReality?.amrLen ?? base.tradersReality.amrLen,
-      rdLen: patch.tradersReality?.rdLen ?? base.tradersReality.rdLen,
-      rwLen: patch.tradersReality?.rwLen ?? base.tradersReality.rwLen,
+    advancedIndicators: {
+      adrLen: patch.advancedIndicators?.adrLen ?? base.advancedIndicators.adrLen,
+      awrLen: patch.advancedIndicators?.awrLen ?? base.advancedIndicators.awrLen,
+      amrLen: patch.advancedIndicators?.amrLen ?? base.advancedIndicators.amrLen,
+      rdLen: patch.advancedIndicators?.rdLen ?? base.advancedIndicators.rdLen,
+      rwLen: patch.advancedIndicators?.rwLen ?? base.advancedIndicators.rwLen,
       openingRangeMin:
-        patch.tradersReality?.openingRangeMin ?? base.tradersReality.openingRangeMin,
-      sessionsUseDST: patch.tradersReality?.sessionsUseDST ?? base.tradersReality.sessionsUseDST
+        patch.advancedIndicators?.openingRangeMin ?? base.advancedIndicators.openingRangeMin,
+      sessionsUseDST: patch.advancedIndicators?.sessionsUseDST ?? base.advancedIndicators.sessionsUseDST
     },
     liquiditySweeps: {
       len: patch.liquiditySweeps?.len ?? base.liquiditySweeps.len,

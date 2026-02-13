@@ -1,4 +1,4 @@
-import type { Candle } from "../../../timeframe.js";
+import type { Candle } from "../timeframe.js";
 
 type NullableNumber = number | null;
 type DstRegion = "uk" | "ny" | "sydney" | null;
@@ -34,7 +34,7 @@ export type SessionStats = {
   openingRangeLow: NullableNumber;
 };
 
-export type TradersRealitySessionsSnapshot = {
+export type SessionsSnapshot = {
   activeSession: string | null;
   openingRangeMinutes: number;
   sessions: Record<string, SessionStats>;
@@ -230,10 +230,10 @@ function resolveSessionWindow(nowMs: number, def: SessionDefinition, useDst: boo
   return { ...candidates[0], activeNow: false };
 }
 
-export function computeTradersRealitySessions(
+export function computeSessions(
   candles: Candle[],
   options: { openingRangeMinutes?: number; useDst?: boolean } = {}
-): TradersRealitySessionsSnapshot {
+): SessionsSnapshot {
   const openingRangeMinutes = Number.isFinite(options.openingRangeMinutes)
     ? Math.max(1, Math.trunc(options.openingRangeMinutes as number))
     : OPENING_RANGE_MINUTES_DEFAULT;

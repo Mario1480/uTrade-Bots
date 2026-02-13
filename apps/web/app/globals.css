@@ -1192,6 +1192,174 @@ a { color: inherit; }
   margin-bottom: 12px;
 }
 
+.indicatorAdminTitle {
+  margin-top: 0;
+  margin-bottom: 4px;
+  letter-spacing: 0.01em;
+}
+
+.indicatorAdminIntro {
+  margin-bottom: 4px;
+}
+
+.indicatorCatalogSection {
+  display: grid;
+  gap: 12px;
+  background: linear-gradient(180deg, rgba(255, 193, 7, 0.08), rgba(255, 193, 7, 0.02) 52%, transparent);
+}
+
+.indicatorCatalogScopeChip {
+  display: inline-flex;
+  align-items: center;
+  border: 1px solid rgba(255, 193, 7, 0.38);
+  border-radius: 999px;
+  font-size: 12px;
+  color: #ffe082;
+  padding: 4px 10px;
+  white-space: nowrap;
+}
+
+.indicatorCatalogStatsGrid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+  gap: 8px;
+}
+
+.indicatorCatalogStatCard {
+  border: 1px solid rgba(255, 193, 7, 0.3);
+  border-radius: 10px;
+  padding: 8px 10px;
+  background: rgba(16, 24, 38, 0.55);
+}
+
+.indicatorCatalogStatLabel {
+  font-size: 11px;
+  color: var(--muted);
+}
+
+.indicatorCatalogStatValue {
+  margin-top: 2px;
+  font-size: 20px;
+  font-weight: 800;
+  line-height: 1.1;
+}
+
+.indicatorCatalogGroupList {
+  display: grid;
+  gap: 10px;
+}
+
+.indicatorCatalogGroupCard {
+  border: 1px solid rgba(255, 193, 7, 0.26);
+  border-radius: 10px;
+  padding: 10px;
+  background: rgba(16, 24, 38, 0.48);
+  display: grid;
+  gap: 8px;
+}
+
+.indicatorCatalogGroupHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.indicatorCatalogGroupCount {
+  border: 1px solid rgba(255, 193, 7, 0.28);
+  border-radius: 999px;
+  padding: 2px 8px;
+  font-size: 11px;
+  color: #ffd55f;
+}
+
+.indicatorCatalogItemList {
+  display: grid;
+  gap: 8px;
+}
+
+.indicatorCatalogItemCard {
+  border: 1px solid rgba(255, 193, 7, 0.2);
+  border-radius: 8px;
+  padding: 8px;
+  display: grid;
+  gap: 5px;
+  background: rgba(255, 255, 255, 0.02);
+}
+
+.indicatorCatalogItemHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.indicatorCatalogItemStatus {
+  border: 1px solid rgba(255, 193, 7, 0.3);
+  border-radius: 999px;
+  padding: 2px 8px;
+  font-size: 11px;
+}
+
+.indicatorCatalogTokenList {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+}
+
+.indicatorCatalogToken {
+  border: 1px solid rgba(255, 193, 7, 0.2);
+  border-radius: 6px;
+  padding: 3px 7px;
+  font-size: 11px;
+  color: #dbeafe;
+  background: rgba(15, 23, 42, 0.5);
+  white-space: nowrap;
+}
+
+.indicatorOverrideSection {
+  display: grid;
+  gap: 12px;
+}
+
+.indicatorScopeGrid {
+  display: grid;
+  gap: 10px;
+  grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
+}
+
+.indicatorConfigBlock {
+  border: 1px solid rgba(255, 193, 7, 0.2);
+  border-radius: 10px;
+  padding: 10px;
+  background: rgba(255, 255, 255, 0.02);
+  display: grid;
+  gap: 8px;
+}
+
+.indicatorConfigTitle {
+  font-size: 14px;
+  font-weight: 700;
+}
+
+.indicatorConfigHint {
+  margin-top: -4px;
+}
+
+.indicatorConfigGrid {
+  display: grid;
+  gap: 10px;
+  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+}
+
+.indicatorFormActions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
 .adminUserCard {
   padding: 10px;
 }
@@ -2162,6 +2330,34 @@ a { color: inherit; }
   }
   .adminTopActions {
     margin-bottom: 8px;
+  }
+  .indicatorCatalogScopeChip {
+    width: 100%;
+    justify-content: center;
+  }
+  .indicatorCatalogStatsGrid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+  .indicatorCatalogStatValue {
+    font-size: 18px;
+  }
+  .indicatorCatalogGroupCard {
+    padding: 8px;
+  }
+  .indicatorCatalogItemCard {
+    padding: 7px;
+  }
+  .indicatorCatalogToken {
+    white-space: normal;
+    overflow-wrap: anywhere;
+  }
+  .indicatorConfigGrid,
+  .indicatorScopeGrid {
+    grid-template-columns: 1fr;
+  }
+  .indicatorFormActions .btn {
+    width: 100%;
+    justify-content: center;
   }
   .adminLandingToolbar {
     align-items: stretch;

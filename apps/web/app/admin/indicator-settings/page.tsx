@@ -11,7 +11,7 @@ type IndicatorSettingsConfig = {
   enabledPacks: {
     indicatorsV1: boolean;
     indicatorsV2: boolean;
-    tradersReality: boolean;
+    advancedIndicators: boolean;
     liquiditySweeps: boolean;
   };
   indicatorsV2: {
@@ -19,7 +19,7 @@ type IndicatorSettingsConfig = {
     volume: { lookback: number; emaFast: number; emaSlow: number };
     fvg: { lookback: number; fillRule: "overlap" | "mid_touch" };
   };
-  tradersReality: {
+  advancedIndicators: {
     adrLen: number;
     awrLen: number;
     amrLen: number;
@@ -71,12 +71,9 @@ type ResolvedResponse = {
   defaults: IndicatorSettingsConfig;
 };
 
-type CatalogPack = "indicatorsV1" | "indicatorsV2" | "tradersReality" | "liquiditySweeps" | "aiGating";
-
 type IndicatorCatalogItem = {
   key: string;
   name: string;
-  pack: CatalogPack;
   live: boolean;
   outputs: string[];
   params: string[];
@@ -90,11 +87,10 @@ type IndicatorCatalogGroup = {
   items: IndicatorCatalogItem[];
 };
 
-type EnabledPack = keyof IndicatorSettingsConfig["enabledPacks"];
 type StochRsiKey = keyof IndicatorSettingsConfig["indicatorsV2"]["stochrsi"];
 type VolumeKey = keyof IndicatorSettingsConfig["indicatorsV2"]["volume"];
 type FvgKey = keyof IndicatorSettingsConfig["indicatorsV2"]["fvg"];
-type TradersRealityKey = Exclude<keyof IndicatorSettingsConfig["tradersReality"], "sessionsUseDST">;
+type AdvancedIndicatorsKey = Exclude<keyof IndicatorSettingsConfig["advancedIndicators"], "sessionsUseDST">;
 type AiGatingKey = keyof IndicatorSettingsConfig["aiGating"];
 type LiquiditySweepsNumberKey = Exclude<
   keyof IndicatorSettingsConfig["liquiditySweeps"],
@@ -108,7 +104,7 @@ const FALLBACK_DEFAULTS: IndicatorSettingsConfig = {
   enabledPacks: {
     indicatorsV1: true,
     indicatorsV2: true,
-    tradersReality: true,
+    advancedIndicators: true,
     liquiditySweeps: true
   },
   indicatorsV2: {
@@ -116,7 +112,7 @@ const FALLBACK_DEFAULTS: IndicatorSettingsConfig = {
     volume: { lookback: 100, emaFast: 10, emaSlow: 30 },
     fvg: { lookback: 300, fillRule: "overlap" }
   },
-  tradersReality: {
+  advancedIndicators: {
     adrLen: 14,
     awrLen: 4,
     amrLen: 6,
@@ -148,7 +144,6 @@ const INDICATOR_CATALOG_GROUPS: IndicatorCatalogGroup[] = [
       {
         key: "rsi14",
         name: "RSI (14)",
-        pack: "indicatorsV1",
         live: true,
         outputs: ["indicators.rsi_14"],
         params: ["fixed period=14"]
@@ -156,7 +151,6 @@ const INDICATOR_CATALOG_GROUPS: IndicatorCatalogGroup[] = [
       {
         key: "macd",
         name: "MACD (12/26/9)",
-        pack: "indicatorsV1",
         live: true,
         outputs: [
           "indicators.macd.line",
@@ -168,7 +162,6 @@ const INDICATOR_CATALOG_GROUPS: IndicatorCatalogGroup[] = [
       {
         key: "adx",
         name: "ADX + DI (14)",
-        pack: "indicatorsV1",
         live: true,
         outputs: [
           "indicators.adx.adx_14",
@@ -180,7 +173,6 @@ const INDICATOR_CATALOG_GROUPS: IndicatorCatalogGroup[] = [
       {
         key: "stochrsi",
         name: "Stoch RSI",
-        pack: "indicatorsV2",
         live: true,
         outputs: [
           "indicators.stochrsi.k",
@@ -204,7 +196,6 @@ const INDICATOR_CATALOG_GROUPS: IndicatorCatalogGroup[] = [
       {
         key: "bb",
         name: "Bollinger Bands (20/2)",
-        pack: "indicatorsV1",
         live: true,
         outputs: [
           "indicators.bb.upper",
@@ -218,7 +209,6 @@ const INDICATOR_CATALOG_GROUPS: IndicatorCatalogGroup[] = [
       {
         key: "atrpct",
         name: "ATR%",
-        pack: "indicatorsV1",
         live: true,
         outputs: ["indicators.atr_pct"],
         params: ["fixed ATR(14) / close"]
@@ -226,7 +216,6 @@ const INDICATOR_CATALOG_GROUPS: IndicatorCatalogGroup[] = [
       {
         key: "fvg",
         name: "Fair Value Gap (FVG) Summary",
-        pack: "indicatorsV2",
         live: true,
         outputs: [
           "indicators.fvg.open_bullish_count",
@@ -251,7 +240,6 @@ const INDICATOR_CATALOG_GROUPS: IndicatorCatalogGroup[] = [
       {
         key: "vwap",
         name: "VWAP (session / rolling)",
-        pack: "indicatorsV1",
         live: true,
         outputs: [
           "indicators.vwap.value",
@@ -263,7 +251,6 @@ const INDICATOR_CATALOG_GROUPS: IndicatorCatalogGroup[] = [
       {
         key: "volume",
         name: "Volume Features",
-        pack: "indicatorsV2",
         live: true,
         outputs: [
           "indicators.volume.vol_z",
@@ -281,75 +268,70 @@ const INDICATOR_CATALOG_GROUPS: IndicatorCatalogGroup[] = [
     ]
   },
   {
-    key: "traders-reality",
-    title: "TradersReality Pack",
-    description: "Extended context pack consumed by explainer and prediction inference.",
+    key: "advanced-indicators",
+    title: "Advanced Indicators",
+    description: "Extended context indicators consumed by explainer and prediction inference.",
     items: [
       {
-        key: "tr-emas-cloud",
+        key: "advanced-emas-cloud",
         name: "EMAs + Cloud",
-        pack: "tradersReality",
         live: true,
         outputs: [
-          "tradersReality.emas.*",
-          "tradersReality.cloud.*"
+          "advancedIndicators.emas.*",
+          "advancedIndicators.cloud.*"
         ],
-        params: ["pack toggle only"]
+        params: ["derived from candle stream (no dedicated params)"]
       },
       {
-        key: "tr-levels",
+        key: "advanced-levels",
         name: "Levels & Pivots",
-        pack: "tradersReality",
         live: true,
         outputs: [
-          "tradersReality.levels.daily.*",
-          "tradersReality.levels.weekly.*",
-          "tradersReality.levels.monthly.*"
+          "advancedIndicators.levels.daily.*",
+          "advancedIndicators.levels.weekly.*",
+          "advancedIndicators.levels.monthly.*"
         ],
-        params: ["pack toggle only"]
+        params: ["derived from candle stream (no dedicated params)"]
       },
       {
-        key: "tr-ranges",
+        key: "advanced-ranges",
         name: "Ranges (ADR/AWR/AMR/RD/RW)",
-        pack: "tradersReality",
         live: true,
         outputs: [
-          "tradersReality.ranges.adr|awr|amr|rd|rw.*",
-          "tradersReality.ranges.distancesPct.*"
+          "advancedIndicators.ranges.adr|awr|amr|rd|rw.*",
+          "advancedIndicators.ranges.distancesPct.*"
         ],
         params: [
-          "config.tradersReality.adrLen",
-          "config.tradersReality.awrLen",
-          "config.tradersReality.amrLen",
-          "config.tradersReality.rdLen",
-          "config.tradersReality.rwLen"
+          "config.advancedIndicators.adrLen",
+          "config.advancedIndicators.awrLen",
+          "config.advancedIndicators.amrLen",
+          "config.advancedIndicators.rdLen",
+          "config.advancedIndicators.rwLen"
         ]
       },
       {
-        key: "tr-sessions",
+        key: "advanced-sessions",
         name: "Sessions (DST-aware)",
-        pack: "tradersReality",
         live: true,
         outputs: [
-          "tradersReality.sessions.activeSession",
-          "tradersReality.sessions.sessions"
+          "advancedIndicators.sessions.activeSession",
+          "advancedIndicators.sessions.sessions"
         ],
         params: [
-          "config.tradersReality.openingRangeMin",
-          "config.tradersReality.sessionsUseDST"
+          "config.advancedIndicators.openingRangeMin",
+          "config.advancedIndicators.sessionsUseDST"
         ]
       },
       {
-        key: "tr-pvsra",
+        key: "advanced-pvsra",
         name: "PVSRA Vector",
-        pack: "tradersReality",
         live: true,
         outputs: [
-          "tradersReality.pvsra.vectorTier",
-          "tradersReality.pvsra.vectorColor",
-          "tradersReality.pvsra.patterns.*"
+          "advancedIndicators.pvsra.vectorTier",
+          "advancedIndicators.pvsra.vectorColor",
+          "advancedIndicators.pvsra.patterns.*"
         ],
-        params: ["pack toggle only"]
+        params: ["derived from candle stream (no dedicated params)"]
       }
     ]
   },
@@ -361,7 +343,6 @@ const INDICATOR_CATALOG_GROUPS: IndicatorCatalogGroup[] = [
       {
         key: "ai-gating",
         name: "AI Explain Gating",
-        pack: "aiGating",
         live: true,
         outputs: ["gating only (no featureSnapshot field)"],
         params: [
@@ -372,7 +353,6 @@ const INDICATOR_CATALOG_GROUPS: IndicatorCatalogGroup[] = [
       {
         key: "liquidity-sweeps",
         name: "Liquidity Sweeps",
-        pack: "liquiditySweeps",
         live: false,
         outputs: ["none yet in featureSnapshot"],
         params: [
@@ -388,19 +368,6 @@ const INDICATOR_CATALOG_GROUPS: IndicatorCatalogGroup[] = [
     ]
   }
 ];
-
-function packLabel(pack: CatalogPack): string {
-  if (pack === "indicatorsV1") return "Indicators V1";
-  if (pack === "indicatorsV2") return "Indicators V2";
-  if (pack === "tradersReality") return "TradersReality";
-  if (pack === "liquiditySweeps") return "Liquidity Sweeps";
-  return "AI Gating";
-}
-
-function isPackEnabled(config: IndicatorSettingsConfig, pack: CatalogPack): boolean {
-  if (pack === "aiGating") return true;
-  return Boolean(config.enabledPacks[pack]);
-}
 
 function parseTimeframe(value: string | null | undefined): Timeframe {
   if (value === "5m" || value === "15m" || value === "1h" || value === "4h" || value === "1d") {
@@ -427,22 +394,18 @@ function parseNumber(value: string): number {
   return Number.isFinite(parsed) ? parsed : 0;
 }
 
-function catalogStatus(item: IndicatorCatalogItem, config: IndicatorSettingsConfig) {
-  const enabled = isPackEnabled(config, item.pack);
-  if (!item.live) return "settings_only";
-  if (enabled) return "live_enabled";
-  return "implemented_disabled";
+function catalogStatus(item: IndicatorCatalogItem) {
+  if (item.live) return "live";
+  return "settings_only";
 }
 
 function catalogStatusLabel(status: ReturnType<typeof catalogStatus>): string {
-  if (status === "live_enabled") return "live (enabled)";
-  if (status === "implemented_disabled") return "implemented (disabled)";
+  if (status === "live") return "live";
   return "settings only";
 }
 
 function catalogStatusColor(status: ReturnType<typeof catalogStatus>): string {
-  if (status === "live_enabled") return "#54d17a";
-  if (status === "implemented_disabled") return "#ffcf66";
+  if (status === "live") return "#54d17a";
   return "var(--muted)";
 }
 
@@ -492,12 +455,16 @@ export default function AdminIndicatorSettingsPage() {
     return true;
   }, [accountId, scopeType, symbol, timeframe]);
 
-  function setPackEnabled(pack: EnabledPack, enabled: boolean) {
-    setConfig((prev) => ({
-      ...prev,
-      enabledPacks: { ...prev.enabledPacks, [pack]: enabled }
-    }));
-  }
+  const catalogSummary = useMemo(() => {
+    const allItems = INDICATOR_CATALOG_GROUPS.flatMap((group) => group.items);
+    const liveCount = allItems.filter((item) => item.live).length;
+    return {
+      groups: INDICATOR_CATALOG_GROUPS.length,
+      indicators: allItems.length,
+      live: liveCount,
+      settingsOnly: allItems.length - liveCount
+    };
+  }, []);
 
   function setIndicatorsV2StochRsi(field: StochRsiKey, value: number) {
     setConfig((prev) => ({
@@ -529,17 +496,17 @@ export default function AdminIndicatorSettingsPage() {
     }));
   }
 
-  function setTradersRealityNumber(field: TradersRealityKey, value: number) {
+  function setAdvancedIndicatorsNumber(field: AdvancedIndicatorsKey, value: number) {
     setConfig((prev) => ({
       ...prev,
-      tradersReality: { ...prev.tradersReality, [field]: value }
+      advancedIndicators: { ...prev.advancedIndicators, [field]: value }
     }));
   }
 
-  function setTradersRealitySessionsUseDst(enabled: boolean) {
+  function setAdvancedIndicatorsSessionsUseDst(enabled: boolean) {
     setConfig((prev) => ({
       ...prev,
-      tradersReality: { ...prev.tradersReality, sessionsUseDST: enabled }
+      advancedIndicators: { ...prev.advancedIndicators, sessionsUseDST: enabled }
     }));
   }
 
@@ -689,9 +656,9 @@ export default function AdminIndicatorSettingsPage() {
         <Link href="/admin" className="btn">← Back to admin</Link>
         <Link href="/settings" className="btn">← Back to settings</Link>
       </div>
-      <h2 style={{ marginTop: 0 }}>Admin · Indicator Settings</h2>
-      <div className="adminPageIntro">
-        Configure global defaults and scoped overrides for prediction feature packs.
+      <h2 className="indicatorAdminTitle">Admin · Indicator Settings</h2>
+      <div className="adminPageIntro indicatorAdminIntro">
+        Configure global defaults and scoped overrides for integrated indicator modules.
       </div>
 
       {loading ? <div className="settingsMutedText">Loading...</div> : null}
@@ -704,83 +671,91 @@ export default function AdminIndicatorSettingsPage() {
 
       {isSuperadmin ? (
         <>
-          <section className="card settingsSection" style={{ marginBottom: 12 }}>
-            <div className="settingsSectionHeader"><h3 style={{ margin: 0 }}>Integrated Indicators (Thematic)</h3></div>
-            <div className="settingsMutedText" style={{ marginBottom: 8 }}>
-              This list reflects currently integrated prediction features and where each one is configured.
+          <section className="card settingsSection indicatorCatalogSection">
+            <div className="settingsSectionHeader">
+              <h3 style={{ margin: 0 }}>Integrated Indicators</h3>
+              <span className="indicatorCatalogScopeChip">
+                Scope layers: {resolved?.breakdown?.length ?? 0}
+              </span>
             </div>
-            <div style={{ display: "grid", gap: 10 }}>
+            <div className="indicatorCatalogStatsGrid">
+              <div className="indicatorCatalogStatCard">
+                <div className="indicatorCatalogStatLabel">Indicator groups</div>
+                <div className="indicatorCatalogStatValue">{catalogSummary.groups}</div>
+              </div>
+              <div className="indicatorCatalogStatCard">
+                <div className="indicatorCatalogStatLabel">Integrated indicators</div>
+                <div className="indicatorCatalogStatValue">{catalogSummary.indicators}</div>
+              </div>
+              <div className="indicatorCatalogStatCard">
+                <div className="indicatorCatalogStatLabel">Live</div>
+                <div className="indicatorCatalogStatValue">{catalogSummary.live}</div>
+              </div>
+              <div className="indicatorCatalogStatCard">
+                <div className="indicatorCatalogStatLabel">Settings only</div>
+                <div className="indicatorCatalogStatValue">{catalogSummary.settingsOnly}</div>
+              </div>
+            </div>
+            <div className="indicatorCatalogGroupList">
               {INDICATOR_CATALOG_GROUPS.map((group) => (
-                <div
-                  key={group.key}
-                  style={{
-                    border: "1px solid var(--border)",
-                    borderRadius: 10,
-                    padding: 10
-                  }}
-                >
-                  <div style={{ fontWeight: 700 }}>{group.title}</div>
-                  <div className="settingsMutedText" style={{ marginBottom: 8 }}>
-                    {group.description}
+                <article key={group.key} className="indicatorCatalogGroupCard">
+                  <div className="indicatorCatalogGroupHeader">
+                    <div style={{ fontWeight: 700 }}>{group.title}</div>
+                    <span className="indicatorCatalogGroupCount">
+                      {group.items.length} indicators
+                    </span>
                   </div>
-                  <div style={{ overflowX: "auto" }}>
-                    <table className="table" style={{ width: "100%" }}>
-                      <thead>
-                        <tr>
-                          <th>Indicator</th>
-                          <th>Pack</th>
-                          <th>Status</th>
-                          <th>Outputs</th>
-                          <th>Config params</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {group.items.map((item) => {
-                          const status = catalogStatus(item, config);
-                          return (
-                            <tr key={item.key}>
-                              <td>
-                                <div style={{ fontWeight: 600 }}>{item.name}</div>
-                                {item.note ? (
-                                  <div className="settingsMutedText">{item.note}</div>
-                                ) : null}
-                              </td>
-                              <td>{packLabel(item.pack)}</td>
-                              <td>
-                                <span
-                                  style={{
-                                    fontSize: 12,
-                                    padding: "2px 8px",
-                                    borderRadius: 999,
-                                    border: "1px solid var(--border)",
-                                    color: catalogStatusColor(status)
-                                  }}
-                                >
-                                  {catalogStatusLabel(status)}
-                                </span>
-                              </td>
-                              <td style={{ fontSize: 12 }}>
-                                {(item.outputs ?? []).join(", ")}
-                              </td>
-                              <td style={{ fontSize: 12 }}>
-                                {(item.params ?? []).join(", ")}
-                              </td>
-                            </tr>
-                          );
-                        })}
-                      </tbody>
-                    </table>
+                  <div className="settingsMutedText">{group.description}</div>
+                  <div className="indicatorCatalogItemList">
+                    {group.items.map((item) => {
+                      const status = catalogStatus(item);
+                      return (
+                        <div key={item.key} className="indicatorCatalogItemCard">
+                          <div className="indicatorCatalogItemHeader">
+                            <div style={{ fontWeight: 600 }}>{item.name}</div>
+                            <span
+                              className="indicatorCatalogItemStatus"
+                              style={{ color: catalogStatusColor(status) }}
+                            >
+                              {catalogStatusLabel(status)}
+                            </span>
+                          </div>
+                          {item.note ? (
+                            <div className="settingsMutedText">{item.note}</div>
+                          ) : null}
+                          <div className="mutedTiny">Outputs</div>
+                          <div className="indicatorCatalogTokenList">
+                            {item.outputs.map((output) => (
+                              <code key={`${item.key}-out-${output}`} className="indicatorCatalogToken">
+                                {output}
+                              </code>
+                            ))}
+                          </div>
+                          <div className="mutedTiny">Config params</div>
+                          <div className="indicatorCatalogTokenList">
+                            {item.params.map((param) => (
+                              <code key={`${item.key}-param-${param}`} className="indicatorCatalogToken">
+                                {param}
+                              </code>
+                            ))}
+                          </div>
+                        </div>
+                      );
+                    })}
                   </div>
-                </div>
+                </article>
               ))}
             </div>
           </section>
 
-          <section className="card settingsSection" style={{ marginBottom: 12 }}>
-            <div className="settingsSectionHeader"><h3 style={{ margin: 0 }}>{editingId ? "Edit override" : "Create override"}</h3></div>
-            <div style={{ display: "grid", gap: 10, gridTemplateColumns: "repeat(auto-fit,minmax(200px,1fr))" }}>
-              <label style={{ display: "grid", gap: 6 }}>
-                <span style={{ fontSize: 12, color: "var(--muted)" }}>Scope</span>
+          <section className="card settingsSection indicatorOverrideSection" style={{ marginBottom: 12 }}>
+            <div className="settingsSectionHeader">
+              <h3 style={{ margin: 0 }}>{editingId ? "Edit override" : "Create override"}</h3>
+            </div>
+
+            <div className="indicatorScopeGrid">
+              <label className="settingsField">
+                <span className="settingsFieldLabel">Scope</span>
                 <select className="input" value={scopeType} onChange={(e) => setScopeType(e.target.value as ScopeType)}>
                   {SCOPE_OPTIONS.map((value) => (
                     <option key={value} value={value}>
@@ -789,20 +764,20 @@ export default function AdminIndicatorSettingsPage() {
                   ))}
                 </select>
               </label>
-              <label style={{ display: "grid", gap: 6 }}>
-                <span style={{ fontSize: 12, color: "var(--muted)" }}>Exchange</span>
+              <label className="settingsField">
+                <span className="settingsFieldLabel">Exchange</span>
                 <input className="input" value={exchange} onChange={(e) => setExchange(e.target.value)} />
               </label>
-              <label style={{ display: "grid", gap: 6 }}>
-                <span style={{ fontSize: 12, color: "var(--muted)" }}>Account ID</span>
+              <label className="settingsField">
+                <span className="settingsFieldLabel">Account ID</span>
                 <input className="input" value={accountId} onChange={(e) => setAccountId(e.target.value)} disabled={scopeType !== "account"} />
               </label>
-              <label style={{ display: "grid", gap: 6 }}>
-                <span style={{ fontSize: 12, color: "var(--muted)" }}>Symbol</span>
+              <label className="settingsField">
+                <span className="settingsFieldLabel">Symbol</span>
                 <input className="input" value={symbol} onChange={(e) => setSymbol(e.target.value.toUpperCase())} disabled={scopeType !== "symbol" && scopeType !== "symbol_tf"} />
               </label>
-              <label style={{ display: "grid", gap: 6 }}>
-                <span style={{ fontSize: 12, color: "var(--muted)" }}>Timeframe</span>
+              <label className="settingsField">
+                <span className="settingsFieldLabel">Timeframe</span>
                 <select
                   className="input"
                   value={timeframe}
@@ -818,104 +793,104 @@ export default function AdminIndicatorSettingsPage() {
               </label>
             </div>
 
-            <div style={{ marginTop: 12, fontWeight: 700 }}>Pack Toggles</div>
-            <div style={{ marginTop: 6, display: "grid", gap: 10, gridTemplateColumns: "repeat(auto-fit,minmax(160px,1fr))" }}>
-              <label className="inlineCheck"><input type="checkbox" checked={config.enabledPacks.indicatorsV1} onChange={(e) => setPackEnabled("indicatorsV1", e.target.checked)} /> Indicators V1</label>
-              <label className="inlineCheck"><input type="checkbox" checked={config.enabledPacks.indicatorsV2} onChange={(e) => setPackEnabled("indicatorsV2", e.target.checked)} /> Indicators V2</label>
-              <label className="inlineCheck"><input type="checkbox" checked={config.enabledPacks.tradersReality} onChange={(e) => setPackEnabled("tradersReality", e.target.checked)} /> TradersReality</label>
-              <label className="inlineCheck"><input type="checkbox" checked={config.enabledPacks.liquiditySweeps} onChange={(e) => setPackEnabled("liquiditySweeps", e.target.checked)} /> Liquidity Sweeps</label>
+            <div className="indicatorConfigBlock">
+              <div className="indicatorConfigTitle">Indicators V2 Params</div>
+              <div className="indicatorConfigGrid">
+                <label className="settingsField"><span className="mutedTiny">Stoch RSI len</span><input className="input" type="number" value={config.indicatorsV2.stochrsi.rsiLen} onChange={(e) => setIndicatorsV2StochRsi("rsiLen", parseNumber(e.target.value))} /></label>
+                <label className="settingsField"><span className="mutedTiny">Stoch len</span><input className="input" type="number" value={config.indicatorsV2.stochrsi.stochLen} onChange={(e) => setIndicatorsV2StochRsi("stochLen", parseNumber(e.target.value))} /></label>
+                <label className="settingsField"><span className="mutedTiny">Stoch smooth K</span><input className="input" type="number" value={config.indicatorsV2.stochrsi.smoothK} onChange={(e) => setIndicatorsV2StochRsi("smoothK", parseNumber(e.target.value))} /></label>
+                <label className="settingsField"><span className="mutedTiny">Stoch smooth D</span><input className="input" type="number" value={config.indicatorsV2.stochrsi.smoothD} onChange={(e) => setIndicatorsV2StochRsi("smoothD", parseNumber(e.target.value))} /></label>
+                <label className="settingsField"><span className="mutedTiny">Volume lookback</span><input className="input" type="number" value={config.indicatorsV2.volume.lookback} onChange={(e) => setIndicatorsV2Volume("lookback", parseNumber(e.target.value))} /></label>
+                <label className="settingsField"><span className="mutedTiny">Volume EMA fast</span><input className="input" type="number" value={config.indicatorsV2.volume.emaFast} onChange={(e) => setIndicatorsV2Volume("emaFast", parseNumber(e.target.value))} /></label>
+                <label className="settingsField"><span className="mutedTiny">Volume EMA slow</span><input className="input" type="number" value={config.indicatorsV2.volume.emaSlow} onChange={(e) => setIndicatorsV2Volume("emaSlow", parseNumber(e.target.value))} /></label>
+                <label className="settingsField"><span className="mutedTiny">FVG lookback</span><input className="input" type="number" value={config.indicatorsV2.fvg.lookback} onChange={(e) => setIndicatorsV2Fvg("lookback", parseNumber(e.target.value))} /></label>
+                <label className="settingsField"><span className="mutedTiny">FVG fill rule</span><select className="input" value={config.indicatorsV2.fvg.fillRule} onChange={(e) => setIndicatorsV2Fvg("fillRule", parseFvgFillRule(e.target.value))}><option value="overlap">overlap</option><option value="mid_touch">mid_touch</option></select></label>
+              </div>
             </div>
 
-            <div style={{ marginTop: 14, fontWeight: 700 }}>Indicators V2 Params</div>
-            <div style={{ marginTop: 6, display: "grid", gap: 10, gridTemplateColumns: "repeat(auto-fit,minmax(160px,1fr))" }}>
-              <label style={{ display: "grid", gap: 4 }}><span className="mutedTiny">Stoch RSI len</span><input className="input" type="number" value={config.indicatorsV2.stochrsi.rsiLen} onChange={(e) => setIndicatorsV2StochRsi("rsiLen", parseNumber(e.target.value))} /></label>
-              <label style={{ display: "grid", gap: 4 }}><span className="mutedTiny">Stoch len</span><input className="input" type="number" value={config.indicatorsV2.stochrsi.stochLen} onChange={(e) => setIndicatorsV2StochRsi("stochLen", parseNumber(e.target.value))} /></label>
-              <label style={{ display: "grid", gap: 4 }}><span className="mutedTiny">Stoch smooth K</span><input className="input" type="number" value={config.indicatorsV2.stochrsi.smoothK} onChange={(e) => setIndicatorsV2StochRsi("smoothK", parseNumber(e.target.value))} /></label>
-              <label style={{ display: "grid", gap: 4 }}><span className="mutedTiny">Stoch smooth D</span><input className="input" type="number" value={config.indicatorsV2.stochrsi.smoothD} onChange={(e) => setIndicatorsV2StochRsi("smoothD", parseNumber(e.target.value))} /></label>
-              <label style={{ display: "grid", gap: 4 }}><span className="mutedTiny">Volume lookback</span><input className="input" type="number" value={config.indicatorsV2.volume.lookback} onChange={(e) => setIndicatorsV2Volume("lookback", parseNumber(e.target.value))} /></label>
-              <label style={{ display: "grid", gap: 4 }}><span className="mutedTiny">Volume EMA fast</span><input className="input" type="number" value={config.indicatorsV2.volume.emaFast} onChange={(e) => setIndicatorsV2Volume("emaFast", parseNumber(e.target.value))} /></label>
-              <label style={{ display: "grid", gap: 4 }}><span className="mutedTiny">Volume EMA slow</span><input className="input" type="number" value={config.indicatorsV2.volume.emaSlow} onChange={(e) => setIndicatorsV2Volume("emaSlow", parseNumber(e.target.value))} /></label>
-              <label style={{ display: "grid", gap: 4 }}><span className="mutedTiny">FVG lookback</span><input className="input" type="number" value={config.indicatorsV2.fvg.lookback} onChange={(e) => setIndicatorsV2Fvg("lookback", parseNumber(e.target.value))} /></label>
-              <label style={{ display: "grid", gap: 4 }}><span className="mutedTiny">FVG fill rule</span><select className="input" value={config.indicatorsV2.fvg.fillRule} onChange={(e) => setIndicatorsV2Fvg("fillRule", parseFvgFillRule(e.target.value))}><option value="overlap">overlap</option><option value="mid_touch">mid_touch</option></select></label>
+            <div className="indicatorConfigBlock">
+              <div className="indicatorConfigTitle">Advanced Indicators Params</div>
+              <div className="indicatorConfigGrid">
+                <label className="settingsField"><span className="mutedTiny">Opening range (min)</span><input className="input" type="number" value={config.advancedIndicators.openingRangeMin} onChange={(e) => setAdvancedIndicatorsNumber("openingRangeMin", parseNumber(e.target.value))} /></label>
+                <label className="settingsField"><span className="mutedTiny">ADR len</span><input className="input" type="number" value={config.advancedIndicators.adrLen} onChange={(e) => setAdvancedIndicatorsNumber("adrLen", parseNumber(e.target.value))} /></label>
+                <label className="settingsField"><span className="mutedTiny">AWR len</span><input className="input" type="number" value={config.advancedIndicators.awrLen} onChange={(e) => setAdvancedIndicatorsNumber("awrLen", parseNumber(e.target.value))} /></label>
+                <label className="settingsField"><span className="mutedTiny">AMR len</span><input className="input" type="number" value={config.advancedIndicators.amrLen} onChange={(e) => setAdvancedIndicatorsNumber("amrLen", parseNumber(e.target.value))} /></label>
+                <label className="settingsField"><span className="mutedTiny">RD len</span><input className="input" type="number" value={config.advancedIndicators.rdLen} onChange={(e) => setAdvancedIndicatorsNumber("rdLen", parseNumber(e.target.value))} /></label>
+                <label className="settingsField"><span className="mutedTiny">RW len</span><input className="input" type="number" value={config.advancedIndicators.rwLen} onChange={(e) => setAdvancedIndicatorsNumber("rwLen", parseNumber(e.target.value))} /></label>
+                <label className="inlineCheck"><input type="checkbox" checked={config.advancedIndicators.sessionsUseDST} onChange={(e) => setAdvancedIndicatorsSessionsUseDst(e.target.checked)} /> Sessions use DST</label>
+              </div>
             </div>
 
-            <div style={{ marginTop: 14, fontWeight: 700 }}>TradersReality Params</div>
-            <div style={{ marginTop: 6, display: "grid", gap: 10, gridTemplateColumns: "repeat(auto-fit,minmax(160px,1fr))" }}>
-              <label style={{ display: "grid", gap: 4 }}><span className="mutedTiny">TR opening range (min)</span><input className="input" type="number" value={config.tradersReality.openingRangeMin} onChange={(e) => setTradersRealityNumber("openingRangeMin", parseNumber(e.target.value))} /></label>
-              <label style={{ display: "grid", gap: 4 }}><span className="mutedTiny">ADR len</span><input className="input" type="number" value={config.tradersReality.adrLen} onChange={(e) => setTradersRealityNumber("adrLen", parseNumber(e.target.value))} /></label>
-              <label style={{ display: "grid", gap: 4 }}><span className="mutedTiny">AWR len</span><input className="input" type="number" value={config.tradersReality.awrLen} onChange={(e) => setTradersRealityNumber("awrLen", parseNumber(e.target.value))} /></label>
-              <label style={{ display: "grid", gap: 4 }}><span className="mutedTiny">AMR len</span><input className="input" type="number" value={config.tradersReality.amrLen} onChange={(e) => setTradersRealityNumber("amrLen", parseNumber(e.target.value))} /></label>
-              <label style={{ display: "grid", gap: 4 }}><span className="mutedTiny">RD len</span><input className="input" type="number" value={config.tradersReality.rdLen} onChange={(e) => setTradersRealityNumber("rdLen", parseNumber(e.target.value))} /></label>
-              <label style={{ display: "grid", gap: 4 }}><span className="mutedTiny">RW len</span><input className="input" type="number" value={config.tradersReality.rwLen} onChange={(e) => setTradersRealityNumber("rwLen", parseNumber(e.target.value))} /></label>
-              <label className="inlineCheck"><input type="checkbox" checked={config.tradersReality.sessionsUseDST} onChange={(e) => setTradersRealitySessionsUseDst(e.target.checked)} /> Sessions use DST</label>
+            <div className="indicatorConfigBlock">
+              <div className="indicatorConfigTitle">AI Gating</div>
+              <div className="indicatorConfigGrid">
+                <label className="settingsField">
+                  <span className="mutedTiny">Min confidence for explain (%)</span>
+                  <input
+                    className="input"
+                    type="number"
+                    min={0}
+                    max={100}
+                    step={0.1}
+                    value={config.aiGating.minConfidenceForExplain}
+                    onChange={(e) =>
+                      setAiGating("minConfidenceForExplain", parseNumber(e.target.value))
+                    }
+                  />
+                </label>
+                <label className="settingsField">
+                  <span className="mutedTiny">Min change score (0..1)</span>
+                  <input
+                    className="input"
+                    type="number"
+                    min={0}
+                    max={1}
+                    step={0.01}
+                    value={config.aiGating.minChangeScore}
+                    onChange={(e) => setAiGating("minChangeScore", parseNumber(e.target.value))}
+                  />
+                </label>
+              </div>
             </div>
 
-            <div style={{ marginTop: 14, fontWeight: 700 }}>AI Gating</div>
-            <div style={{ marginTop: 6, display: "grid", gap: 10, gridTemplateColumns: "repeat(auto-fit,minmax(160px,1fr))" }}>
-              <label style={{ display: "grid", gap: 4 }}>
-                <span className="mutedTiny">Min confidence for explain (%)</span>
-                <input
-                  className="input"
-                  type="number"
-                  min={0}
-                  max={100}
-                  step={0.1}
-                  value={config.aiGating.minConfidenceForExplain}
-                  onChange={(e) =>
-                    setAiGating("minConfidenceForExplain", parseNumber(e.target.value))
-                  }
-                />
-              </label>
-              <label style={{ display: "grid", gap: 4 }}>
-                <span className="mutedTiny">Min change score (0..1)</span>
-                <input
-                  className="input"
-                  type="number"
-                  min={0}
-                  max={1}
-                  step={0.01}
-                  value={config.aiGating.minChangeScore}
-                  onChange={(e) => setAiGating("minChangeScore", parseNumber(e.target.value))}
-                />
-              </label>
+            <div className="indicatorConfigBlock">
+              <div className="indicatorConfigTitle">Liquidity Sweeps (Prepared)</div>
+              <div className="settingsMutedText indicatorConfigHint">
+                These params are configurable now but not yet wired into prediction feature snapshots.
+              </div>
+              <div className="indicatorConfigGrid">
+                <label className="settingsField">
+                  <span className="mutedTiny">Sweep len</span>
+                  <input className="input" type="number" value={config.liquiditySweeps.len} onChange={(e) => setLiquiditySweepsNumber("len", parseNumber(e.target.value))} />
+                </label>
+                <label className="settingsField">
+                  <span className="mutedTiny">Mode</span>
+                  <select className="input" value={config.liquiditySweeps.mode} onChange={(e) => setLiquiditySweepsMode(parseLiquiditySweepsMode(e.target.value))}>
+                    <option value="wicks">wicks</option>
+                    <option value="outbreak_retest">outbreak_retest</option>
+                    <option value="both">both</option>
+                  </select>
+                </label>
+                <label className="inlineCheck">
+                  <input type="checkbox" checked={config.liquiditySweeps.extend} onChange={(e) => setLiquiditySweepsExtend(e.target.checked)} />
+                  Extend zones
+                </label>
+                <label className="settingsField">
+                  <span className="mutedTiny">Max bars</span>
+                  <input className="input" type="number" value={config.liquiditySweeps.maxBars} onChange={(e) => setLiquiditySweepsNumber("maxBars", parseNumber(e.target.value))} />
+                </label>
+                <label className="settingsField">
+                  <span className="mutedTiny">Max recent events</span>
+                  <input className="input" type="number" value={config.liquiditySweeps.maxRecentEvents} onChange={(e) => setLiquiditySweepsNumber("maxRecentEvents", parseNumber(e.target.value))} />
+                </label>
+                <label className="settingsField">
+                  <span className="mutedTiny">Max active zones</span>
+                  <input className="input" type="number" value={config.liquiditySweeps.maxActiveZones} onChange={(e) => setLiquiditySweepsNumber("maxActiveZones", parseNumber(e.target.value))} />
+                </label>
+              </div>
             </div>
 
-            <div style={{ marginTop: 14, fontWeight: 700 }}>Liquidity Sweeps (Prepared)</div>
-            <div className="settingsMutedText" style={{ marginBottom: 6 }}>
-              These params are configurable now but not yet wired into prediction feature snapshots.
-            </div>
-            <div style={{ marginTop: 6, display: "grid", gap: 10, gridTemplateColumns: "repeat(auto-fit,minmax(160px,1fr))" }}>
-              <label style={{ display: "grid", gap: 4 }}>
-                <span className="mutedTiny">Sweep len</span>
-                <input className="input" type="number" value={config.liquiditySweeps.len} onChange={(e) => setLiquiditySweepsNumber("len", parseNumber(e.target.value))} />
-              </label>
-              <label style={{ display: "grid", gap: 4 }}>
-                <span className="mutedTiny">Mode</span>
-                <select className="input" value={config.liquiditySweeps.mode} onChange={(e) => setLiquiditySweepsMode(parseLiquiditySweepsMode(e.target.value))}>
-                  <option value="wicks">wicks</option>
-                  <option value="outbreak_retest">outbreak_retest</option>
-                  <option value="both">both</option>
-                </select>
-              </label>
-              <label className="inlineCheck">
-                <input type="checkbox" checked={config.liquiditySweeps.extend} onChange={(e) => setLiquiditySweepsExtend(e.target.checked)} />
-                Extend zones
-              </label>
-              <label style={{ display: "grid", gap: 4 }}>
-                <span className="mutedTiny">Max bars</span>
-                <input className="input" type="number" value={config.liquiditySweeps.maxBars} onChange={(e) => setLiquiditySweepsNumber("maxBars", parseNumber(e.target.value))} />
-              </label>
-              <label style={{ display: "grid", gap: 4 }}>
-                <span className="mutedTiny">Max recent events</span>
-                <input className="input" type="number" value={config.liquiditySweeps.maxRecentEvents} onChange={(e) => setLiquiditySweepsNumber("maxRecentEvents", parseNumber(e.target.value))} />
-              </label>
-              <label style={{ display: "grid", gap: 4 }}>
-                <span className="mutedTiny">Max active zones</span>
-                <input className="input" type="number" value={config.liquiditySweeps.maxActiveZones} onChange={(e) => setLiquiditySweepsNumber("maxActiveZones", parseNumber(e.target.value))} />
-              </label>
-            </div>
-
-            <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginTop: 12 }}>
+            <div className="indicatorFormActions">
               <button className="btn btnPrimary" type="button" disabled={saving || !canSave} onClick={save}>{saving ? "Saving..." : editingId ? "Update override" : "Create override"}</button>
               <button className="btn" type="button" onClick={() => void refreshResolvedPreview()}>Preview resolved</button>
               <button className="btn" type="button" onClick={resetForm}>Reset form</button>

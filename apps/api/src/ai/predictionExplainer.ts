@@ -73,7 +73,7 @@ const SYSTEM_MESSAGE =
   "You are a trading assistant. You must only use the provided JSON featureSnapshot. " +
   "If a value is missing, say 'unknown' or omit it. Do not mention news unless featureSnapshot contains a 'newsRisk' flag. " +
   "You may reference indicators only when values exist under featureSnapshot.indicators (including stochrsi, volume, fvg) " +
-  "or under featureSnapshot.tradersReality (emas, cloud, levels, ranges, sessions, pvsra). " +
+  "or under featureSnapshot.advancedIndicators (emas, cloud, levels, ranges, sessions, pvsra). " +
   "Do not claim volume spikes or fair value gaps unless those fields explicitly support it. " +
   "Never mention TradingView.";
 
@@ -94,7 +94,13 @@ function getByPath(snapshot: Record<string, unknown>, path: string): unknown {
   let cursor: unknown = snapshot;
   for (const segment of path.split(".")) {
     if (!cursor || typeof cursor !== "object" || Array.isArray(cursor)) return undefined;
-    cursor = (cursor as Record<string, unknown>)[segment];
+    const record = cursor as Record<string, unknown>;
+    cursor = record[segment];
+    if (cursor === undefined && segment === "advancedIndicators") {
+      cursor = record.tradersReality;
+    } else if (cursor === undefined && segment === "tradersReality") {
+      cursor = record.advancedIndicators;
+    }
   }
   return cursor;
 }
@@ -168,7 +174,7 @@ function deriveFallbackAiPrediction(input: {
     "trendScore",
     "trend",
     "indicators.macd.hist",
-    "tradersReality.emas.emaDistancesPct.spread_13_50_pct"
+    "advancedIndicators.emas.emaDistancesPct.spread_13_50_pct"
   ]);
   const momentum = pickNumberByPaths(snapshot, ["momentum", "indicators.vwap.dist_pct"]);
   const rsi = pickNumberByPaths(snapshot, ["rsi", "indicators.rsi_14"]);
@@ -234,6 +240,11 @@ function collectFeaturePaths(
   for (const [key, next] of Object.entries(record)) {
     const path = prefix ? `${prefix}.${key}` : key;
     out.add(path);
+    if (path.startsWith("advancedIndicators")) {
+      out.add(path.replace("advancedIndicators", "tradersReality"));
+    } else if (path.startsWith("tradersReality")) {
+      out.add(path.replace("tradersReality", "advancedIndicators"));
+    }
     if (next && typeof next === "object" && !Array.isArray(next)) {
       collectFeaturePaths(next, path, out, depth + 1);
     }
@@ -303,8 +314,8 @@ export function fallbackExplain(input: ExplainerInput): ExplainerOutput {
     "ema_slope",
     "indicators.macd.hist",
     "indicators.vwap.dist_pct",
-    "tradersReality.emas.emaDistancesPct.spread_13_50_pct",
-    "tradersReality.emas.emaDistancesPct.spread_50_200_pct"
+    "advancedIndicators.emas.emaDistancesPct.spread_13_50_pct",
+    "advancedIndicators.emas.emaDistancesPct.spread_50_200_pct"
   ]);
   const adx = pickNumberByPaths(snapshot, ["adx", "trendStrength", "indicators.adx.adx_14"]);
   const breakoutProb = pickNumberByPaths(snapshot, ["breakoutProb", "breakoutRisk", "breakout_score"]);
@@ -318,8 +329,8 @@ export function fallbackExplain(input: ExplainerInput): ExplainerOutput {
   const volZ = pickNumberByPaths(snapshot, ["indicators.volume.vol_z"]);
   const relVol = pickNumberByPaths(snapshot, ["indicators.volume.rel_vol"]);
   const volTrend = pickNumberByPaths(snapshot, ["indicators.volume.vol_trend"]);
-  const trPvsraTier = getByPath(snapshot, "tradersReality.pvsra.vectorTier");
-  const trCloudPos = pickNumberByPaths(snapshot, ["tradersReality.cloud.price_pos"]);
+  const trPvsraTier = getByPath(snapshot, "advancedIndicators.pvsra.vectorTier");
+  const trCloudPos = pickNumberByPaths(snapshot, ["advancedIndicators.cloud.price_pos"]);
   const openBullishGaps = pickNumberByPaths(snapshot, ["indicators.fvg.open_bullish_count"]);
   const openBearishGaps = pickNumberByPaths(snapshot, ["indicators.fvg.open_bearish_count"]);
   const nearestBullGapDist = pickNumberByPaths(snapshot, ["indicators.fvg.nearest_bullish_gap.dist_pct"]);
@@ -415,15 +426,15 @@ export function fallbackExplain(input: ExplainerInput): ExplainerOutput {
     "indicators.fvg.nearest_bearish_gap.dist_pct",
     "indicators.vwap.dist_pct",
     "indicators.adx.adx_14",
-    "tradersReality.emas.ema_50",
-    "tradersReality.emas.ema_200",
-    "tradersReality.emas.ema_800",
-    "tradersReality.emas.emaDistancesPct.spread_13_50_pct",
-    "tradersReality.cloud.price_pos",
-    "tradersReality.ranges.distancesPct.dist_to_adrHigh_pct",
-    "tradersReality.ranges.distancesPct.dist_to_adrLow_pct",
-    "tradersReality.pvsra.vectorTier",
-    "tradersReality.pvsra.vectorColor",
+    "advancedIndicators.emas.ema_50",
+    "advancedIndicators.emas.ema_200",
+    "advancedIndicators.emas.ema_800",
+    "advancedIndicators.emas.emaDistancesPct.spread_13_50_pct",
+    "advancedIndicators.cloud.price_pos",
+    "advancedIndicators.ranges.distancesPct.dist_to_adrHigh_pct",
+    "advancedIndicators.ranges.distancesPct.dist_to_adrLow_pct",
+    "advancedIndicators.pvsra.vectorTier",
+    "advancedIndicators.pvsra.vectorColor",
     "emaSpread",
     "atrPct",
     "volatility",
@@ -483,7 +494,7 @@ function buildPromptPayload(input: ExplainerInput) {
     groundingRules: [
       "Only reference values that exist in featureSnapshot",
       "Only reference stochrsi/volume/fvg when present and non-null",
-      "Only reference tradersReality fields when present and non-null",
+      "Only reference advancedIndicators fields when present and non-null",
       "Do not claim volume spikes unless rel_vol or vol_z supports it",
       "Do not claim fair value gaps unless fvg counts or distances support it",
       "aiPrediction must be inferred from featureSnapshot and can differ from prediction"

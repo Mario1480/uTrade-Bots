@@ -1,20 +1,20 @@
-import type { Candle } from "../../timeframe.js";
-import { computeTradersRealityCloud, type TradersRealityCloudSnapshot } from "./indicators/cloud.js";
-import { computeTradersRealityEma, type TradersRealityEmaSnapshot } from "./indicators/ema.js";
-import { round } from "./indicators/shared.js";
+import type { Candle } from "../timeframe.js";
+import { computeCloud, type CloudSnapshot } from "./cloud.js";
+import { computeEmaCore, type EmaSnapshot } from "./emaCore.js";
+import { round } from "./shared.js";
 
-export type { TradersRealityEmaSnapshot } from "./indicators/ema.js";
-export type { TradersRealityCloudSnapshot } from "./indicators/cloud.js";
+export type { EmaSnapshot } from "./emaCore.js";
+export type { CloudSnapshot } from "./cloud.js";
 
-export function computeTradersRealityEmaSnapshot(candles: Candle[]): {
-  emas: TradersRealityEmaSnapshot;
-  cloud: TradersRealityCloudSnapshot;
+export function computeEmaCloudSnapshot(candles: Candle[]): {
+  emas: EmaSnapshot;
+  cloud: CloudSnapshot;
   dataGap: boolean;
 } {
   const closes = candles.map((row) => row.close);
   const lastClose = closes.length > 0 ? closes[closes.length - 1] : null;
-  const ema = computeTradersRealityEma(closes);
-  const cloud = computeTradersRealityCloud(closes, ema.ema50.latest, lastClose);
+  const ema = computeEmaCore(closes);
+  const cloud = computeCloud(closes, ema.ema50.latest, lastClose);
 
   const dataGap =
     closes.length < 900 ||

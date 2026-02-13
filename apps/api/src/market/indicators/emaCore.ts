@@ -3,7 +3,7 @@ import { mean, toFinite } from "./shared.js";
 
 type NullableNumber = number | null;
 
-export type TradersRealityEmaSnapshot = {
+export type EmaSnapshot = {
   ema_5: NullableNumber;
   ema_13: NullableNumber;
   ema_50: NullableNumber;
@@ -59,7 +59,7 @@ function latestEma(values: number[], period: number): EmaLatest {
   return { latest, prev };
 }
 
-export type TradersRealityEmaComputed = {
+export type EmaComputed = {
   ema5: EmaLatest;
   ema13: EmaLatest;
   ema50: EmaLatest;
@@ -69,7 +69,7 @@ export type TradersRealityEmaComputed = {
   bearishStack: boolean;
 };
 
-export function computeTradersRealityEma(closes: number[]): TradersRealityEmaComputed {
+export function computeEmaCore(closes: number[]): EmaComputed {
   const ema5 = latestEma(closes, 5);
   const ema13 = latestEma(closes, 13);
   const ema50 = latestEma(closes, 50);

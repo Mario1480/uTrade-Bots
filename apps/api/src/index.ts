@@ -93,7 +93,7 @@ import {
   minimumCandlesForIndicatorsWithSettings,
   type IndicatorsSnapshot
 } from "./market/indicators.js";
-import { computeTradersRealityFeatures } from "./market/indicators/tradersReality/index.js";
+import { computeAdvancedIndicators } from "./market/indicators/advancedIndicators.js";
 import { bucketCandles, toBucketStart } from "./market/timeframe.js";
 import {
   DEFAULT_INDICATOR_SETTINGS,
@@ -923,16 +923,16 @@ function toIndicatorComputeSettings(config: IndicatorSettingsConfig) {
   };
 }
 
-function toTradersRealityComputeSettings(config: IndicatorSettingsConfig) {
+function toAdvancedIndicatorComputeSettings(config: IndicatorSettingsConfig) {
   return {
-    enabled: config.enabledPacks.tradersReality,
-    adrLen: config.tradersReality.adrLen,
-    awrLen: config.tradersReality.awrLen,
-    amrLen: config.tradersReality.amrLen,
-    rdLen: config.tradersReality.rdLen,
-    rwLen: config.tradersReality.rwLen,
-    openingRangeMinutes: config.tradersReality.openingRangeMin,
-    sessionsUseDST: config.tradersReality.sessionsUseDST
+    enabled: config.enabledPacks.advancedIndicators,
+    adrLen: config.advancedIndicators.adrLen,
+    awrLen: config.advancedIndicators.awrLen,
+    amrLen: config.advancedIndicators.amrLen,
+    rdLen: config.advancedIndicators.rdLen,
+    rwLen: config.advancedIndicators.rwLen,
+    openingRangeMinutes: config.advancedIndicators.openingRangeMin,
+    sessionsUseDST: config.advancedIndicators.sessionsUseDST
   };
 }
 
@@ -2071,7 +2071,7 @@ async function generateAutoPredictionForUser(
       timeframe: payload.timeframe
     });
     const indicatorComputeSettings = toIndicatorComputeSettings(indicatorSettingsResolution.config);
-    const tradersRealitySettings = toTradersRealityComputeSettings(indicatorSettingsResolution.config);
+    const advancedIndicatorSettings = toAdvancedIndicatorComputeSettings(indicatorSettingsResolution.config);
 
     const exchangeSymbol = await adapter.toExchangeSymbol(canonicalSymbol);
     const candleLookback = Math.max(
@@ -2108,10 +2108,10 @@ async function generateAutoPredictionForUser(
       logVwapMetrics: true,
       settings: indicatorComputeSettings
     });
-    const tradersReality = computeTradersRealityFeatures(
+    const advancedIndicators = computeAdvancedIndicators(
       alignedCandles,
       payload.timeframe,
-      tradersRealitySettings
+      advancedIndicatorSettings
     );
     const ticker = normalizeTickerPayload(coerceFirstItem(tickerRaw));
     const referencePrice = ticker.mark ?? ticker.last ?? closes[closes.length - 1];
@@ -2171,12 +2171,12 @@ async function generateAutoPredictionForUser(
     inferred.featureSnapshot.qualityTpCount = quality.tpCount;
     inferred.featureSnapshot.qualitySlCount = quality.slCount;
     inferred.featureSnapshot.qualityExpiredCount = quality.expiredCount;
-    inferred.featureSnapshot.tradersReality = tradersReality;
+    inferred.featureSnapshot.advancedIndicators = advancedIndicators;
     inferred.featureSnapshot.meta = {
       ...(asRecord(inferred.featureSnapshot.meta) ?? {}),
       indicatorSettingsHash: indicatorSettingsResolution.hash
     };
-    if (tradersReality.dataGap) {
+    if (advancedIndicators.dataGap) {
       const riskFlags = asRecord(inferred.featureSnapshot.riskFlags) ?? {};
       inferred.featureSnapshot.riskFlags = { ...riskFlags, dataGap: true };
     }
@@ -4313,7 +4313,7 @@ async function refreshPredictionStateForTemplate(params: {
       timeframe: template.timeframe
     });
     const indicatorComputeSettings = toIndicatorComputeSettings(indicatorSettingsResolution.config);
-    const tradersRealitySettings = toTradersRealityComputeSettings(indicatorSettingsResolution.config);
+    const advancedIndicatorSettings = toAdvancedIndicatorComputeSettings(indicatorSettingsResolution.config);
 
     const exchangeSymbol = await adapter.toExchangeSymbol(template.symbol);
     const candleLookback = Math.max(
@@ -4345,10 +4345,10 @@ async function refreshPredictionStateForTemplate(params: {
       logVwapMetrics: true,
       settings: indicatorComputeSettings
     });
-    const tradersReality = computeTradersRealityFeatures(
+    const advancedIndicators = computeAdvancedIndicators(
       candles,
       template.timeframe,
-      tradersRealitySettings
+      advancedIndicatorSettings
     );
     const ticker = normalizeTickerPayload(coerceFirstItem(tickerRaw));
     const referencePrice = ticker.mark ?? ticker.last ?? closes[closes.length - 1];
@@ -4404,12 +4404,12 @@ async function refreshPredictionStateForTemplate(params: {
     inferred.featureSnapshot.qualityTpCount = quality.tpCount;
     inferred.featureSnapshot.qualitySlCount = quality.slCount;
     inferred.featureSnapshot.qualityExpiredCount = quality.expiredCount;
-    inferred.featureSnapshot.tradersReality = tradersReality;
+    inferred.featureSnapshot.advancedIndicators = advancedIndicators;
     inferred.featureSnapshot.meta = {
       ...(asRecord(inferred.featureSnapshot.meta) ?? {}),
       indicatorSettingsHash: indicatorSettingsResolution.hash
     };
-    if (tradersReality.dataGap) {
+    if (advancedIndicators.dataGap) {
       const riskFlags = asRecord(inferred.featureSnapshot.riskFlags) ?? {};
       inferred.featureSnapshot.riskFlags = { ...riskFlags, dataGap: true };
     }

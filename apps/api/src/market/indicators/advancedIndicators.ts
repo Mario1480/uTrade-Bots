@@ -1,38 +1,43 @@
-import type { Candle, Timeframe } from "../../timeframe.js";
+import type { Candle, Timeframe } from "../timeframe.js";
 import {
-  computeTradersRealityEmaSnapshot,
-  type TradersRealityCloudSnapshot,
-  type TradersRealityEmaSnapshot
-} from "./emas.js";
+  computeEmaCloudSnapshot,
+  type CloudSnapshot,
+  type EmaSnapshot
+} from "./emaCloud.js";
 import {
-  computeTradersRealityLevels,
-  type TradersRealityLevelsSnapshot
+  computeLevels,
+  type LevelsSnapshot
 } from "./levels.js";
 import {
-  computeTradersRealityPvsra,
-  type TradersRealityPvsraSnapshot
+  computePvsra,
+  type PvsraSnapshot
 } from "./pvsra.js";
 import {
-  computeTradersRealityRanges,
-  type TradersRealityRangesSnapshot
+  computeRanges,
+  type RangesSnapshot
 } from "./ranges.js";
 import {
-  computeTradersRealitySessions,
-  type TradersRealitySessionsSnapshot
+  computeSessions,
+  type SessionsSnapshot
 } from "./sessions.js";
+import {
+  computeSmartMoneyConcepts,
+  type SmartMoneyConceptsSnapshot
+} from "./smartMoneyConcepts.js";
 
-export type TradersRealitySnapshot = {
-  emas: TradersRealityEmaSnapshot;
-  cloud: TradersRealityCloudSnapshot;
-  levels: TradersRealityLevelsSnapshot;
-  ranges: TradersRealityRangesSnapshot;
-  sessions: TradersRealitySessionsSnapshot;
-  pvsra: TradersRealityPvsraSnapshot;
+export type AdvancedIndicatorsSnapshot = {
+  emas: EmaSnapshot;
+  cloud: CloudSnapshot;
+  levels: LevelsSnapshot;
+  ranges: RangesSnapshot;
+  sessions: SessionsSnapshot;
+  pvsra: PvsraSnapshot;
+  smartMoneyConcepts: SmartMoneyConceptsSnapshot;
   timeframe: Timeframe;
   dataGap: boolean;
 };
 
-export type TradersRealityComputeOptions = {
+export type AdvancedIndicatorsComputeOptions = {
   enabled?: boolean;
   adrLen?: number;
   awrLen?: number;
@@ -43,7 +48,7 @@ export type TradersRealityComputeOptions = {
   sessionsUseDST?: boolean;
 };
 
-function emptySnapshot(tf: Timeframe): TradersRealitySnapshot {
+function emptySnapshot(tf: Timeframe): AdvancedIndicatorsSnapshot {
   return {
     timeframe: tf,
     emas: {
@@ -145,15 +150,85 @@ function emptySnapshot(tf: Timeframe): TradersRealitySnapshot {
         purpleBlue: false
       }
     },
+    smartMoneyConcepts: {
+      internal: {
+        trend: "neutral",
+        lastEvent: {
+          type: null,
+          direction: null,
+          level: null,
+          ts: null
+        },
+        bullishBreaks: 0,
+        bearishBreaks: 0
+      },
+      swing: {
+        trend: "neutral",
+        lastEvent: {
+          type: null,
+          direction: null,
+          level: null,
+          ts: null
+        },
+        bullishBreaks: 0,
+        bearishBreaks: 0
+      },
+      equalLevels: {
+        eqh: {
+          detected: false,
+          level: null,
+          ts: null,
+          deltaPct: null
+        },
+        eql: {
+          detected: false,
+          level: null,
+          ts: null,
+          deltaPct: null
+        }
+      },
+      orderBlocks: {
+        internal: {
+          bullishCount: 0,
+          bearishCount: 0,
+          latestBullish: null,
+          latestBearish: null
+        },
+        swing: {
+          bullishCount: 0,
+          bearishCount: 0,
+          latestBullish: null,
+          latestBearish: null
+        }
+      },
+      fairValueGaps: {
+        bullishCount: 0,
+        bearishCount: 0,
+        latestBullish: null,
+        latestBearish: null,
+        autoThresholdPct: null
+      },
+      zones: {
+        trailingTop: null,
+        trailingBottom: null,
+        premiumTop: null,
+        premiumBottom: null,
+        equilibriumTop: null,
+        equilibriumBottom: null,
+        discountTop: null,
+        discountBottom: null
+      },
+      dataGap: true
+    },
     dataGap: true
   };
 }
 
-export function computeTradersRealityFeatures(
+export function computeAdvancedIndicators(
   candles: Candle[],
   timeframe: Timeframe,
-  options: TradersRealityComputeOptions = {}
-): TradersRealitySnapshot {
+  options: AdvancedIndicatorsComputeOptions = {}
+): AdvancedIndicatorsSnapshot {
   if (options.enabled === false) {
     const snapshot = emptySnapshot(timeframe);
     snapshot.dataGap = false;
@@ -166,20 +241,21 @@ export function computeTradersRealityFeatures(
     return emptySnapshot(timeframe);
   }
 
-  const emaCloud = computeTradersRealityEmaSnapshot(sorted);
-  const levels = computeTradersRealityLevels(sorted);
-  const ranges = computeTradersRealityRanges(sorted, {
+  const emaCloud = computeEmaCloudSnapshot(sorted);
+  const levels = computeLevels(sorted);
+  const ranges = computeRanges(sorted, {
     adrLen: options.adrLen,
     awrLen: options.awrLen,
     amrLen: options.amrLen,
     rdLen: options.rdLen,
     rwLen: options.rwLen
   });
-  const sessions = computeTradersRealitySessions(sorted, {
+  const sessions = computeSessions(sorted, {
     openingRangeMinutes: options.openingRangeMinutes ?? 30,
     useDst: options.sessionsUseDST ?? true
   });
-  const pvsra = computeTradersRealityPvsra(sorted);
+  const pvsra = computePvsra(sorted);
+  const smartMoneyConcepts = computeSmartMoneyConcepts(sorted);
 
   return {
     timeframe,
@@ -189,6 +265,7 @@ export function computeTradersRealityFeatures(
     ranges,
     sessions,
     pvsra,
+    smartMoneyConcepts,
     dataGap: emaCloud.dataGap
   };
 }

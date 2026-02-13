@@ -51,7 +51,7 @@ test("resolveIndicatorSettings applies precedence global->account->symbol->symbo
           symbol: "BTCUSDT",
           timeframe: "15m",
           configJson: {
-            enabledPacks: { tradersReality: false }
+            enabledPacks: { advancedIndicators: false }
           }
         })
       ]
@@ -69,7 +69,7 @@ test("resolveIndicatorSettings applies precedence global->account->symbol->symbo
 
   assert.equal(resolved.config.indicatorsV2.volume.lookback, 150);
   assert.equal(resolved.config.indicatorsV2.fvg.lookback, 500);
-  assert.equal(resolved.config.enabledPacks.tradersReality, false);
+  assert.equal(resolved.config.enabledPacks.advancedIndicators, false);
   assert.equal(resolved.breakdown.length, 4);
   assert.ok(resolved.hash.length >= 12);
 });
@@ -86,6 +86,6 @@ test("resolveIndicatorSettings falls back to defaults when model is unavailable"
   });
 
   assert.equal(resolved.config.enabledPacks.indicatorsV1, true);
-  assert.equal(resolved.config.tradersReality.sessionsUseDST, true);
+  assert.equal(resolved.config.advancedIndicators.sessionsUseDST, true);
   assert.equal(resolved.breakdown.length, 0);
 });

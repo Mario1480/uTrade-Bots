@@ -2,7 +2,7 @@ import { clamp, round, std } from "./shared.js";
 
 type NullableNumber = number | null;
 
-export type TradersRealityCloudSnapshot = {
+export type CloudSnapshot = {
   cloud_size: NullableNumber;
   upper: NullableNumber;
   lower: NullableNumber;
@@ -10,11 +10,11 @@ export type TradersRealityCloudSnapshot = {
   price_pos: NullableNumber;
 };
 
-export function computeTradersRealityCloud(
+export function computeCloud(
   closes: number[],
   ema50Latest: number | null,
   lastClose: number | null
-): TradersRealityCloudSnapshot {
+): CloudSnapshot {
   const cloudLen = 100;
   const cloudWindow = closes.length >= cloudLen ? closes.slice(-cloudLen) : [];
   const cloudStd = cloudWindow.length === cloudLen ? std(cloudWindow) : null;

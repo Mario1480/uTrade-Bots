@@ -1,4 +1,4 @@
-import type { Candle } from "../../../timeframe.js";
+import type { Candle } from "../timeframe.js";
 
 type NullableNumber = number | null;
 
@@ -6,7 +6,7 @@ type VectorColor = "green" | "red" | "blue" | "violet" | "regular";
 type VectorTier = "extreme" | "high" | "none";
 type VectorDirection = "bull" | "bear";
 
-export type TradersRealityPvsraSnapshot = {
+export type PvsraSnapshot = {
   avgVol10: NullableNumber;
   spread: NullableNumber;
   volSpread: NullableNumber;
@@ -76,7 +76,7 @@ function classifyVectorColor(
   };
 }
 
-export function computeTradersRealityPvsra(candles: Candle[]): TradersRealityPvsraSnapshot {
+export function computePvsra(candles: Candle[]): PvsraSnapshot {
   if (candles.length === 0) {
     return {
       avgVol10: null,

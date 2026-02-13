@@ -1,4 +1,4 @@
-import type { Candle } from "../../../timeframe.js";
+import type { Candle } from "../timeframe.js";
 
 type NullableNumber = number | null;
 
@@ -11,7 +11,7 @@ type OhlcAggregate = {
   close: number;
 };
 
-export type TradersRealityLevelsSnapshot = {
+export type LevelsSnapshot = {
   daily: {
     dayOpen: NullableNumber;
     dayHigh: NullableNumber;
@@ -109,7 +109,7 @@ function aggregateByPeriod(
     .map(([, agg]) => agg);
 }
 
-function emptyLevels(): TradersRealityLevelsSnapshot {
+function emptyLevels(): LevelsSnapshot {
   return {
     daily: {
       dayOpen: null,
@@ -156,7 +156,7 @@ function pivotMids(pivots: {
   };
 }
 
-export function computeTradersRealityLevels(candles: Candle[]): TradersRealityLevelsSnapshot {
+export function computeLevels(candles: Candle[]): LevelsSnapshot {
   const levels = emptyLevels();
   const daily = aggregateByPeriod(candles, startOfUtcDay);
   const weekly = aggregateByPeriod(candles, startOfUtcWeek);

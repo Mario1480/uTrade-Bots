@@ -23,7 +23,7 @@ const baseInput: ExplainerInput = {
     emaSpread: 0.0012,
     volatility: 0.021,
     spreadBps: 8,
-    tradersReality: {
+    advancedIndicators: {
       emas: {
         ema_5: 70110,
         ema_13: 70092,
@@ -115,7 +115,25 @@ test("v2 indicator keyDrivers paths are accepted", () => {
   assert.equal(value.keyDrivers.length, 3);
 });
 
-test("tradersReality keyDrivers paths are accepted", () => {
+test("advancedIndicators keyDrivers paths are accepted", () => {
+  const value = validateExplainerOutput(
+    {
+      explanation: "Signal up while EMA structure remains stacked and cloud position is elevated.",
+      tags: ["trend_up"],
+      keyDrivers: [
+        { name: "advancedIndicators.emas.ema_50", value: 70040 },
+        { name: "advancedIndicators.emas.emaDistancesPct.spread_13_50_pct", value: 0.074 },
+        { name: "advancedIndicators.cloud.price_pos", value: 0.88 }
+      ],
+      disclaimer: "grounded_features_only"
+    },
+    baseInput.featureSnapshot
+  );
+
+  assert.equal(value.keyDrivers.length, 3);
+});
+
+test("legacy tradersReality keyDrivers remain accepted", () => {
   const value = validateExplainerOutput(
     {
       explanation: "Signal up while EMA structure remains stacked and cloud position is elevated.",
