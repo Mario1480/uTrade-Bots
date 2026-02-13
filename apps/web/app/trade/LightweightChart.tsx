@@ -69,6 +69,7 @@ type IndicatorToggleState = {
   emaCloud50: boolean;
   vwapSession: boolean;
   dailyOpen: boolean;
+  smcStructure: boolean;
 };
 
 type IndicatorPresetKey = "scalping" | "trend" | "off" | "all";
@@ -81,7 +82,8 @@ const DEFAULT_INDICATOR_TOGGLES: IndicatorToggleState = {
   ema800: false,
   emaCloud50: false,
   vwapSession: false,
-  dailyOpen: false
+  dailyOpen: false,
+  smcStructure: false
 };
 
 const INDICATOR_PRESETS: Record<IndicatorPresetKey, { label: string; toggles: IndicatorToggleState }> = {
@@ -95,7 +97,8 @@ const INDICATOR_PRESETS: Record<IndicatorPresetKey, { label: string; toggles: In
       ema800: false,
       emaCloud50: false,
       vwapSession: true,
-      dailyOpen: true
+      dailyOpen: true,
+      smcStructure: false
     }
   },
   trend: {
@@ -108,7 +111,8 @@ const INDICATOR_PRESETS: Record<IndicatorPresetKey, { label: string; toggles: In
       ema800: true,
       emaCloud50: true,
       vwapSession: false,
-      dailyOpen: true
+      dailyOpen: true,
+      smcStructure: true
     }
   },
   off: {
@@ -121,7 +125,8 @@ const INDICATOR_PRESETS: Record<IndicatorPresetKey, { label: string; toggles: In
       ema800: false,
       emaCloud50: false,
       vwapSession: false,
-      dailyOpen: false
+      dailyOpen: false,
+      smcStructure: false
     }
   },
   all: {
@@ -134,7 +139,8 @@ const INDICATOR_PRESETS: Record<IndicatorPresetKey, { label: string; toggles: In
       ema800: true,
       emaCloud50: true,
       vwapSession: true,
-      dailyOpen: true
+      dailyOpen: true,
+      smcStructure: true
     }
   }
 };
@@ -148,7 +154,8 @@ function togglesEqual(a: IndicatorToggleState, b: IndicatorToggleState): boolean
     a.ema800 === b.ema800 &&
     a.emaCloud50 === b.emaCloud50 &&
     a.vwapSession === b.vwapSession &&
-    a.dailyOpen === b.dailyOpen
+    a.dailyOpen === b.dailyOpen &&
+    a.smcStructure === b.smcStructure
   );
 }
 
@@ -273,6 +280,105 @@ function buildDailyOpenLine(items: Array<CandleApiItem & { ts: number }>): LineD
   return out;
 }
 
+type SmcPivotState = {
+  level: number | null;
+  crossed: boolean;
+};
+
+function isPivotHigh(items: Array<CandleApiItem & { ts: number }>, index: number, size: number): boolean {
+  if (index - size < 0 || index + size >= items.length) return false;
+  const level = items[index].high;
+  for (let i = index - size; i <= index + size; i += 1) {
+    if (i === index) continue;
+    if (items[i].high >= level) return false;
+  }
+  return true;
+}
+
+function isPivotLow(items: Array<CandleApiItem & { ts: number }>, index: number, size: number): boolean {
+  if (index - size < 0 || index + size >= items.length) return false;
+  const level = items[index].low;
+  for (let i = index - size; i <= index + size; i += 1) {
+    if (i === index) continue;
+    if (items[i].low <= level) return false;
+  }
+  return true;
+}
+
+function buildSmcMarkersForPivotSize(
+  items: Array<CandleApiItem & { ts: number }>,
+  pivotSize: number,
+  mode: "internal" | "swing"
+): SeriesMarker<Time>[] {
+  const markers: SeriesMarker<Time>[] = [];
+  const highPivot: SmcPivotState = { level: null, crossed: false };
+  const lowPivot: SmcPivotState = { level: null, crossed: false };
+  let trendBias = 0;
+
+  for (let i = 1; i < items.length; i += 1) {
+    if (isPivotHigh(items, i, pivotSize)) {
+      highPivot.level = items[i].high;
+      highPivot.crossed = false;
+    }
+    if (isPivotLow(items, i, pivotSize)) {
+      lowPivot.level = items[i].low;
+      lowPivot.crossed = false;
+    }
+
+    const prevClose = items[i - 1].close;
+    const close = items[i].close;
+    const time = Math.floor(items[i].ts / 1000) as UTCTimestamp;
+
+    if (
+      highPivot.level !== null &&
+      !highPivot.crossed &&
+      prevClose <= highPivot.level &&
+      close > highPivot.level
+    ) {
+      const eventType = trendBias < 0 ? "CHoCH" : "BOS";
+      trendBias = 1;
+      highPivot.crossed = true;
+      markers.push({
+        time,
+        position: "belowBar",
+        shape: mode === "swing" ? "arrowUp" : "circle",
+        color: eventType === "CHoCH" ? "#2dd4bf" : "#22c55e",
+        text: mode === "swing" ? eventType : `i${eventType}`
+      });
+    }
+
+    if (
+      lowPivot.level !== null &&
+      !lowPivot.crossed &&
+      prevClose >= lowPivot.level &&
+      close < lowPivot.level
+    ) {
+      const eventType = trendBias > 0 ? "CHoCH" : "BOS";
+      trendBias = -1;
+      lowPivot.crossed = true;
+      markers.push({
+        time,
+        position: "aboveBar",
+        shape: mode === "swing" ? "arrowDown" : "circle",
+        color: eventType === "CHoCH" ? "#f59e0b" : "#ef4444",
+        text: mode === "swing" ? eventType : `i${eventType}`
+      });
+    }
+  }
+
+  return markers;
+}
+
+function buildSmcStructureMarkers(
+  items: Array<CandleApiItem & { ts: number }>
+): SeriesMarker<Time>[] {
+  const internal = buildSmcMarkersForPivotSize(items, 5, "internal");
+  const swing = buildSmcMarkersForPivotSize(items, 50, "swing");
+  const merged = [...internal, ...swing].sort((a, b) => Number(a.time) - Number(b.time));
+  const maxMarkers = 120;
+  return merged.length > maxMarkers ? merged.slice(merged.length - maxMarkers) : merged;
+}
+
 function errMsg(error: unknown): string {
   if (error instanceof ApiError) return `${error.message} (HTTP ${error.status})`;
   if (error && typeof error === "object" && "message" in error) return String((error as any).message);
@@ -307,6 +413,8 @@ export function LightweightChart({
   const [lastClose, setLastClose] = useState<number | null>(null);
   const [showUpMarkers, setShowUpMarkers] = useState(false);
   const [showDownMarkers, setShowDownMarkers] = useState(false);
+  const [predictionMarkers, setPredictionMarkers] = useState<SeriesMarker<Time>[]>([]);
+  const [smcMarkers, setSmcMarkers] = useState<SeriesMarker<Time>[]>([]);
   const [indicatorToggles, setIndicatorToggles] = useState<IndicatorToggleState>(
     DEFAULT_INDICATOR_TOGGLES
   );
@@ -570,6 +678,7 @@ export function LightweightChart({
       vwapSeriesRef.current?.applyOptions({ visible: false });
       dailyOpenSeriesRef.current?.setData([]);
       dailyOpenSeriesRef.current?.applyOptions({ visible: false });
+      setSmcMarkers([]);
       return;
     }
 
@@ -647,6 +756,12 @@ export function LightweightChart({
       dailyOpenSeriesRef.current?.setData([]);
       dailyOpenSeriesRef.current?.applyOptions({ visible: false });
     }
+
+    if (indicatorToggles.smcStructure) {
+      setSmcMarkers(buildSmcStructureMarkers(normalized));
+    } else {
+      setSmcMarkers([]);
+    }
   }, [rawCandles, indicatorToggles]);
 
   useEffect(() => {
@@ -703,10 +818,10 @@ export function LightweightChart({
           });
         }
 
-        markerPluginRef.current.setMarkers(markers);
+        setPredictionMarkers(markers);
       } catch {
-        if (!active || !markerPluginRef.current) return;
-        markerPluginRef.current.setMarkers([]);
+        if (!active) return;
+        setPredictionMarkers([]);
       }
     };
 
@@ -718,9 +833,17 @@ export function LightweightChart({
     return () => {
       active = false;
       if (timer) clearInterval(timer);
-      markerPluginRef.current?.setMarkers([]);
+      setPredictionMarkers([]);
     };
   }, [exchangeAccountId, symbol, normalizedTimeframe, showUpMarkers, showDownMarkers]);
+
+  useEffect(() => {
+    if (!markerPluginRef.current) return;
+    const merged = [...predictionMarkers, ...smcMarkers].sort(
+      (a, b) => Number(a.time) - Number(b.time)
+    );
+    markerPluginRef.current.setMarkers(merged);
+  }, [predictionMarkers, smcMarkers]);
 
   return (
     <div>
@@ -759,7 +882,8 @@ export function LightweightChart({
           { key: "ema800", label: "EMA 800" },
           { key: "emaCloud50", label: "EMA 50 Cloud" },
           { key: "vwapSession", label: "Session VWAP" },
-          { key: "dailyOpen", label: "Daily Open" }
+          { key: "dailyOpen", label: "Daily Open" },
+          { key: "smcStructure", label: "SMC Structure (BOS/CHoCH)" }
         ].map((item) => (
           <label key={item.key} style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
             <input
