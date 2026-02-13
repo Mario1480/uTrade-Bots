@@ -32,7 +32,13 @@ const advancedIndicatorsSchema = z.object({
   rdLen: positiveInt(1, 365).default(15),
   rwLen: positiveInt(1, 104).default(13),
   openingRangeMin: positiveInt(1, 180).default(30),
-  sessionsUseDST: z.boolean().default(true)
+  sessionsUseDST: z.boolean().default(true),
+  smcInternalLength: positiveInt(2, 50).default(5),
+  smcSwingLength: positiveInt(10, 250).default(50),
+  smcEqualLength: positiveInt(1, 50).default(3),
+  smcEqualThreshold: z.number().min(0).max(0.5).default(0.1),
+  smcMaxOrderBlocks: positiveInt(1, 50).default(20),
+  smcFvgAutoThreshold: z.boolean().default(true)
 });
 
 const liquiditySweepsSchema = z.object({
@@ -163,7 +169,13 @@ export const DEFAULT_INDICATOR_SETTINGS: IndicatorSettingsConfig = {
     rdLen: 15,
     rwLen: 13,
     openingRangeMin: 30,
-    sessionsUseDST: true
+    sessionsUseDST: true,
+    smcInternalLength: 5,
+    smcSwingLength: 50,
+    smcEqualLength: 3,
+    smcEqualThreshold: 0.1,
+    smcMaxOrderBlocks: 20,
+    smcFvgAutoThreshold: true
   },
   liquiditySweeps: {
     len: 5,
@@ -245,7 +257,19 @@ export function mergeIndicatorSettings(
       rwLen: patch.advancedIndicators?.rwLen ?? base.advancedIndicators.rwLen,
       openingRangeMin:
         patch.advancedIndicators?.openingRangeMin ?? base.advancedIndicators.openingRangeMin,
-      sessionsUseDST: patch.advancedIndicators?.sessionsUseDST ?? base.advancedIndicators.sessionsUseDST
+      sessionsUseDST: patch.advancedIndicators?.sessionsUseDST ?? base.advancedIndicators.sessionsUseDST,
+      smcInternalLength:
+        patch.advancedIndicators?.smcInternalLength ?? base.advancedIndicators.smcInternalLength,
+      smcSwingLength:
+        patch.advancedIndicators?.smcSwingLength ?? base.advancedIndicators.smcSwingLength,
+      smcEqualLength:
+        patch.advancedIndicators?.smcEqualLength ?? base.advancedIndicators.smcEqualLength,
+      smcEqualThreshold:
+        patch.advancedIndicators?.smcEqualThreshold ?? base.advancedIndicators.smcEqualThreshold,
+      smcMaxOrderBlocks:
+        patch.advancedIndicators?.smcMaxOrderBlocks ?? base.advancedIndicators.smcMaxOrderBlocks,
+      smcFvgAutoThreshold:
+        patch.advancedIndicators?.smcFvgAutoThreshold ?? base.advancedIndicators.smcFvgAutoThreshold
     },
     liquiditySweeps: {
       len: patch.liquiditySweeps?.len ?? base.liquiditySweeps.len,

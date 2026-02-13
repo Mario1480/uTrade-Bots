@@ -49,6 +49,22 @@ test("advancedIndicators marks data gap when ema_800 cannot be computed", () => 
   assert.equal(snapshot.emas.ema_800, null);
 });
 
+test("advancedIndicators forwards SMC settings to smartMoneyConcepts", () => {
+  const snapshot = computeAdvancedIndicators(buildCandles(900), "5m", {
+    smcInternalLength: 7,
+    smcSwingLength: 30,
+    smcEqualLength: 2,
+    smcEqualThreshold: 0.2,
+    smcMaxOrderBlocks: 1,
+    smcFvgAutoThreshold: false
+  });
+
+  assert.equal(snapshot.smartMoneyConcepts.dataGap, false);
+  assert.ok(snapshot.smartMoneyConcepts.orderBlocks.internal.bullishCount <= 1);
+  assert.ok(snapshot.smartMoneyConcepts.orderBlocks.internal.bearishCount <= 1);
+  assert.ok(snapshot.smartMoneyConcepts.fairValueGaps.autoThresholdPct !== null);
+});
+
 test("daily pivots follow classic floor equations", () => {
   const day1 = Date.UTC(2026, 1, 1, 0, 0, 0, 0);
   const day2 = Date.UTC(2026, 1, 2, 0, 0, 0, 0);

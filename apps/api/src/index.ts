@@ -932,7 +932,13 @@ function toAdvancedIndicatorComputeSettings(config: IndicatorSettingsConfig) {
     rdLen: config.advancedIndicators.rdLen,
     rwLen: config.advancedIndicators.rwLen,
     openingRangeMinutes: config.advancedIndicators.openingRangeMin,
-    sessionsUseDST: config.advancedIndicators.sessionsUseDST
+    sessionsUseDST: config.advancedIndicators.sessionsUseDST,
+    smcInternalLength: config.advancedIndicators.smcInternalLength,
+    smcSwingLength: config.advancedIndicators.smcSwingLength,
+    smcEqualLength: config.advancedIndicators.smcEqualLength,
+    smcEqualThreshold: config.advancedIndicators.smcEqualThreshold,
+    smcMaxOrderBlocks: config.advancedIndicators.smcMaxOrderBlocks,
+    smcFvgAutoThreshold: config.advancedIndicators.smcFvgAutoThreshold
   };
 }
 

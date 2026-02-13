@@ -27,6 +27,12 @@ type IndicatorSettingsConfig = {
     rwLen: number;
     openingRangeMin: number;
     sessionsUseDST: boolean;
+    smcInternalLength: number;
+    smcSwingLength: number;
+    smcEqualLength: number;
+    smcEqualThreshold: number;
+    smcMaxOrderBlocks: number;
+    smcFvgAutoThreshold: boolean;
   };
   liquiditySweeps: {
     len: number;
@@ -90,7 +96,10 @@ type IndicatorCatalogGroup = {
 type StochRsiKey = keyof IndicatorSettingsConfig["indicatorsV2"]["stochrsi"];
 type VolumeKey = keyof IndicatorSettingsConfig["indicatorsV2"]["volume"];
 type FvgKey = keyof IndicatorSettingsConfig["indicatorsV2"]["fvg"];
-type AdvancedIndicatorsKey = Exclude<keyof IndicatorSettingsConfig["advancedIndicators"], "sessionsUseDST">;
+type AdvancedIndicatorsKey = Exclude<
+  keyof IndicatorSettingsConfig["advancedIndicators"],
+  "sessionsUseDST" | "smcFvgAutoThreshold"
+>;
 type AiGatingKey = keyof IndicatorSettingsConfig["aiGating"];
 type LiquiditySweepsNumberKey = Exclude<
   keyof IndicatorSettingsConfig["liquiditySweeps"],
@@ -119,7 +128,13 @@ const FALLBACK_DEFAULTS: IndicatorSettingsConfig = {
     rdLen: 15,
     rwLen: 13,
     openingRangeMin: 30,
-    sessionsUseDST: true
+    sessionsUseDST: true,
+    smcInternalLength: 5,
+    smcSwingLength: 50,
+    smcEqualLength: 3,
+    smcEqualThreshold: 0.1,
+    smcMaxOrderBlocks: 20,
+    smcFvgAutoThreshold: true
   },
   liquiditySweeps: {
     len: 5,
@@ -345,7 +360,14 @@ const INDICATOR_CATALOG_GROUPS: IndicatorCatalogGroup[] = [
           "advancedIndicators.smartMoneyConcepts.fairValueGaps.*",
           "advancedIndicators.smartMoneyConcepts.zones.*"
         ],
-        params: ["derived from candle stream (default internal/swing/equal lengths)"]
+        params: [
+          "config.advancedIndicators.smcInternalLength",
+          "config.advancedIndicators.smcSwingLength",
+          "config.advancedIndicators.smcEqualLength",
+          "config.advancedIndicators.smcEqualThreshold",
+          "config.advancedIndicators.smcMaxOrderBlocks",
+          "config.advancedIndicators.smcFvgAutoThreshold"
+        ]
       }
     ]
   },
@@ -521,6 +543,13 @@ export default function AdminIndicatorSettingsPage() {
     setConfig((prev) => ({
       ...prev,
       advancedIndicators: { ...prev.advancedIndicators, sessionsUseDST: enabled }
+    }));
+  }
+
+  function setAdvancedIndicatorsSmcFvgAutoThreshold(enabled: boolean) {
+    setConfig((prev) => ({
+      ...prev,
+      advancedIndicators: { ...prev.advancedIndicators, smcFvgAutoThreshold: enabled }
     }));
   }
 
@@ -831,7 +860,13 @@ export default function AdminIndicatorSettingsPage() {
                 <label className="settingsField"><span className="mutedTiny">AMR len</span><input className="input" type="number" value={config.advancedIndicators.amrLen} onChange={(e) => setAdvancedIndicatorsNumber("amrLen", parseNumber(e.target.value))} /></label>
                 <label className="settingsField"><span className="mutedTiny">RD len</span><input className="input" type="number" value={config.advancedIndicators.rdLen} onChange={(e) => setAdvancedIndicatorsNumber("rdLen", parseNumber(e.target.value))} /></label>
                 <label className="settingsField"><span className="mutedTiny">RW len</span><input className="input" type="number" value={config.advancedIndicators.rwLen} onChange={(e) => setAdvancedIndicatorsNumber("rwLen", parseNumber(e.target.value))} /></label>
+                <label className="settingsField"><span className="mutedTiny">SMC internal len</span><input className="input" type="number" min={2} max={50} value={config.advancedIndicators.smcInternalLength} onChange={(e) => setAdvancedIndicatorsNumber("smcInternalLength", parseNumber(e.target.value))} /></label>
+                <label className="settingsField"><span className="mutedTiny">SMC swing len</span><input className="input" type="number" min={10} max={250} value={config.advancedIndicators.smcSwingLength} onChange={(e) => setAdvancedIndicatorsNumber("smcSwingLength", parseNumber(e.target.value))} /></label>
+                <label className="settingsField"><span className="mutedTiny">SMC equal len</span><input className="input" type="number" min={1} max={50} value={config.advancedIndicators.smcEqualLength} onChange={(e) => setAdvancedIndicatorsNumber("smcEqualLength", parseNumber(e.target.value))} /></label>
+                <label className="settingsField"><span className="mutedTiny">SMC equal threshold</span><input className="input" type="number" min={0} max={0.5} step={0.01} value={config.advancedIndicators.smcEqualThreshold} onChange={(e) => setAdvancedIndicatorsNumber("smcEqualThreshold", parseNumber(e.target.value))} /></label>
+                <label className="settingsField"><span className="mutedTiny">SMC max order blocks</span><input className="input" type="number" min={1} max={50} value={config.advancedIndicators.smcMaxOrderBlocks} onChange={(e) => setAdvancedIndicatorsNumber("smcMaxOrderBlocks", parseNumber(e.target.value))} /></label>
                 <label className="inlineCheck"><input type="checkbox" checked={config.advancedIndicators.sessionsUseDST} onChange={(e) => setAdvancedIndicatorsSessionsUseDst(e.target.checked)} /> Sessions use DST</label>
+                <label className="inlineCheck"><input type="checkbox" checked={config.advancedIndicators.smcFvgAutoThreshold} onChange={(e) => setAdvancedIndicatorsSmcFvgAutoThreshold(e.target.checked)} /> SMC FVG auto threshold</label>
               </div>
             </div>
 

@@ -22,12 +22,13 @@ test("normalizeIndicatorSettingsPatch accepts partial config", () => {
 test("mergeIndicatorSettings applies nested overrides", () => {
   const merged = mergeIndicatorSettings(DEFAULT_INDICATOR_SETTINGS, {
     enabledPacks: { advancedIndicators: false },
-    advancedIndicators: { openingRangeMin: 45 },
+    advancedIndicators: { openingRangeMin: 45, smcEqualThreshold: 0.2 },
     indicatorsV2: { fvg: { fillRule: "mid_touch" } }
   });
 
   assert.equal(merged.enabledPacks.advancedIndicators, false);
   assert.equal(merged.advancedIndicators.openingRangeMin, 45);
+  assert.equal(merged.advancedIndicators.smcEqualThreshold, 0.2);
   assert.equal(merged.indicatorsV2.fvg.fillRule, "mid_touch");
 });
 

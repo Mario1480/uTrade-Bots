@@ -46,6 +46,12 @@ export type AdvancedIndicatorsComputeOptions = {
   rwLen?: number;
   openingRangeMinutes?: number;
   sessionsUseDST?: boolean;
+  smcInternalLength?: number;
+  smcSwingLength?: number;
+  smcEqualLength?: number;
+  smcEqualThreshold?: number;
+  smcMaxOrderBlocks?: number;
+  smcFvgAutoThreshold?: boolean;
 };
 
 function emptySnapshot(tf: Timeframe): AdvancedIndicatorsSnapshot {
@@ -255,7 +261,14 @@ export function computeAdvancedIndicators(
     useDst: options.sessionsUseDST ?? true
   });
   const pvsra = computePvsra(sorted);
-  const smartMoneyConcepts = computeSmartMoneyConcepts(sorted);
+  const smartMoneyConcepts = computeSmartMoneyConcepts(sorted, {
+    internalLength: options.smcInternalLength,
+    swingLength: options.smcSwingLength,
+    equalLength: options.smcEqualLength,
+    equalThreshold: options.smcEqualThreshold,
+    maxOrderBlocks: options.smcMaxOrderBlocks,
+    fvgAutoThreshold: options.smcFvgAutoThreshold
+  });
 
   return {
     timeframe,
