@@ -332,6 +332,20 @@ const INDICATOR_CATALOG_GROUPS: IndicatorCatalogGroup[] = [
           "advancedIndicators.pvsra.patterns.*"
         ],
         params: ["derived from candle stream (no dedicated params)"]
+      },
+      {
+        key: "advanced-smc",
+        name: "Smart Money Concepts (SMC)",
+        live: true,
+        outputs: [
+          "advancedIndicators.smartMoneyConcepts.internal.*",
+          "advancedIndicators.smartMoneyConcepts.swing.*",
+          "advancedIndicators.smartMoneyConcepts.equalLevels.*",
+          "advancedIndicators.smartMoneyConcepts.orderBlocks.*",
+          "advancedIndicators.smartMoneyConcepts.fairValueGaps.*",
+          "advancedIndicators.smartMoneyConcepts.zones.*"
+        ],
+        params: ["derived from candle stream (default internal/swing/equal lengths)"]
       }
     ]
   },

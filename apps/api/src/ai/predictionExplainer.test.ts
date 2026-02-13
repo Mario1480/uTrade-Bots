@@ -37,7 +37,47 @@ const baseInput: ExplainerInput = {
         }
       },
       cloud: { price_pos: 0.88 },
-      pvsra: { vectorTier: "high", vectorColor: "blue" }
+      pvsra: { vectorTier: "high", vectorColor: "blue" },
+      smartMoneyConcepts: {
+        internal: {
+          trend: "bullish",
+          lastEvent: { type: "bos", direction: "bullish", level: 70020, ts: 1739085600000 },
+          bullishBreaks: 4,
+          bearishBreaks: 1
+        },
+        swing: {
+          trend: "bullish",
+          lastEvent: { type: "choch", direction: "bullish", level: 69980, ts: 1739085900000 },
+          bullishBreaks: 2,
+          bearishBreaks: 1
+        },
+        equalLevels: {
+          eqh: { detected: false, level: null, ts: null, deltaPct: null },
+          eql: { detected: false, level: null, ts: null, deltaPct: null }
+        },
+        orderBlocks: {
+          internal: { bullishCount: 2, bearishCount: 1, latestBullish: null, latestBearish: null },
+          swing: { bullishCount: 1, bearishCount: 0, latestBullish: null, latestBearish: null }
+        },
+        fairValueGaps: {
+          bullishCount: 1,
+          bearishCount: 0,
+          latestBullish: null,
+          latestBearish: null,
+          autoThresholdPct: 0.04
+        },
+        zones: {
+          trailingTop: 70140,
+          trailingBottom: 69510,
+          premiumTop: 70140,
+          premiumBottom: 70008.5,
+          equilibriumTop: 69840.75,
+          equilibriumBottom: 69809.25,
+          discountTop: 69641.5,
+          discountBottom: 69510
+        },
+        dataGap: false
+      }
     },
     indicators: {
       rsi_14: 57.2,
@@ -142,6 +182,24 @@ test("legacy tradersReality keyDrivers remain accepted", () => {
         { name: "tradersReality.emas.ema_50", value: 70040 },
         { name: "tradersReality.emas.emaDistancesPct.spread_13_50_pct", value: 0.074 },
         { name: "tradersReality.cloud.price_pos", value: 0.88 }
+      ],
+      disclaimer: "grounded_features_only"
+    },
+    baseInput.featureSnapshot
+  );
+
+  assert.equal(value.keyDrivers.length, 3);
+});
+
+test("smartMoneyConcepts keyDrivers paths are accepted", () => {
+  const value = validateExplainerOutput(
+    {
+      explanation: "SMC structure remains bullish with recent CHoCH and active bullish blocks.",
+      tags: ["trend_up", "breakout_risk"],
+      keyDrivers: [
+        { name: "advancedIndicators.smartMoneyConcepts.swing.lastEvent.type", value: "choch" },
+        { name: "advancedIndicators.smartMoneyConcepts.orderBlocks.internal.bullishCount", value: 2 },
+        { name: "advancedIndicators.smartMoneyConcepts.fairValueGaps.bullishCount", value: 1 }
       ],
       disclaimer: "grounded_features_only"
     },

@@ -70,6 +70,12 @@ Predictions also include `featureSnapshot.advancedIndicators` (deterministic Nod
   - US DST: second Sunday March -> first Sunday November (New York/US Brinks)
   - Sydney DST: first Sunday October -> first Sunday April
 - `pvsra`: vector candle tier/color + transition patterns
+- `smartMoneyConcepts`: structure + liquidity context inspired by LuxAlgo SMC logic:
+  - internal/swing `BOS` / `CHoCH` state and break counts
+  - equal highs/lows (`eqh` / `eql`) events
+  - internal/swing order-block stacks and latest active block
+  - FVG stack (bullish/bearish active counts + last threshold)
+  - premium / discount / equilibrium zone levels
 
 If history is too short for long EMAs (especially EMA800), fields are returned null-safe and
 `featureSnapshot.advancedIndicators.dataGap=true`.

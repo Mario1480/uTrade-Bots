@@ -73,7 +73,7 @@ const SYSTEM_MESSAGE =
   "You are a trading assistant. You must only use the provided JSON featureSnapshot. " +
   "If a value is missing, say 'unknown' or omit it. Do not mention news unless featureSnapshot contains a 'newsRisk' flag. " +
   "You may reference indicators only when values exist under featureSnapshot.indicators (including stochrsi, volume, fvg) " +
-  "or under featureSnapshot.advancedIndicators (emas, cloud, levels, ranges, sessions, pvsra). " +
+  "or under featureSnapshot.advancedIndicators (emas, cloud, levels, ranges, sessions, pvsra, smartMoneyConcepts). " +
   "Do not claim volume spikes or fair value gaps unless those fields explicitly support it. " +
   "Never mention TradingView.";
 
@@ -331,6 +331,17 @@ export function fallbackExplain(input: ExplainerInput): ExplainerOutput {
   const volTrend = pickNumberByPaths(snapshot, ["indicators.volume.vol_trend"]);
   const trPvsraTier = getByPath(snapshot, "advancedIndicators.pvsra.vectorTier");
   const trCloudPos = pickNumberByPaths(snapshot, ["advancedIndicators.cloud.price_pos"]);
+  const smcSwingEvent = getByPath(snapshot, "advancedIndicators.smartMoneyConcepts.swing.lastEvent.type");
+  const smcSwingDirection = getByPath(
+    snapshot,
+    "advancedIndicators.smartMoneyConcepts.swing.lastEvent.direction"
+  );
+  const smcInternalBullBreaks = pickNumberByPaths(snapshot, [
+    "advancedIndicators.smartMoneyConcepts.internal.bullishBreaks"
+  ]);
+  const smcInternalBearBreaks = pickNumberByPaths(snapshot, [
+    "advancedIndicators.smartMoneyConcepts.internal.bearishBreaks"
+  ]);
   const openBullishGaps = pickNumberByPaths(snapshot, ["indicators.fvg.open_bullish_count"]);
   const openBearishGaps = pickNumberByPaths(snapshot, ["indicators.fvg.open_bearish_count"]);
   const nearestBullGapDist = pickNumberByPaths(snapshot, ["indicators.fvg.nearest_bullish_gap.dist_pct"]);
@@ -373,6 +384,25 @@ export function fallbackExplain(input: ExplainerInput): ExplainerOutput {
   }
   if (trPvsraTier === "extreme") {
     tags.push("breakout_risk");
+  }
+  if (smcSwingEvent === "bos" || smcSwingEvent === "choch") {
+    tags.push("breakout_risk");
+    if (smcSwingDirection === "bullish") tags.push("trend_up");
+    if (smcSwingDirection === "bearish") tags.push("trend_down");
+  }
+  if (
+    smcInternalBullBreaks !== null &&
+    smcInternalBearBreaks !== null &&
+    smcInternalBullBreaks > smcInternalBearBreaks
+  ) {
+    tags.push("trend_up");
+  }
+  if (
+    smcInternalBearBreaks !== null &&
+    smcInternalBullBreaks !== null &&
+    smcInternalBearBreaks > smcInternalBullBreaks
+  ) {
+    tags.push("trend_down");
   }
   if (bbPos !== null && (bbPos >= 0.9 || bbPos <= 0.1)) tags.push("mean_reversion");
   if ((spreadBps !== null && spreadBps >= 25) || (liquidity !== null && liquidity <= 0.35)) {
@@ -435,6 +465,16 @@ export function fallbackExplain(input: ExplainerInput): ExplainerOutput {
     "advancedIndicators.ranges.distancesPct.dist_to_adrLow_pct",
     "advancedIndicators.pvsra.vectorTier",
     "advancedIndicators.pvsra.vectorColor",
+    "advancedIndicators.smartMoneyConcepts.internal.lastEvent.type",
+    "advancedIndicators.smartMoneyConcepts.internal.lastEvent.direction",
+    "advancedIndicators.smartMoneyConcepts.swing.lastEvent.type",
+    "advancedIndicators.smartMoneyConcepts.swing.lastEvent.direction",
+    "advancedIndicators.smartMoneyConcepts.orderBlocks.internal.bullishCount",
+    "advancedIndicators.smartMoneyConcepts.orderBlocks.internal.bearishCount",
+    "advancedIndicators.smartMoneyConcepts.orderBlocks.swing.bullishCount",
+    "advancedIndicators.smartMoneyConcepts.orderBlocks.swing.bearishCount",
+    "advancedIndicators.smartMoneyConcepts.fairValueGaps.bullishCount",
+    "advancedIndicators.smartMoneyConcepts.fairValueGaps.bearishCount",
     "emaSpread",
     "atrPct",
     "volatility",

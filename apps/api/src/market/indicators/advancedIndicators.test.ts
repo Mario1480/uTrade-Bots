@@ -38,6 +38,9 @@ test("advancedIndicators computes EMA set + cloud with bounded cloud position", 
   assert.ok(snapshot.emas.ema_800 !== null);
   assert.ok(snapshot.cloud.price_pos !== null);
   assert.ok(snapshot.cloud.price_pos! >= 0 && snapshot.cloud.price_pos! <= 1);
+  assert.equal(snapshot.smartMoneyConcepts.dataGap, false);
+  assert.ok(snapshot.smartMoneyConcepts.internal.bullishBreaks >= 0);
+  assert.ok(snapshot.smartMoneyConcepts.swing.bearishBreaks >= 0);
 });
 
 test("advancedIndicators marks data gap when ema_800 cannot be computed", () => {
