@@ -1,4 +1,4 @@
-import type { Candle } from "../timeframe.js";
+import type { Candle } from "../../../timeframe.js";
 
 type NullableNumber = number | null;
 type DstRegion = "uk" | "ny" | "sydney" | null;

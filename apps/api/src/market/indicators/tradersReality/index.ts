@@ -1,4 +1,4 @@
-import type { Candle, Timeframe } from "../timeframe.js";
+import type { Candle, Timeframe } from "../../timeframe.js";
 import {
   computeTradersRealityEmaSnapshot,
   type TradersRealityCloudSnapshot,

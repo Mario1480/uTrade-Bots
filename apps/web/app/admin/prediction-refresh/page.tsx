@@ -41,7 +41,7 @@ const REFRESH_PRESETS: RefreshPreset[] = [
   {
     key: "conservative",
     label: "Conservative",
-    description: "Weniger Flip-Flops, weniger AI-Calls.",
+    description: "Fewer signal flips and fewer AI calls.",
     values: {
       triggerDebounceSec: 180,
       aiCooldownSec: 900,
@@ -54,7 +54,7 @@ const REFRESH_PRESETS: RefreshPreset[] = [
   {
     key: "balanced",
     label: "Balanced",
-    description: "Guter Standard für die meisten Märkte.",
+    description: "Recommended default for most markets.",
     values: {
       triggerDebounceSec: 120,
       aiCooldownSec: 600,
@@ -67,7 +67,7 @@ const REFRESH_PRESETS: RefreshPreset[] = [
   {
     key: "aggressive",
     label: "Aggressive",
-    description: "Schneller, aber mit mehr Noise-Risiko.",
+    description: "Faster reactions with higher noise risk.",
     values: {
       triggerDebounceSec: 60,
       aiCooldownSec: 300,
@@ -185,7 +185,7 @@ export default function AdminPredictionRefreshPage() {
 
   return (
     <div className="settingsWrap">
-      <div style={{ marginBottom: 10, display: "flex", gap: 8, flexWrap: "wrap" }}>
+      <div className="adminTopActions">
         <Link href="/admin" className="btn">
           ← Back to admin
         </Link>
@@ -194,15 +194,18 @@ export default function AdminPredictionRefreshPage() {
         </Link>
       </div>
       <h2 style={{ marginTop: 0 }}>Admin · Prediction Refresh</h2>
+      <div className="adminPageIntro">
+        Tune scheduler stability and AI refresh behavior for auto predictions.
+      </div>
 
-      {loading ? <div>Loading...</div> : null}
+      {loading ? <div className="settingsMutedText">Loading...</div> : null}
       {error ? (
-        <div className="card settingsSection" style={{ borderColor: "#ef4444", marginBottom: 12 }}>
+        <div className="card settingsSection settingsAlert settingsAlertError">
           {error}
         </div>
       ) : null}
       {notice ? (
-        <div className="card settingsSection" style={{ borderColor: "#22c55e", marginBottom: 12 }}>
+        <div className="card settingsSection settingsAlert settingsAlertSuccess">
           {notice}
         </div>
       ) : null}
@@ -233,7 +236,7 @@ export default function AdminPredictionRefreshPage() {
               ))}
             </div>
             <div style={{ marginTop: 6, fontSize: 12, color: "var(--muted)" }}>
-              Tipp: Preset laden, dann "Save settings".
+              Tip: Load a preset first, then click "Save settings".
             </div>
           </div>
 
@@ -242,7 +245,7 @@ export default function AdminPredictionRefreshPage() {
               <span style={{ fontSize: 12, color: "var(--muted)" }}>Trigger debounce (sec)</span>
               <input className="input" type="number" min={0} max={3600} value={triggerDebounceSec} onChange={(e) => setTriggerDebounceSec(e.target.value)} />
               <span style={{ fontSize: 11, color: "var(--muted)" }}>
-                Trigger muss stabil bleiben, bevor ein Refresh ausgelöst wird.
+                Trigger must stay stable before a refresh starts.
               </span>
             </label>
 
@@ -250,7 +253,7 @@ export default function AdminPredictionRefreshPage() {
               <span style={{ fontSize: 12, color: "var(--muted)" }}>AI cooldown (sec)</span>
               <input className="input" type="number" min={30} max={3600} value={aiCooldownSec} onChange={(e) => setAiCooldownSec(e.target.value)} />
               <span style={{ fontSize: 11, color: "var(--muted)" }}>
-                Mindestabstand zwischen OpenAI-Erklärungen pro Symbol/TF.
+                Minimum delay between OpenAI explanations per symbol/timeframe.
               </span>
             </label>
 
@@ -258,7 +261,7 @@ export default function AdminPredictionRefreshPage() {
               <span style={{ fontSize: 12, color: "var(--muted)" }}>Event throttle (sec)</span>
               <input className="input" type="number" min={0} max={3600} value={eventThrottleSec} onChange={(e) => setEventThrottleSec(e.target.value)} />
               <span style={{ fontSize: 11, color: "var(--muted)" }}>
-                Wiederholte gleiche Events in kurzer Zeit werden unterdrückt.
+                Repeated identical events are suppressed within this window.
               </span>
             </label>
 
@@ -266,7 +269,7 @@ export default function AdminPredictionRefreshPage() {
               <span style={{ fontSize: 12, color: "var(--muted)" }}>Hysteresis ratio (0.2 - 0.95)</span>
               <input className="input" type="number" min={0.2} max={0.95} step={0.01} value={hysteresisRatio} onChange={(e) => setHysteresisRatio(e.target.value)} />
               <span style={{ fontSize: 11, color: "var(--muted)" }}>
-                Höher = stabiler (weniger Flip), niedriger = reaktiver.
+                Higher values are steadier (fewer flips), lower values react faster.
               </span>
             </label>
 
@@ -274,7 +277,7 @@ export default function AdminPredictionRefreshPage() {
               <span style={{ fontSize: 12, color: "var(--muted)" }}>Unstable flip limit</span>
               <input className="input" type="number" min={2} max={20} value={unstableFlipLimit} onChange={(e) => setUnstableFlipLimit(e.target.value)} />
               <span style={{ fontSize: 11, color: "var(--muted)" }}>
-                Ab wie vielen Signal-Flips der Markt als instabil markiert wird.
+                Number of flips required before the market is marked unstable.
               </span>
             </label>
 
@@ -282,7 +285,7 @@ export default function AdminPredictionRefreshPage() {
               <span style={{ fontSize: 12, color: "var(--muted)" }}>Unstable flip window (sec)</span>
               <input className="input" type="number" min={60} max={86400} value={unstableFlipWindowSeconds} onChange={(e) => setUnstableFlipWindowSeconds(e.target.value)} />
               <span style={{ fontSize: 11, color: "var(--muted)" }}>
-                Zeitfenster, in dem die Flip-Anzahl gezählt wird.
+                Time window used to count unstable signal flips.
               </span>
             </label>
           </div>

@@ -89,7 +89,7 @@ export default function AdminSmtpPage() {
 
   return (
     <div className="settingsWrap">
-      <div style={{ marginBottom: 10, display: "flex", gap: 8, flexWrap: "wrap" }}>
+      <div className="adminTopActions">
         <Link href="/admin" className="btn">
           ← Back to admin
         </Link>
@@ -98,15 +98,18 @@ export default function AdminSmtpPage() {
         </Link>
       </div>
       <h2 style={{ marginTop: 0 }}>Admin · SMTP</h2>
+      <div className="adminPageIntro">
+        Manage SMTP transport used for system and reset emails.
+      </div>
 
-      {loading ? <div>Loading...</div> : null}
+      {loading ? <div className="settingsMutedText">Loading...</div> : null}
       {error ? (
-        <div className="card settingsSection" style={{ borderColor: "#ef4444", marginBottom: 12 }}>
+        <div className="card settingsSection settingsAlert settingsAlertError">
           {error}
         </div>
       ) : null}
       {notice ? (
-        <div className="card settingsSection" style={{ borderColor: "#22c55e", marginBottom: 12 }}>
+        <div className="card settingsSection settingsAlert settingsAlertSuccess">
           {notice}
         </div>
       ) : null}
@@ -119,29 +122,29 @@ export default function AdminSmtpPage() {
           <div style={{ fontSize: 12, color: "var(--muted)", marginBottom: 8 }}>
             Password stored: {smtpHasPassword ? "yes" : "no"}
           </div>
-          <div style={{ display: "grid", gap: 8 }}>
-            <label style={{ display: "grid", gap: 6 }}>
-              <span style={{ fontSize: 12, color: "var(--muted)" }}>Host</span>
+          <div className="settingsFormGrid">
+            <label className="settingsField">
+              <span className="settingsFieldLabel">Host</span>
               <input className="input" value={smtpHost} onChange={(e) => setSmtpHost(e.target.value)} />
             </label>
-            <label style={{ display: "grid", gap: 6 }}>
-              <span style={{ fontSize: 12, color: "var(--muted)" }}>Port</span>
+            <label className="settingsField">
+              <span className="settingsFieldLabel">Port</span>
               <input className="input" type="number" value={smtpPort} onChange={(e) => setSmtpPort(e.target.value)} />
             </label>
-            <label style={{ display: "grid", gap: 6 }}>
-              <span style={{ fontSize: 12, color: "var(--muted)" }}>User</span>
+            <label className="settingsField">
+              <span className="settingsFieldLabel">User</span>
               <input className="input" value={smtpUser} onChange={(e) => setSmtpUser(e.target.value)} />
             </label>
-            <label style={{ display: "grid", gap: 6 }}>
-              <span style={{ fontSize: 12, color: "var(--muted)" }}>From</span>
+            <label className="settingsField">
+              <span className="settingsFieldLabel">From</span>
               <input className="input" value={smtpFrom} onChange={(e) => setSmtpFrom(e.target.value)} />
             </label>
             <label style={{ display: "flex", gap: 8, alignItems: "center" }}>
               <input type="checkbox" checked={smtpSecure} onChange={(e) => setSmtpSecure(e.target.checked)} />
               <span>Use secure connection</span>
             </label>
-            <label style={{ display: "grid", gap: 6 }}>
-              <span style={{ fontSize: 12, color: "var(--muted)" }}>Password (leave empty to keep)</span>
+            <label className="settingsField">
+              <span className="settingsFieldLabel">Password (leave empty to keep)</span>
               <input
                 className="input"
                 type="password"
@@ -154,8 +157,8 @@ export default function AdminSmtpPage() {
                 Save SMTP
               </button>
             </div>
-            <label style={{ display: "grid", gap: 6 }}>
-              <span style={{ fontSize: 12, color: "var(--muted)" }}>Test recipient</span>
+            <label className="settingsField">
+              <span className="settingsFieldLabel">Test recipient</span>
               <input className="input" value={smtpTestTo} onChange={(e) => setSmtpTestTo(e.target.value)} />
             </label>
             <div>

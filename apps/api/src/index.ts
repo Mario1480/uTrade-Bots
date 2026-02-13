@@ -93,7 +93,7 @@ import {
   minimumCandlesForIndicatorsWithSettings,
   type IndicatorsSnapshot
 } from "./market/indicators.js";
-import { computeTradersRealityFeatures } from "./market/tradersReality/index.js";
+import { computeTradersRealityFeatures } from "./market/indicators/tradersReality/index.js";
 import { bucketCandles, toBucketStart } from "./market/timeframe.js";
 import {
   DEFAULT_INDICATOR_SETTINGS,

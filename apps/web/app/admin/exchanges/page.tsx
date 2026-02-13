@@ -63,7 +63,7 @@ export default function AdminExchangesPage() {
 
   return (
     <div className="settingsWrap">
-      <div style={{ marginBottom: 10, display: "flex", gap: 8, flexWrap: "wrap" }}>
+      <div className="adminTopActions">
         <Link href="/admin" className="btn">
           ← Back to admin
         </Link>
@@ -72,15 +72,18 @@ export default function AdminExchangesPage() {
         </Link>
       </div>
       <h2 style={{ marginTop: 0 }}>Admin · Offered Exchanges</h2>
+      <div className="adminPageIntro">
+        Choose which exchanges are available for user account onboarding.
+      </div>
 
-      {loading ? <div>Loading...</div> : null}
+      {loading ? <div className="settingsMutedText">Loading...</div> : null}
       {error ? (
-        <div className="card settingsSection" style={{ borderColor: "#ef4444", marginBottom: 12 }}>
+        <div className="card settingsSection settingsAlert settingsAlertError">
           {error}
         </div>
       ) : null}
       {notice ? (
-        <div className="card settingsSection" style={{ borderColor: "#22c55e", marginBottom: 12 }}>
+        <div className="card settingsSection settingsAlert settingsAlertSuccess">
           {notice}
         </div>
       ) : null}

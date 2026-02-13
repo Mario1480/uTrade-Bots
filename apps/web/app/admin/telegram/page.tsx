@@ -80,7 +80,7 @@ export default function AdminTelegramPage() {
 
   return (
     <div className="settingsWrap">
-      <div style={{ marginBottom: 10, display: "flex", gap: 8, flexWrap: "wrap" }}>
+      <div className="adminTopActions">
         <Link href="/admin" className="btn">
           ← Back to admin
         </Link>
@@ -89,15 +89,18 @@ export default function AdminTelegramPage() {
         </Link>
       </div>
       <h2 style={{ marginTop: 0 }}>Admin · Global Telegram</h2>
+      <div className="adminPageIntro">
+        Configure global Telegram credentials and delivery checks.
+      </div>
 
-      {loading ? <div>Loading...</div> : null}
+      {loading ? <div className="settingsMutedText">Loading...</div> : null}
       {error ? (
-        <div className="card settingsSection" style={{ borderColor: "#ef4444", marginBottom: 12 }}>
+        <div className="card settingsSection settingsAlert settingsAlertError">
           {error}
         </div>
       ) : null}
       {notice ? (
-        <div className="card settingsSection" style={{ borderColor: "#22c55e", marginBottom: 12 }}>
+        <div className="card settingsSection settingsAlert settingsAlertSuccess">
           {notice}
         </div>
       ) : null}
@@ -111,9 +114,9 @@ export default function AdminTelegramPage() {
             Configured: {telegramConfigured ? "yes" : "no"}
             {telegramMasked ? ` · current token ${telegramMasked}` : ""}
           </div>
-          <div style={{ display: "grid", gap: 8 }}>
-            <label style={{ display: "grid", gap: 6 }}>
-              <span style={{ fontSize: 12, color: "var(--muted)" }}>Bot token</span>
+          <div className="settingsFormGrid">
+            <label className="settingsField">
+              <span className="settingsFieldLabel">Bot token</span>
               <input
                 className="input"
                 placeholder={telegramMasked ?? "123456:ABC..."}
@@ -121,8 +124,8 @@ export default function AdminTelegramPage() {
                 onChange={(e) => setTelegramToken(e.target.value)}
               />
             </label>
-            <label style={{ display: "grid", gap: 6 }}>
-              <span style={{ fontSize: 12, color: "var(--muted)" }}>Chat ID</span>
+            <label className="settingsField">
+              <span className="settingsFieldLabel">Chat ID</span>
               <input className="input" value={telegramChatId} onChange={(e) => setTelegramChatId(e.target.value)} />
             </label>
             <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>

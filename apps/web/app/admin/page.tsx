@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { ApiError, apiGet } from "../../lib/api";
 
 function errMsg(e: unknown): string {
@@ -10,41 +10,55 @@ function errMsg(e: unknown): string {
   return String(e);
 }
 
-const ADMIN_LINKS = [
+type AdminLinkItem = {
+  href: string;
+  title: string;
+  description: string;
+  category: "Access" | "Integrations" | "Strategy";
+};
+
+const ADMIN_LINKS: AdminLinkItem[] = [
   {
     href: "/admin/users",
     title: "Users",
-    description: "Search, create, update password and delete users."
+    description: "Search, create, update password and delete users.",
+    category: "Access"
   },
   {
     href: "/admin/telegram",
     title: "Global Telegram",
-    description: "Set global bot token/chat and send test alerts."
+    description: "Set global bot token/chat and send test alerts.",
+    category: "Integrations"
   },
   {
     href: "/admin/exchanges",
     title: "Offered Exchanges",
-    description: "Select which CEX options are available to users."
+    description: "Select which CEX options are available to users.",
+    category: "Integrations"
   },
   {
     href: "/admin/smtp",
     title: "SMTP",
-    description: "Configure SMTP transport and send test email."
+    description: "Configure SMTP transport and send test email.",
+    category: "Integrations"
   },
   {
     href: "/admin/api-keys",
     title: "API Keys",
-    description: "Store global API keys (starting with OpenAI) encrypted in DB."
+    description: "Store global API keys (starting with OpenAI) encrypted in DB.",
+    category: "Integrations"
   },
   {
     href: "/admin/indicator-settings",
     title: "Indicator Settings",
-    description: "Configure feature packs and indicator params with scoped overrides."
+    description: "Configure feature packs and indicator params with scoped overrides.",
+    category: "Strategy"
   },
   {
     href: "/admin/prediction-refresh",
     title: "Prediction Refresh",
-    description: "Tune debounce, hysteresis, cooldown and event throttle for auto predictions."
+    description: "Tune debounce, hysteresis, cooldown and event throttle for auto predictions.",
+    category: "Strategy"
   }
 ];
 
@@ -52,6 +66,17 @@ export default function AdminPage() {
   const [loading, setLoading] = useState(true);
   const [isSuperadmin, setIsSuperadmin] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [query, setQuery] = useState("");
+
+  const filteredLinks = useMemo(() => {
+    const needle = query.trim().toLowerCase();
+    if (!needle) return ADMIN_LINKS;
+    return ADMIN_LINKS.filter((item) =>
+      [item.title, item.description, item.category].some((value) =>
+        value.toLowerCase().includes(needle)
+      )
+    );
+  }, [query]);
 
   useEffect(() => {
     const load = async () => {
@@ -76,7 +101,7 @@ export default function AdminPage() {
 
   return (
     <div className="settingsWrap">
-      <div style={{ marginBottom: 10, display: "flex", gap: 8, flexWrap: "wrap" }}>
+      <div className="adminTopActions">
         <Link href="/settings" className="btn">
           ← Back to settings
         </Link>
@@ -90,27 +115,52 @@ export default function AdminPage() {
       </div>
 
       {error ? (
-        <div className="card settingsSection" style={{ borderColor: "#ef4444", marginBottom: 12 }}>
+        <div className="card settingsSection settingsAlert settingsAlertError">
           {error}
         </div>
       ) : null}
 
       {isSuperadmin ? (
-        <div style={{ display: "grid", gap: 12 }}>
-          {ADMIN_LINKS.map((item) => (
-            <div key={item.href} className="card settingsSection">
-              <div className="settingsSectionHeader">
-                <h3 style={{ margin: 0 }}>{item.title}</h3>
+        <>
+          <section className="card settingsSection">
+            <div className="adminLandingToolbar">
+              <div className="adminLandingMeta">
+                {filteredLinks.length} of {ADMIN_LINKS.length} sections
               </div>
-              <div style={{ fontSize: 13, color: "var(--muted)", marginBottom: 10 }}>
-                {item.description}
-              </div>
-              <Link href={item.href} className="btn btnPrimary">
-                Open {item.title}
-              </Link>
+              <input
+                className="input adminLandingSearch"
+                placeholder="Search admin sections..."
+                value={query}
+                onChange={(event) => setQuery(event.target.value)}
+              />
             </div>
-          ))}
-        </div>
+          </section>
+
+          {filteredLinks.length === 0 ? (
+            <section className="card settingsSection">
+              <div className="settingsMutedText">No admin section matches your search.</div>
+            </section>
+          ) : null}
+
+          <div className="adminLandingGrid">
+            {filteredLinks.map((item) => (
+              <article key={item.href} className="card settingsSection adminLandingCard">
+                <div className="adminLandingCardHeader">
+                  <h3 style={{ margin: 0 }}>{item.title}</h3>
+                  <span className="badge adminLandingBadge">{item.category}</span>
+                </div>
+                <div className="adminLandingDesc">
+                  {item.description}
+                </div>
+                <div className="adminLandingActions">
+                  <Link href={item.href} className="btn btnPrimary">
+                    Open {item.title}
+                  </Link>
+                </div>
+              </article>
+            ))}
+          </div>
+        </>
       ) : null}
     </div>
   );

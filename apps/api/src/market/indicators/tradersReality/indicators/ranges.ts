@@ -1,4 +1,4 @@
-import type { Candle } from "../timeframe.js";
+import type { Candle } from "../../../timeframe.js";
 import {
   aggregateDaily,
   aggregateMonthly,

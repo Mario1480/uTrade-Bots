@@ -1094,6 +1094,18 @@ a { color: inherit; }
   color: var(--muted);
 }
 
+.mutedTiny {
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.inlineCheck {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+}
+
 .settingsAccountList {
   display: grid;
   gap: 8px;
@@ -1110,6 +1122,97 @@ a { color: inherit; }
 .settingsAccountActions {
   display: flex;
   gap: 8px;
+}
+
+.adminTopActions {
+  margin-bottom: 10px;
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.adminLandingToolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.adminLandingMeta {
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.adminLandingSearch {
+  width: min(360px, 100%);
+}
+
+.adminLandingGrid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.adminLandingCard {
+  display: grid;
+  gap: 10px;
+  align-content: start;
+}
+
+.adminLandingCardHeader {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.adminLandingDesc {
+  font-size: 13px;
+  color: var(--muted);
+  line-height: 1.35;
+}
+
+.adminLandingActions {
+  display: flex;
+  gap: 8px;
+}
+
+.adminLandingBadge {
+  border-color: rgba(255, 193, 7, 0.48);
+  color: #ffe082;
+  font-size: 11px;
+  padding: 5px 9px;
+}
+
+.adminPageIntro {
+  font-size: 13px;
+  color: var(--muted);
+  margin-bottom: 12px;
+}
+
+.adminUserCard {
+  padding: 10px;
+}
+
+.adminUserHead {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.adminUserActions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  align-items: center;
+}
+
+.adminUserPasswordInput {
+  width: 180px;
 }
 
 .predictionsWrap {
@@ -2056,6 +2159,36 @@ a { color: inherit; }
   .settingsAccountActions .btn {
     width: 100%;
     justify-content: center;
+  }
+  .adminTopActions {
+    margin-bottom: 8px;
+  }
+  .adminLandingToolbar {
+    align-items: stretch;
+  }
+  .adminLandingSearch {
+    width: 100%;
+  }
+  .adminLandingGrid {
+    grid-template-columns: 1fr;
+    gap: 8px;
+  }
+  .adminLandingActions .btn {
+    width: 100%;
+    justify-content: center;
+  }
+  .adminUserHead {
+    flex-direction: column;
+  }
+  .adminUserActions {
+    width: 100%;
+  }
+  .adminUserActions .btn {
+    width: 100%;
+    justify-content: center;
+  }
+  .adminUserPasswordInput {
+    width: 100%;
   }
   .statGrid {
     grid-template-columns: repeat(2, minmax(0, 1fr));

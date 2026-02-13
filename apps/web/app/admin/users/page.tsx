@@ -118,7 +118,7 @@ export default function AdminUsersPage() {
 
   return (
     <div className="settingsWrap">
-      <div style={{ marginBottom: 10, display: "flex", gap: 8, flexWrap: "wrap" }}>
+      <div className="adminTopActions">
         <Link href="/admin" className="btn">
           ← Back to admin
         </Link>
@@ -127,32 +127,35 @@ export default function AdminUsersPage() {
         </Link>
       </div>
       <h2 style={{ marginTop: 0 }}>Admin · Users</h2>
+      <div className="adminPageIntro">
+        Manage users, credentials and account access.
+      </div>
 
-      {loading ? <div>Loading...</div> : null}
+      {loading ? <div className="settingsMutedText">Loading...</div> : null}
       {error ? (
-        <div className="card settingsSection" style={{ borderColor: "#ef4444", marginBottom: 12 }}>
+        <div className="card settingsSection settingsAlert settingsAlertError">
           {error}
         </div>
       ) : null}
       {notice ? (
-        <div className="card settingsSection" style={{ borderColor: "#22c55e", marginBottom: 12 }}>
+        <div className="card settingsSection settingsAlert settingsAlertSuccess">
           {notice}
         </div>
       ) : null}
 
       {isSuperadmin ? (
         <>
-          <section className="card settingsSection" style={{ marginBottom: 12 }}>
+          <section className="card settingsSection">
             <div className="settingsSectionHeader">
               <h3 style={{ margin: 0 }}>Create User</h3>
             </div>
-            <form onSubmit={createUser} style={{ display: "grid", gap: 8 }}>
-              <label style={{ display: "grid", gap: 6 }}>
-                <span style={{ fontSize: 12, color: "var(--muted)" }}>Email</span>
+            <form onSubmit={createUser} className="settingsFormGrid">
+              <label className="settingsField">
+                <span className="settingsFieldLabel">Email</span>
                 <input className="input" value={newEmail} onChange={(e) => setNewEmail(e.target.value)} required />
               </label>
-              <label style={{ display: "grid", gap: 6 }}>
-                <span style={{ fontSize: 12, color: "var(--muted)" }}>Temporary password (optional)</span>
+              <label className="settingsField">
+                <span className="settingsFieldLabel">Temporary password (optional)</span>
                 <input className="input" value={newPassword} onChange={(e) => setNewPassword(e.target.value)} />
               </label>
               <button className="btn btnPrimary" type="submit">
@@ -165,8 +168,8 @@ export default function AdminUsersPage() {
             <div className="settingsSectionHeader">
               <h3 style={{ margin: 0 }}>User List</h3>
             </div>
-            <label style={{ display: "grid", gap: 6, marginBottom: 12 }}>
-              <span style={{ fontSize: 12, color: "var(--muted)" }}>Search user</span>
+            <label className="settingsField" style={{ marginBottom: 12 }}>
+              <span className="settingsFieldLabel">Search user</span>
               <input
                 className="input"
                 placeholder="Filter by email..."
@@ -176,8 +179,8 @@ export default function AdminUsersPage() {
             </label>
             <div style={{ display: "grid", gap: 8 }}>
               {filtered.map((user) => (
-                <div key={user.id} className="card settingsSection">
-                  <div style={{ display: "flex", justifyContent: "space-between", gap: 8, flexWrap: "wrap" }}>
+                <div key={user.id} className="card settingsSection adminUserCard">
+                  <div className="adminUserHead">
                     <div>
                       <div style={{ fontWeight: 700 }}>
                         {user.email} {user.isSuperadmin ? "· superadmin" : ""}
@@ -186,9 +189,9 @@ export default function AdminUsersPage() {
                         Bots: {user.bots} · Accounts: {user.exchangeAccounts} · Sessions: {user.sessions}
                       </div>
                     </div>
-                    <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+                    <div className="adminUserActions">
                       <input
-                        className="input"
+                        className="input adminUserPasswordInput"
                         placeholder="New password"
                         value={resetPassword[user.id] ?? ""}
                         onChange={(e) =>

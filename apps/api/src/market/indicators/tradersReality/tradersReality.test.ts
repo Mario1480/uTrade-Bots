@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import type { Candle } from "../timeframe.js";
+import type { Candle } from "../../timeframe.js";
 import { computeTradersRealityFeatures } from "./index.js";
 import { computeTradersRealityLevels } from "./levels.js";
 import { computeTradersRealityPvsra } from "./pvsra.js";
