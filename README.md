@@ -164,6 +164,7 @@ SMTP:
 - Global OpenAI Key (encrypted DB): `/admin/api-keys`
 - Global FMP Key (encrypted DB): `/admin/api-keys`
 - Indicator Settings (global/account/symbol/tf overrides): `/admin/indicator-settings`
+- Paper Trading Smoke Test: `docs/paper-trading-smoke-test.md`
 
 ## Manual Trading Desk Chart
 
@@ -173,6 +174,7 @@ Der Trading-Desk verwendet aktuell `lightweight-charts` (Node/TS, ohne native Ab
 - Polling-Refresh für neue Kerzen (MVP)
 
 Damit die Kerzen erscheinen, muss die API erreichbar sein (`/api/market/candles`) und ein gültiger Exchange-Account gewählt sein.
+Für `Paper (Simulated Trading)` muss zusätzlich ein echtes Exchange-Konto als Marktdatenquelle hinterlegt sein.
 
 ## Bot Prediction Gate (Entry Filter)
 
@@ -209,6 +211,7 @@ Beispiel `paramsJson` für Trend-Bot:
 
 Der Runner unterstützt jetzt zusätzlich `strategyKey: "prediction_copier"`:
 - liest Signale aus `predictions_state` (pro `exchange/account/symbol/timeframe`)
+- unterstützt `bitget` und `paper` (bei `paper` kommen Marktdaten aus dem verknüpften Live-CEX-Konto)
 - **enter_exit** Logik:
   - Entry auf frische `up/down` Signale
   - Exit bei `signal_flip`, `neutral` oder Confidence-Drop

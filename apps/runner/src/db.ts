@@ -3,6 +3,8 @@ import type { TradeIntent } from "@mm/futures-core";
 import { decryptSecret } from "./secret-crypto.js";
 
 const db = prisma as any;
+const PAPER_EXCHANGE = "paper";
+const PAPER_MARKET_DATA_ACCOUNT_KEY_PREFIX = "paper.marketDataAccount:";
 
 export type BotStatusValue = "running" | "stopped" | "error";
 
@@ -22,6 +24,15 @@ export type ActiveFuturesBot = {
     apiKey: string;
     apiSecret: string;
     passphrase: string | null;
+  };
+  marketData: {
+    exchange: string;
+    exchangeAccountId: string;
+    credentials: {
+      apiKey: string;
+      apiSecret: string;
+      passphrase: string | null;
+    };
   };
 };
 
@@ -93,7 +104,106 @@ function normalizeUtcDayStart(date: Date): Date {
   return new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate(), 0, 0, 0, 0));
 }
 
-function mapRowToActiveBot(bot: any): ActiveFuturesBot {
+function normalizeExchange(value: unknown): string {
+  return String(value ?? "").trim().toLowerCase();
+}
+
+function getPaperMarketDataSettingKey(exchangeAccountId: string): string {
+  return `${PAPER_MARKET_DATA_ACCOUNT_KEY_PREFIX}${exchangeAccountId}`;
+}
+
+function decodeCredentials(row: {
+  apiKeyEnc: string;
+  apiSecretEnc: string;
+  passphraseEnc: string | null;
+}) {
+  return {
+    apiKey: decryptSecret(row.apiKeyEnc),
+    apiSecret: decryptSecret(row.apiSecretEnc),
+    passphrase: row.passphraseEnc ? decryptSecret(row.passphraseEnc) : null
+  };
+}
+
+async function resolvePaperMarketDataAccountId(exchangeAccountId: string): Promise<string | null> {
+  const row = await db.globalSetting.findUnique({
+    where: {
+      key: getPaperMarketDataSettingKey(exchangeAccountId)
+    },
+    select: {
+      value: true
+    }
+  });
+
+  if (typeof row?.value === "string" && row.value.trim()) {
+    return row.value.trim();
+  }
+
+  if (row?.value && typeof row.value === "object" && !Array.isArray(row.value)) {
+    const record = row.value as Record<string, unknown>;
+    const candidate = record.exchangeAccountId ?? record.accountId ?? record.id;
+    if (typeof candidate === "string" && candidate.trim()) {
+      return candidate.trim();
+    }
+  }
+
+  return null;
+}
+
+async function resolveMarketDataForBot(bot: any): Promise<{
+  exchange: string;
+  exchangeAccountId: string;
+  credentials: {
+    apiKey: string;
+    apiSecret: string;
+    passphrase: string | null;
+  };
+}> {
+  const exchange = normalizeExchange(bot.exchange);
+  if (exchange !== PAPER_EXCHANGE) {
+    return {
+      exchange,
+      exchangeAccountId: String(bot.exchangeAccount?.id ?? bot.exchangeAccountId ?? ""),
+      credentials: decodeCredentials(bot.exchangeAccount)
+    };
+  }
+
+  const paperAccountId = String(bot.exchangeAccount?.id ?? bot.exchangeAccountId ?? "");
+  const linkedId = await resolvePaperMarketDataAccountId(paperAccountId);
+  if (!linkedId) {
+    throw new Error("paper_market_data_account_missing");
+  }
+
+  const linked = await db.exchangeAccount.findFirst({
+    where: {
+      id: linkedId,
+      userId: bot.userId
+    },
+    select: {
+      id: true,
+      exchange: true,
+      apiKeyEnc: true,
+      apiSecretEnc: true,
+      passphraseEnc: true
+    }
+  });
+  if (!linked) {
+    throw new Error("paper_market_data_account_not_found");
+  }
+  const linkedExchange = normalizeExchange(linked.exchange);
+  if (linkedExchange === PAPER_EXCHANGE) {
+    throw new Error("paper_market_data_account_invalid");
+  }
+
+  return {
+    exchange: linkedExchange,
+    exchangeAccountId: linked.id,
+    credentials: decodeCredentials(linked)
+  };
+}
+
+async function mapRowToActiveBot(bot: any): Promise<ActiveFuturesBot> {
+  const executionCredentials = decodeCredentials(bot.exchangeAccount);
+  const marketData = await resolveMarketDataForBot(bot);
   return {
     id: bot.id,
     userId: bot.userId,
@@ -106,13 +216,8 @@ function mapRowToActiveBot(bot: any): ActiveFuturesBot {
     leverage: bot.futuresConfig.leverage,
     paramsJson: (bot.futuresConfig.paramsJson ?? {}) as Record<string, unknown>,
     tickMs: bot.futuresConfig?.tickMs ?? 1000,
-    credentials: {
-      apiKey: decryptSecret(bot.exchangeAccount.apiKeyEnc),
-      apiSecret: decryptSecret(bot.exchangeAccount.apiSecretEnc),
-      passphrase: bot.exchangeAccount.passphraseEnc
-        ? decryptSecret(bot.exchangeAccount.passphraseEnc)
-        : null
-    }
+    credentials: executionCredentials,
+    marketData
   };
 }
 
@@ -175,7 +280,11 @@ export async function loadBotForExecution(botId: string): Promise<ActiveFuturesB
   });
 
   if (!bot || !canExecuteRow(bot)) return null;
-  return mapRowToActiveBot(bot);
+  try {
+    return await mapRowToActiveBot(bot);
+  } catch {
+    return null;
+  }
 }
 
 export async function loadActiveFuturesBots(): Promise<ActiveFuturesBot[]> {
@@ -208,7 +317,15 @@ export async function loadActiveFuturesBots(): Promise<ActiveFuturesBot[]> {
     orderBy: { createdAt: "asc" }
   });
 
-  return (bots as any[]).filter(canExecuteRow).map(mapRowToActiveBot);
+  const out: ActiveFuturesBot[] = [];
+  for (const bot of (bots as any[]).filter(canExecuteRow)) {
+    try {
+      out.push(await mapRowToActiveBot(bot));
+    } catch {
+      // Skip bots with incomplete or invalid market-data mapping.
+    }
+  }
+  return out;
 }
 
 export async function loadLatestPredictionStateForGate(params: {

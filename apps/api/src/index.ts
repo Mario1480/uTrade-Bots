@@ -40,7 +40,15 @@ import {
   type ExplainerOutput
 } from "./ai/predictionExplainer.js";
 import {
+  clearPaperMarketDataAccountId,
+  clearPaperState,
+  closePaperPosition,
   ManualTradingError,
+  getPaperAccountState,
+  isPaperTradingAccount,
+  listPaperMarketDataAccountIds,
+  listPaperOpenOrders,
+  listPaperPositions,
   cancelAllOrders,
   closePositionsMarket,
   createBitgetAdapter,
@@ -53,8 +61,11 @@ import {
   normalizeSymbolInput,
   normalizeTickerPayload,
   normalizeTradesPayload,
+  placePaperOrder,
+  resolveMarketDataTradingAccount,
   resolveTradingAccount,
-  saveTradingSettings
+  saveTradingSettings,
+  setPaperMarketDataAccountId
 } from "./trading.js";
 import {
   generateAndPersistPrediction,
@@ -167,15 +178,54 @@ const loginSchema = z.object({
 const exchangeCreateSchema = z.object({
   exchange: z.string().trim().min(1),
   label: z.string().trim().min(1),
-  apiKey: z.string().trim().min(1),
-  apiSecret: z.string().trim().min(1),
-  passphrase: z.string().trim().optional()
+  apiKey: z.string().trim().optional(),
+  apiSecret: z.string().trim().optional(),
+  passphrase: z.string().trim().optional(),
+  marketDataExchangeAccountId: z.string().trim().optional()
 }).superRefine((value, ctx) => {
-  if (value.exchange.toLowerCase() === "bitget" && !value.passphrase) {
+  const exchange = value.exchange.toLowerCase();
+  if (exchange === "bitget") {
+    if (!value.apiKey) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["apiKey"],
+        message: "apiKey is required for bitget"
+      });
+    }
+    if (!value.apiSecret) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["apiSecret"],
+        message: "apiSecret is required for bitget"
+      });
+    }
+  }
+  if (exchange !== "paper" && !value.apiKey) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ["apiKey"],
+      message: "apiKey is required"
+    });
+  }
+  if (exchange !== "paper" && !value.apiSecret) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ["apiSecret"],
+      message: "apiSecret is required"
+    });
+  }
+  if (exchange === "bitget" && !value.passphrase) {
     ctx.addIssue({
       code: z.ZodIssueCode.custom,
       path: ["passphrase"],
       message: "passphrase is required for bitget"
+    });
+  }
+  if (exchange === "paper" && !value.marketDataExchangeAccountId) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ["marketDataExchangeAccountId"],
+      message: "marketDataExchangeAccountId is required for paper"
     });
   }
 });
@@ -658,7 +708,8 @@ const PASSWORD_RESET_OTP_TTL_MIN = Math.max(
 
 const EXCHANGE_OPTION_CATALOG = [
   { value: "bitget", label: "Bitget (Futures)" },
-  { value: "mexc", label: "MEXC (Legacy)" }
+  { value: "mexc", label: "MEXC (Legacy)" },
+  { value: "paper", label: "Paper (Simulated Trading)" }
 ] as const;
 
 type ExchangeOption = (typeof EXCHANGE_OPTION_CATALOG)[number];
@@ -2002,8 +2053,9 @@ async function generateAutoPredictionForUser(
   predictionId: string | null;
   tsCreated: string;
 }> {
-  const account = await resolveTradingAccount(userId, payload.exchangeAccountId);
-  const adapter = createBitgetAdapter(account);
+  const resolvedAccount = await resolveMarketDataTradingAccount(userId, payload.exchangeAccountId);
+  const account = resolvedAccount.selectedAccount;
+  const adapter = createBitgetAdapter(resolvedAccount.marketDataAccount);
 
   try {
     await adapter.contractCache.warmup();
@@ -3574,8 +3626,9 @@ async function runPredictionOutcomeEvalCycle() {
       const [userId, exchangeAccountId] = key.split(":");
       let adapter: BitgetFuturesAdapter | null = null;
       try {
-        const account = await resolveTradingAccount(userId, exchangeAccountId);
-        adapter = createBitgetAdapter(account);
+        const resolvedAccount = await resolveMarketDataTradingAccount(userId, exchangeAccountId);
+        const accountLabel = resolvedAccount.selectedAccount.label;
+        adapter = createBitgetAdapter(resolvedAccount.marketDataAccount);
         await adapter.contractCache.warmup();
 
         for (const row of groupRows) {
@@ -3642,7 +3695,7 @@ async function runPredictionOutcomeEvalCycle() {
               : null;
             const sent = await notifyPredictionOutcome({
               userId,
-              exchangeAccountLabel: account.label,
+              exchangeAccountLabel: accountLabel,
               symbol,
               marketType: row.marketType === "spot" ? "spot" : "perp",
               timeframe,
@@ -3784,8 +3837,8 @@ async function runPredictionPerformanceEvalCycle() {
       let adapter: BitgetFuturesAdapter | null = null;
 
       try {
-        const account = await resolveTradingAccount(userId, exchangeAccountId);
-        adapter = createBitgetAdapter(account);
+        const resolvedAccount = await resolveMarketDataTradingAccount(userId, exchangeAccountId);
+        adapter = createBitgetAdapter(resolvedAccount.marketDataAccount);
         await adapter.contractCache.warmup();
 
         for (const row of groupRows) {
@@ -4144,8 +4197,8 @@ async function probePredictionRefreshTrigger(
 ): Promise<{ refresh: boolean; reasons: string[] }> {
   let adapter: BitgetFuturesAdapter | null = null;
   try {
-    const account = await resolveTradingAccount(template.userId, template.exchangeAccountId);
-    adapter = createBitgetAdapter(account);
+    const resolvedAccount = await resolveMarketDataTradingAccount(template.userId, template.exchangeAccountId);
+    adapter = createBitgetAdapter(resolvedAccount.marketDataAccount);
     await adapter.contractCache.warmup();
     const indicatorSettingsResolution = await resolveIndicatorSettings({
       db,
@@ -4248,8 +4301,9 @@ async function refreshPredictionStateForTemplate(params: {
   const { template } = params;
   let adapter: BitgetFuturesAdapter | null = null;
   try {
-    const account = await resolveTradingAccount(template.userId, template.exchangeAccountId);
-    adapter = createBitgetAdapter(account);
+    const resolvedAccount = await resolveMarketDataTradingAccount(template.userId, template.exchangeAccountId);
+    const account = resolvedAccount.selectedAccount;
+    adapter = createBitgetAdapter(resolvedAccount.marketDataAccount);
     await adapter.contractCache.warmup();
     const indicatorSettingsResolution = await resolveIndicatorSettings({
       db,
@@ -4860,6 +4914,8 @@ type WsAuthUser = {
 
 type MarketWsContext = {
   adapter: BitgetFuturesAdapter;
+  selectedAccount: Awaited<ReturnType<typeof resolveTradingAccount>>;
+  marketDataAccount: Awaited<ReturnType<typeof resolveTradingAccount>>;
   stop: () => Promise<void>;
 };
 
@@ -4925,8 +4981,8 @@ async function createMarketWsContext(
   userId: string,
   exchangeAccountId?: string | null
 ): Promise<{ accountId: string; ctx: MarketWsContext }> {
-  const account = await resolveTradingAccount(userId, exchangeAccountId);
-  const adapter = createBitgetAdapter(account);
+  const resolved = await resolveMarketDataTradingAccount(userId, exchangeAccountId);
+  const adapter = createBitgetAdapter(resolved.marketDataAccount);
   await adapter.contractCache.warmup();
 
   let closed = false;
@@ -4937,9 +4993,11 @@ async function createMarketWsContext(
   };
 
   return {
-    accountId: account.id,
+    accountId: resolved.selectedAccount.id,
     ctx: {
       adapter,
+      selectedAccount: resolved.selectedAccount,
+      marketDataAccount: resolved.marketDataAccount,
       stop
     }
   };
@@ -7518,14 +7576,15 @@ app.get("/api/symbols", requireAuth, async (req, res) => {
     const exchangeAccountId = typeof req.query.exchangeAccountId === "string"
       ? req.query.exchangeAccountId
       : undefined;
-    const account = await resolveTradingAccount(user.id, exchangeAccountId);
-    const adapter = createBitgetAdapter(account);
+    const resolved = await resolveMarketDataTradingAccount(user.id, exchangeAccountId);
+    const adapter = createBitgetAdapter(resolved.marketDataAccount);
 
     try {
       const symbols = await listSymbols(adapter);
       return res.json({
-        exchangeAccountId: account.id,
-        exchange: account.exchange,
+        exchangeAccountId: resolved.selectedAccount.id,
+        exchange: resolved.selectedAccount.exchange,
+        marketDataExchange: resolved.marketDataAccount.exchange,
         ...symbols
       });
     } finally {
@@ -7544,8 +7603,8 @@ app.get("/api/market/candles", requireAuth, async (req, res) => {
   }
 
   try {
-    const account = await resolveTradingAccount(user.id, parsed.data.exchangeAccountId);
-    const adapter = createBitgetAdapter(account);
+    const resolved = await resolveMarketDataTradingAccount(user.id, parsed.data.exchangeAccountId);
+    const adapter = createBitgetAdapter(resolved.marketDataAccount);
 
     try {
       const symbol = normalizeSymbolInput(parsed.data.symbol);
@@ -7565,8 +7624,9 @@ app.get("/api/market/candles", requireAuth, async (req, res) => {
       const items = parseBitgetCandles(raw);
 
       return res.json({
-        exchangeAccountId: account.id,
-        exchange: account.exchange,
+        exchangeAccountId: resolved.selectedAccount.id,
+        exchange: resolved.selectedAccount.exchange,
+        marketDataExchange: resolved.marketDataAccount.exchange,
         symbol,
         timeframe: parsed.data.timeframe,
         granularity,
@@ -7586,18 +7646,34 @@ app.get("/api/account/summary", requireAuth, async (req, res) => {
     const exchangeAccountId = typeof req.query.exchangeAccountId === "string"
       ? req.query.exchangeAccountId
       : undefined;
-    const account = await resolveTradingAccount(user.id, exchangeAccountId);
-    const adapter = createBitgetAdapter(account);
+    const resolved = await resolveMarketDataTradingAccount(user.id, exchangeAccountId);
+    const adapter = createBitgetAdapter(resolved.marketDataAccount);
 
     try {
-      const [summary, positions] = await Promise.all([
-        adapter.getAccountState(),
-        adapter.getPositions()
-      ]);
+      if (isPaperTradingAccount(resolved.selectedAccount)) {
+        const [summary, positions] = await Promise.all([
+          getPaperAccountState(resolved.selectedAccount, adapter),
+          listPaperPositions(resolved.selectedAccount, adapter)
+        ]);
+
+        return res.json({
+          exchangeAccountId: resolved.selectedAccount.id,
+          exchange: resolved.selectedAccount.exchange,
+          marketDataExchange: resolved.marketDataAccount.exchange,
+          equity: summary.equity ?? null,
+          availableMargin: summary.availableMargin ?? null,
+          marginMode: summary.marginMode ?? null,
+          positionsCount: positions.length,
+          updatedAt: new Date().toISOString()
+        });
+      }
+
+      const [summary, positions] = await Promise.all([adapter.getAccountState(), adapter.getPositions()]);
 
       return res.json({
-        exchangeAccountId: account.id,
-        exchange: account.exchange,
+        exchangeAccountId: resolved.selectedAccount.id,
+        exchange: resolved.selectedAccount.exchange,
+        marketDataExchange: resolved.marketDataAccount.exchange,
         equity: summary.equity ?? null,
         availableMargin: summary.availableMargin ?? null,
         marginMode: summary.marginMode ?? null,
@@ -7621,19 +7697,23 @@ app.post("/api/account/leverage", requireAuth, async (req, res) => {
 
   try {
     const account = await resolveTradingAccount(user.id, parsed.data.exchangeAccountId);
+    const symbol = normalizeSymbolInput(parsed.data.symbol);
+    if (!symbol) {
+      return res.status(400).json({ error: "symbol_required" });
+    }
+    if (isPaperTradingAccount(account)) {
+      return res.json({
+        ok: true,
+        exchangeAccountId: account.id,
+        symbol,
+        leverage: parsed.data.leverage,
+        marginMode: parsed.data.marginMode
+      });
+    }
+
     const adapter = createBitgetAdapter(account);
     try {
-      const symbol = normalizeSymbolInput(parsed.data.symbol);
-      if (!symbol) {
-        return res.status(400).json({ error: "symbol_required" });
-      }
-
-      await adapter.setLeverage(
-        symbol,
-        parsed.data.leverage,
-        parsed.data.marginMode
-      );
-
+      await adapter.setLeverage(symbol, parsed.data.leverage, parsed.data.marginMode);
       return res.json({
         ok: true,
         exchangeAccountId: account.id,
@@ -7657,12 +7737,14 @@ app.get("/api/positions", requireAuth, async (req, res) => {
       : undefined;
     const symbol = normalizeSymbolInput(typeof req.query.symbol === "string" ? req.query.symbol : null);
 
-    const account = await resolveTradingAccount(user.id, exchangeAccountId);
-    const adapter = createBitgetAdapter(account);
+    const resolved = await resolveMarketDataTradingAccount(user.id, exchangeAccountId);
+    const adapter = createBitgetAdapter(resolved.marketDataAccount);
     try {
-      const items = await listPositions(adapter, symbol ?? undefined);
+      const items = isPaperTradingAccount(resolved.selectedAccount)
+        ? await listPaperPositions(resolved.selectedAccount, adapter, symbol ?? undefined)
+        : await listPositions(adapter, symbol ?? undefined);
       return res.json({
-        exchangeAccountId: account.id,
+        exchangeAccountId: resolved.selectedAccount.id,
         items
       });
     } finally {
@@ -7681,12 +7763,14 @@ app.get("/api/orders/open", requireAuth, async (req, res) => {
       : undefined;
     const symbol = normalizeSymbolInput(typeof req.query.symbol === "string" ? req.query.symbol : null);
 
-    const account = await resolveTradingAccount(user.id, exchangeAccountId);
-    const adapter = createBitgetAdapter(account);
+    const resolved = await resolveMarketDataTradingAccount(user.id, exchangeAccountId);
+    const adapter = createBitgetAdapter(resolved.marketDataAccount);
     try {
-      const items = await listOpenOrders(adapter, symbol ?? undefined);
+      const items = isPaperTradingAccount(resolved.selectedAccount)
+        ? await listPaperOpenOrders(resolved.selectedAccount)
+        : await listOpenOrders(adapter, symbol ?? undefined);
       return res.json({
-        exchangeAccountId: account.id,
+        exchangeAccountId: resolved.selectedAccount.id,
         items
       });
     } finally {
@@ -7705,13 +7789,30 @@ app.post("/api/orders", requireAuth, async (req, res) => {
   }
 
   try {
-    const account = await resolveTradingAccount(user.id, parsed.data.exchangeAccountId);
-    const adapter = createBitgetAdapter(account);
+    const resolved = await resolveMarketDataTradingAccount(user.id, parsed.data.exchangeAccountId);
+    const adapter = createBitgetAdapter(resolved.marketDataAccount);
 
     try {
       const symbol = normalizeSymbolInput(parsed.data.symbol);
       if (!symbol) {
         return res.status(400).json({ error: "symbol_required" });
+      }
+
+      if (isPaperTradingAccount(resolved.selectedAccount)) {
+        const orderSide = parsed.data.side === "long" ? "buy" : "sell";
+        const placed = await placePaperOrder(resolved.selectedAccount, adapter, {
+          symbol,
+          side: orderSide,
+          type: parsed.data.type,
+          qty: parsed.data.qty,
+          price: parsed.data.price,
+          reduceOnly: parsed.data.reduceOnly
+        });
+        return res.status(201).json({
+          exchangeAccountId: resolved.selectedAccount.id,
+          orderId: placed.orderId,
+          status: "accepted"
+        });
       }
 
       if (parsed.data.leverage !== undefined) {
@@ -7735,7 +7836,7 @@ app.post("/api/orders", requireAuth, async (req, res) => {
       });
 
       return res.status(201).json({
-        exchangeAccountId: account.id,
+        exchangeAccountId: resolved.selectedAccount.id,
         orderId: placed.orderId,
         status: "accepted"
       });
@@ -7756,6 +7857,9 @@ app.post("/api/orders/cancel", requireAuth, async (req, res) => {
 
   try {
     const account = await resolveTradingAccount(user.id, parsed.data.exchangeAccountId);
+    if (isPaperTradingAccount(account)) {
+      return res.json({ ok: true });
+    }
     const adapter = createBitgetAdapter(account);
     try {
       const symbol = normalizeSymbolInput(parsed.data.symbol);
@@ -7793,6 +7897,14 @@ app.post("/api/orders/cancel-all", requireAuth, async (req, res) => {
           : null
     );
     const account = await resolveTradingAccount(user.id, exchangeAccountId);
+    if (isPaperTradingAccount(account)) {
+      return res.json({
+        exchangeAccountId: account.id,
+        requested: 0,
+        cancelled: 0,
+        failed: 0
+      });
+    }
     const adapter = createBitgetAdapter(account);
 
     try {
@@ -7817,16 +7929,18 @@ app.post("/api/positions/close", requireAuth, async (req, res) => {
   }
 
   try {
-    const account = await resolveTradingAccount(user.id, parsed.data.exchangeAccountId);
-    const adapter = createBitgetAdapter(account);
+    const resolved = await resolveMarketDataTradingAccount(user.id, parsed.data.exchangeAccountId);
+    const adapter = createBitgetAdapter(resolved.marketDataAccount);
     try {
       const symbol = normalizeSymbolInput(parsed.data.symbol);
       if (!symbol) {
         return res.status(400).json({ error: "symbol_required" });
       }
-      const orderIds = await closePositionsMarket(adapter, symbol, parsed.data.side);
+      const orderIds = isPaperTradingAccount(resolved.selectedAccount)
+        ? await closePaperPosition(resolved.selectedAccount, adapter, symbol, parsed.data.side)
+        : await closePositionsMarket(adapter, symbol, parsed.data.side);
       return res.json({
-        exchangeAccountId: account.id,
+        exchangeAccountId: resolved.selectedAccount.id,
         closedCount: orderIds.length,
         orderIds
       });
@@ -7845,6 +7959,36 @@ app.get("/exchange-accounts", requireAuth, async (_req, res) => {
     orderBy: { createdAt: "desc" }
   });
 
+  const paperIds = rows
+    .filter((row: any) => normalizeExchangeValue(String(row.exchange ?? "")) === "paper")
+    .map((row: any) => String(row.id));
+  const paperBindings = await listPaperMarketDataAccountIds(paperIds);
+  const linkedIds = Array.from(
+    new Set(
+      Object.values(paperBindings)
+        .filter((value): value is string => typeof value === "string" && value.trim().length > 0)
+    )
+  );
+  const linkedAccounts = linkedIds.length > 0
+    ? await db.exchangeAccount.findMany({
+        where: {
+          userId: user.id,
+          id: { in: linkedIds }
+        },
+        select: {
+          id: true,
+          exchange: true,
+          label: true
+        }
+      })
+    : [];
+  const linkedById = new Map<string, { exchange: string; label: string }>(
+    linkedAccounts.map((row: any) => [
+      row.id,
+      { exchange: String(row.exchange ?? ""), label: String(row.label ?? "") }
+    ])
+  );
+
   const items = rows.map((row: any) => {
     let apiKeyMasked = "****";
     try {
@@ -7852,6 +7996,8 @@ app.get("/exchange-accounts", requireAuth, async (_req, res) => {
     } catch {
       apiKeyMasked = "****";
     }
+    const linkedMarketDataId = paperBindings[row.id] ?? null;
+    const linkedMarketData = linkedMarketDataId ? linkedById.get(linkedMarketDataId) ?? null : null;
     return {
       id: row.id,
       exchange: row.exchange,
@@ -7859,7 +8005,10 @@ app.get("/exchange-accounts", requireAuth, async (_req, res) => {
       apiKeyMasked,
       createdAt: row.createdAt,
       updatedAt: row.updatedAt,
-      lastUsedAt: row.lastUsedAt
+      lastUsedAt: row.lastUsedAt,
+      marketDataExchangeAccountId: linkedMarketDataId,
+      marketDataExchange: linkedMarketData?.exchange ?? null,
+      marketDataLabel: linkedMarketData?.label ?? null
     };
   });
 
@@ -8380,22 +8529,57 @@ app.post("/exchange-accounts", requireAuth, async (req, res) => {
     });
   }
 
+  let marketDataExchangeAccountId: string | null = null;
+  if (requestedExchange === "paper") {
+    marketDataExchangeAccountId = parsed.data.marketDataExchangeAccountId?.trim() || null;
+    if (!marketDataExchangeAccountId) {
+      return res.status(400).json({
+        error: "paper_market_data_account_required"
+      });
+    }
+    const marketDataAccount = await db.exchangeAccount.findFirst({
+      where: {
+        id: marketDataExchangeAccountId,
+        userId: user.id
+      },
+      select: {
+        id: true,
+        exchange: true
+      }
+    });
+    if (!marketDataAccount) {
+      return res.status(404).json({ error: "paper_market_data_account_not_found" });
+    }
+    if (normalizeExchangeValue(marketDataAccount.exchange) === "paper") {
+      return res.status(400).json({ error: "paper_market_data_account_invalid" });
+    }
+  }
+
   const created = await db.exchangeAccount.create({
     data: {
       userId: user.id,
       exchange: requestedExchange,
       label: parsed.data.label,
-      apiKeyEnc: encryptSecret(parsed.data.apiKey),
-      apiSecretEnc: encryptSecret(parsed.data.apiSecret),
-      passphraseEnc: parsed.data.passphrase ? encryptSecret(parsed.data.passphrase) : null
+      apiKeyEnc: encryptSecret(parsed.data.apiKey?.trim() || `paper_${crypto.randomUUID()}`),
+      apiSecretEnc: encryptSecret(parsed.data.apiSecret?.trim() || `paper_${crypto.randomUUID()}`),
+      passphraseEnc: requestedExchange === "paper"
+        ? null
+        : parsed.data.passphrase
+          ? encryptSecret(parsed.data.passphrase)
+          : null
     }
   });
+
+  if (requestedExchange === "paper" && marketDataExchangeAccountId) {
+    await setPaperMarketDataAccountId(created.id, marketDataExchangeAccountId);
+  }
 
   return res.status(201).json({
     id: created.id,
     exchange: created.exchange,
     label: created.label,
-    apiKeyMasked: maskSecret(parsed.data.apiKey)
+    apiKeyMasked: parsed.data.apiKey ? maskSecret(parsed.data.apiKey) : "paper",
+    marketDataExchangeAccountId
   });
 });
 
@@ -8414,7 +8598,29 @@ app.delete("/exchange-accounts/:id", requireAuth, async (req, res) => {
     return res.status(409).json({ error: "exchange_account_in_use" });
   }
 
+  const paperAccounts = await db.exchangeAccount.findMany({
+    where: {
+      userId: user.id,
+      exchange: "paper"
+    },
+    select: {
+      id: true
+    }
+  });
+  const bindings = await listPaperMarketDataAccountIds(paperAccounts.map((row: any) => row.id));
+  const dependentPaperAccountIds = paperAccounts
+    .map((row: any) => row.id as string)
+    .filter((paperId) => paperId !== id && bindings[paperId] === id);
+  if (dependentPaperAccountIds.length > 0) {
+    return res.status(409).json({
+      error: "exchange_account_in_use_by_paper",
+      dependentPaperAccountIds
+    });
+  }
+
   await db.exchangeAccount.delete({ where: { id } });
+  await clearPaperMarketDataAccountId(id);
+  await clearPaperState(id);
   return res.json({ ok: true });
 });
 
@@ -8432,6 +8638,44 @@ app.post("/exchange-accounts/:id/test-connection", requireAuth, async (req, res)
     }
   });
   if (!account) return res.status(404).json({ error: "exchange_account_not_found" });
+
+  if (normalizeExchangeValue(account.exchange) === "paper") {
+    try {
+      const resolved = await resolveMarketDataTradingAccount(user.id, account.id);
+      const adapter = createBitgetAdapter(resolved.marketDataAccount);
+      try {
+        const summary = await getPaperAccountState(resolved.selectedAccount, adapter);
+        const synced: Awaited<ReturnType<typeof syncExchangeAccount>> = {
+          syncedAt: new Date(),
+          spotBudget: null,
+          futuresBudget: {
+            equity: summary.equity,
+            availableMargin: summary.availableMargin,
+            marginCoin: "USDT"
+          },
+          pnlTodayUsd: null,
+          details: {
+            exchange: "paper",
+            endpoint: "paper/simulated"
+          }
+        };
+        await persistExchangeSyncSuccess(account.id, synced);
+        return res.json({
+          ok: true,
+          message: "paper_sync_ok",
+          syncedAt: synced.syncedAt.toISOString(),
+          spotBudget: synced.spotBudget,
+          futuresBudget: synced.futuresBudget,
+          pnlTodayUsd: synced.pnlTodayUsd,
+          details: synced.details
+        });
+      } finally {
+        await adapter.close();
+      }
+    } catch (error) {
+      return sendManualTradingError(res, error);
+    }
+  }
 
   try {
     const synced = await executeExchangeSync(account);
@@ -8971,43 +9215,52 @@ async function handleUserWsConnection(
       exchangeAccountId ?? settings.exchangeAccountId
     );
     context = resolved.ctx;
+    const paperMode = isPaperTradingAccount(context.selectedAccount);
 
     await saveTradingSettings(user.id, {
       exchangeAccountId: resolved.accountId
     });
 
-    unsubs.push(
-      context.adapter.onFill((event) => {
-        wsSend(socket, {
-          type: "fill",
-          data: event
-        });
-      })
-    );
-    unsubs.push(
-      context.adapter.onOrderUpdate((event) => {
-        wsSend(socket, {
-          type: "order",
-          data: event
-        });
-      })
-    );
-    unsubs.push(
-      context.adapter.onPositionUpdate((event) => {
-        wsSend(socket, {
-          type: "position",
-          data: event
-        });
-      })
-    );
+    if (!paperMode) {
+      unsubs.push(
+        context.adapter.onFill((event) => {
+          wsSend(socket, {
+            type: "fill",
+            data: event
+          });
+        })
+      );
+      unsubs.push(
+        context.adapter.onOrderUpdate((event) => {
+          wsSend(socket, {
+            type: "order",
+            data: event
+          });
+        })
+      );
+      unsubs.push(
+        context.adapter.onPositionUpdate((event) => {
+          wsSend(socket, {
+            type: "position",
+            data: event
+          });
+        })
+      );
+    }
 
     const sendSummary = async () => {
       if (!context) return;
-      const [accountSummary, positions, openOrders] = await Promise.all([
-        context.adapter.getAccountState(),
-        listPositions(context.adapter),
-        listOpenOrders(context.adapter)
-      ]);
+      const [accountSummary, positions, openOrders] = paperMode
+        ? await Promise.all([
+            getPaperAccountState(context.selectedAccount, context.adapter),
+            listPaperPositions(context.selectedAccount, context.adapter),
+            listPaperOpenOrders(context.selectedAccount)
+          ])
+        : await Promise.all([
+            context.adapter.getAccountState(),
+            listPositions(context.adapter),
+            listOpenOrders(context.adapter)
+          ]);
       wsSend(socket, {
         type: "account",
         data: {

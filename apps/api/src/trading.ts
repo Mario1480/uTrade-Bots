@@ -5,6 +5,13 @@ import { decryptSecret } from "./secret-crypto.js";
 type DbClient = typeof prisma;
 
 const db = prisma as DbClient as any;
+const PAPER_EXCHANGE = "paper";
+const PAPER_MARKET_DATA_ACCOUNT_KEY_PREFIX = "paper.marketDataAccount:";
+const PAPER_STATE_KEY_PREFIX = "paper.state:";
+const DEFAULT_PAPER_BALANCE_USD = Math.max(
+  0,
+  Number(process.env.PAPER_TRADING_START_BALANCE_USD ?? "10000")
+);
 
 export type TradingAccount = {
   id: string;
@@ -14,6 +21,7 @@ export type TradingAccount = {
   apiKey: string;
   apiSecret: string;
   passphrase: string | null;
+  marketDataExchangeAccountId: string | null;
 };
 
 export type TradingSettings = {
@@ -72,6 +80,36 @@ export type NormalizedTrade = {
   ts: number | null;
 };
 
+type PaperPositionState = {
+  symbol: string;
+  side: "long" | "short";
+  qty: number;
+  entryPrice: number;
+  openedAt: string;
+  updatedAt: string;
+};
+
+type PaperOrderState = {
+  orderId: string;
+  symbol: string;
+  side: "buy" | "sell";
+  type: "market" | "limit";
+  qty: number;
+  price: number;
+  reduceOnly: boolean;
+  status: "filled";
+  createdAt: string;
+};
+
+type PaperState = {
+  balanceUsd: number;
+  realizedPnlUsd: number;
+  nextOrderSeq: number;
+  positions: PaperPositionState[];
+  orders: PaperOrderState[];
+  updatedAt: string;
+};
+
 export class ManualTradingError extends Error {
   readonly status: number;
   readonly code: string;
@@ -81,6 +119,201 @@ export class ManualTradingError extends Error {
     this.status = status;
     this.code = code;
   }
+}
+
+function getPaperMarketDataKey(exchangeAccountId: string): string {
+  return `${PAPER_MARKET_DATA_ACCOUNT_KEY_PREFIX}${exchangeAccountId}`;
+}
+
+function getPaperStateKey(exchangeAccountId: string): string {
+  return `${PAPER_STATE_KEY_PREFIX}${exchangeAccountId}`;
+}
+
+function isPaperExchange(exchange: string): boolean {
+  return exchange.trim().toLowerCase() === PAPER_EXCHANGE;
+}
+
+function coercePaperState(value: unknown): PaperState {
+  const record = toRecord(value);
+  const balanceUsd = Math.max(0, toNumber(record?.balanceUsd) ?? DEFAULT_PAPER_BALANCE_USD);
+  const realizedPnlUsd = toNumber(record?.realizedPnlUsd) ?? 0;
+  const nextOrderSeq = Math.max(1, Math.trunc(toNumber(record?.nextOrderSeq) ?? 1));
+  const updatedAt = typeof record?.updatedAt === "string" ? record.updatedAt : new Date().toISOString();
+
+  const positionsRaw = Array.isArray(record?.positions) ? record.positions : [];
+  const positions: PaperPositionState[] = [];
+  for (const row of positionsRaw) {
+    const pos = toRecord(row);
+    const symbol = normalizeCanonicalSymbol(getString(pos, ["symbol"]) ?? "");
+    const sideRaw = getString(pos, ["side"])?.toLowerCase();
+    const side: "long" | "short" | null = sideRaw === "long" || sideRaw === "short" ? sideRaw : null;
+    const qty = Math.abs(toNumber(pos?.qty) ?? 0);
+    const entryPrice = toNumber(pos?.entryPrice) ?? 0;
+    if (!symbol || !side || qty <= 0 || entryPrice <= 0) continue;
+    positions.push({
+      symbol,
+      side,
+      qty,
+      entryPrice,
+      openedAt: typeof pos?.openedAt === "string" ? pos.openedAt : new Date().toISOString(),
+      updatedAt: typeof pos?.updatedAt === "string" ? pos.updatedAt : new Date().toISOString()
+    });
+  }
+
+  const ordersRaw = Array.isArray(record?.orders) ? record.orders : [];
+  const orders: PaperOrderState[] = [];
+  for (const row of ordersRaw) {
+    const order = toRecord(row);
+    const orderId = getString(order, ["orderId"]) ?? "";
+    const symbol = normalizeCanonicalSymbol(getString(order, ["symbol"]) ?? "");
+    const sideRaw = getString(order, ["side"])?.toLowerCase();
+    const side: "buy" | "sell" | null = sideRaw === "buy" || sideRaw === "sell" ? sideRaw : null;
+    const typeRaw = getString(order, ["type"])?.toLowerCase();
+    const type: "market" | "limit" | null = typeRaw === "market" || typeRaw === "limit" ? typeRaw : null;
+    const qty = Math.abs(toNumber(order?.qty) ?? 0);
+    const price = toNumber(order?.price) ?? 0;
+    if (!orderId || !symbol || !side || !type || qty <= 0 || price <= 0) continue;
+    orders.push({
+      orderId,
+      symbol,
+      side,
+      type,
+      qty,
+      price,
+      reduceOnly: Boolean(order?.reduceOnly),
+      status: "filled",
+      createdAt: typeof order?.createdAt === "string" ? order.createdAt : new Date().toISOString()
+    });
+  }
+
+  return {
+    balanceUsd,
+    realizedPnlUsd,
+    nextOrderSeq,
+    positions,
+    orders: orders.slice(0, 200),
+    updatedAt
+  };
+}
+
+async function getPaperState(exchangeAccountId: string): Promise<PaperState> {
+  const row = await db.globalSetting.findUnique({
+    where: {
+      key: getPaperStateKey(exchangeAccountId)
+    },
+    select: {
+      value: true
+    }
+  });
+  return coercePaperState(row?.value);
+}
+
+async function savePaperState(exchangeAccountId: string, state: PaperState): Promise<PaperState> {
+  const payload: PaperState = {
+    ...state,
+    orders: state.orders.slice(0, 200),
+    updatedAt: new Date().toISOString()
+  };
+  await db.globalSetting.upsert({
+    where: {
+      key: getPaperStateKey(exchangeAccountId)
+    },
+    update: {
+      value: payload
+    },
+    create: {
+      key: getPaperStateKey(exchangeAccountId),
+      value: payload
+    }
+  });
+  return payload;
+}
+
+async function readPaperMarketDataAccountId(exchangeAccountId: string): Promise<string | null> {
+  const row = await db.globalSetting.findUnique({
+    where: { key: getPaperMarketDataKey(exchangeAccountId) },
+    select: { value: true }
+  });
+
+  if (typeof row?.value === "string" && row.value.trim()) {
+    return row.value.trim();
+  }
+  const record = toRecord(row?.value);
+  const value = getString(record, ["exchangeAccountId", "accountId", "id"]);
+  return value?.trim() || null;
+}
+
+export async function setPaperMarketDataAccountId(
+  exchangeAccountId: string,
+  marketDataExchangeAccountId: string
+): Promise<void> {
+  await db.globalSetting.upsert({
+    where: {
+      key: getPaperMarketDataKey(exchangeAccountId)
+    },
+    update: {
+      value: {
+        exchangeAccountId: marketDataExchangeAccountId
+      }
+    },
+    create: {
+      key: getPaperMarketDataKey(exchangeAccountId),
+      value: {
+        exchangeAccountId: marketDataExchangeAccountId
+      }
+    }
+  });
+}
+
+export async function clearPaperMarketDataAccountId(exchangeAccountId: string): Promise<void> {
+  await db.globalSetting.deleteMany({
+    where: {
+      key: getPaperMarketDataKey(exchangeAccountId)
+    }
+  });
+}
+
+export async function clearPaperState(exchangeAccountId: string): Promise<void> {
+  await db.globalSetting.deleteMany({
+    where: {
+      key: getPaperStateKey(exchangeAccountId)
+    }
+  });
+}
+
+export async function listPaperMarketDataAccountIds(
+  exchangeAccountIds: string[]
+): Promise<Record<string, string | null>> {
+  if (exchangeAccountIds.length === 0) return {};
+  const keys = exchangeAccountIds.map((id) => getPaperMarketDataKey(id));
+  const rows = await db.globalSetting.findMany({
+    where: {
+      key: { in: keys }
+    },
+    select: {
+      key: true,
+      value: true
+    }
+  });
+
+  const out: Record<string, string | null> = {};
+  for (const id of exchangeAccountIds) out[id] = null;
+
+  for (const row of rows) {
+    const accountId = row.key.slice(PAPER_MARKET_DATA_ACCOUNT_KEY_PREFIX.length);
+    if (!accountId) continue;
+    if (typeof row.value === "string") {
+      out[accountId] = row.value.trim() || null;
+      continue;
+    }
+    const record = toRecord(row.value);
+    out[accountId] = getString(record, ["exchangeAccountId", "accountId", "id"]);
+  }
+  return out;
+}
+
+export function isPaperTradingAccount(account: TradingAccount): boolean {
+  return isPaperExchange(account.exchange);
 }
 
 export interface ExchangeClient {
@@ -370,12 +603,22 @@ export async function resolveTradingAccount(userId: string, exchangeAccountId?: 
   }
 
   const exchange = String(account.exchange ?? "").toLowerCase();
-  if (exchange !== "bitget") {
-    throw new ManualTradingError(
-      `exchange_not_supported:${exchange}`,
-      400,
-      "exchange_not_supported"
-    );
+  if (exchange !== "bitget" && !isPaperExchange(exchange)) {
+    throw new ManualTradingError(`exchange_not_supported:${exchange}`, 400, "exchange_not_supported");
+  }
+
+  if (isPaperExchange(exchange)) {
+    const marketDataExchangeAccountId = await readPaperMarketDataAccountId(account.id);
+    return {
+      id: account.id,
+      userId: account.userId,
+      exchange,
+      label: account.label,
+      apiKey: "",
+      apiSecret: "",
+      passphrase: null,
+      marketDataExchangeAccountId
+    };
   }
 
   let apiKey = "";
@@ -401,11 +644,55 @@ export async function resolveTradingAccount(userId: string, exchangeAccountId?: 
     label: account.label,
     apiKey,
     apiSecret,
-    passphrase
+    passphrase,
+    marketDataExchangeAccountId: null
+  };
+}
+
+export async function resolveMarketDataTradingAccount(
+  userId: string,
+  exchangeAccountId?: string | null
+): Promise<{ selectedAccount: TradingAccount; marketDataAccount: TradingAccount }> {
+  const selectedAccount = await resolveTradingAccount(userId, exchangeAccountId);
+  if (!isPaperExchange(selectedAccount.exchange)) {
+    return {
+      selectedAccount,
+      marketDataAccount: selectedAccount
+    };
+  }
+
+  const linkedId = selectedAccount.marketDataExchangeAccountId;
+  if (!linkedId) {
+    throw new ManualTradingError(
+      "paper_market_data_account_missing",
+      400,
+      "paper_market_data_account_missing"
+    );
+  }
+
+  const marketDataAccount = await resolveTradingAccount(userId, linkedId);
+  if (isPaperExchange(marketDataAccount.exchange)) {
+    throw new ManualTradingError(
+      "paper_market_data_account_invalid",
+      400,
+      "paper_market_data_account_invalid"
+    );
+  }
+
+  return {
+    selectedAccount,
+    marketDataAccount
   };
 }
 
 export function createBitgetAdapter(account: TradingAccount): BitgetFuturesAdapter {
+  if (isPaperExchange(account.exchange)) {
+    throw new ManualTradingError(
+      "paper_account_requires_market_data_resolution",
+      400,
+      "paper_account_requires_market_data_resolution"
+    );
+  }
   return new BitgetFuturesAdapter({
     apiKey: account.apiKey,
     apiSecret: account.apiSecret,
@@ -497,6 +784,259 @@ export async function listPositions(
     markPrice: toNumber(row.markPrice),
     unrealizedPnl: toNumber(row.unrealizedPnl)
   }));
+}
+
+function signedQty(position: PaperPositionState): number {
+  return position.side === "long" ? Math.abs(position.qty) : -Math.abs(position.qty);
+}
+
+function pushPaperOrder(state: PaperState, order: PaperOrderState): void {
+  state.orders = [order, ...state.orders].slice(0, 200);
+}
+
+function toPaperOrderId(exchangeAccountId: string, seq: number): string {
+  return `paper_${exchangeAccountId}_${String(seq).padStart(8, "0")}`;
+}
+
+async function fetchTickerPrice(adapter: BitgetFuturesAdapter, symbol: string): Promise<number> {
+  const exchangeSymbol = await adapter.toExchangeSymbol(symbol);
+  const ticker = await adapter.marketApi.getTicker(exchangeSymbol, adapter.productType);
+  const row = toRecord(Array.isArray(ticker) ? ticker[0] : ticker);
+  const price =
+    getNumber(row, ["markPrice", "lastPr", "last", "price", "close", "indexPrice"]) ??
+    getNumber(toRecord((row as any)?.data), ["markPrice", "lastPr", "last", "price", "close", "indexPrice"]);
+  if (!price || !Number.isFinite(price) || price <= 0) {
+    throw new ManualTradingError("paper_price_unavailable", 422, "paper_price_unavailable");
+  }
+  return price;
+}
+
+async function fetchMarkPriceMap(
+  adapter: BitgetFuturesAdapter,
+  symbols: string[]
+): Promise<Map<string, number>> {
+  const out = new Map<string, number>();
+  for (const symbol of symbols) {
+    try {
+      out.set(symbol, await fetchTickerPrice(adapter, symbol));
+    } catch {
+      // Keep partial mark-price coverage.
+    }
+  }
+  return out;
+}
+
+export async function listPaperOpenOrders(_account: TradingAccount): Promise<NormalizedOrder[]> {
+  return [];
+}
+
+export async function listPaperPositions(
+  account: TradingAccount,
+  adapter: BitgetFuturesAdapter,
+  symbol?: string
+): Promise<NormalizedPosition[]> {
+  const state = await getPaperState(account.id);
+  const normalizedSymbol = symbol ? normalizeCanonicalSymbol(symbol) : null;
+  const positions = normalizedSymbol
+    ? state.positions.filter((row) => row.symbol === normalizedSymbol)
+    : state.positions.slice();
+  const markPrices = await fetchMarkPriceMap(adapter, positions.map((row) => row.symbol));
+
+  return positions.map((row) => {
+    const markPrice = markPrices.get(row.symbol) ?? null;
+    const unrealizedPnl =
+      markPrice === null
+        ? null
+        : row.side === "long"
+          ? (markPrice - row.entryPrice) * row.qty
+          : (row.entryPrice - markPrice) * row.qty;
+    return {
+      symbol: row.symbol,
+      side: row.side,
+      size: row.qty,
+      entryPrice: row.entryPrice,
+      markPrice,
+      unrealizedPnl
+    };
+  });
+}
+
+export async function getPaperAccountState(
+  account: TradingAccount,
+  adapter: BitgetFuturesAdapter
+): Promise<{ equity: number; availableMargin: number; marginMode: "cross" }> {
+  const state = await getPaperState(account.id);
+  const positions = await listPaperPositions(account, adapter);
+  const unrealized = positions.reduce((acc, row) => acc + (Number(row.unrealizedPnl) || 0), 0);
+  const equity = Number((state.balanceUsd + unrealized).toFixed(6));
+  return {
+    equity,
+    availableMargin: equity,
+    marginMode: "cross"
+  };
+}
+
+function positionBySymbol(state: PaperState, symbol: string): PaperPositionState | null {
+  return state.positions.find((row) => row.symbol === symbol) ?? null;
+}
+
+function replacePosition(state: PaperState, symbol: string, next: PaperPositionState | null): void {
+  state.positions = state.positions.filter((row) => row.symbol !== symbol);
+  if (next) state.positions.push(next);
+}
+
+function applyPaperFill(params: {
+  state: PaperState;
+  symbol: string;
+  qty: number;
+  side: "buy" | "sell";
+  reduceOnly: boolean;
+  fillPrice: number;
+}): { filledQty: number; realizedPnlUsd: number; nextPosition: PaperPositionState | null } {
+  const current = positionBySymbol(params.state, params.symbol);
+  const currentSigned = current ? signedQty(current) : 0;
+  let deltaSigned = params.side === "buy" ? Math.abs(params.qty) : -Math.abs(params.qty);
+  if (params.reduceOnly) {
+    if (currentSigned === 0 || Math.sign(currentSigned) === Math.sign(deltaSigned)) {
+      return {
+        filledQty: 0,
+        realizedPnlUsd: 0,
+        nextPosition: current
+      };
+    }
+    const maxReduce = Math.abs(currentSigned);
+    deltaSigned = Math.sign(deltaSigned) * Math.min(Math.abs(deltaSigned), maxReduce);
+  }
+
+  const nextSigned = currentSigned + deltaSigned;
+  let realizedPnlUsd = 0;
+
+  if (current && currentSigned !== 0 && Math.sign(currentSigned) !== Math.sign(deltaSigned)) {
+    const closedQty = Math.min(Math.abs(currentSigned), Math.abs(deltaSigned));
+    const pnlPerUnit =
+      current.side === "long"
+        ? params.fillPrice - current.entryPrice
+        : current.entryPrice - params.fillPrice;
+    realizedPnlUsd = closedQty * pnlPerUnit;
+  }
+
+  if (nextSigned === 0) {
+    return {
+      filledQty: Math.abs(deltaSigned),
+      realizedPnlUsd,
+      nextPosition: null
+    };
+  }
+
+  const nextSide: "long" | "short" = nextSigned > 0 ? "long" : "short";
+  const nextQty = Math.abs(nextSigned);
+  let nextEntryPrice = params.fillPrice;
+  const nowIso = new Date().toISOString();
+
+  if (current && Math.sign(currentSigned) === Math.sign(nextSigned)) {
+    if (Math.abs(deltaSigned) > 0 && Math.sign(currentSigned) === Math.sign(deltaSigned)) {
+      const weightedNotional = current.entryPrice * Math.abs(currentSigned) + params.fillPrice * Math.abs(deltaSigned);
+      nextEntryPrice = weightedNotional / (Math.abs(currentSigned) + Math.abs(deltaSigned));
+    } else {
+      nextEntryPrice = current.entryPrice;
+    }
+  }
+
+  return {
+    filledQty: Math.abs(deltaSigned),
+    realizedPnlUsd,
+    nextPosition: {
+      symbol: params.symbol,
+      side: nextSide,
+      qty: nextQty,
+      entryPrice: Number(nextEntryPrice.toFixed(8)),
+      openedAt: current?.openedAt ?? nowIso,
+      updatedAt: nowIso
+    }
+  };
+}
+
+export async function placePaperOrder(
+  account: TradingAccount,
+  adapter: BitgetFuturesAdapter,
+  input: {
+    symbol: string;
+    side: "buy" | "sell";
+    type: "market" | "limit";
+    qty: number;
+    price?: number;
+    reduceOnly?: boolean;
+  }
+): Promise<{ orderId: string }> {
+  const symbol = normalizeCanonicalSymbol(input.symbol);
+  if (!symbol) throw new ManualTradingError("symbol_required", 400, "symbol_required");
+  const qty = Number(input.qty);
+  if (!Number.isFinite(qty) || qty <= 0) {
+    throw new ManualTradingError("invalid_qty", 400, "invalid_qty");
+  }
+
+  const state = await getPaperState(account.id);
+  const marketPrice = await fetchTickerPrice(adapter, symbol);
+  const fillPrice = input.type === "limit" && Number.isFinite(Number(input.price)) && Number(input.price) > 0
+    ? Number(input.price)
+    : marketPrice;
+
+  const fill = applyPaperFill({
+    state,
+    symbol,
+    qty,
+    side: input.side,
+    reduceOnly: Boolean(input.reduceOnly),
+    fillPrice
+  });
+
+  if (fill.filledQty <= 0) {
+    throw new ManualTradingError("paper_reduce_only_rejected", 409, "paper_reduce_only_rejected");
+  }
+
+  state.realizedPnlUsd = Number((state.realizedPnlUsd + fill.realizedPnlUsd).toFixed(8));
+  state.balanceUsd = Number((state.balanceUsd + fill.realizedPnlUsd).toFixed(8));
+  replacePosition(state, symbol, fill.nextPosition);
+
+  const orderId = toPaperOrderId(account.id, state.nextOrderSeq);
+  state.nextOrderSeq += 1;
+  pushPaperOrder(state, {
+    orderId,
+    symbol,
+    side: input.side,
+    type: input.type,
+    qty: fill.filledQty,
+    price: Number(fillPrice.toFixed(8)),
+    reduceOnly: Boolean(input.reduceOnly),
+    status: "filled",
+    createdAt: new Date().toISOString()
+  });
+
+  await savePaperState(account.id, state);
+  return { orderId };
+}
+
+export async function closePaperPosition(
+  account: TradingAccount,
+  adapter: BitgetFuturesAdapter,
+  symbol: string,
+  side?: "long" | "short"
+): Promise<string[]> {
+  const normalized = normalizeCanonicalSymbol(symbol);
+  if (!normalized) return [];
+  const state = await getPaperState(account.id);
+  const current = positionBySymbol(state, normalized);
+  if (!current) return [];
+  if (side && current.side !== side) return [];
+
+  const placed = await placePaperOrder(account, adapter, {
+    symbol: normalized,
+    side: current.side === "long" ? "sell" : "buy",
+    type: "market",
+    qty: current.qty,
+    reduceOnly: true
+  });
+  return [placed.orderId];
 }
 
 export async function closePositionsMarket(

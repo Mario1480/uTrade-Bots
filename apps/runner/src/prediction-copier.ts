@@ -18,7 +18,7 @@ export type PredictionCopierSide = "long" | "short";
 
 export type PredictionCopierConfig = {
   botType: "prediction_copier";
-  exchange: "bitget";
+  exchange: "bitget" | "paper";
   accountId: string;
   marketType: "perp";
   symbols: string[];
@@ -97,6 +97,10 @@ type NormalizedPosition = {
 };
 
 const adapterCache = new Map<string, BitgetFuturesAdapter>();
+const DEFAULT_PAPER_EQUITY_USD = Math.max(
+  0,
+  Number(process.env.PAPER_TRADING_START_BALANCE_USD ?? "10000")
+);
 
 function normalizeSymbol(value: string | null | undefined): string {
   return String(value ?? "").replace(/[^A-Za-z0-9]/g, "").toUpperCase();
@@ -152,6 +156,11 @@ function normalizeTimeframe(value: unknown): PredictionCopierTimeframe {
   return "15m";
 }
 
+function normalizeExecutionExchange(value: unknown): "bitget" | "paper" {
+  const normalized = String(value ?? "").trim().toLowerCase();
+  return normalized === "paper" ? "paper" : "bitget";
+}
+
 function toUtcDayStart(value: Date): Date {
   return new Date(Date.UTC(value.getUTCFullYear(), value.getUTCMonth(), value.getUTCDate(), 0, 0, 0, 0));
 }
@@ -197,7 +206,7 @@ export function readPredictionCopierConfig(bot: ActiveFuturesBot): PredictionCop
 
   const config: PredictionCopierConfig = {
     botType: "prediction_copier",
-    exchange: "bitget",
+    exchange: normalizeExecutionExchange(root.exchange ?? bot.exchange),
     accountId: bot.exchangeAccountId,
     marketType: "perp",
     symbols: symbols.length > 0 ? symbols : [normalizeSymbol(bot.symbol)],
@@ -473,18 +482,23 @@ function buildLimitEntryPrice(side: PredictionCopierSide, markPrice: number, off
 }
 
 function getOrCreateAdapter(bot: ActiveFuturesBot): BitgetFuturesAdapter {
-  const cached = adapterCache.get(bot.id);
+  const cacheKey = `${bot.id}:${bot.marketData.exchangeAccountId}`;
+  const cached = adapterCache.get(cacheKey);
   if (cached) return cached;
 
   const adapter = new BitgetFuturesAdapter({
-    apiKey: bot.credentials.apiKey,
-    apiSecret: bot.credentials.apiSecret,
-    apiPassphrase: bot.credentials.passphrase ?? undefined,
+    apiKey: bot.marketData.credentials.apiKey,
+    apiSecret: bot.marketData.credentials.apiSecret,
+    apiPassphrase: bot.marketData.credentials.passphrase ?? undefined,
     productType: (process.env.BITGET_PRODUCT_TYPE as any) ?? "USDT-FUTURES",
     marginCoin: process.env.BITGET_MARGIN_COIN ?? "USDT"
   });
-  adapterCache.set(bot.id, adapter);
+  adapterCache.set(cacheKey, adapter);
   return adapter;
+}
+
+function toPaperOrderId(botId: string): string {
+  return `paper_${botId}_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
 }
 
 async function syncOpenPositionInState(botId: string, symbol: string, state: BotTradeState, openPosition: NormalizedPosition | null) {
@@ -508,8 +522,10 @@ export async function runPredictionCopierTick(
   const symbol = normalizeSymbol(bot.symbol);
   const now = new Date();
   const config = readPredictionCopierConfig(bot);
+  const executionExchange = String(bot.exchange ?? "").trim().toLowerCase();
+  const marketDataExchange = String(bot.marketData.exchange ?? "").trim().toLowerCase();
 
-  if (bot.exchange.toLowerCase() !== "bitget" || config.exchange !== "bitget") {
+  if ((executionExchange !== "bitget" && executionExchange !== "paper") || marketDataExchange !== "bitget") {
     return {
       outcome: "blocked",
       intent: { type: "none" },
@@ -542,7 +558,7 @@ export async function runPredictionCopierTick(
   const adapter = getOrCreateAdapter(bot);
   await adapter.contractCache.refresh(false);
 
-  const [prediction, accountState, positions, tradeState] = await Promise.all([
+  const [prediction, tradeState] = await Promise.all([
     loadLatestPredictionStateForGate({
       userId: bot.userId,
       exchange: bot.exchange,
@@ -551,10 +567,64 @@ export async function runPredictionCopierTick(
       marketType: "perp",
       timeframe: config.timeframe
     }),
-    adapter.getAccountState(),
-    adapter.getPositions(),
     loadBotTradeState({ botId: bot.id, symbol, now })
   ]);
+
+  let accountState: { equity: number };
+  let positions: Array<{
+    symbol: string;
+    side: string;
+    size: number;
+    entryPrice?: number | null;
+    markPrice?: number | null;
+  }>;
+
+  if (executionExchange === "paper") {
+    let markPrice: number | null = null;
+    try {
+      const exchangeSymbol = await adapter.toExchangeSymbol(symbol);
+      const ticker = await adapter.marketApi.getTicker(exchangeSymbol, adapter.productType);
+      markPrice = parseTickerPrice(ticker);
+    } catch {
+      markPrice = null;
+    }
+
+    const openQty = Number(tradeState.openQty ?? 0);
+    const hasOpen = !!tradeState.openSide && Number.isFinite(openQty) && openQty > 0;
+    positions = hasOpen
+      ? [{
+          symbol,
+          side: tradeState.openSide === "long" ? "long" : "short",
+          size: openQty,
+          entryPrice: tradeState.openEntryPrice ?? null,
+          markPrice: markPrice ?? null
+        }]
+      : [];
+
+    let equity = DEFAULT_PAPER_EQUITY_USD;
+    if (hasOpen && markPrice && Number.isFinite(markPrice) && markPrice > 0 && Number.isFinite(Number(tradeState.openEntryPrice))) {
+      const entryPrice = Number(tradeState.openEntryPrice);
+      const unrealized =
+        tradeState.openSide === "long"
+          ? (markPrice - entryPrice) * openQty
+          : (entryPrice - markPrice) * openQty;
+      equity += unrealized;
+    }
+    accountState = { equity };
+  } else {
+    const [liveAccountState, livePositions] = await Promise.all([
+      adapter.getAccountState(),
+      adapter.getPositions()
+    ]);
+    accountState = { equity: Number(liveAccountState.equity ?? 0) };
+    positions = livePositions.map((row) => ({
+      symbol: row.symbol,
+      side: row.side,
+      size: Number(row.size ?? 0),
+      entryPrice: row.entryPrice,
+      markPrice: row.markPrice
+    }));
+  }
 
   const predictionHash = prediction ? buildPredictionHash(prediction) : null;
 
@@ -683,13 +753,15 @@ export async function runPredictionCopierTick(
     }
 
     const orderSide = openPosition.side === "long" ? "sell" : "buy";
-    const placed = await adapter.placeOrder({
-      symbol,
-      side: orderSide,
-      type: "market",
-      qty: openPosition.size,
-      reduceOnly: config.execution.reduceOnlyOnExit
-    });
+    const placed = executionExchange === "paper"
+      ? { orderId: toPaperOrderId(bot.id) }
+      : await adapter.placeOrder({
+          symbol,
+          side: orderSide,
+          type: "market",
+          qty: openPosition.size,
+          reduceOnly: config.execution.reduceOnlyOnExit
+        });
 
     await upsertBotTradeState({
       botId: bot.id,
@@ -758,7 +830,9 @@ export async function runPredictionCopierTick(
   }
 
   const leverage = Math.max(1, Math.min(bot.leverage, config.risk.maxLeverage));
-  await adapter.setLeverage(symbol, leverage, bot.marginMode);
+  if (executionExchange !== "paper") {
+    await adapter.setLeverage(symbol, leverage, bot.marginMode);
+  }
 
   const qty = Number((candidateNotionalUsd / markPrice).toFixed(8));
   if (!Number.isFinite(qty) || qty <= 0) {
@@ -789,14 +863,16 @@ export async function runPredictionCopierTick(
     takeProfitPct: config.risk.takeProfitPct
   });
 
-  const placed = await adapter.placeOrder({
-    symbol,
-    side: orderSide,
-    type: config.execution.orderType,
-    qty,
-    price: limitPrice,
-    ...tpSl
-  });
+  const placed = executionExchange === "paper"
+    ? { orderId: toPaperOrderId(bot.id) }
+    : await adapter.placeOrder({
+        symbol,
+        side: orderSide,
+        type: config.execution.orderType,
+        qty,
+        price: limitPrice,
+        ...tpSl
+      });
 
   await upsertBotTradeState({
     botId: bot.id,

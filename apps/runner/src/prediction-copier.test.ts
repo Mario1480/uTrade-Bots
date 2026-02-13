@@ -26,6 +26,15 @@ function makeBot(overrides: Partial<ActiveFuturesBot> = {}): ActiveFuturesBot {
       apiSecret: "secret",
       passphrase: "pass"
     },
+    marketData: {
+      exchange: "bitget",
+      exchangeAccountId: "acc_1",
+      credentials: {
+        apiKey: "key",
+        apiSecret: "secret",
+        passphrase: "pass"
+      }
+    },
     ...overrides
   };
 }
@@ -115,6 +124,15 @@ test("readPredictionCopierConfig returns safe defaults", () => {
   assert.equal(cfg.positionSizing.type, "fixed_usd");
   assert.equal(cfg.positionSizing.value, 100);
   assert.deepEqual(cfg.filters.allowSignals, ["up", "down"]);
+});
+
+test("readPredictionCopierConfig supports paper execution exchange", () => {
+  const cfg = readPredictionCopierConfig(
+    makeBot({
+      exchange: "paper"
+    })
+  );
+  assert.equal(cfg.exchange, "paper");
 });
 
 test("buildPredictionHash is deterministic", () => {

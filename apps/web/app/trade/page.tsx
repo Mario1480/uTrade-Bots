@@ -1003,7 +1003,7 @@ function TradePageContent() {
   }
 
   return (
-    <div>
+    <div className="tradeDeskWrap">
       <div className="dashboardHeader">
         <div>
           <h2 style={{ margin: 0 }}>Manual Trading Desk</h2>
@@ -1011,7 +1011,7 @@ function TradePageContent() {
             TradingView + futures order controls.
           </div>
         </div>
-        <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+        <div className="tradeDeskActions">
           <Link href="/dashboard" className="btn">Dashboard</Link>
           <Link href={selectedAccountId ? `/bots?exchangeAccountId=${encodeURIComponent(selectedAccountId)}` : "/bots"} className="btn">
             Bots
@@ -1020,7 +1020,7 @@ function TradePageContent() {
       </div>
 
       {error ? (
-        <div className="card" style={{ padding: 12, borderColor: "#ef4444", marginBottom: 12 }}>
+        <div className="card tradeDeskNotice tradeDeskNoticeError">
           <strong>Error:</strong> {error}
           <div style={{ marginTop: 8 }}>
             <button
@@ -1037,19 +1037,19 @@ function TradePageContent() {
       ) : null}
 
       {actionError ? (
-        <div className="card" style={{ padding: 12, borderColor: "#ef4444", marginBottom: 12 }}>
+        <div className="card tradeDeskNotice tradeDeskNoticeError">
           <strong>Action failed:</strong> {actionError}
         </div>
       ) : null}
 
       {softWarning ? (
-        <div className="card" style={{ padding: 12, borderColor: "#f59e0b", marginBottom: 12 }}>
+        <div className="card tradeDeskNotice tradeDeskNoticeWarn">
           <strong>Warning:</strong> {softWarning}
         </div>
       ) : null}
 
       {activePrefill ? (
-        <div className="card" style={{ padding: 12, borderColor: "#3b82f6", marginBottom: 12 }}>
+        <div className="card tradeDeskNotice tradeDeskNoticeInfo">
           <div style={{ display: "flex", justifyContent: "space-between", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
             <div>
               <strong>Prediction Context</strong>
@@ -1181,9 +1181,9 @@ function TradePageContent() {
       ) : null}
 
       {loading ? (
-        <div className="card" style={{ padding: 16 }}>Loading trading desk…</div>
+        <div className="card tradeDeskSection">Loading trading desk…</div>
       ) : accounts.length === 0 ? (
-        <div className="card" style={{ padding: 16 }}>
+        <div className="card tradeDeskSection">
           <div style={{ fontWeight: 700, marginBottom: 8 }}>No exchange accounts available</div>
           <div style={{ color: "var(--muted)", marginBottom: 12 }}>
             Add a Bitget account first to use manual trading.
@@ -1192,10 +1192,18 @@ function TradePageContent() {
         </div>
       ) : (
         <>
-          <section className="card" style={{ padding: 12, marginBottom: 12 }}>
-            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(200px,1fr))", gap: 10 }}>
+          <section className="card tradeDeskSection">
+            <div className="tradeDeskSectionHeader">
               <div>
-                <div style={{ fontSize: 12, color: "var(--muted)", marginBottom: 4 }}>Exchange account</div>
+                <div className="tradeDeskSectionTitle">Trading Context</div>
+                <div className="tradeDeskSectionHint">
+                  Select account, symbol and timeframe used by chart and order ticket.
+                </div>
+              </div>
+            </div>
+            <div className="tradeDeskContextGrid">
+              <label className="tradeDeskField">
+                <div className="tradeDeskFieldLabel">Exchange account</div>
                 <select
                   className="input"
                   value={selectedAccountId}
@@ -1211,10 +1219,10 @@ function TradePageContent() {
                     </option>
                   ))}
                 </select>
-              </div>
+              </label>
 
-              <div>
-                <div style={{ fontSize: 12, color: "var(--muted)", marginBottom: 4 }}>Symbol</div>
+              <label className="tradeDeskField">
+                <div className="tradeDeskFieldLabel">Symbol</div>
                 <select
                   className="input"
                   value={selectedSymbol}
@@ -1231,10 +1239,10 @@ function TradePageContent() {
                     </option>
                   ))}
                 </select>
-              </div>
+              </label>
 
-              <div>
-                <div style={{ fontSize: 12, color: "var(--muted)", marginBottom: 4 }}>Timeframe</div>
+              <label className="tradeDeskField">
+                <div className="tradeDeskFieldLabel">Timeframe</div>
                 <select
                   className="input"
                   value={timeframe}
@@ -1248,11 +1256,11 @@ function TradePageContent() {
                     <option key={item} value={item}>{item}</option>
                   ))}
                 </select>
-              </div>
+              </label>
 
-              <div>
-                <div style={{ fontSize: 12, color: "var(--muted)", marginBottom: 4 }}>Account</div>
-                <div className="card" style={{ padding: 10, minHeight: 44 }}>
+              <div className="tradeDeskField">
+                <div className="tradeDeskFieldLabel">Account Snapshot</div>
+                <div className="card tradeDeskSummary">
                   Eq: {fmt(summary?.equity)} | Avail: {fmt(summary?.availableMargin)}
                 </div>
               </div>
@@ -1262,10 +1270,11 @@ function TradePageContent() {
           <section
             className="tradeDeskGrid"
           >
-            <article className="card" style={{ padding: 10, minHeight: 620 }}>
-              <div style={{ marginBottom: 8, fontWeight: 700 }}>
+            <article className="card tradeDeskPane">
+              <div className="tradeDeskPaneTitle">
                 {selectedSymbol} {selectedSymbolMeta?.status ? `- ${selectedSymbolMeta.status}` : ""}
               </div>
+              <div className="tradeDeskPaneHint">Live market chart</div>
               <LightweightChart
                 exchangeAccountId={selectedAccountId}
                 symbol={selectedSymbol}
@@ -1274,8 +1283,9 @@ function TradePageContent() {
               />
             </article>
 
-            <article className="card" style={{ padding: 10, minHeight: 620 }}>
-              <div style={{ fontWeight: 700, marginBottom: 8 }}>Order Entry</div>
+            <article className="card tradeDeskPane">
+              <div className="tradeDeskPaneTitle">Order Entry</div>
+              <div className="tradeDeskPaneHint">Place manual futures orders with live account data.</div>
 
               <div className="tradeOrderPanel">
                 <div className="tradeOrderTopRow">
@@ -1301,24 +1311,27 @@ function TradePageContent() {
                       Cross
                     </button>
                   </div>
-                  <div className="tradeOrderLeverageGroup">
-                    <input
-                      className="tradeOrderLeverageInput"
-                      type="number"
-                      min={1}
-                      max={125}
-                      step={1}
-                      value={leverage}
-                      onChange={(event) => setLeverage(event.target.value)}
-                    />
-                    <button
-                      className="tradeOrderApplyBtn"
-                      disabled={isApplyingLeverage}
-                      onClick={() => void applyLeverage()}
-                      type="button"
-                    >
-                      {isApplyingLeverage ? "..." : "Apply"}
-                    </button>
+                  <div className="tradeOrderLeverageControl">
+                    <div className="tradeOrderLeverageLabel">Leverage (x)</div>
+                    <div className="tradeOrderLeverageGroup">
+                      <input
+                        className="tradeOrderLeverageInput"
+                        type="number"
+                        min={1}
+                        max={125}
+                        step={1}
+                        value={leverage}
+                        onChange={(event) => setLeverage(event.target.value)}
+                      />
+                      <button
+                        className="tradeOrderApplyBtn"
+                        disabled={isApplyingLeverage}
+                        onClick={() => void applyLeverage()}
+                        type="button"
+                      >
+                        {isApplyingLeverage ? "..." : "Apply"}
+                      </button>
+                    </div>
                   </div>
                 </div>
 
@@ -1353,9 +1366,6 @@ function TradePageContent() {
                     type="button"
                   >
                     Market
-                  </button>
-                  <button className="tradeOrderTypeTab tradeOrderTypeTabMuted" type="button" disabled>
-                    Post only
                   </button>
                 </div>
 
@@ -1426,18 +1436,14 @@ function TradePageContent() {
                   <div className="tradeOrderDualRow">
                     <span>Position size</span>
                     <strong>
-                      <span className="tradeOrderValueLong">{fmt(orderQtyValue, 4)}</span>
-                      <span className="tradeOrderValueSlash"> / </span>
-                      <span className="tradeOrderValueShort">{fmt(orderQtyValue, 4)}</span>
+                      <span>{fmt(orderQtyValue, 4)}</span>
                       <span className="tradeOrderValueUnit"> {baseAssetUnit}</span>
                     </strong>
                   </div>
                   <div className="tradeOrderDualRow">
                     <span>Cost</span>
                     <strong>
-                      <span className="tradeOrderValueLong">{fmt(estimatedCost, 4)}</span>
-                      <span className="tradeOrderValueSlash"> / </span>
-                      <span className="tradeOrderValueShort">{fmt(estimatedCost, 4)}</span>
+                      <span>{fmt(estimatedCost, 4)}</span>
                       <span className="tradeOrderValueUnit"> USDT</span>
                     </strong>
                   </div>
@@ -1543,10 +1549,13 @@ function TradePageContent() {
             </article>
           </section>
 
-          <section className="card" style={{ padding: 12, marginTop: 12 }}>
-            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10, flexWrap: "wrap", gap: 8 }}>
-              <div style={{ fontWeight: 700 }}>Positions</div>
-              <div style={{ fontSize: 12, color: "var(--muted)" }}>Symbol filter: {selectedSymbol}</div>
+          <section className="card tradeDeskSection">
+            <div className="tradeDeskSectionHeader">
+              <div>
+                <div className="tradeDeskSectionTitle">Positions</div>
+                <div className="tradeDeskSectionHint">Open positions for the selected market.</div>
+              </div>
+              <div className="tradeDeskSectionHint">Symbol: {selectedSymbol}</div>
             </div>
 
             <div style={{ overflowX: "auto" }}>
@@ -1587,9 +1596,12 @@ function TradePageContent() {
             </div>
           </section>
 
-          <section className="card" style={{ padding: 12, marginTop: 12 }}>
-            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10, flexWrap: "wrap", gap: 8 }}>
-              <div style={{ fontWeight: 700 }}>Open Orders</div>
+          <section className="card tradeDeskSection">
+            <div className="tradeDeskSectionHeader">
+              <div>
+                <div className="tradeDeskSectionTitle">Open Orders</div>
+                <div className="tradeDeskSectionHint">Manage active orders before they fill.</div>
+              </div>
               <button className="btn" onClick={() => void cancelAll()}>Cancel All</button>
             </div>
 
