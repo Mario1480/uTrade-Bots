@@ -32,6 +32,27 @@ type AiPredictionSummary = {
   confidence: number;
 };
 
+type PublicAiPromptItem = {
+  id: string;
+  name: string;
+  indicatorKeys: string[];
+  timeframe: PredictionTimeframe | null;
+  directionPreference: DirectionPreference;
+  confidenceTargetPct: number;
+  isPublic?: boolean;
+  updatedAt: string | null;
+};
+
+type PublicAiPromptLicensePolicy = {
+  mode: "off" | "warn" | "enforce";
+  allowedPublicPromptIds: string[];
+  enforcementActive: boolean;
+};
+
+type PredictionDefaultsResponse = {
+  signalMode: CreateSignalMode;
+};
+
 type PredictionListItem = {
   id: string;
   symbol: string;
@@ -63,6 +84,8 @@ type PredictionListItem = {
   signalMode?: CreateSignalMode;
   localPrediction?: AiPredictionSummary | null;
   aiPrediction?: AiPredictionSummary | null;
+  aiPromptTemplateId?: string | null;
+  aiPromptTemplateName?: string | null;
 };
 
 type PredictionEventItem = {
@@ -180,6 +203,8 @@ type RunningPredictionItem = {
   confidenceTargetPct: number;
   leverage: number | null;
   signalMode: CreateSignalMode;
+  aiPromptTemplateId?: string | null;
+  aiPromptTemplateName?: string | null;
   paused: boolean;
   tsCreated: string;
   nextRunAt: string;
@@ -509,11 +534,12 @@ export default function PredictionsPage() {
   const [newSymbol, setNewSymbol] = useState("BTCUSDT");
   const [newMarketType, setNewMarketType] = useState<PredictionMarketType>("perp");
   const [newTimeframe, setNewTimeframe] = useState<PredictionTimeframe>("15m");
-  const [newDirectionPreference, setNewDirectionPreference] = useState<DirectionPreference>("either");
-  const [newSignalMode, setNewSignalMode] = useState<CreateSignalMode>("both");
-  const [newConfidenceTarget, setNewConfidenceTarget] = useState("60");
+  const [publicAiPrompts, setPublicAiPrompts] = useState<PublicAiPromptItem[]>([]);
+  const [publicAiPromptsLoading, setPublicAiPromptsLoading] = useState(false);
+  const [publicAiPromptLicensePolicy, setPublicAiPromptLicensePolicy] = useState<PublicAiPromptLicensePolicy | null>(null);
+  const [predictionDefaults, setPredictionDefaults] = useState<PredictionDefaultsResponse | null>(null);
+  const [newAiPromptTemplateId, setNewAiPromptTemplateId] = useState("");
   const [newLeverage, setNewLeverage] = useState("10");
-  const [newAutoSchedule, setNewAutoSchedule] = useState(true);
   const [nowMs, setNowMs] = useState(() => Date.now());
   const [expandedDetailId, setExpandedDetailId] = useState<string | null>(null);
   const [detailsById, setDetailsById] = useState<Record<string, PredictionDetailResponse>>({});
@@ -596,6 +622,38 @@ export default function PredictionsPage() {
     }
   }
 
+  async function loadPublicAiPrompts() {
+    setPublicAiPromptsLoading(true);
+    try {
+      const payload = await apiGet<{
+        items: PublicAiPromptItem[];
+        licensePolicy?: PublicAiPromptLicensePolicy;
+      }>("/settings/ai-prompts/public");
+      const items = Array.isArray(payload.items) ? payload.items : [];
+      setPublicAiPrompts(items);
+      setPublicAiPromptLicensePolicy(payload.licensePolicy ?? null);
+      setNewAiPromptTemplateId((prev) => {
+        if (!prev) return "";
+        return items.some((item) => item.id === prev) ? prev : "";
+      });
+    } catch {
+      setPublicAiPrompts([]);
+      setPublicAiPromptLicensePolicy(null);
+      setNewAiPromptTemplateId("");
+    } finally {
+      setPublicAiPromptsLoading(false);
+    }
+  }
+
+  async function loadPredictionDefaults() {
+    try {
+      const payload = await apiGet<PredictionDefaultsResponse>("/settings/prediction-defaults");
+      setPredictionDefaults(payload);
+    } catch {
+      setPredictionDefaults(null);
+    }
+  }
+
   async function loadSymbolsForAccount(exchangeAccountId: string) {
     setSymbolsLoading(true);
     setSymbolsError(null);
@@ -627,6 +685,8 @@ export default function PredictionsPage() {
     void loadPredictionQuality();
     void loadPredictionMetrics();
     void loadAccounts();
+    void loadPublicAiPrompts();
+    void loadPredictionDefaults();
   }, []);
 
   useEffect(() => {
@@ -642,6 +702,19 @@ export default function PredictionsPage() {
     const timer = setInterval(() => setNowMs(Date.now()), 1000);
     return () => clearInterval(timer);
   }, []);
+
+  const selectedPrompt = useMemo(
+    () => publicAiPrompts.find((item) => item.id === newAiPromptTemplateId) ?? null,
+    [newAiPromptTemplateId, publicAiPrompts]
+  );
+  const selectedPromptLockedTimeframe = selectedPrompt?.timeframe ?? null;
+  const effectiveCreateTimeframe = selectedPromptLockedTimeframe ?? newTimeframe;
+
+  useEffect(() => {
+    if (selectedPromptLockedTimeframe && newTimeframe !== selectedPromptLockedTimeframe) {
+      setNewTimeframe(selectedPromptLockedTimeframe);
+    }
+  }, [newTimeframe, selectedPromptLockedTimeframe]);
 
   const filteredRows = useMemo(() => {
     const symbolSearch = filterSymbol.trim().toUpperCase();
@@ -809,7 +882,6 @@ export default function PredictionsPage() {
     setNotice(null);
 
     const symbol = newSymbol.trim().toUpperCase();
-    const confidenceTargetPct = Number(newConfidenceTarget);
     const leverage = Number(newLeverage);
 
     if (!createAccountId) {
@@ -818,10 +890,6 @@ export default function PredictionsPage() {
     }
     if (!symbol) {
       setActionError("Please select a pair.");
-      return;
-    }
-    if (!Number.isFinite(confidenceTargetPct) || confidenceTargetPct < 0 || confidenceTargetPct > 100) {
-      setActionError("Confidence target must be between 0 and 100.");
       return;
     }
     if (newMarketType === "perp" && (!Number.isFinite(leverage) || leverage < 1 || leverage > 125)) {
@@ -836,19 +904,21 @@ export default function PredictionsPage() {
           signal: PredictionSignal;
           confidence: number;
           expectedMovePct: number;
+          timeframe: PredictionTimeframe;
         };
+        directionPreference: DirectionPreference;
+        confidenceTargetPct: number;
         signalSource: SignalSource;
         signalMode: CreateSignalMode;
+        aiPromptTemplateId?: string | null;
+        aiPromptTemplateName?: string | null;
       }>("/api/predictions/generate-auto", {
         exchangeAccountId: createAccountId,
         symbol,
         marketType: newMarketType,
-        timeframe: newTimeframe,
-        directionPreference: newDirectionPreference,
-        signalMode: newSignalMode,
-        confidenceTargetPct,
-        leverage: newMarketType === "perp" ? Math.trunc(leverage) : undefined,
-        autoSchedule: newAutoSchedule
+        timeframe: effectiveCreateTimeframe,
+        aiPromptTemplateId: newAiPromptTemplateId || undefined,
+        leverage: newMarketType === "perp" ? Math.trunc(leverage) : undefined
       });
       const modeLabel =
         response.signalMode === "local_only"
@@ -858,10 +928,11 @@ export default function PredictionsPage() {
             : "Local + AI";
 
       setNotice(
-        `Prediction created for ${symbol} (${newTimeframe}) with signal ${response.prediction.signal} ` +
+        `Prediction created for ${symbol} (${response.prediction.timeframe}) with signal ${response.prediction.signal} ` +
         `and confidence ${fmtConfidence(response.prediction.confidence)}. ` +
         `Mode: ${modeLabel}, active source: ${response.signalSource.toUpperCase()}.` +
-        (newAutoSchedule ? ` Auto mode is enabled (${newTimeframe} cadence).` : " Auto mode is disabled.")
+        ` AI prompt: ${response.aiPromptTemplateName ?? "System default"}.` +
+        ` Dir: ${response.directionPreference}, conf target: ${response.confidenceTargetPct.toFixed(0)}%.`
       );
       await Promise.all([
         loadPredictions(),
@@ -1038,6 +1109,9 @@ export default function PredictionsPage() {
           </div>
           <div className="predictionContextReason">
             Signal mode: {signalModeLabel(row.signalMode)}
+          </div>
+          <div className="predictionContextReason">
+            AI Prompt: {row.aiPromptTemplateName ?? "System default"}
           </div>
 
           {dataGap ? (
@@ -1263,12 +1337,55 @@ export default function PredictionsPage() {
         </div>
       </section>
 
-      <section className="card predictionsSection">
-        <div className="predictionCreateTitle">Create Prediction</div>
-        <div className="predictionsSectionHint">
-          Configure a one-off prediction or enable auto scheduling for continuous updates.
+      <section className="card predictionsSection predictionCreateSection">
+        <div className="predictionCreateHeader">
+          <div>
+            <div className="predictionCreateTitle">Create Prediction</div>
+            <div className="predictionsSectionHint">
+              Configure prediction templates. Auto scheduling is always active.
+            </div>
+          </div>
+          <div className="predictionCreateBadges">
+            <span className="badge badgeOk">Auto Schedule: Always On</span>
+            <span className="badge">
+              Signal mode:{" "}
+              {predictionDefaults?.signalMode === "local_only"
+                ? "Local only"
+                : predictionDefaults?.signalMode === "ai_only"
+                  ? "AI only"
+                  : "Local + AI"}
+            </span>
+          </div>
         </div>
         <div className="predictionCreateGrid">
+          <label className="predictionCreateField predictionCreateFieldPrompt">
+            <div className="predictionCreateLabel">AI Prompt</div>
+            <div className="predictionCreateHint">
+              Optional: öffentlicher Prompt für dieses Prediction-Template.
+            </div>
+            <select
+              className="input"
+              value={newAiPromptTemplateId}
+              onChange={(e) => setNewAiPromptTemplateId(e.target.value)}
+              disabled={publicAiPromptsLoading}
+            >
+              <option value="">System default prompt</option>
+              {publicAiPrompts.map((prompt) => (
+                <option key={prompt.id} value={prompt.id}>
+                  {prompt.name}
+                  {prompt.isPublic === false ? " (private)" : ""}
+                </option>
+              ))}
+            </select>
+            <div className="predictionCreateHint">
+              License mode: {publicAiPromptLicensePolicy?.mode ?? "off"}
+              {publicAiPromptLicensePolicy?.enforcementActive ? " (enforced)" : " (preview/off)"}.
+            </div>
+            <div className="predictionCreateHint predictionCreateHintCompact">
+              Prompt lock timeframe: {selectedPromptLockedTimeframe ?? "none"}
+            </div>
+          </label>
+
           <label className="predictionCreateField">
             <div className="predictionCreateLabel">Exchange account</div>
             <div className="predictionCreateHint">Welcher Account später beim Trading-Prefill genutzt wird.</div>
@@ -1324,53 +1441,21 @@ export default function PredictionsPage() {
 
           <label className="predictionCreateField">
             <div className="predictionCreateLabel">Timeframe</div>
-            <div className="predictionCreateHint">Zeithorizont der Prognose.</div>
-            <select className="input" value={newTimeframe} onChange={(e) => setNewTimeframe(e.target.value as PredictionTimeframe)}>
+            <div className="predictionCreateHint">
+              {selectedPromptLockedTimeframe
+                ? `Vom Prompt vorgegeben: ${selectedPromptLockedTimeframe}`
+                : "Zeithorizont der Prognose."}
+            </div>
+            <select
+              className="input"
+              value={effectiveCreateTimeframe}
+              onChange={(e) => setNewTimeframe(e.target.value as PredictionTimeframe)}
+              disabled={Boolean(selectedPromptLockedTimeframe)}
+            >
               {TIMEFRAMES.map((tf) => (
                 <option key={tf} value={tf}>{tf}</option>
               ))}
             </select>
-          </label>
-
-          <label className="predictionCreateField">
-            <div className="predictionCreateLabel">Direction preference</div>
-            <div className="predictionCreateHint">Optional: long only, short only oder egal.</div>
-            <select className="input" value={newDirectionPreference} onChange={(e) => setNewDirectionPreference(e.target.value as DirectionPreference)}>
-              <option value="either">either (egal)</option>
-              <option value="long">long preferred</option>
-              <option value="short">short preferred</option>
-            </select>
-          </label>
-
-          <label className="predictionCreateField">
-            <div className="predictionCreateLabel">Signal mode</div>
-            <div className="predictionCreateHint">
-              Bestimmt, ob nur lokal, nur AI oder beide Signale berechnet werden.
-            </div>
-            <select
-              className="input"
-              value={newSignalMode}
-              onChange={(e) => setNewSignalMode(e.target.value as CreateSignalMode)}
-            >
-              <option value="local_only">Eigene Berechnung (Local only)</option>
-              <option value="ai_only">Nur AI</option>
-              <option value="both">Beides (Local + AI)</option>
-            </select>
-          </label>
-
-          <label className="predictionCreateField">
-            <div className="predictionCreateLabel">Confidence target (%)</div>
-            <div className="predictionCreateHint">Mindest-Confidence für ein klares Long/Short Signal.</div>
-            <input
-              className="input"
-              type="number"
-              step="1"
-              min="0"
-              max="100"
-              value={newConfidenceTarget}
-              onChange={(e) => setNewConfidenceTarget(e.target.value)}
-              placeholder="60"
-            />
           </label>
 
           <label className="predictionCreateField">
@@ -1388,40 +1473,33 @@ export default function PredictionsPage() {
               disabled={newMarketType !== "perp"}
             />
           </label>
-
-          <label className="predictionCreateField" style={{ justifyContent: "flex-end" }}>
-            <div className="predictionCreateLabel">Auto schedule</div>
-            <div className="predictionCreateHint">
-              Erstellt automatisch neue Predictions im gewählten Timeframe.
-            </div>
-            <div
-              className="card"
-              style={{ margin: 0 }}
-            >
-              <label className="predictionAutoToggle">
-              <input
-                type="checkbox"
-                checked={newAutoSchedule}
-                onChange={(e) => setNewAutoSchedule(e.target.checked)}
-              />
-              <span style={{ fontSize: 13 }}>
-                {newAutoSchedule ? "Enabled" : "Disabled"}
-              </span>
-              </label>
-            </div>
-          </label>
         </div>
 
-        {symbolsError ? (
-          <div style={{ marginTop: 8, fontSize: 12, color: "#f59e0b" }}>
+        <div className="predictionCreateFooter">
+          {symbolsError ? (
+          <div className="predictionCreateAlert predictionCreateAlertWarn">
             Pairs konnten nicht geladen werden: {symbolsError}
           </div>
-        ) : null}
+          ) : null}
+          {!publicAiPromptsLoading && publicAiPrompts.length === 0 ? (
+          <div className="predictionCreateAlert predictionCreateAlertInfo">
+            Keine öffentlichen AI-Prompts vorhanden. Es wird der System-Standard verwendet.
+          </div>
+          ) : null}
+          {publicAiPromptLicensePolicy ? (
+          <div className="predictionCreateAlert predictionCreateAlertInfo">
+            Allowed prompt IDs:{" "}
+            {publicAiPromptLicensePolicy.allowedPublicPromptIds.length > 0
+              ? publicAiPromptLicensePolicy.allowedPublicPromptIds.join(", ")
+              : "*"}
+          </div>
+          ) : null}
 
-        <div style={{ marginTop: 10 }}>
-          <button className="btn btnPrimary" type="button" disabled={creating} onClick={() => void createPrediction()}>
-            {creating ? "Creating..." : "Create Prediction"}
-          </button>
+          <div className="predictionCreateActions">
+            <button className="btn btnPrimary" type="button" disabled={creating} onClick={() => void createPrediction()}>
+              {creating ? "Creating..." : "Create Prediction"}
+            </button>
+          </div>
         </div>
 
         <div className="card predictionSubCard">
@@ -1463,7 +1541,7 @@ export default function PredictionsPage() {
             <div style={{ color: "var(--muted)" }}>Loading running schedules…</div>
           ) : runningRows.length === 0 ? (
             <div style={{ color: "var(--muted)" }}>
-              No running auto-predictions. Enable <code>Auto schedule</code> when creating a prediction.
+              No running auto-predictions yet.
             </div>
           ) : filteredRunningRows.length === 0 ? (
             <div style={{ color: "var(--muted)" }}>
@@ -1498,6 +1576,7 @@ export default function PredictionsPage() {
                         Dir: {row.directionPreference}, conf: {row.confidenceTargetPct}%
                         {row.marketType === "perp" && row.leverage ? `, lev: ${row.leverage}x` : ""}
                         {`, mode: ${signalModeLabel(row.signalMode)}`}
+                        {`, prompt: ${row.aiPromptTemplateName ?? "default"}`}
                       </td>
                       <td style={{ padding: "8px 6px" }}>
                         {row.paused ? "paused" : "running"}
@@ -1556,6 +1635,10 @@ export default function PredictionsPage() {
                   <div className="predictionRunningCardLine">
                     <span>Mode</span>
                     <strong>{signalModeLabel(row.signalMode)}</strong>
+                  </div>
+                  <div className="predictionRunningCardLine">
+                    <span>AI Prompt</span>
+                    <strong>{row.aiPromptTemplateName ?? "System default"}</strong>
                   </div>
                   <div className="predictionRunningCardLine">
                     <span>Next run</span>

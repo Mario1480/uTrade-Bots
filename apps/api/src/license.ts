@@ -6,6 +6,19 @@ export type Entitlements = {
   allowedExchanges: string[];
 };
 
+export type AiPromptLicenseMode = "off" | "warn" | "enforce";
+
+export type AiPromptAccessDecision = {
+  allowed: boolean;
+  reason:
+    | "ok"
+    | "enforcement_off"
+    | "no_prompt_selected"
+    | "prompt_not_allowed";
+  mode: AiPromptLicenseMode;
+  wouldBlock: boolean;
+};
+
 export type LicenseDecision = {
   allowed: boolean;
   reason:
@@ -34,6 +47,11 @@ function includesExchange(list: string[], exchange: string): boolean {
   return list.some((entry) => normalize(entry) === "*" || normalize(entry) === normalized);
 }
 
+function includesPromptId(list: string[], promptId: string): boolean {
+  const normalizedPromptId = normalize(promptId);
+  return list.some((entry) => normalize(entry) === "*" || normalize(entry) === normalizedPromptId);
+}
+
 export function isLicenseEnforcementEnabled(raw: string | null | undefined = process.env.LICENSE_ENFORCEMENT): boolean {
   const normalized = normalize(raw);
   return normalized === "" || normalized === "on" || normalized === "true" || normalized === "1";
@@ -43,6 +61,75 @@ export function isLicenseStubEnabled(raw: string | null | undefined = process.en
   const normalized = normalize(raw);
   if (normalized === "") return process.env.NODE_ENV !== "production";
   return normalized === "on" || normalized === "true" || normalized === "1";
+}
+
+export function getAiPromptLicenseMode(
+  raw: string | null | undefined = process.env.AI_PROMPT_LICENSE_MODE
+): AiPromptLicenseMode {
+  const normalized = normalize(raw);
+  if (normalized === "warn") return "warn";
+  if (normalized === "enforce") return "enforce";
+  return "off";
+}
+
+export function getAiPromptAllowedPublicIds(
+  raw: string | null | undefined = process.env.AI_PROMPT_ALLOWED_PUBLIC_IDS
+): string[] {
+  const values = (raw ?? "*")
+    .split(",")
+    .map((value) => value.trim())
+    .filter(Boolean);
+  return values.length > 0 ? values : ["*"];
+}
+
+export function evaluateAiPromptAccess(params: {
+  userId: string;
+  selectedPromptId: string | null;
+}): AiPromptAccessDecision {
+  void params.userId;
+  const mode = getAiPromptLicenseMode();
+  const promptId = normalize(params.selectedPromptId);
+  if (!promptId) {
+    return {
+      allowed: true,
+      reason: "no_prompt_selected",
+      mode,
+      wouldBlock: false
+    };
+  }
+
+  const allowedList = getAiPromptAllowedPublicIds();
+  const matches = includesPromptId(allowedList, promptId);
+  if (mode === "off") {
+    return {
+      allowed: true,
+      reason: "enforcement_off",
+      mode,
+      wouldBlock: !matches
+    };
+  }
+  if (matches) {
+    return {
+      allowed: true,
+      reason: "ok",
+      mode,
+      wouldBlock: false
+    };
+  }
+  if (mode === "warn") {
+    return {
+      allowed: true,
+      reason: "prompt_not_allowed",
+      mode,
+      wouldBlock: true
+    };
+  }
+  return {
+    allowed: false,
+    reason: "prompt_not_allowed",
+    mode,
+    wouldBlock: true
+  };
 }
 
 export function getLicenseCacheTtlSeconds(): number {

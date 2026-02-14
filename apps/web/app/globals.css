@@ -1274,6 +1274,12 @@ a { color: inherit; }
   color: #ffd55f;
 }
 
+.indicatorCatalogAccordionMeta {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
 .indicatorCatalogItemList {
   display: grid;
   gap: 8px;
@@ -1324,10 +1330,36 @@ a { color: inherit; }
   gap: 12px;
 }
 
+.indicatorOverrideModeChip {
+  display: inline-flex;
+  align-items: center;
+  border: 1px solid rgba(255, 193, 7, 0.34);
+  border-radius: 999px;
+  font-size: 11px;
+  color: #ffd55f;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+  padding: 3px 9px;
+}
+
+.indicatorOverrideIntro {
+  margin-top: -6px;
+}
+
 .indicatorScopeGrid {
   display: grid;
   gap: 10px;
   grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
+}
+
+.indicatorOverrideSection .indicatorScopeGrid {
+  grid-template-columns: 1fr;
+}
+
+.indicatorCardGrid {
+  display: grid;
+  gap: 10px;
+  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
 }
 
 .indicatorConfigBlock {
@@ -1344,6 +1376,15 @@ a { color: inherit; }
   font-weight: 700;
 }
 
+.indicatorConfigSubTitle {
+  font-size: 12px;
+  font-weight: 700;
+  color: #ffd55f;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+  margin-top: 2px;
+}
+
 .indicatorConfigHint {
   margin-top: -4px;
 }
@@ -1352,6 +1393,17 @@ a { color: inherit; }
   display: grid;
   gap: 10px;
   grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+}
+
+.indicatorOverrideAccordion .indicatorConfigGrid {
+  grid-template-columns: 1fr;
+}
+
+.indicatorInlineChecks {
+  display: flex;
+  gap: 12px;
+  flex-wrap: wrap;
+  align-items: center;
 }
 
 .indicatorFormActions {
@@ -1456,6 +1508,15 @@ a { color: inherit; }
   letter-spacing: 0.01em;
 }
 
+.predictionCreateSection {
+  position: relative;
+  overflow: hidden;
+  background:
+    radial-gradient(1200px 260px at 0% -20%, rgba(20, 129, 192, 0.12), transparent 55%),
+    radial-gradient(900px 200px at 100% -10%, rgba(255, 193, 7, 0.11), transparent 60%),
+    rgba(7, 13, 26, 0.82);
+}
+
 .predictionCreateTitle {
   margin-bottom: 6px;
 }
@@ -1466,27 +1527,101 @@ a { color: inherit; }
   margin-bottom: 10px;
 }
 
+.predictionCreateHeader {
+  display: flex;
+  justify-content: space-between;
+  gap: 10px 12px;
+  align-items: flex-start;
+  margin-bottom: 10px;
+}
+
+.predictionCreateBadges {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
 .predictionCreateGrid {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(210px, 1fr));
   gap: 10px;
   align-items: end;
 }
 
 .predictionCreateField {
   display: grid;
-  gap: 4px;
+  gap: 6px;
+  margin: 0;
+  padding: 10px;
+  border-radius: 10px;
+  border: 1px solid rgba(255, 193, 7, 0.22);
+  background: linear-gradient(180deg, rgba(255,255,255,0.03), rgba(255,255,255,0.01));
+}
+
+.predictionCreateFieldPrompt {
+  grid-column: 1 / -1;
+  border-color: rgba(20, 129, 192, 0.45);
+  background: linear-gradient(
+    145deg,
+    rgba(20, 129, 192, 0.17) 0%,
+    rgba(255,255,255,0.02) 58%
+  );
+}
+
+.predictionCreateField .input:disabled {
+  opacity: 0.72;
+  border-color: rgba(148, 163, 184, 0.5);
 }
 
 .predictionCreateLabel {
   font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.01em;
 }
 
 .predictionCreateHint {
-  min-height: 28px;
   font-size: 11px;
   color: var(--muted);
   line-height: 1.25;
+}
+
+.predictionCreateHintCompact {
+  color: #cbd5e1;
+}
+
+.predictionCreateFooter {
+  margin-top: 10px;
+  padding-top: 9px;
+  border-top: 1px dashed rgba(255, 193, 7, 0.25);
+  display: grid;
+  gap: 6px;
+}
+
+.predictionCreateAlert {
+  font-size: 12px;
+  line-height: 1.3;
+  border-radius: 8px;
+  padding: 7px 9px;
+  border: 1px solid transparent;
+}
+
+.predictionCreateAlertInfo {
+  color: var(--muted);
+  background: rgba(255, 255, 255, 0.02);
+  border-color: rgba(255, 193, 7, 0.2);
+}
+
+.predictionCreateAlertWarn {
+  color: #fbbf24;
+  background: rgba(245, 158, 11, 0.08);
+  border-color: rgba(245, 158, 11, 0.45);
+}
+
+.predictionCreateActions {
+  margin-top: 4px;
+  display: flex;
+  justify-content: flex-end;
 }
 
 .predictionSubCard {
@@ -2352,7 +2487,8 @@ a { color: inherit; }
     overflow-wrap: anywhere;
   }
   .indicatorConfigGrid,
-  .indicatorScopeGrid {
+  .indicatorScopeGrid,
+  .indicatorCardGrid {
     grid-template-columns: 1fr;
   }
   .indicatorFormActions .btn {
@@ -2493,11 +2629,28 @@ a { color: inherit; }
     font-size: 11px;
     margin-bottom: 8px;
   }
+  .predictionCreateHeader {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+  .predictionCreateBadges {
+    justify-content: flex-start;
+  }
   .predictionCreateGrid {
     grid-template-columns: 1fr;
   }
+  .predictionCreateField {
+    padding: 9px;
+  }
   .predictionCreateHint {
     min-height: 0;
+  }
+  .predictionCreateActions {
+    justify-content: stretch;
+  }
+  .predictionCreateActions .btn {
+    width: 100%;
+    justify-content: center;
   }
   .tradeOrderTypeTabs {
     display: grid;

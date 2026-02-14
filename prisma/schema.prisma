@@ -695,3 +695,31 @@ model IndicatorSetting {
   @@index([exchange, accountId, symbol, timeframe])
   @@map("indicator_settings")
 }
+
+model AiTraceLog {
+  id                 String   @id @default(cuid())
+  scope              String
+  provider           String?
+  model              String?
+  symbol             String?
+  marketType         String?  @map("market_type")
+  timeframe          String?
+  promptTemplateId   String?  @map("prompt_template_id")
+  promptTemplateName String?  @map("prompt_template_name")
+  systemMessage      String?  @map("system_message")
+  userPayload        Json?    @map("user_payload")
+  rawResponse        String?  @map("raw_response")
+  parsedResponse     Json?    @map("parsed_response")
+  success            Boolean  @default(true)
+  error              String?
+  fallbackUsed       Boolean  @default(false) @map("fallback_used")
+  cacheHit           Boolean  @default(false) @map("cache_hit")
+  rateLimited        Boolean  @default(false) @map("rate_limited")
+  latencyMs          Int?     @map("latency_ms")
+  createdAt          DateTime @default(now()) @map("created_at")
+
+  @@index([createdAt(sort: Desc)])
+  @@index([scope, createdAt(sort: Desc)])
+  @@index([symbol, timeframe, createdAt(sort: Desc)])
+  @@map("ai_trace_logs")
+}

@@ -2,6 +2,13 @@ import { z } from "zod";
 import { logger } from "../logger.js";
 import { analyzeWithAiGuards, hashStableObject } from "./analyzer.js";
 import { callAi, getAiModel } from "./provider.js";
+import {
+  filterFeatureSnapshotForAiPrompt,
+  getAiPromptRuntimeSettings,
+  type AiPromptScopeContext,
+  type AiPromptRuntimeSettings
+} from "./promptSettings.js";
+import { recordAiTraceLog } from "./traceLog.js";
 
 export type ExplainerInput = {
   symbol: string;
@@ -67,6 +74,18 @@ const baseOutputSchema = z.object({
 
 type GenerateDeps = {
   callAiFn?: typeof callAi;
+  promptSettings?: AiPromptRuntimeSettings;
+  promptScopeContext?: AiPromptScopeContext;
+  requireSuccessfulAi?: boolean;
+};
+
+export type ExplainerPromptPreview = {
+  scopeContext: AiPromptScopeContext;
+  runtimeSettings: AiPromptRuntimeSettings;
+  systemMessage: string;
+  userPayload: Record<string, unknown>;
+  promptInput: ExplainerInput;
+  cacheKey: string;
 };
 
 const SYSTEM_MESSAGE =
@@ -76,6 +95,52 @@ const SYSTEM_MESSAGE =
   "or under featureSnapshot.advancedIndicators (emas, cloud, levels, ranges, sessions, pvsra, smartMoneyConcepts). " +
   "Do not claim volume spikes or fair value gaps unless those fields explicitly support it. " +
   "Never mention TradingView.";
+
+function readEnvNumber(
+  value: string | undefined,
+  fallback: number,
+  min: number
+): number {
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed)) return fallback;
+  return Math.max(min, parsed);
+}
+
+const EXPLAINER_TIMEOUT_MS = readEnvNumber(
+  process.env.AI_EXPLAINER_TIMEOUT_MS ?? process.env.AI_TIMEOUT_MS,
+  15000,
+  1000
+);
+const EXPLAINER_MAX_TOKENS = readEnvNumber(
+  process.env.AI_EXPLAINER_MAX_TOKENS,
+  650,
+  300
+);
+const EXPLAINER_RETRY_MAX_TOKENS = readEnvNumber(
+  process.env.AI_EXPLAINER_RETRY_MAX_TOKENS,
+  Math.max(EXPLAINER_MAX_TOKENS + 350, Math.trunc(EXPLAINER_MAX_TOKENS * 1.5)),
+  EXPLAINER_MAX_TOKENS
+);
+
+function withTraceMetaPayload(
+  userPayload: Record<string, unknown>,
+  retryUsed: boolean,
+  retryCount: number
+): Record<string, unknown> {
+  return {
+    ...userPayload,
+    __trace: {
+      retryUsed,
+      retryCount: Math.max(0, Math.trunc(retryCount))
+    }
+  };
+}
+
+function buildSystemMessage(customPromptText: string): string {
+  const trimmed = customPromptText.trim();
+  if (!trimmed) return SYSTEM_MESSAGE;
+  return `${SYSTEM_MESSAGE}\n\nOperator instructions:\n${trimmed}`;
+}
 
 function toNumber(value: unknown): number | null {
   const parsed = Number(value);
@@ -515,7 +580,10 @@ export function buildPredictionExplainerCacheKey(input: ExplainerInput): string 
   return `predExplain:${input.symbol}:${input.marketType}:${input.timeframe}:${input.tsCreated}:${featureHash}`;
 }
 
-function buildPromptPayload(input: ExplainerInput) {
+function buildPromptPayload(
+  input: ExplainerInput,
+  settings: Pick<AiPromptRuntimeSettings, "promptText" | "indicatorKeys">
+) {
   return {
     symbol: input.symbol,
     marketType: input.marketType,
@@ -531,6 +599,8 @@ function buildPromptPayload(input: ExplainerInput) {
       aiPrediction: "{signal: up|down|neutral, expectedMovePct: number, confidence: number 0..1}",
       disclaimer: "grounded_features_only"
     },
+    operatorPrompt: settings.promptText,
+    selectedIndicatorKeys: settings.indicatorKeys,
     groundingRules: [
       "Only reference values that exist in featureSnapshot",
       "Only reference stochrsi/volume/fvg when present and non-null",
@@ -542,46 +612,169 @@ function buildPromptPayload(input: ExplainerInput) {
   };
 }
 
+function normalizeContextString(value: unknown): string | null {
+  if (typeof value !== "string") return null;
+  const trimmed = value.trim();
+  return trimmed.length > 0 ? trimmed : null;
+}
+
+function deriveScopeContext(
+  input: ExplainerInput,
+  explicitContext: AiPromptScopeContext | undefined
+): AiPromptScopeContext {
+  const snapshot = input.featureSnapshot ?? {};
+  const snapshotExchange = normalizeContextString(snapshot.prefillExchange);
+  const snapshotAccount = normalizeContextString(snapshot.prefillExchangeAccountId);
+  const explicitExchange = normalizeContextString(explicitContext?.exchange);
+  const explicitAccount = normalizeContextString(explicitContext?.accountId);
+  const explicitSymbol = normalizeContextString(explicitContext?.symbol);
+  const explicitTimeframe = normalizeContextString(explicitContext?.timeframe);
+
+  return {
+    exchange: (explicitExchange ?? snapshotExchange ?? null)?.toLowerCase() ?? null,
+    accountId: explicitAccount ?? snapshotAccount ?? null,
+    symbol: (explicitSymbol ?? input.symbol ?? null)?.toUpperCase() ?? null,
+    timeframe: (explicitTimeframe ?? input.timeframe ?? null)?.toLowerCase() ?? null
+  };
+}
+
+export async function buildPredictionExplainerPromptPreview(
+  input: ExplainerInput,
+  deps: GenerateDeps = {}
+): Promise<ExplainerPromptPreview> {
+  const scopeContext = deriveScopeContext(input, deps.promptScopeContext);
+  const runtimeSettings =
+    deps.promptSettings ?? (await getAiPromptRuntimeSettings(scopeContext));
+  const filteredFeatureSnapshot = filterFeatureSnapshotForAiPrompt(
+    input.featureSnapshot ?? {},
+    runtimeSettings.indicatorKeys
+  );
+  const promptInput: ExplainerInput = {
+    ...input,
+    featureSnapshot: filteredFeatureSnapshot
+  };
+  const userPayload = buildPromptPayload(promptInput, runtimeSettings);
+  const systemMessage = buildSystemMessage(runtimeSettings.promptText);
+  const cacheKey =
+    `${buildPredictionExplainerCacheKey(promptInput)}:${hashStableObject({
+      promptText: runtimeSettings.promptText,
+      indicatorKeys: runtimeSettings.indicatorKeys,
+      activePromptId: runtimeSettings.activePromptId,
+      activePromptName: runtimeSettings.activePromptName,
+      selectedFrom: runtimeSettings.selectedFrom,
+      matchedOverrideId: runtimeSettings.matchedOverrideId
+    })}`;
+
+  return {
+    scopeContext,
+    runtimeSettings,
+    systemMessage,
+    userPayload,
+    promptInput,
+    cacheKey
+  };
+}
+
 export async function generatePredictionExplanation(
   input: ExplainerInput,
   deps: GenerateDeps = {}
 ): Promise<ExplainerOutput> {
-  const fallback = () => fallbackExplain(input);
-  const cacheKey = buildPredictionExplainerCacheKey(input);
+  const preview = await buildPredictionExplainerPromptPreview(input, deps);
+  const { promptInput, runtimeSettings, systemMessage, userPayload, cacheKey } = preview;
+  const fallback = () => fallbackExplain(promptInput);
   const aiModel = getAiModel();
   const callAiFn = deps.callAiFn ?? callAi;
+  const traceBase = {
+    scope: "prediction_explainer",
+    provider: "openai",
+    model: aiModel,
+    symbol: promptInput.symbol,
+    marketType: promptInput.marketType,
+    timeframe: promptInput.timeframe,
+    promptTemplateId: runtimeSettings.activePromptId,
+    promptTemplateName: runtimeSettings.activePromptName,
+    systemMessage,
+    userPayload
+  } as const;
 
   const result = await analyzeWithAiGuards({
     cacheKey,
     aiModel,
     compute: async () => {
-      const userPayload = buildPromptPayload(input);
-      const raw = await callAiFn(JSON.stringify(userPayload), {
-        systemMessage: SYSTEM_MESSAGE,
-        model: aiModel,
-        temperature: 0
-      });
-
-      let parsedJson: unknown;
+      const startedAt = Date.now();
+      let raw: string | null = null;
+      let parsedJson: unknown = null;
+      let attemptsUsed = 0;
       try {
-        parsedJson = JSON.parse(stripCodeFenceJson(raw));
+        let validated: ExplainerOutput | null = null;
+        for (let attempt = 1; attempt <= 2; attempt += 1) {
+          attemptsUsed = attempt;
+          raw = await callAiFn(JSON.stringify(userPayload), {
+            systemMessage,
+            model: aiModel,
+            temperature: 0,
+            timeoutMs: EXPLAINER_TIMEOUT_MS,
+            maxTokens: attempt === 1 ? EXPLAINER_MAX_TOKENS : EXPLAINER_RETRY_MAX_TOKENS
+          });
+
+          try {
+            parsedJson = JSON.parse(stripCodeFenceJson(raw));
+            validated = validateExplainerOutput(
+              parsedJson,
+              promptInput.featureSnapshot,
+              promptInput.prediction
+            );
+            break;
+          } catch (error) {
+            const isInvalidJson = error instanceof SyntaxError;
+            if (isInvalidJson && attempt < 2) {
+              continue;
+            }
+            throw error;
+          }
+        }
+
+        if (!validated) {
+          throw new Error("invalid_json");
+        }
+        const retryCount = Math.max(0, attemptsUsed - 1);
+        const retryUsed = retryCount > 0;
+        await recordAiTraceLog({
+          ...traceBase,
+          userPayload: withTraceMetaPayload(userPayload, retryUsed, retryCount),
+          rawResponse: raw ?? null,
+          parsedResponse: validated,
+          success: true,
+          fallbackUsed: false,
+          cacheHit: false,
+          rateLimited: false,
+          latencyMs: Date.now() - startedAt
+        });
+        return validated;
       } catch (error) {
+        const isInvalidJson = error instanceof SyntaxError;
+        const retryCount = Math.max(0, attemptsUsed - 1);
+        const retryUsed = retryCount > 0;
         logger.warn("ai_validation_failed", {
           ai_validation_failed: true,
           ai_model: aiModel,
-          reason: `invalid_json:${String(error)}`
+          reason: isInvalidJson ? `invalid_json:${String(error)}` : String(error)
         });
-        throw new Error("invalid_json");
-      }
-
-      try {
-        return validateExplainerOutput(parsedJson, input.featureSnapshot, input.prediction);
-      } catch (error) {
-        logger.warn("ai_validation_failed", {
-          ai_validation_failed: true,
-          ai_model: aiModel,
-          reason: String(error)
+        await recordAiTraceLog({
+          ...traceBase,
+          userPayload: withTraceMetaPayload(userPayload, retryUsed, retryCount),
+          rawResponse: raw,
+          parsedResponse: parsedJson,
+          success: false,
+          error: isInvalidJson ? "invalid_json" : String(error),
+          fallbackUsed: true,
+          cacheHit: false,
+          rateLimited: false,
+          latencyMs: Date.now() - startedAt
         });
+        if (isInvalidJson) {
+          throw new Error("invalid_json");
+        }
         throw error;
       }
     },
@@ -589,6 +782,9 @@ export async function generatePredictionExplanation(
   });
 
   if (result.fallbackUsed) {
+    if (deps.requireSuccessfulAi) {
+      throw new Error("ai_required_but_unavailable");
+    }
     logger.info("ai_fallback_used", {
       ai_fallback_used: true,
       ai_model: aiModel,

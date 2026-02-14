@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
+  evaluateAiPromptAccess,
   enforceBotStartLicense,
   getStubEntitlements,
   isLicenseEnforcementEnabled,
@@ -59,6 +60,49 @@ test("stub entitlements parse sane defaults", () => {
   assert.equal(typeof e.maxBotsTotal, "number");
   assert.equal(typeof e.maxRunningBots, "number");
   assert.ok(Array.isArray(e.allowedExchanges));
+});
+
+test("ai prompt license mode defaults to off and allows", () => {
+  const prevMode = process.env.AI_PROMPT_LICENSE_MODE;
+  const prevAllowed = process.env.AI_PROMPT_ALLOWED_PUBLIC_IDS;
+  process.env.AI_PROMPT_LICENSE_MODE = "";
+  process.env.AI_PROMPT_ALLOWED_PUBLIC_IDS = "prompt_a";
+
+  const decision = evaluateAiPromptAccess({
+    userId: "u1",
+    selectedPromptId: "prompt_b"
+  });
+  assert.equal(decision.allowed, true);
+  assert.equal(decision.mode, "off");
+  assert.equal(decision.wouldBlock, true);
+
+  process.env.AI_PROMPT_LICENSE_MODE = prevMode;
+  process.env.AI_PROMPT_ALLOWED_PUBLIC_IDS = prevAllowed;
+});
+
+test("ai prompt license enforce blocks unknown prompt ids", () => {
+  const prevMode = process.env.AI_PROMPT_LICENSE_MODE;
+  const prevAllowed = process.env.AI_PROMPT_ALLOWED_PUBLIC_IDS;
+  process.env.AI_PROMPT_LICENSE_MODE = "enforce";
+  process.env.AI_PROMPT_ALLOWED_PUBLIC_IDS = "prompt_a,prompt_b";
+
+  const denied = evaluateAiPromptAccess({
+    userId: "u1",
+    selectedPromptId: "prompt_c"
+  });
+  assert.equal(denied.allowed, false);
+  assert.equal(denied.reason, "prompt_not_allowed");
+  assert.equal(denied.wouldBlock, true);
+
+  const allowed = evaluateAiPromptAccess({
+    userId: "u1",
+    selectedPromptId: "prompt_a"
+  });
+  assert.equal(allowed.allowed, true);
+  assert.equal(allowed.reason, "ok");
+
+  process.env.AI_PROMPT_LICENSE_MODE = prevMode;
+  process.env.AI_PROMPT_ALLOWED_PUBLIC_IDS = prevAllowed;
 });
 
 test.afterEach(() => {

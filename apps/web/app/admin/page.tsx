@@ -59,6 +59,24 @@ const ADMIN_LINKS: AdminLinkItem[] = [
     title: "Prediction Refresh",
     description: "Tune debounce, hysteresis, cooldown and event throttle for auto predictions.",
     category: "Strategy"
+  },
+  {
+    href: "/admin/prediction-defaults",
+    title: "Prediction Defaults",
+    description: "Configure global defaults like signal mode for newly created predictions.",
+    category: "Strategy"
+  },
+  {
+    href: "/admin/ai-prompts",
+    title: "AI Prompts",
+    description: "Manage explainer prompt text and indicator groups sent to AI.",
+    category: "Strategy"
+  },
+  {
+    href: "/admin/ai-trace",
+    title: "AI Trace Logs",
+    description: "Inspect AI request payloads/responses with on/off toggle and cleanup.",
+    category: "Strategy"
   }
 ];
 

@@ -6,6 +6,10 @@ import {
   type ExplainerInput,
   type ExplainerOutput
 } from "./predictionExplainer.js";
+import type {
+  AiPromptRuntimeSettings,
+  AiPromptScopeContext
+} from "./promptSettings.js";
 
 const db = prisma as any;
 
@@ -18,6 +22,8 @@ export type PredictionRecordInput = ExplainerInput & {
   modelVersionBase?: string;
   preferredSignalSource?: PredictionSignalSource;
   signalMode?: PredictionSignalMode;
+  promptSettings?: AiPromptRuntimeSettings;
+  promptScopeContext?: AiPromptScopeContext;
   tracking?: {
     entryPrice?: number | null;
     stopLossPrice?: number | null;
@@ -80,20 +86,36 @@ export async function generateAndPersistPrediction(
   const localPrediction = normalizePrediction(input.prediction);
   const signalMode = normalizeSignalMode(input.signalMode);
   const preferredSignalSource = normalizeSignalSource(input.preferredSignalSource);
-  const explanation =
-    signalMode === "local_only"
-      ? fallbackExplain({
-          symbol: input.symbol,
-          marketType: input.marketType,
-          timeframe: input.timeframe,
-          tsCreated: input.tsCreated,
-          prediction: localPrediction,
-          featureSnapshot: input.featureSnapshot
-        })
-      : await generatePredictionExplanation({
-          ...input,
-          prediction: localPrediction
-        });
+  let explanation: ExplainerOutput;
+  try {
+    explanation =
+      signalMode === "local_only"
+        ? fallbackExplain({
+            symbol: input.symbol,
+            marketType: input.marketType,
+            timeframe: input.timeframe,
+            tsCreated: input.tsCreated,
+            prediction: localPrediction,
+            featureSnapshot: input.featureSnapshot
+          })
+        : await generatePredictionExplanation({
+            ...input,
+            prediction: localPrediction
+          }, {
+            promptSettings: input.promptSettings,
+            promptScopeContext: input.promptScopeContext,
+            requireSuccessfulAi: signalMode === "ai_only"
+          });
+  } catch (error) {
+    if (signalMode === "ai_only") {
+      const wrapped = Object.assign(
+        new Error("AI signal required (ai_only), but AI response was unavailable."),
+        { status: 503, code: "ai_only_requires_ai_success" }
+      );
+      throw wrapped;
+    }
+    throw error;
+  }
   const aiPrediction =
     signalMode === "local_only"
       ? null

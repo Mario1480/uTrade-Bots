@@ -20,7 +20,10 @@ import { ensureDefaultRoles, buildPermissions, PERMISSION_KEYS } from "./rbac.js
 import { sendReauthOtpEmail, sendSmtpTestEmail } from "./email.js";
 import { decryptSecret, encryptSecret } from "./secret-crypto.js";
 import {
+  evaluateAiPromptAccess,
   enforceBotStartLicense,
+  getAiPromptAllowedPublicIds,
+  getAiPromptLicenseMode,
   getStubEntitlements,
   isLicenseEnforcementEnabled,
   isLicenseStubEnabled
@@ -35,10 +38,34 @@ import {
 import { ExchangeSyncError, syncExchangeAccount } from "./exchange-sync.js";
 import { invalidateAiApiKeyCache } from "./ai/provider.js";
 import {
+  buildPredictionExplainerPromptPreview,
   fallbackExplain,
   generatePredictionExplanation,
   type ExplainerOutput
 } from "./ai/predictionExplainer.js";
+import {
+  AI_PROMPT_SETTINGS_GLOBAL_SETTING_KEY,
+  DEFAULT_AI_PROMPT_SETTINGS,
+  getAiPromptRuntimeSettings,
+  getAiPromptRuntimeSettingsByTemplateId,
+  getAiPromptIndicatorOptionsPublic,
+  getAiPromptTemplateById,
+  getPublicAiPromptTemplates,
+  invalidateAiPromptSettingsCache,
+  isAiPromptIndicatorKey,
+  parseStoredAiPromptSettings,
+  resolveAiPromptRuntimeSettingsForContext,
+  type AiPromptSettingsStored,
+  type AiPromptTemplate,
+  type AiPromptIndicatorKey
+} from "./ai/promptSettings.js";
+import {
+  AI_TRACE_SETTINGS_GLOBAL_SETTING_KEY,
+  DEFAULT_AI_TRACE_SETTINGS,
+  getAiTraceSettingsCached,
+  invalidateAiTraceSettingsCache,
+  parseStoredAiTraceSettings
+} from "./ai/traceLog.js";
 import {
   clearPaperMarketDataAccountId,
   clearPaperState,
@@ -387,6 +414,62 @@ const adminPredictionRefreshSchema = z.object({
   unstableFlipWindowSeconds: z.number().int().min(60).max(86400)
 });
 
+const adminPredictionDefaultsSchema = z.object({
+  signalMode: z.enum(["local_only", "ai_only", "both"]).default("both")
+});
+
+const adminAiTraceSettingsSchema = z.object({
+  enabled: z.boolean().default(false),
+  maxSystemMessageChars: z.number().int().min(500).max(50_000).default(12_000),
+  maxUserPayloadChars: z.number().int().min(1_000).max(250_000).default(60_000),
+  maxRawResponseChars: z.number().int().min(500).max(50_000).default(12_000)
+});
+
+const adminAiTraceLogsQuerySchema = z.object({
+  limit: z.coerce.number().int().min(1).max(500).default(100)
+});
+
+const adminAiTraceCleanupSchema = z.object({
+  deleteAll: z.boolean().default(false),
+  olderThanDays: z.number().int().min(1).max(3650).default(30)
+});
+
+const aiPromptTemplateSchema = z.object({
+  id: z.string().trim().min(1).max(120),
+  name: z.string().trim().min(1).max(64),
+  promptText: z.string().max(8000).default(""),
+  indicatorKeys: z.array(z.string().trim().min(1)).max(128).default([]),
+  timeframe: z.enum(["5m", "15m", "1h", "4h", "1d"]).nullable().default(null),
+  directionPreference: z.enum(["long", "short", "either"]).default("either"),
+  confidenceTargetPct: z.number().min(0).max(100).default(60),
+  isPublic: z.boolean().default(false),
+  createdAt: z.string().datetime().optional(),
+  updatedAt: z.string().datetime().optional()
+});
+
+const adminAiPromptsSchema = z.object({
+  activePromptId: z.string().trim().nullable().optional(),
+  prompts: z.array(aiPromptTemplateSchema).max(500).default([])
+});
+
+const adminAiPromptsPreviewSchema = z.object({
+  exchange: z.string().trim().optional(),
+  accountId: z.string().trim().optional(),
+  symbol: z.string().trim().min(1),
+  marketType: z.enum(["spot", "perp"]).default("perp"),
+  timeframe: z.enum(["5m", "15m", "1h", "4h", "1d"]).default("15m"),
+  tsCreated: z.string().datetime().optional(),
+  prediction: z.object({
+    signal: z.enum(["up", "down", "neutral"]),
+    expectedMovePct: z.number(),
+    confidence: z.number()
+  }).optional(),
+  featureSnapshot: z.record(z.any()).default({}),
+  settingsDraft: z.unknown().optional()
+});
+
+type AdminAiPromptsPayload = z.infer<typeof adminAiPromptsSchema>;
+
 const adminIndicatorSettingsResolvedQuerySchema = z.object({
   exchange: z.string().trim().optional(),
   accountId: z.string().trim().optional(),
@@ -459,7 +542,8 @@ const predictionGenerateSchema = z.object({
   featureSnapshot: z.record(z.any()),
   botId: z.string().trim().min(1).optional(),
   modelVersionBase: z.string().trim().min(1).optional(),
-  signalMode: z.enum(["local_only", "ai_only", "both"]).default("both")
+  signalMode: z.enum(["local_only", "ai_only", "both"]).default("both"),
+  aiPromptTemplateId: z.string().trim().min(1).max(128).nullish()
 });
 
 const predictionGenerateAutoSchema = z.object({
@@ -467,12 +551,9 @@ const predictionGenerateAutoSchema = z.object({
   symbol: z.string().trim().min(1),
   marketType: z.enum(["spot", "perp"]),
   timeframe: z.enum(["5m", "15m", "1h", "4h", "1d"]),
-  directionPreference: z.enum(["long", "short", "either"]).default("either"),
-  confidenceTargetPct: z.number().min(0).max(100).default(55),
   leverage: z.number().int().min(1).max(125).optional(),
-  autoSchedule: z.boolean().default(true),
   modelVersionBase: z.string().trim().min(1).optional(),
-  signalMode: z.enum(["local_only", "ai_only", "both"]).default("both")
+  aiPromptTemplateId: z.string().trim().min(1).max(128).nullish()
 });
 
 const predictionListQuerySchema = z.object({
@@ -698,6 +779,12 @@ const GLOBAL_SETTING_SMTP_KEY = "admin.smtp";
 const GLOBAL_SETTING_SECURITY_KEY = "settings.security";
 const GLOBAL_SETTING_API_KEYS_KEY = "admin.apiKeys";
 const GLOBAL_SETTING_PREDICTION_REFRESH_KEY = "admin.predictionRefresh";
+const GLOBAL_SETTING_PREDICTION_DEFAULTS_KEY = "admin.predictionDefaults";
+const GLOBAL_SETTING_AI_PROMPTS_KEY = AI_PROMPT_SETTINGS_GLOBAL_SETTING_KEY;
+const GLOBAL_SETTING_AI_TRACE_KEY = AI_TRACE_SETTINGS_GLOBAL_SETTING_KEY;
+const DEFAULT_PREDICTION_SIGNAL_MODE = normalizePredictionSignalMode(
+  process.env.PREDICTION_DEFAULT_SIGNAL_MODE
+);
 const SUPERADMIN_EMAIL = (process.env.ADMIN_EMAIL ?? "admin@utrade.vip").trim().toLowerCase();
 const DEFAULT_ADMIN_PASSWORD = process.env.ADMIN_PASSWORD?.trim() || "TempAdmin1234!";
 const PASSWORD_RESET_PURPOSE = "password_reset";
@@ -785,6 +872,18 @@ function normalizePredictionSignalMode(value: unknown): PredictionSignalMode {
 
 function readSignalMode(snapshot: Record<string, unknown>): PredictionSignalMode {
   return normalizePredictionSignalMode(snapshot.signalMode);
+}
+
+function readAiPromptTemplateId(snapshot: Record<string, unknown>): string | null {
+  if (typeof snapshot.aiPromptTemplateId !== "string") return null;
+  const trimmed = snapshot.aiPromptTemplateId.trim();
+  return trimmed.length > 0 ? trimmed : null;
+}
+
+function readAiPromptTemplateName(snapshot: Record<string, unknown>): string | null {
+  if (typeof snapshot.aiPromptTemplateName !== "string") return null;
+  const trimmed = snapshot.aiPromptTemplateName.trim();
+  return trimmed.length > 0 ? trimmed : null;
 }
 
 function readStateSignalMode(
@@ -1035,6 +1134,10 @@ type StoredPredictionRefreshSettings = {
   unstableFlipWindowSeconds: number | null;
 };
 
+type StoredPredictionDefaultsSettings = {
+  signalMode: PredictionSignalMode | null;
+};
+
 type PredictionRefreshSettingsPublic = {
   triggerDebounceSec: number;
   aiCooldownSec: number;
@@ -1042,6 +1145,10 @@ type PredictionRefreshSettingsPublic = {
   hysteresisRatio: number;
   unstableFlipLimit: number;
   unstableFlipWindowSeconds: number;
+};
+
+type PredictionDefaultsSettingsPublic = {
+  signalMode: PredictionSignalMode;
 };
 
 type ApiKeySource = "env" | "db" | "none";
@@ -1123,6 +1230,18 @@ function parseStoredPredictionRefreshSettings(value: unknown): StoredPredictionR
   };
 }
 
+function parseStoredPredictionDefaultsSettings(value: unknown): StoredPredictionDefaultsSettings {
+  const record = parseJsonObject(value);
+  const raw = record.signalMode;
+  if (raw === undefined || raw === null) {
+    return { signalMode: null };
+  }
+  const signalMode = normalizePredictionSignalMode(raw);
+  return {
+    signalMode
+  };
+}
+
 function toEffectivePredictionRefreshSettings(
   stored: StoredPredictionRefreshSettings | null
 ): PredictionRefreshSettingsPublic {
@@ -1135,6 +1254,23 @@ function toEffectivePredictionRefreshSettings(
     unstableFlipWindowSeconds:
       stored?.unstableFlipWindowSeconds ?? DEFAULT_PRED_UNSTABLE_FLIP_WINDOW_SECONDS
   };
+}
+
+function toEffectivePredictionDefaultsSettings(
+  stored: StoredPredictionDefaultsSettings | null
+): PredictionDefaultsSettingsPublic {
+  return {
+    signalMode: stored?.signalMode ?? DEFAULT_PREDICTION_SIGNAL_MODE
+  };
+}
+
+async function getPredictionDefaultsSettings(): Promise<PredictionDefaultsSettingsPublic> {
+  const row = await db.globalSetting.findUnique({
+    where: { key: GLOBAL_SETTING_PREDICTION_DEFAULTS_KEY },
+    select: { value: true }
+  });
+  const stored = parseStoredPredictionDefaultsSettings(row?.value);
+  return toEffectivePredictionDefaultsSettings(stored);
 }
 
 function toPublicApiKeysSettings(value: StoredApiKeysSettings) {
@@ -2048,33 +2184,108 @@ function parseDirectionPreference(value: unknown): DirectionPreference {
 
 async function generateAutoPredictionForUser(
   userId: string,
-  payload: PredictionGenerateAutoInput
+  payload: PredictionGenerateAutoInput,
+  options?: {
+    isSuperadmin?: boolean;
+  }
 ): Promise<{
   persisted: boolean;
   prediction: { signal: PredictionSignal; expectedMovePct: number; confidence: number };
+  timeframe: PredictionTimeframe;
+  directionPreference: DirectionPreference;
+  confidenceTargetPct: number;
   signalSource: PredictionSignalSource;
   signalMode: PredictionSignalMode;
   explanation: Awaited<ReturnType<typeof generateAndPersistPrediction>>["explanation"];
   modelVersion: string;
   predictionId: string | null;
   tsCreated: string;
+  aiPromptTemplateId: string | null;
+  aiPromptTemplateName: string | null;
 }> {
   const resolvedAccount = await resolveMarketDataTradingAccount(userId, payload.exchangeAccountId);
   const account = resolvedAccount.selectedAccount;
   const adapter = createBitgetAdapter(resolvedAccount.marketDataAccount);
 
   try {
+    const requestIsSuperadmin = Boolean(options?.isSuperadmin);
     await adapter.contractCache.warmup();
     const canonicalSymbol = normalizeSymbolInput(payload.symbol);
     if (!canonicalSymbol) {
       throw new ManualTradingError("symbol_required", 400, "symbol_required");
     }
+    const predictionDefaults = await getPredictionDefaultsSettings();
+    const signalMode = predictionDefaults.signalMode;
+    const requestedTimeframe = payload.timeframe;
+    const promptScopeContextDraft = {
+      exchange: account.exchange,
+      accountId: payload.exchangeAccountId,
+      symbol: canonicalSymbol,
+      timeframe: requestedTimeframe
+    };
+    const requestedPromptTemplateId =
+      typeof payload.aiPromptTemplateId === "string" && payload.aiPromptTemplateId.trim()
+        ? payload.aiPromptTemplateId.trim()
+        : null;
+    const promptLicenseDecision = evaluateAiPromptAccess({
+      userId,
+      selectedPromptId: requestedPromptTemplateId
+    });
+    if (requestedPromptTemplateId) {
+      const selectedPrompt = await getAiPromptTemplateById(requestedPromptTemplateId, {
+        requirePublic: !requestIsSuperadmin
+      });
+      if (!selectedPrompt) {
+        throw new ManualTradingError(
+          "Selected AI prompt is not available.",
+          400,
+          "invalid_ai_prompt_template"
+        );
+      }
+    }
+    if (!promptLicenseDecision.allowed) {
+      throw new ManualTradingError(
+        "Selected AI prompt is blocked by license policy.",
+        403,
+        "ai_prompt_license_blocked"
+      );
+    }
+    if (promptLicenseDecision.wouldBlock) {
+      // eslint-disable-next-line no-console
+      console.warn("[license] ai prompt selection would be blocked in enforce mode", {
+        userId,
+        selectedPromptId: requestedPromptTemplateId,
+        mode: promptLicenseDecision.mode
+      });
+    }
+    const selectedPromptSettings = requestedPromptTemplateId
+      ? await getAiPromptRuntimeSettingsByTemplateId({
+          templateId: requestedPromptTemplateId,
+          context: promptScopeContextDraft,
+          requirePublic: !requestIsSuperadmin
+        })
+      : await getAiPromptRuntimeSettings(promptScopeContextDraft);
+    const effectiveTimeframe = (
+      selectedPromptSettings?.timeframe ?? requestedTimeframe
+    ) as PredictionTimeframe;
+    const effectiveDirectionPreference = parseDirectionPreference(
+      selectedPromptSettings?.directionPreference
+    );
+    const effectiveConfidenceTargetPct = clamp(
+      Number(selectedPromptSettings?.confidenceTargetPct ?? 60),
+      0,
+      100
+    );
+    const promptScopeContext = {
+      ...promptScopeContextDraft,
+      timeframe: effectiveTimeframe
+    };
     const indicatorSettingsResolution = await resolveIndicatorSettings({
       db,
       exchange: account.exchange,
       accountId: payload.exchangeAccountId,
       symbol: canonicalSymbol,
-      timeframe: payload.timeframe
+      timeframe: effectiveTimeframe
     });
     const indicatorComputeSettings = toIndicatorComputeSettings(indicatorSettingsResolution.config);
     const advancedIndicatorSettings = toAdvancedIndicatorComputeSettings(indicatorSettingsResolution.config);
@@ -2082,20 +2293,20 @@ async function generateAutoPredictionForUser(
     const exchangeSymbol = await adapter.toExchangeSymbol(canonicalSymbol);
     const candleLookback = Math.max(
       120,
-      minimumCandlesForIndicatorsWithSettings(payload.timeframe, indicatorComputeSettings)
+      minimumCandlesForIndicatorsWithSettings(effectiveTimeframe, indicatorComputeSettings)
     );
     const [tickerRaw, candlesRaw] = await Promise.all([
       adapter.marketApi.getTicker(exchangeSymbol, adapter.productType),
       adapter.marketApi.getCandles({
         symbol: exchangeSymbol,
         productType: adapter.productType,
-        granularity: timeframeToBitgetGranularity(payload.timeframe),
+        granularity: timeframeToBitgetGranularity(effectiveTimeframe),
         limit: candleLookback
       })
     ]);
 
     const candles = parseBitgetCandles(candlesRaw);
-    const alignedCandles = bucketCandles(candles, payload.timeframe);
+    const alignedCandles = bucketCandles(candles, effectiveTimeframe);
     if (alignedCandles.length < 20) {
       throw new ManualTradingError(
         "Not enough candle data to generate prediction.",
@@ -2107,7 +2318,7 @@ async function generateAutoPredictionForUser(
     const closes = alignedCandles.map((row) => row.close);
     const highs = alignedCandles.map((row) => row.high);
     const lows = alignedCandles.map((row) => row.low);
-    const indicators = computeIndicators(alignedCandles, payload.timeframe, {
+    const indicators = computeIndicators(alignedCandles, effectiveTimeframe, {
       exchange: account.exchange,
       symbol: canonicalSymbol,
       marketType: payload.marketType,
@@ -2116,7 +2327,7 @@ async function generateAutoPredictionForUser(
     });
     const advancedIndicators = computeAdvancedIndicators(
       alignedCandles,
-      payload.timeframe,
+      effectiveTimeframe,
       advancedIndicatorSettings
     );
     const ticker = normalizeTickerPayload(coerceFirstItem(tickerRaw));
@@ -2133,7 +2344,7 @@ async function generateAutoPredictionForUser(
       exchange: account.exchange,
       symbol: canonicalSymbol,
       marketType: payload.marketType,
-      timeframe: payload.timeframe
+      timeframe: effectiveTimeframe
     });
 
     const inferred = inferPredictionFromMarket({
@@ -2142,9 +2353,9 @@ async function generateAutoPredictionForUser(
       lows,
       indicators,
       referencePrice,
-      timeframe: payload.timeframe,
-      directionPreference: payload.directionPreference,
-      confidenceTargetPct: payload.confidenceTargetPct,
+      timeframe: effectiveTimeframe,
+      directionPreference: effectiveDirectionPreference,
+      confidenceTargetPct: effectiveConfidenceTargetPct,
       leverage: payload.leverage,
       marketType: payload.marketType,
       exchangeAccountId: payload.exchangeAccountId,
@@ -2155,7 +2366,7 @@ async function generateAutoPredictionForUser(
     const quality = await getPredictionQualityContext(
       userId,
       canonicalSymbol,
-      payload.timeframe,
+      effectiveTimeframe,
       payload.marketType
     );
     const newsBlackout = await evaluateNewsRiskForSymbol({
@@ -2164,10 +2375,12 @@ async function generateAutoPredictionForUser(
       now: new Date()
     });
 
-    inferred.featureSnapshot.autoScheduleEnabled = payload.autoSchedule;
+    inferred.featureSnapshot.autoScheduleEnabled = true;
     inferred.featureSnapshot.autoSchedulePaused = false;
-    inferred.featureSnapshot.directionPreference = payload.directionPreference;
-    inferred.featureSnapshot.confidenceTargetPct = payload.confidenceTargetPct;
+    inferred.featureSnapshot.directionPreference = effectiveDirectionPreference;
+    inferred.featureSnapshot.confidenceTargetPct = effectiveConfidenceTargetPct;
+    inferred.featureSnapshot.promptTimeframe = selectedPromptSettings?.timeframe ?? null;
+    inferred.featureSnapshot.requestedTimeframe = requestedTimeframe;
     inferred.featureSnapshot.requestedLeverage = payload.leverage ?? null;
     inferred.featureSnapshot.prefillExchangeAccountId = payload.exchangeAccountId;
     inferred.featureSnapshot.prefillExchange = account.exchange;
@@ -2178,6 +2391,13 @@ async function generateAutoPredictionForUser(
     inferred.featureSnapshot.qualitySlCount = quality.slCount;
     inferred.featureSnapshot.qualityExpiredCount = quality.expiredCount;
     inferred.featureSnapshot.advancedIndicators = advancedIndicators;
+    inferred.featureSnapshot.aiPromptTemplateRequestedId = requestedPromptTemplateId;
+    inferred.featureSnapshot.aiPromptTemplateId =
+      selectedPromptSettings?.activePromptId ?? requestedPromptTemplateId;
+    inferred.featureSnapshot.aiPromptTemplateName =
+      selectedPromptSettings?.activePromptName ?? null;
+    inferred.featureSnapshot.aiPromptLicenseMode = promptLicenseDecision.mode;
+    inferred.featureSnapshot.aiPromptLicenseWouldBlock = promptLicenseDecision.wouldBlock;
     inferred.featureSnapshot.meta = {
       ...(asRecord(inferred.featureSnapshot.meta) ?? {}),
       indicatorSettingsHash: indicatorSettingsResolution.hash
@@ -2192,7 +2412,6 @@ async function generateAutoPredictionForUser(
     );
 
     const tsCreated = new Date().toISOString();
-    const signalMode = normalizePredictionSignalMode(payload.signalMode);
     const selectedSignalSource = resolvePreferredSignalSourceForMode(
       signalMode,
       PREDICTION_PRIMARY_SIGNAL_SOURCE
@@ -2200,7 +2419,7 @@ async function generateAutoPredictionForUser(
     const created = await generateAndPersistPrediction({
       symbol: canonicalSymbol,
       marketType: payload.marketType,
-      timeframe: payload.timeframe,
+      timeframe: effectiveTimeframe,
       tsCreated,
       prediction: inferred.prediction,
       featureSnapshot: inferred.featureSnapshot,
@@ -2209,7 +2428,9 @@ async function generateAutoPredictionForUser(
       tracking: inferred.tracking,
       userId,
       botId: null,
-      modelVersionBase: payload.modelVersionBase ?? "baseline-v1:auto-market-v1"
+      modelVersionBase: payload.modelVersionBase ?? "baseline-v1:auto-market-v1",
+      promptSettings: selectedPromptSettings ?? undefined,
+      promptScopeContext
     });
     const featureSnapshotForState = created.featureSnapshot;
 
@@ -2235,7 +2456,7 @@ async function generateAutoPredictionForUser(
       accountId: payload.exchangeAccountId,
       symbol: canonicalSymbol,
       marketType: payload.marketType,
-      timeframe: payload.timeframe,
+      timeframe: effectiveTimeframe,
       signalMode
     });
 
@@ -2245,10 +2466,10 @@ async function generateAutoPredictionForUser(
       userId,
       symbol: canonicalSymbol,
       marketType: payload.marketType,
-      timeframe: payload.timeframe,
+      timeframe: effectiveTimeframe,
       signalMode,
       tsUpdated: stateTs,
-      tsPredictedFor: new Date(stateTs.getTime() + timeframeToIntervalMs(payload.timeframe)),
+      tsPredictedFor: new Date(stateTs.getTime() + timeframeToIntervalMs(effectiveTimeframe)),
       signal: created.prediction.signal,
       expectedMovePct: Number.isFinite(Number(created.prediction.expectedMovePct))
         ? Number(created.prediction.expectedMovePct)
@@ -2264,10 +2485,10 @@ async function generateAutoPredictionForUser(
       lastAiExplainedAt: signalMode === "local_only" ? null : stateTs,
       lastChangeHash: stateHash,
       lastChangeReason: "manual",
-      autoScheduleEnabled: payload.autoSchedule,
+      autoScheduleEnabled: true,
       autoSchedulePaused: false,
-      directionPreference: payload.directionPreference,
-      confidenceTargetPct: payload.confidenceTargetPct,
+      directionPreference: effectiveDirectionPreference,
+      confidenceTargetPct: effectiveConfidenceTargetPct,
       leverage: payload.leverage ?? null
     };
 
@@ -2308,10 +2529,10 @@ async function generateAutoPredictionForUser(
       exchangeAccountLabel: account.label,
       symbol: canonicalSymbol,
       marketType: payload.marketType,
-      timeframe: payload.timeframe,
+      timeframe: effectiveTimeframe,
       signal: created.prediction.signal,
       confidence: created.prediction.confidence,
-      confidenceTargetPct: payload.confidenceTargetPct,
+      confidenceTargetPct: effectiveConfidenceTargetPct,
       expectedMovePct: created.prediction.expectedMovePct,
       predictionId: created.rowId,
       explanation: created.explanation.explanation,
@@ -2322,12 +2543,19 @@ async function generateAutoPredictionForUser(
     return {
       persisted: created.persisted,
       prediction: created.prediction,
+      timeframe: effectiveTimeframe,
+      directionPreference: effectiveDirectionPreference,
+      confidenceTargetPct: effectiveConfidenceTargetPct,
       explanation: created.explanation,
       modelVersion: created.modelVersion,
       predictionId: created.rowId,
       tsCreated,
       signalSource: created.signalSource,
-      signalMode
+      signalMode,
+      aiPromptTemplateId:
+        selectedPromptSettings?.activePromptId ?? requestedPromptTemplateId,
+      aiPromptTemplateName:
+        selectedPromptSettings?.activePromptName ?? null
     };
   } finally {
     await adapter.close();
@@ -3962,6 +4190,8 @@ type PredictionRefreshTemplate = {
   autoSchedulePaused: boolean;
   tsUpdated: Date;
   featureSnapshot: Record<string, unknown>;
+  aiPromptTemplateId: string | null;
+  aiPromptTemplateName: string | null;
   modelVersionBase: string;
 };
 
@@ -4180,6 +4410,8 @@ async function listPredictionRefreshTemplates(): Promise<PredictionRefreshTempla
           ...snapshot,
           signalMode
         },
+        aiPromptTemplateId: readAiPromptTemplateId(snapshot),
+        aiPromptTemplateName: readAiPromptTemplateName(snapshot),
         modelVersionBase:
           typeof row.modelVersion === "string" && row.modelVersion.trim()
             ? row.modelVersion
@@ -4456,12 +4688,52 @@ async function refreshPredictionStateForTemplate(params: {
       cooldownMs: predictionRefreshRuntimeSettings.aiCooldownSec * 1000
     });
 
+    if (signalMode === "ai_only" && !aiDecision.shouldCallAi) {
+      return {
+        refreshed: false,
+        significant: false,
+        aiCalled: false
+      };
+    }
+
     const tsCreated = new Date().toISOString();
     let explainer: ExplainerOutput;
     let aiCalled = false;
+    const promptScopeContext = {
+      exchange: template.exchange,
+      accountId: template.exchangeAccountId,
+      symbol: template.symbol,
+      timeframe: template.timeframe
+    };
+    const requestedPromptTemplateId =
+      readAiPromptTemplateId(template.featureSnapshot) ?? template.aiPromptTemplateId;
+    const requestedPromptTemplateName =
+      readAiPromptTemplateName(template.featureSnapshot) ?? template.aiPromptTemplateName;
+    const promptLicenseDecision = evaluateAiPromptAccess({
+      userId: template.userId,
+      selectedPromptId: requestedPromptTemplateId
+    });
+    const runtimePromptTemplateId =
+      promptLicenseDecision.allowed ? requestedPromptTemplateId : null;
+    if (promptLicenseDecision.wouldBlock) {
+      // eslint-disable-next-line no-console
+      console.warn("[license] ai prompt selection would be blocked in enforce mode", {
+        userId: template.userId,
+        selectedPromptId: requestedPromptTemplateId,
+        mode: promptLicenseDecision.mode,
+        stateId: template.stateId
+      });
+    }
+    let runtimePromptSettings: Awaited<
+      ReturnType<typeof getAiPromptRuntimeSettingsByTemplateId>
+    > | null = null;
 
     if (signalMode !== "local_only" && aiDecision.shouldCallAi) {
       try {
+        runtimePromptSettings = await getAiPromptRuntimeSettingsByTemplateId({
+          templateId: runtimePromptTemplateId,
+          context: promptScopeContext
+        });
         explainer = await generatePredictionExplanation({
           symbol: template.symbol,
           marketType: template.marketType,
@@ -4469,9 +4741,27 @@ async function refreshPredictionStateForTemplate(params: {
           tsCreated,
           prediction: inferred.prediction,
           featureSnapshot: inferred.featureSnapshot
+        }, {
+          promptScopeContext,
+          promptSettings: runtimePromptSettings,
+          requireSuccessfulAi: signalMode === "ai_only"
         });
         aiCalled = true;
-      } catch {
+      } catch (error) {
+        if (signalMode === "ai_only") {
+          // eslint-disable-next-line no-console
+          console.warn("[predictions:refresh] ai_only skip due to missing AI response", {
+            stateId: template.stateId,
+            symbol: template.symbol,
+            timeframe: template.timeframe,
+            reason: String(error)
+          });
+          return {
+            refreshed: false,
+            significant: false,
+            aiCalled: false
+          };
+        }
         explainer = fallbackExplain({
           symbol: template.symbol,
           marketType: template.marketType,
@@ -4490,6 +4780,12 @@ async function refreshPredictionStateForTemplate(params: {
         prediction: inferred.prediction,
         featureSnapshot: inferred.featureSnapshot
       });
+    } else if (signalMode === "ai_only") {
+      return {
+        refreshed: false,
+        significant: false,
+        aiCalled: false
+      };
     } else if (
       prevState &&
       !significantForAiGate.significant &&
@@ -4518,6 +4814,17 @@ async function refreshPredictionStateForTemplate(params: {
         featureSnapshot: inferred.featureSnapshot
       });
     }
+    inferred.featureSnapshot.aiPromptTemplateRequestedId = requestedPromptTemplateId;
+    if (runtimePromptSettings) {
+      inferred.featureSnapshot.aiPromptTemplateId = runtimePromptSettings.activePromptId;
+      inferred.featureSnapshot.aiPromptTemplateName = runtimePromptSettings.activePromptName;
+    } else {
+      inferred.featureSnapshot.aiPromptTemplateId = runtimePromptTemplateId;
+      inferred.featureSnapshot.aiPromptTemplateName =
+        runtimePromptTemplateId ? requestedPromptTemplateName : null;
+    }
+    inferred.featureSnapshot.aiPromptLicenseMode = promptLicenseDecision.mode;
+    inferred.featureSnapshot.aiPromptLicenseWouldBlock = promptLicenseDecision.wouldBlock;
     inferred.featureSnapshot.signalMode = signalMode;
     const localPrediction =
       normalizeSnapshotPrediction(asRecord(inferred.prediction)) ??
@@ -6132,6 +6439,429 @@ app.put("/admin/settings/prediction-refresh", requireAuth, async (req, res) => {
   });
 });
 
+app.get("/admin/settings/prediction-defaults", requireAuth, async (_req, res) => {
+  if (!(await requireSuperadmin(res))) return;
+  const row = await db.globalSetting.findUnique({
+    where: { key: GLOBAL_SETTING_PREDICTION_DEFAULTS_KEY },
+    select: { value: true, updatedAt: true }
+  });
+  const effective = toEffectivePredictionDefaultsSettings(
+    parseStoredPredictionDefaultsSettings(row?.value)
+  );
+  return res.json({
+    ...effective,
+    updatedAt: row?.updatedAt ?? null,
+    source: row ? "db" : "env",
+    defaults: toEffectivePredictionDefaultsSettings(null)
+  });
+});
+
+app.put("/admin/settings/prediction-defaults", requireAuth, async (req, res) => {
+  if (!(await requireSuperadmin(res))) return;
+  const parsed = adminPredictionDefaultsSchema.safeParse(req.body ?? {});
+  if (!parsed.success) {
+    return res.status(400).json({ error: "invalid_payload", details: parsed.error.flatten() });
+  }
+  const value = {
+    signalMode: normalizePredictionSignalMode(parsed.data.signalMode)
+  };
+  const updated = await setGlobalSettingValue(GLOBAL_SETTING_PREDICTION_DEFAULTS_KEY, value);
+  const effective = toEffectivePredictionDefaultsSettings(
+    parseStoredPredictionDefaultsSettings(updated.value)
+  );
+  return res.json({
+    ...effective,
+    updatedAt: updated.updatedAt,
+    source: "db",
+    defaults: toEffectivePredictionDefaultsSettings(null)
+  });
+});
+
+app.get("/settings/prediction-defaults", requireAuth, async (_req, res) => {
+  const effective = await getPredictionDefaultsSettings();
+  return res.json(effective);
+});
+
+function normalizeAiPromptSettingsPayload(
+  payload: AdminAiPromptsPayload,
+  nowIso: string
+): {
+  settings: AiPromptSettingsStored;
+  invalidKeys: string[];
+  duplicatePromptIds: string[];
+} {
+  const invalidKeys = new Set<string>();
+  const duplicatePromptIds = new Set<string>();
+
+  const normalizeIndicatorKeyList = (values: string[]): AiPromptIndicatorKey[] => {
+    const deduped: AiPromptIndicatorKey[] = [];
+    const seen = new Set<AiPromptIndicatorKey>();
+    for (const raw of values) {
+      const key = raw.trim();
+      if (!isAiPromptIndicatorKey(key)) {
+        if (key) invalidKeys.add(key);
+        continue;
+      }
+      if (seen.has(key)) continue;
+      seen.add(key);
+      deduped.push(key);
+    }
+    return deduped;
+  };
+
+  const parseIso = (value: string | undefined): string | null => {
+    if (!value) return null;
+    const parsed = new Date(value);
+    if (Number.isNaN(parsed.getTime())) return null;
+    return parsed.toISOString();
+  };
+
+  const seenIds = new Set<string>();
+  const prompts: AiPromptTemplate[] = [];
+  for (const row of payload.prompts) {
+    const id = row.id.trim();
+    if (!id) continue;
+    if (seenIds.has(id)) {
+      duplicatePromptIds.add(id);
+      continue;
+    }
+    seenIds.add(id);
+
+    const createdAt = parseIso(row.createdAt) ?? nowIso;
+    const updatedAt = nowIso;
+    prompts.push({
+      id,
+      name: row.name.trim(),
+      promptText: row.promptText.trim(),
+      indicatorKeys: normalizeIndicatorKeyList(row.indicatorKeys),
+      timeframe: row.timeframe ?? null,
+      directionPreference: row.directionPreference,
+      confidenceTargetPct: row.confidenceTargetPct,
+      isPublic: Boolean(row.isPublic),
+      createdAt,
+      updatedAt
+    });
+  }
+
+  const activePromptIdRaw =
+    typeof payload.activePromptId === "string" && payload.activePromptId.trim()
+      ? payload.activePromptId.trim()
+      : null;
+  const activePromptId =
+    activePromptIdRaw && prompts.some((item) => item.id === activePromptIdRaw)
+      ? activePromptIdRaw
+      : (prompts[0]?.id ?? null);
+
+  return {
+    settings: {
+      activePromptId,
+      prompts
+    },
+    invalidKeys: [...invalidKeys],
+    duplicatePromptIds: [...duplicatePromptIds]
+  };
+}
+
+function readAiPromptLicensePolicyPublic() {
+  const mode = getAiPromptLicenseMode();
+  return {
+    mode,
+    allowedPublicPromptIds: getAiPromptAllowedPublicIds(),
+    enforcementActive: mode === "enforce"
+  } as const;
+}
+
+app.get("/admin/settings/ai-prompts", requireAuth, async (_req, res) => {
+  if (!(await requireSuperadmin(res))) return;
+  const row = await db.globalSetting.findUnique({
+    where: { key: GLOBAL_SETTING_AI_PROMPTS_KEY },
+    select: { value: true, updatedAt: true }
+  });
+  const settings = parseStoredAiPromptSettings(row?.value);
+
+  return res.json({
+    activePromptId: settings.activePromptId,
+    prompts: settings.prompts,
+    availableIndicators: getAiPromptIndicatorOptionsPublic(),
+    licensePolicy: readAiPromptLicensePolicyPublic(),
+    updatedAt: row?.updatedAt ?? null,
+    source: row ? "db" : "default",
+    defaults: DEFAULT_AI_PROMPT_SETTINGS
+  });
+});
+
+app.put("/admin/settings/ai-prompts", requireAuth, async (req, res) => {
+  if (!(await requireSuperadmin(res))) return;
+  const parsed = adminAiPromptsSchema.safeParse(req.body ?? {});
+  if (!parsed.success) {
+    return res.status(400).json({ error: "invalid_payload", details: parsed.error.flatten() });
+  }
+
+  const normalized = normalizeAiPromptSettingsPayload(parsed.data, new Date().toISOString());
+  if (normalized.invalidKeys.length > 0) {
+    return res.status(400).json({
+      error: "invalid_indicator_keys",
+      details: { invalidKeys: normalized.invalidKeys }
+    });
+  }
+  if (normalized.duplicatePromptIds.length > 0) {
+    return res.status(409).json({
+      error: "duplicate_prompt_id",
+      details: { duplicatePromptIds: normalized.duplicatePromptIds }
+    });
+  }
+
+  const sanitized = parseStoredAiPromptSettings(normalized.settings);
+  const updated = await setGlobalSettingValue(GLOBAL_SETTING_AI_PROMPTS_KEY, sanitized);
+  const settings = parseStoredAiPromptSettings(updated.value);
+  invalidateAiPromptSettingsCache();
+
+  return res.json({
+    activePromptId: settings.activePromptId,
+    prompts: settings.prompts,
+    availableIndicators: getAiPromptIndicatorOptionsPublic(),
+    licensePolicy: readAiPromptLicensePolicyPublic(),
+    updatedAt: updated.updatedAt,
+    source: "db",
+    defaults: DEFAULT_AI_PROMPT_SETTINGS
+  });
+});
+
+app.post("/admin/settings/ai-prompts/preview", requireAuth, async (req, res) => {
+  if (!(await requireSuperadmin(res))) return;
+  const parsed = adminAiPromptsPreviewSchema.safeParse(req.body ?? {});
+  if (!parsed.success) {
+    return res.status(400).json({ error: "invalid_payload", details: parsed.error.flatten() });
+  }
+
+  let settings: AiPromptSettingsStored;
+  if (parsed.data.settingsDraft !== undefined) {
+    const draftParsed = adminAiPromptsSchema.safeParse(parsed.data.settingsDraft);
+    if (!draftParsed.success) {
+      return res.status(400).json({
+        error: "invalid_settings_draft",
+        details: draftParsed.error.flatten()
+      });
+    }
+    const normalizedDraft = normalizeAiPromptSettingsPayload(
+      draftParsed.data,
+      new Date().toISOString()
+    );
+    if (normalizedDraft.invalidKeys.length > 0) {
+      return res.status(400).json({
+        error: "invalid_indicator_keys",
+        details: { invalidKeys: normalizedDraft.invalidKeys }
+      });
+    }
+    if (normalizedDraft.duplicatePromptIds.length > 0) {
+      return res.status(409).json({
+        error: "duplicate_prompt_id",
+        details: { duplicatePromptIds: normalizedDraft.duplicatePromptIds }
+      });
+    }
+    settings = parseStoredAiPromptSettings(normalizedDraft.settings);
+  } else {
+    const row = await db.globalSetting.findUnique({
+      where: { key: GLOBAL_SETTING_AI_PROMPTS_KEY },
+      select: { value: true }
+    });
+    settings = parseStoredAiPromptSettings(row?.value);
+  }
+
+  const context = {
+    exchange: parsed.data.exchange ?? null,
+    accountId: parsed.data.accountId ?? null,
+    symbol: parsed.data.symbol,
+    timeframe: parsed.data.timeframe
+  };
+  const runtimeSettings = resolveAiPromptRuntimeSettingsForContext(
+    settings,
+    context,
+    "db"
+  );
+
+  const promptInput = {
+    symbol: parsed.data.symbol,
+    marketType: parsed.data.marketType,
+    timeframe: parsed.data.timeframe,
+    tsCreated: parsed.data.tsCreated ?? new Date().toISOString(),
+    prediction: parsed.data.prediction ?? {
+      signal: "neutral" as const,
+      expectedMovePct: 0.8,
+      confidence: 0.5
+    },
+    featureSnapshot: parsed.data.featureSnapshot ?? {}
+  };
+
+  const preview = await buildPredictionExplainerPromptPreview(promptInput, {
+    promptSettings: runtimeSettings,
+    promptScopeContext: context
+  });
+
+  return res.json({
+    scopeContext: preview.scopeContext,
+    runtimeSettings: preview.runtimeSettings,
+    systemMessage: preview.systemMessage,
+    cacheKey: preview.cacheKey,
+    userPayload: preview.userPayload
+  });
+});
+
+app.get("/settings/ai-prompts/public", requireAuth, async (_req, res) => {
+  const user = readUserFromLocals(res);
+  const row = await db.globalSetting.findUnique({
+    where: { key: GLOBAL_SETTING_AI_PROMPTS_KEY },
+    select: { value: true, updatedAt: true }
+  });
+  const settings = parseStoredAiPromptSettings(row?.value);
+  const isSuperadmin = isSuperadminEmail(user.email);
+  const visiblePrompts = isSuperadmin ? settings.prompts : getPublicAiPromptTemplates(settings);
+
+  return res.json({
+    items: visiblePrompts.map((item) => ({
+      id: item.id,
+      name: item.name,
+      promptText: item.promptText,
+      indicatorKeys: item.indicatorKeys,
+      timeframe: item.timeframe,
+      directionPreference: item.directionPreference,
+      confidenceTargetPct: item.confidenceTargetPct,
+      isPublic: item.isPublic,
+      updatedAt: item.updatedAt
+    })),
+    licensePolicy: readAiPromptLicensePolicyPublic(),
+    updatedAt: row?.updatedAt ?? null
+  });
+});
+
+app.get("/admin/settings/ai-trace", requireAuth, async (_req, res) => {
+  if (!(await requireSuperadmin(res))) return;
+  const row = await db.globalSetting.findUnique({
+    where: { key: GLOBAL_SETTING_AI_TRACE_KEY },
+    select: { value: true, updatedAt: true }
+  });
+  const settings = parseStoredAiTraceSettings(row?.value);
+
+  return res.json({
+    ...settings,
+    updatedAt: row?.updatedAt ?? null,
+    source: row ? "db" : "default",
+    defaults: DEFAULT_AI_TRACE_SETTINGS
+  });
+});
+
+app.put("/admin/settings/ai-trace", requireAuth, async (req, res) => {
+  if (!(await requireSuperadmin(res))) return;
+  const parsed = adminAiTraceSettingsSchema.safeParse(req.body ?? {});
+  if (!parsed.success) {
+    return res.status(400).json({ error: "invalid_payload", details: parsed.error.flatten() });
+  }
+
+  const sanitized = parseStoredAiTraceSettings(parsed.data);
+  const updated = await setGlobalSettingValue(GLOBAL_SETTING_AI_TRACE_KEY, sanitized);
+  invalidateAiTraceSettingsCache();
+
+  return res.json({
+    ...sanitized,
+    updatedAt: updated.updatedAt,
+    source: "db",
+    defaults: DEFAULT_AI_TRACE_SETTINGS
+  });
+});
+
+app.get("/admin/ai-trace/logs", requireAuth, async (req, res) => {
+  if (!(await requireSuperadmin(res))) return;
+  const parsed = adminAiTraceLogsQuerySchema.safeParse(req.query ?? {});
+  if (!parsed.success) {
+    return res.status(400).json({ error: "invalid_query", details: parsed.error.flatten() });
+  }
+  if (!db.aiTraceLog || typeof db.aiTraceLog.findMany !== "function") {
+    return res.status(503).json({ error: "ai_trace_not_ready" });
+  }
+
+  const [items, total, traceSettings] = await Promise.all([
+    db.aiTraceLog.findMany({
+      orderBy: { createdAt: "desc" },
+      take: parsed.data.limit
+    }),
+    db.aiTraceLog.count(),
+    getAiTraceSettingsCached()
+  ]);
+
+  const readTraceMeta = (payload: unknown): { retryUsed: boolean; retryCount: number } => {
+    if (!payload || typeof payload !== "object" || Array.isArray(payload)) {
+      return { retryUsed: false, retryCount: 0 };
+    }
+    const meta = (payload as Record<string, unknown>).__trace;
+    if (!meta || typeof meta !== "object" || Array.isArray(meta)) {
+      return { retryUsed: false, retryCount: 0 };
+    }
+    const record = meta as Record<string, unknown>;
+    const retryUsed = record.retryUsed === true;
+    const retryCountRaw = Number(record.retryCount);
+    const retryCount = Number.isFinite(retryCountRaw) ? Math.max(0, Math.trunc(retryCountRaw)) : 0;
+    return {
+      retryUsed,
+      retryCount
+    };
+  };
+
+  return res.json({
+    enabled: traceSettings.settings.enabled,
+    source: traceSettings.source,
+    total,
+    limit: parsed.data.limit,
+    items: items.map((row: any) => ({
+      ...(readTraceMeta(row.userPayload ?? null)),
+      id: row.id,
+      createdAt: row.createdAt instanceof Date ? row.createdAt.toISOString() : null,
+      scope: row.scope,
+      provider: row.provider ?? null,
+      model: row.model ?? null,
+      symbol: row.symbol ?? null,
+      marketType: row.marketType ?? null,
+      timeframe: row.timeframe ?? null,
+      promptTemplateId: row.promptTemplateId ?? null,
+      promptTemplateName: row.promptTemplateName ?? null,
+      systemMessage: row.systemMessage ?? null,
+      userPayload: row.userPayload ?? null,
+      rawResponse: row.rawResponse ?? null,
+      parsedResponse: row.parsedResponse ?? null,
+      success: Boolean(row.success),
+      error: row.error ?? null,
+      fallbackUsed: Boolean(row.fallbackUsed),
+      cacheHit: Boolean(row.cacheHit),
+      rateLimited: Boolean(row.rateLimited),
+      latencyMs:
+        Number.isFinite(Number(row.latencyMs)) && row.latencyMs !== null
+          ? Math.max(0, Math.trunc(Number(row.latencyMs)))
+          : null
+    }))
+  });
+});
+
+app.post("/admin/ai-trace/logs/cleanup", requireAuth, async (req, res) => {
+  if (!(await requireSuperadmin(res))) return;
+  const parsed = adminAiTraceCleanupSchema.safeParse(req.body ?? {});
+  if (!parsed.success) {
+    return res.status(400).json({ error: "invalid_payload", details: parsed.error.flatten() });
+  }
+  if (!db.aiTraceLog || typeof db.aiTraceLog.deleteMany !== "function") {
+    return res.status(503).json({ error: "ai_trace_not_ready" });
+  }
+
+  const where = parsed.data.deleteAll
+    ? {}
+    : { createdAt: { lt: new Date(Date.now() - parsed.data.olderThanDays * 24 * 60 * 60 * 1000) } };
+  const deleted = await db.aiTraceLog.deleteMany({ where });
+
+  return res.json({
+    deletedCount: deleted.count,
+    mode: parsed.data.deleteAll ? "all" : "older_than_days",
+    olderThanDays: parsed.data.deleteAll ? null : parsed.data.olderThanDays
+  });
+});
+
 app.get("/api/admin/indicator-settings", requireAuth, async (_req, res) => {
   if (!(await requireSuperadmin(res))) return;
   if (!db.indicatorSetting || typeof db.indicatorSetting.findMany !== "function") {
@@ -6344,6 +7074,7 @@ app.post("/api/trading/settings", requireAuth, async (req, res) => {
 
 app.post("/api/predictions/generate", requireAuth, async (req, res) => {
   const user = getUserFromLocals(res);
+  const requestIsSuperadmin = isSuperadminEmail(user.email);
   const parsed = predictionGenerateSchema.safeParse(req.body);
   if (!parsed.success) {
     return res.status(400).json({ error: "invalid_payload", details: parsed.error.flatten() });
@@ -6352,7 +7083,68 @@ app.post("/api/predictions/generate", requireAuth, async (req, res) => {
   const payload = parsed.data;
   const signalMode = normalizePredictionSignalMode(payload.signalMode);
   const tsCreated = payload.tsCreated ?? new Date().toISOString();
-  const tracking = derivePredictionTrackingFromSnapshot(payload.featureSnapshot, payload.timeframe);
+  const inputFeatureSnapshot = asRecord(payload.featureSnapshot);
+  const requestedPromptTemplateId =
+    typeof payload.aiPromptTemplateId === "string" && payload.aiPromptTemplateId.trim()
+      ? payload.aiPromptTemplateId.trim()
+      : null;
+  const promptLicenseDecision = evaluateAiPromptAccess({
+    userId: user.id,
+    selectedPromptId: requestedPromptTemplateId
+  });
+  if (requestedPromptTemplateId) {
+    const selectedPrompt = await getAiPromptTemplateById(requestedPromptTemplateId, {
+      requirePublic: !requestIsSuperadmin
+    });
+    if (!selectedPrompt) {
+      return res.status(400).json({ error: "invalid_ai_prompt_template" });
+    }
+  }
+  if (!promptLicenseDecision.allowed) {
+    return res.status(403).json({ error: "ai_prompt_license_blocked" });
+  }
+  if (promptLicenseDecision.wouldBlock) {
+    // eslint-disable-next-line no-console
+    console.warn("[license] ai prompt selection would be blocked in enforce mode", {
+      userId: user.id,
+      selectedPromptId: requestedPromptTemplateId,
+      mode: promptLicenseDecision.mode
+    });
+  }
+  const promptScopeContext = {
+    exchange:
+      typeof inputFeatureSnapshot.prefillExchange === "string"
+        ? normalizeExchangeValue(inputFeatureSnapshot.prefillExchange)
+        : null,
+    accountId:
+      typeof inputFeatureSnapshot.prefillExchangeAccountId === "string"
+        ? inputFeatureSnapshot.prefillExchangeAccountId.trim()
+        : null,
+    symbol: normalizeSymbolInput(payload.symbol) ?? payload.symbol,
+    timeframe: payload.timeframe
+  };
+  const selectedPromptSettings =
+    signalMode === "local_only"
+      ? null
+      : requestedPromptTemplateId
+        ? await getAiPromptRuntimeSettingsByTemplateId({
+            templateId: requestedPromptTemplateId,
+            context: promptScopeContext,
+            requirePublic: !requestIsSuperadmin
+          })
+        : await getAiPromptRuntimeSettings(promptScopeContext);
+  const featureSnapshotWithPrompt = {
+    ...inputFeatureSnapshot,
+    aiPromptTemplateRequestedId: requestedPromptTemplateId,
+    aiPromptTemplateId: selectedPromptSettings?.activePromptId ?? requestedPromptTemplateId,
+    aiPromptTemplateName: selectedPromptSettings?.activePromptName ?? null,
+    aiPromptLicenseMode: promptLicenseDecision.mode,
+    aiPromptLicenseWouldBlock: promptLicenseDecision.wouldBlock
+  };
+  const tracking = derivePredictionTrackingFromSnapshot(
+    featureSnapshotWithPrompt,
+    payload.timeframe
+  );
 
   const created = await generateAndPersistPrediction({
     symbol: payload.symbol,
@@ -6360,7 +7152,7 @@ app.post("/api/predictions/generate", requireAuth, async (req, res) => {
     timeframe: payload.timeframe,
     tsCreated,
     prediction: payload.prediction,
-    featureSnapshot: payload.featureSnapshot,
+    featureSnapshot: featureSnapshotWithPrompt,
     signalMode,
     preferredSignalSource: resolvePreferredSignalSourceForMode(
       signalMode,
@@ -6369,7 +7161,9 @@ app.post("/api/predictions/generate", requireAuth, async (req, res) => {
     tracking,
     userId: user.id,
     botId: payload.botId ?? null,
-    modelVersionBase: payload.modelVersionBase
+    modelVersionBase: payload.modelVersionBase,
+    promptSettings: selectedPromptSettings ?? undefined,
+    promptScopeContext
   });
 
   const snapshot = asRecord(created.featureSnapshot);
@@ -6503,7 +7297,9 @@ app.post("/api/predictions/generate", requireAuth, async (req, res) => {
     signalSource: created.signalSource,
     explanation: created.explanation,
     modelVersion: created.modelVersion,
-    predictionId: created.rowId
+    predictionId: created.rowId,
+    aiPromptTemplateId: readAiPromptTemplateId(snapshot),
+    aiPromptTemplateName: readAiPromptTemplateName(snapshot)
   });
 });
 
@@ -6517,24 +7313,28 @@ app.post("/api/predictions/generate-auto", requireAuth, async (req, res) => {
   const payload = parsed.data;
 
   try {
-    const created = await generateAutoPredictionForUser(user.id, payload);
+    const created = await generateAutoPredictionForUser(user.id, payload, {
+      isSuperadmin: isSuperadminEmail(user.email)
+    });
     return res.status(created.persisted ? 201 : 202).json({
       persisted: created.persisted,
       prediction: {
         symbol: normalizeSymbolInput(payload.symbol),
         marketType: payload.marketType,
-        timeframe: payload.timeframe,
+        timeframe: created.timeframe,
         tsCreated: created.tsCreated,
         ...created.prediction
       },
-      directionPreference: payload.directionPreference,
+      directionPreference: created.directionPreference,
+      confidenceTargetPct: created.confidenceTargetPct,
       leverage: payload.leverage ?? null,
-      autoSchedule: payload.autoSchedule,
       signalMode: created.signalMode,
       signalSource: created.signalSource,
       explanation: created.explanation,
       modelVersion: created.modelVersion,
-      predictionId: created.predictionId
+      predictionId: created.predictionId,
+      aiPromptTemplateId: created.aiPromptTemplateId,
+      aiPromptTemplateName: created.aiPromptTemplateName
     });
   } catch (error) {
     return sendManualTradingError(res, error);
@@ -6604,6 +7404,8 @@ app.get("/api/predictions", requireAuth, async (req, res) => {
         outcomeEvaluatedAt: null,
         localPrediction: readLocalPredictionSnapshot(snapshot),
         aiPrediction: readAiPredictionSnapshot(snapshot),
+        aiPromptTemplateId: readAiPromptTemplateId(snapshot),
+        aiPromptTemplateName: readAiPromptTemplateName(snapshot),
         signalMode,
         autoScheduleEnabled: Boolean(row.autoScheduleEnabled) && !Boolean(row.autoSchedulePaused),
         confidenceTargetPct:
@@ -6753,6 +7555,8 @@ app.get("/api/predictions", requireAuth, async (req, res) => {
           confidence: row.confidence
         })),
       aiPrediction: readAiPredictionSnapshot(snapshot),
+      aiPromptTemplateId: readAiPromptTemplateId(snapshot),
+      aiPromptTemplateName: readAiPromptTemplateName(snapshot),
       signalMode: readSignalMode(snapshot),
       autoScheduleEnabled: isAutoScheduleEnabled(snapshot.autoScheduleEnabled),
       confidenceTargetPct: readConfiguredConfidenceTarget(snapshot),
@@ -7062,6 +7866,8 @@ app.get("/api/predictions/running", requireAuth, async (req, res) => {
     confidenceTargetPct: number;
     leverage: number | null;
     signalMode: PredictionSignalMode;
+    aiPromptTemplateId: string | null;
+    aiPromptTemplateName: string | null;
     paused: boolean;
     tsCreated: string;
     nextRunAt: string;
@@ -7119,6 +7925,8 @@ app.get("/api/predictions/running", requireAuth, async (req, res) => {
           ? Math.max(1, Math.trunc(Number(row.leverage)))
           : readRequestedLeverage(snapshot) ?? null,
       signalMode,
+      aiPromptTemplateId: readAiPromptTemplateId(snapshot),
+      aiPromptTemplateName: readAiPromptTemplateName(snapshot),
       paused,
       tsCreated:
         row.tsUpdated instanceof Date ? row.tsUpdated.toISOString() : new Date().toISOString(),
@@ -7521,6 +8329,8 @@ app.get("/api/predictions/state", requireAuth, async (req, res) => {
     explanation: typeof row.explanation === "string" ? row.explanation : null,
     keyDrivers: normalizeKeyDriverList(row.keyDrivers),
     featureSnapshot: asRecord(row.featuresSnapshot),
+    aiPromptTemplateId: readAiPromptTemplateId(asRecord(row.featuresSnapshot)),
+    aiPromptTemplateName: readAiPromptTemplateName(asRecord(row.featuresSnapshot)),
     modelVersion: row.modelVersion,
     autoScheduleEnabled: Boolean(row.autoScheduleEnabled),
     autoSchedulePaused: Boolean(row.autoSchedulePaused),
@@ -9324,6 +10134,7 @@ const marketWss = new WebSocketServer({ noServer: true });
 const userWss = new WebSocketServer({ noServer: true });
 
 const port = Number(process.env.API_PORT ?? "4000");
+const listenHost = process.env.API_HOST?.trim() || "::";
 const server = http.createServer(app);
 
 server.on("upgrade", (req, socket, head) => {
@@ -9365,16 +10176,23 @@ async function startApiServer() {
     console.error("[admin] seed failed", String(error));
   }
 
-  server.listen(port, () => {
+  server.listen(
+    {
+      port,
+      host: listenHost,
+      ipv6Only: false
+    },
+    () => {
     // eslint-disable-next-line no-console
-    console.log(`[api] listening on :${port}`);
+      console.log(`[api] listening on ${listenHost}:${port}`);
     startExchangeAutoSyncScheduler();
     startFeatureThresholdCalibrationScheduler();
     startPredictionAutoScheduler();
     startPredictionOutcomeEvalScheduler();
     startPredictionPerformanceEvalScheduler();
     economicCalendarRefreshJob.start();
-  });
+    }
+  );
 }
 
 void startApiServer();

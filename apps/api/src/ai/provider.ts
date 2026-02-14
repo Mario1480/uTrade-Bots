@@ -116,7 +116,7 @@ export async function callAi(prompt: string, options: CallAiOptions = {}): Promi
   if (!apiKey) throw new Error("ai_api_key_missing");
 
   const model = options.model ?? getAiModel();
-  const timeoutMs = Number(options.timeoutMs ?? process.env.AI_TIMEOUT_MS ?? "8000");
+  const timeoutMs = Number(options.timeoutMs ?? process.env.AI_TIMEOUT_MS ?? "15000");
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), Math.max(1000, timeoutMs));
   const startedAt = Date.now();

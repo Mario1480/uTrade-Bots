@@ -105,6 +105,14 @@ type LiquiditySweepsNumberKey = Exclude<
   keyof IndicatorSettingsConfig["liquiditySweeps"],
   "mode" | "extend"
 >;
+type IndicatorSectionKey =
+  | "stochRsi"
+  | "volume"
+  | "fvg"
+  | "rangesSessions"
+  | "smc"
+  | "aiGating"
+  | "liquiditySweeps";
 
 const SCOPE_OPTIONS: ScopeType[] = ["global", "account", "symbol", "symbol_tf"];
 const TIMEFRAME_OPTIONS: Timeframe[] = ["5m", "15m", "1h", "4h", "1d"];
@@ -483,6 +491,18 @@ export default function AdminIndicatorSettingsPage() {
   const [symbol, setSymbol] = useState("BTCUSDT");
   const [timeframe, setTimeframe] = useState<Timeframe>("15m");
   const [config, setConfig] = useState<IndicatorSettingsConfig>(FALLBACK_DEFAULTS);
+  const [openCatalogGroups, setOpenCatalogGroups] = useState<Record<string, boolean>>(() =>
+    Object.fromEntries(INDICATOR_CATALOG_GROUPS.map((group) => [group.key, false]))
+  );
+  const [openIndicatorSections, setOpenIndicatorSections] = useState<Record<IndicatorSectionKey, boolean>>({
+    stochRsi: false,
+    volume: false,
+    fvg: false,
+    rangesSessions: false,
+    smc: false,
+    aiGating: false,
+    liquiditySweeps: false
+  });
 
   const canSave = useMemo(() => {
     if (scopeType === "account") return accountId.trim().length > 0;
@@ -578,6 +598,20 @@ export default function AdminIndicatorSettingsPage() {
     setConfig((prev) => ({
       ...prev,
       liquiditySweeps: { ...prev.liquiditySweeps, extend }
+    }));
+  }
+
+  function toggleIndicatorSection(section: IndicatorSectionKey) {
+    setOpenIndicatorSections((prev) => ({
+      ...prev,
+      [section]: !prev[section]
+    }));
+  }
+
+  function toggleCatalogGroup(groupKey: string) {
+    setOpenCatalogGroups((prev) => ({
+      ...prev,
+      [groupKey]: !prev[groupKey]
     }));
   }
 
@@ -739,63 +773,101 @@ export default function AdminIndicatorSettingsPage() {
                 <div className="indicatorCatalogStatValue">{catalogSummary.settingsOnly}</div>
               </div>
             </div>
-            <div className="indicatorCatalogGroupList">
-              {INDICATOR_CATALOG_GROUPS.map((group) => (
-                <article key={group.key} className="indicatorCatalogGroupCard">
-                  <div className="indicatorCatalogGroupHeader">
-                    <div style={{ fontWeight: 700 }}>{group.title}</div>
-                    <span className="indicatorCatalogGroupCount">
-                      {group.items.length} indicators
-                    </span>
-                  </div>
-                  <div className="settingsMutedText">{group.description}</div>
-                  <div className="indicatorCatalogItemList">
-                    {group.items.map((item) => {
-                      const status = catalogStatus(item);
-                      return (
-                        <div key={item.key} className="indicatorCatalogItemCard">
-                          <div className="indicatorCatalogItemHeader">
-                            <div style={{ fontWeight: 600 }}>{item.name}</div>
-                            <span
-                              className="indicatorCatalogItemStatus"
-                              style={{ color: catalogStatusColor(status) }}
-                            >
-                              {catalogStatusLabel(status)}
-                            </span>
-                          </div>
-                          {item.note ? (
-                            <div className="settingsMutedText">{item.note}</div>
-                          ) : null}
-                          <div className="mutedTiny">Outputs</div>
-                          <div className="indicatorCatalogTokenList">
-                            {item.outputs.map((output) => (
-                              <code key={`${item.key}-out-${output}`} className="indicatorCatalogToken">
-                                {output}
-                              </code>
-                            ))}
-                          </div>
-                          <div className="mutedTiny">Config params</div>
-                          <div className="indicatorCatalogTokenList">
-                            {item.params.map((param) => (
-                              <code key={`${item.key}-param-${param}`} className="indicatorCatalogToken">
-                                {param}
-                              </code>
-                            ))}
-                          </div>
+            <div className="settingsAccordion indicatorCatalogAccordion">
+              {INDICATOR_CATALOG_GROUPS.map((group) => {
+                const isOpen = !!openCatalogGroups[group.key];
+                return (
+                  <div
+                    key={group.key}
+                    className={`settingsAccordionItem ${isOpen ? "settingsAccordionItemOpen" : ""}`}
+                  >
+                    <button
+                      type="button"
+                      className="settingsAccordionTrigger"
+                      onClick={() => toggleCatalogGroup(group.key)}
+                      aria-expanded={isOpen}
+                    >
+                      <span>{group.title}</span>
+                      <span className="indicatorCatalogAccordionMeta">
+                        <span className="indicatorCatalogGroupCount">{group.items.length} indicators</span>
+                        <span
+                          className={`settingsAccordionChevron ${isOpen ? "settingsAccordionChevronOpen" : ""}`}
+                        >
+                          ▾
+                        </span>
+                      </span>
+                    </button>
+                    {isOpen ? (
+                      <div className="settingsAccordionBody">
+                        <div className="settingsMutedText">{group.description}</div>
+                        <div className="indicatorCatalogItemList">
+                          {group.items.map((item) => {
+                            const status = catalogStatus(item);
+                            return (
+                              <div key={item.key} className="indicatorCatalogItemCard">
+                                <div className="indicatorCatalogItemHeader">
+                                  <div style={{ fontWeight: 600 }}>{item.name}</div>
+                                  <span
+                                    className="indicatorCatalogItemStatus"
+                                    style={{ color: catalogStatusColor(status) }}
+                                  >
+                                    {catalogStatusLabel(status)}
+                                  </span>
+                                </div>
+                                {item.note ? (
+                                  <div className="settingsMutedText">{item.note}</div>
+                                ) : null}
+                                <div className="mutedTiny">Outputs</div>
+                                <div className="indicatorCatalogTokenList">
+                                  {item.outputs.map((output) => (
+                                    <code
+                                      key={`${item.key}-out-${output}`}
+                                      className="indicatorCatalogToken"
+                                    >
+                                      {output}
+                                    </code>
+                                  ))}
+                                </div>
+                                <div className="mutedTiny">Config params</div>
+                                <div className="indicatorCatalogTokenList">
+                                  {item.params.map((param) => (
+                                    <code
+                                      key={`${item.key}-param-${param}`}
+                                      className="indicatorCatalogToken"
+                                    >
+                                      {param}
+                                    </code>
+                                  ))}
+                                </div>
+                              </div>
+                            );
+                          })}
                         </div>
-                      );
-                    })}
+                      </div>
+                    ) : null}
                   </div>
-                </article>
-              ))}
+                );
+              })}
             </div>
           </section>
 
           <section className="card settingsSection indicatorOverrideSection" style={{ marginBottom: 12 }}>
             <div className="settingsSectionHeader">
               <h3 style={{ margin: 0 }}>{editingId ? "Edit override" : "Create override"}</h3>
+              <span className="indicatorOverrideModeChip">
+                {editingId ? "update mode" : "new override"}
+              </span>
+            </div>
+            <div className="settingsMutedText indicatorOverrideIntro">
+              Scope zuerst festlegen, dann nur die Werte anpassen, die in dieser Ebene überschrieben
+              werden sollen.
             </div>
 
+            <div className="indicatorConfigBlock">
+              <div className="indicatorConfigTitle">Scope Target</div>
+              <div className="settingsMutedText indicatorConfigHint">
+                Reihenfolge der Priorität: global → account → symbol → symbol_tf.
+              </div>
             <div className="indicatorScopeGrid">
               <label className="settingsField">
                 <span className="settingsFieldLabel">Scope</span>
@@ -809,15 +881,15 @@ export default function AdminIndicatorSettingsPage() {
               </label>
               <label className="settingsField">
                 <span className="settingsFieldLabel">Exchange</span>
-                <input className="input" value={exchange} onChange={(e) => setExchange(e.target.value)} />
+                <input className="input" value={exchange} onChange={(e) => setExchange(e.target.value)} placeholder="bitget" />
               </label>
               <label className="settingsField">
                 <span className="settingsFieldLabel">Account ID</span>
-                <input className="input" value={accountId} onChange={(e) => setAccountId(e.target.value)} disabled={scopeType !== "account"} />
+                <input className="input" value={accountId} onChange={(e) => setAccountId(e.target.value)} disabled={scopeType !== "account"} placeholder={scopeType === "account" ? "acc_..." : "Nur bei account"} />
               </label>
               <label className="settingsField">
                 <span className="settingsFieldLabel">Symbol</span>
-                <input className="input" value={symbol} onChange={(e) => setSymbol(e.target.value.toUpperCase())} disabled={scopeType !== "symbol" && scopeType !== "symbol_tf"} />
+                <input className="input" value={symbol} onChange={(e) => setSymbol(e.target.value.toUpperCase())} disabled={scopeType !== "symbol" && scopeType !== "symbol_tf"} placeholder={scopeType === "symbol" || scopeType === "symbol_tf" ? "BTCUSDT" : "Nur bei symbol/symbol_tf"} />
               </label>
               <label className="settingsField">
                 <span className="settingsFieldLabel">Timeframe</span>
@@ -835,107 +907,183 @@ export default function AdminIndicatorSettingsPage() {
                 </select>
               </label>
             </div>
-
-            <div className="indicatorConfigBlock">
-              <div className="indicatorConfigTitle">Indicators V2 Params</div>
-              <div className="indicatorConfigGrid">
-                <label className="settingsField"><span className="mutedTiny">Stoch RSI len</span><input className="input" type="number" value={config.indicatorsV2.stochrsi.rsiLen} onChange={(e) => setIndicatorsV2StochRsi("rsiLen", parseNumber(e.target.value))} /></label>
-                <label className="settingsField"><span className="mutedTiny">Stoch len</span><input className="input" type="number" value={config.indicatorsV2.stochrsi.stochLen} onChange={(e) => setIndicatorsV2StochRsi("stochLen", parseNumber(e.target.value))} /></label>
-                <label className="settingsField"><span className="mutedTiny">Stoch smooth K</span><input className="input" type="number" value={config.indicatorsV2.stochrsi.smoothK} onChange={(e) => setIndicatorsV2StochRsi("smoothK", parseNumber(e.target.value))} /></label>
-                <label className="settingsField"><span className="mutedTiny">Stoch smooth D</span><input className="input" type="number" value={config.indicatorsV2.stochrsi.smoothD} onChange={(e) => setIndicatorsV2StochRsi("smoothD", parseNumber(e.target.value))} /></label>
-                <label className="settingsField"><span className="mutedTiny">Volume lookback</span><input className="input" type="number" value={config.indicatorsV2.volume.lookback} onChange={(e) => setIndicatorsV2Volume("lookback", parseNumber(e.target.value))} /></label>
-                <label className="settingsField"><span className="mutedTiny">Volume EMA fast</span><input className="input" type="number" value={config.indicatorsV2.volume.emaFast} onChange={(e) => setIndicatorsV2Volume("emaFast", parseNumber(e.target.value))} /></label>
-                <label className="settingsField"><span className="mutedTiny">Volume EMA slow</span><input className="input" type="number" value={config.indicatorsV2.volume.emaSlow} onChange={(e) => setIndicatorsV2Volume("emaSlow", parseNumber(e.target.value))} /></label>
-                <label className="settingsField"><span className="mutedTiny">FVG lookback</span><input className="input" type="number" value={config.indicatorsV2.fvg.lookback} onChange={(e) => setIndicatorsV2Fvg("lookback", parseNumber(e.target.value))} /></label>
-                <label className="settingsField"><span className="mutedTiny">FVG fill rule</span><select className="input" value={config.indicatorsV2.fvg.fillRule} onChange={(e) => setIndicatorsV2Fvg("fillRule", parseFvgFillRule(e.target.value))}><option value="overlap">overlap</option><option value="mid_touch">mid_touch</option></select></label>
-              </div>
             </div>
 
-            <div className="indicatorConfigBlock">
-              <div className="indicatorConfigTitle">Advanced Indicators Params</div>
-              <div className="indicatorConfigGrid">
-                <label className="settingsField"><span className="mutedTiny">Opening range (min)</span><input className="input" type="number" value={config.advancedIndicators.openingRangeMin} onChange={(e) => setAdvancedIndicatorsNumber("openingRangeMin", parseNumber(e.target.value))} /></label>
-                <label className="settingsField"><span className="mutedTiny">ADR len</span><input className="input" type="number" value={config.advancedIndicators.adrLen} onChange={(e) => setAdvancedIndicatorsNumber("adrLen", parseNumber(e.target.value))} /></label>
-                <label className="settingsField"><span className="mutedTiny">AWR len</span><input className="input" type="number" value={config.advancedIndicators.awrLen} onChange={(e) => setAdvancedIndicatorsNumber("awrLen", parseNumber(e.target.value))} /></label>
-                <label className="settingsField"><span className="mutedTiny">AMR len</span><input className="input" type="number" value={config.advancedIndicators.amrLen} onChange={(e) => setAdvancedIndicatorsNumber("amrLen", parseNumber(e.target.value))} /></label>
-                <label className="settingsField"><span className="mutedTiny">RD len</span><input className="input" type="number" value={config.advancedIndicators.rdLen} onChange={(e) => setAdvancedIndicatorsNumber("rdLen", parseNumber(e.target.value))} /></label>
-                <label className="settingsField"><span className="mutedTiny">RW len</span><input className="input" type="number" value={config.advancedIndicators.rwLen} onChange={(e) => setAdvancedIndicatorsNumber("rwLen", parseNumber(e.target.value))} /></label>
-                <label className="settingsField"><span className="mutedTiny">SMC internal len</span><input className="input" type="number" min={2} max={50} value={config.advancedIndicators.smcInternalLength} onChange={(e) => setAdvancedIndicatorsNumber("smcInternalLength", parseNumber(e.target.value))} /></label>
-                <label className="settingsField"><span className="mutedTiny">SMC swing len</span><input className="input" type="number" min={10} max={250} value={config.advancedIndicators.smcSwingLength} onChange={(e) => setAdvancedIndicatorsNumber("smcSwingLength", parseNumber(e.target.value))} /></label>
-                <label className="settingsField"><span className="mutedTiny">SMC equal len</span><input className="input" type="number" min={1} max={50} value={config.advancedIndicators.smcEqualLength} onChange={(e) => setAdvancedIndicatorsNumber("smcEqualLength", parseNumber(e.target.value))} /></label>
-                <label className="settingsField"><span className="mutedTiny">SMC equal threshold</span><input className="input" type="number" min={0} max={0.5} step={0.01} value={config.advancedIndicators.smcEqualThreshold} onChange={(e) => setAdvancedIndicatorsNumber("smcEqualThreshold", parseNumber(e.target.value))} /></label>
-                <label className="settingsField"><span className="mutedTiny">SMC max order blocks</span><input className="input" type="number" min={1} max={50} value={config.advancedIndicators.smcMaxOrderBlocks} onChange={(e) => setAdvancedIndicatorsNumber("smcMaxOrderBlocks", parseNumber(e.target.value))} /></label>
-                <label className="inlineCheck"><input type="checkbox" checked={config.advancedIndicators.sessionsUseDST} onChange={(e) => setAdvancedIndicatorsSessionsUseDst(e.target.checked)} /> Sessions use DST</label>
-                <label className="inlineCheck"><input type="checkbox" checked={config.advancedIndicators.smcFvgAutoThreshold} onChange={(e) => setAdvancedIndicatorsSmcFvgAutoThreshold(e.target.checked)} /> SMC FVG auto threshold</label>
+            <div className="settingsAccordion indicatorOverrideAccordion">
+              <div className={`settingsAccordionItem ${openIndicatorSections.stochRsi ? "settingsAccordionItemOpen" : ""}`}>
+                <button type="button" className="settingsAccordionTrigger" onClick={() => toggleIndicatorSection("stochRsi")} aria-expanded={openIndicatorSections.stochRsi}>
+                  <span>Stoch RSI</span>
+                  <span className={`settingsAccordionChevron ${openIndicatorSections.stochRsi ? "settingsAccordionChevronOpen" : ""}`}>▾</span>
+                </button>
+                {openIndicatorSections.stochRsi ? (
+                  <div className="settingsAccordionBody">
+                    <div className="indicatorConfigGrid">
+                      <label className="settingsField"><span className="mutedTiny">RSI len</span><input className="input" type="number" value={config.indicatorsV2.stochrsi.rsiLen} onChange={(e) => setIndicatorsV2StochRsi("rsiLen", parseNumber(e.target.value))} /></label>
+                      <label className="settingsField"><span className="mutedTiny">Stoch len</span><input className="input" type="number" value={config.indicatorsV2.stochrsi.stochLen} onChange={(e) => setIndicatorsV2StochRsi("stochLen", parseNumber(e.target.value))} /></label>
+                      <label className="settingsField"><span className="mutedTiny">Smooth K</span><input className="input" type="number" value={config.indicatorsV2.stochrsi.smoothK} onChange={(e) => setIndicatorsV2StochRsi("smoothK", parseNumber(e.target.value))} /></label>
+                      <label className="settingsField"><span className="mutedTiny">Smooth D</span><input className="input" type="number" value={config.indicatorsV2.stochrsi.smoothD} onChange={(e) => setIndicatorsV2StochRsi("smoothD", parseNumber(e.target.value))} /></label>
+                    </div>
+                  </div>
+                ) : null}
               </div>
-            </div>
 
-            <div className="indicatorConfigBlock">
-              <div className="indicatorConfigTitle">AI Gating</div>
-              <div className="indicatorConfigGrid">
-                <label className="settingsField">
-                  <span className="mutedTiny">Min confidence for explain (%)</span>
-                  <input
-                    className="input"
-                    type="number"
-                    min={0}
-                    max={100}
-                    step={0.1}
-                    value={config.aiGating.minConfidenceForExplain}
-                    onChange={(e) =>
-                      setAiGating("minConfidenceForExplain", parseNumber(e.target.value))
-                    }
-                  />
-                </label>
-                <label className="settingsField">
-                  <span className="mutedTiny">Min change score (0..1)</span>
-                  <input
-                    className="input"
-                    type="number"
-                    min={0}
-                    max={1}
-                    step={0.01}
-                    value={config.aiGating.minChangeScore}
-                    onChange={(e) => setAiGating("minChangeScore", parseNumber(e.target.value))}
-                  />
-                </label>
+              <div className={`settingsAccordionItem ${openIndicatorSections.volume ? "settingsAccordionItemOpen" : ""}`}>
+                <button type="button" className="settingsAccordionTrigger" onClick={() => toggleIndicatorSection("volume")} aria-expanded={openIndicatorSections.volume}>
+                  <span>Volume</span>
+                  <span className={`settingsAccordionChevron ${openIndicatorSections.volume ? "settingsAccordionChevronOpen" : ""}`}>▾</span>
+                </button>
+                {openIndicatorSections.volume ? (
+                  <div className="settingsAccordionBody">
+                    <div className="indicatorConfigGrid">
+                      <label className="settingsField"><span className="mutedTiny">Lookback</span><input className="input" type="number" value={config.indicatorsV2.volume.lookback} onChange={(e) => setIndicatorsV2Volume("lookback", parseNumber(e.target.value))} /></label>
+                      <label className="settingsField"><span className="mutedTiny">EMA fast</span><input className="input" type="number" value={config.indicatorsV2.volume.emaFast} onChange={(e) => setIndicatorsV2Volume("emaFast", parseNumber(e.target.value))} /></label>
+                      <label className="settingsField"><span className="mutedTiny">EMA slow</span><input className="input" type="number" value={config.indicatorsV2.volume.emaSlow} onChange={(e) => setIndicatorsV2Volume("emaSlow", parseNumber(e.target.value))} /></label>
+                    </div>
+                  </div>
+                ) : null}
               </div>
-            </div>
 
-            <div className="indicatorConfigBlock">
-              <div className="indicatorConfigTitle">Liquidity Sweeps (Prepared)</div>
-              <div className="settingsMutedText indicatorConfigHint">
-                These params are configurable now but not yet wired into prediction feature snapshots.
+              <div className={`settingsAccordionItem ${openIndicatorSections.fvg ? "settingsAccordionItemOpen" : ""}`}>
+                <button type="button" className="settingsAccordionTrigger" onClick={() => toggleIndicatorSection("fvg")} aria-expanded={openIndicatorSections.fvg}>
+                  <span>Fair Value Gap (FVG)</span>
+                  <span className={`settingsAccordionChevron ${openIndicatorSections.fvg ? "settingsAccordionChevronOpen" : ""}`}>▾</span>
+                </button>
+                {openIndicatorSections.fvg ? (
+                  <div className="settingsAccordionBody">
+                    <div className="indicatorConfigGrid">
+                      <label className="settingsField"><span className="mutedTiny">Lookback</span><input className="input" type="number" value={config.indicatorsV2.fvg.lookback} onChange={(e) => setIndicatorsV2Fvg("lookback", parseNumber(e.target.value))} /></label>
+                      <label className="settingsField"><span className="mutedTiny">Fill rule</span><select className="input" value={config.indicatorsV2.fvg.fillRule} onChange={(e) => setIndicatorsV2Fvg("fillRule", parseFvgFillRule(e.target.value))}><option value="overlap">overlap</option><option value="mid_touch">mid_touch</option></select></label>
+                    </div>
+                  </div>
+                ) : null}
               </div>
-              <div className="indicatorConfigGrid">
-                <label className="settingsField">
-                  <span className="mutedTiny">Sweep len</span>
-                  <input className="input" type="number" value={config.liquiditySweeps.len} onChange={(e) => setLiquiditySweepsNumber("len", parseNumber(e.target.value))} />
-                </label>
-                <label className="settingsField">
-                  <span className="mutedTiny">Mode</span>
-                  <select className="input" value={config.liquiditySweeps.mode} onChange={(e) => setLiquiditySweepsMode(parseLiquiditySweepsMode(e.target.value))}>
-                    <option value="wicks">wicks</option>
-                    <option value="outbreak_retest">outbreak_retest</option>
-                    <option value="both">both</option>
-                  </select>
-                </label>
-                <label className="inlineCheck">
-                  <input type="checkbox" checked={config.liquiditySweeps.extend} onChange={(e) => setLiquiditySweepsExtend(e.target.checked)} />
-                  Extend zones
-                </label>
-                <label className="settingsField">
-                  <span className="mutedTiny">Max bars</span>
-                  <input className="input" type="number" value={config.liquiditySweeps.maxBars} onChange={(e) => setLiquiditySweepsNumber("maxBars", parseNumber(e.target.value))} />
-                </label>
-                <label className="settingsField">
-                  <span className="mutedTiny">Max recent events</span>
-                  <input className="input" type="number" value={config.liquiditySweeps.maxRecentEvents} onChange={(e) => setLiquiditySweepsNumber("maxRecentEvents", parseNumber(e.target.value))} />
-                </label>
-                <label className="settingsField">
-                  <span className="mutedTiny">Max active zones</span>
-                  <input className="input" type="number" value={config.liquiditySweeps.maxActiveZones} onChange={(e) => setLiquiditySweepsNumber("maxActiveZones", parseNumber(e.target.value))} />
-                </label>
+
+              <div className={`settingsAccordionItem ${openIndicatorSections.rangesSessions ? "settingsAccordionItemOpen" : ""}`}>
+                <button type="button" className="settingsAccordionTrigger" onClick={() => toggleIndicatorSection("rangesSessions")} aria-expanded={openIndicatorSections.rangesSessions}>
+                  <span>Ranges & Sessions</span>
+                  <span className={`settingsAccordionChevron ${openIndicatorSections.rangesSessions ? "settingsAccordionChevronOpen" : ""}`}>▾</span>
+                </button>
+                {openIndicatorSections.rangesSessions ? (
+                  <div className="settingsAccordionBody">
+                    <div className="indicatorConfigGrid">
+                      <label className="settingsField"><span className="mutedTiny">Opening range (min)</span><input className="input" type="number" min={1} max={180} value={config.advancedIndicators.openingRangeMin} onChange={(e) => setAdvancedIndicatorsNumber("openingRangeMin", parseNumber(e.target.value))} /></label>
+                      <label className="settingsField"><span className="mutedTiny">ADR len</span><input className="input" type="number" min={1} max={365} value={config.advancedIndicators.adrLen} onChange={(e) => setAdvancedIndicatorsNumber("adrLen", parseNumber(e.target.value))} /></label>
+                      <label className="settingsField"><span className="mutedTiny">AWR len</span><input className="input" type="number" min={1} max={52} value={config.advancedIndicators.awrLen} onChange={(e) => setAdvancedIndicatorsNumber("awrLen", parseNumber(e.target.value))} /></label>
+                      <label className="settingsField"><span className="mutedTiny">AMR len</span><input className="input" type="number" min={1} max={24} value={config.advancedIndicators.amrLen} onChange={(e) => setAdvancedIndicatorsNumber("amrLen", parseNumber(e.target.value))} /></label>
+                      <label className="settingsField"><span className="mutedTiny">RD len</span><input className="input" type="number" min={1} max={365} value={config.advancedIndicators.rdLen} onChange={(e) => setAdvancedIndicatorsNumber("rdLen", parseNumber(e.target.value))} /></label>
+                      <label className="settingsField"><span className="mutedTiny">RW len</span><input className="input" type="number" min={1} max={104} value={config.advancedIndicators.rwLen} onChange={(e) => setAdvancedIndicatorsNumber("rwLen", parseNumber(e.target.value))} /></label>
+                    </div>
+                    <div className="indicatorInlineChecks">
+                      <label className="inlineCheck"><input type="checkbox" checked={config.advancedIndicators.sessionsUseDST} onChange={(e) => setAdvancedIndicatorsSessionsUseDst(e.target.checked)} /> Sessions use DST</label>
+                    </div>
+                  </div>
+                ) : null}
+              </div>
+
+              <div className={`settingsAccordionItem ${openIndicatorSections.smc ? "settingsAccordionItemOpen" : ""}`}>
+                <button type="button" className="settingsAccordionTrigger" onClick={() => toggleIndicatorSection("smc")} aria-expanded={openIndicatorSections.smc}>
+                  <span>Smart Money Concepts (SMC)</span>
+                  <span className={`settingsAccordionChevron ${openIndicatorSections.smc ? "settingsAccordionChevronOpen" : ""}`}>▾</span>
+                </button>
+                {openIndicatorSections.smc ? (
+                  <div className="settingsAccordionBody">
+                    <div className="indicatorConfigGrid">
+                      <label className="settingsField"><span className="mutedTiny">Internal len</span><input className="input" type="number" min={2} max={50} value={config.advancedIndicators.smcInternalLength} onChange={(e) => setAdvancedIndicatorsNumber("smcInternalLength", parseNumber(e.target.value))} /></label>
+                      <label className="settingsField"><span className="mutedTiny">Swing len</span><input className="input" type="number" min={10} max={250} value={config.advancedIndicators.smcSwingLength} onChange={(e) => setAdvancedIndicatorsNumber("smcSwingLength", parseNumber(e.target.value))} /></label>
+                      <label className="settingsField"><span className="mutedTiny">Equal len</span><input className="input" type="number" min={1} max={50} value={config.advancedIndicators.smcEqualLength} onChange={(e) => setAdvancedIndicatorsNumber("smcEqualLength", parseNumber(e.target.value))} /></label>
+                      <label className="settingsField"><span className="mutedTiny">Equal threshold</span><input className="input" type="number" min={0} max={0.5} step={0.01} value={config.advancedIndicators.smcEqualThreshold} onChange={(e) => setAdvancedIndicatorsNumber("smcEqualThreshold", parseNumber(e.target.value))} /></label>
+                      <label className="settingsField"><span className="mutedTiny">Max order blocks</span><input className="input" type="number" min={1} max={50} value={config.advancedIndicators.smcMaxOrderBlocks} onChange={(e) => setAdvancedIndicatorsNumber("smcMaxOrderBlocks", parseNumber(e.target.value))} /></label>
+                    </div>
+                    <div className="indicatorInlineChecks">
+                      <label className="inlineCheck"><input type="checkbox" checked={config.advancedIndicators.smcFvgAutoThreshold} onChange={(e) => setAdvancedIndicatorsSmcFvgAutoThreshold(e.target.checked)} /> FVG auto threshold</label>
+                    </div>
+                  </div>
+                ) : null}
+              </div>
+
+              <div className={`settingsAccordionItem ${openIndicatorSections.aiGating ? "settingsAccordionItemOpen" : ""}`}>
+                <button type="button" className="settingsAccordionTrigger" onClick={() => toggleIndicatorSection("aiGating")} aria-expanded={openIndicatorSections.aiGating}>
+                  <span>AI Gating</span>
+                  <span className={`settingsAccordionChevron ${openIndicatorSections.aiGating ? "settingsAccordionChevronOpen" : ""}`}>▾</span>
+                </button>
+                {openIndicatorSections.aiGating ? (
+                  <div className="settingsAccordionBody">
+                    <div className="indicatorConfigGrid">
+                      <label className="settingsField">
+                        <span className="mutedTiny">Min confidence for explain (%)</span>
+                        <input
+                          className="input"
+                          type="number"
+                          min={0}
+                          max={100}
+                          step={0.1}
+                          value={config.aiGating.minConfidenceForExplain}
+                          onChange={(e) =>
+                            setAiGating("minConfidenceForExplain", parseNumber(e.target.value))
+                          }
+                        />
+                      </label>
+                      <label className="settingsField">
+                        <span className="mutedTiny">Min change score (0..1)</span>
+                        <input
+                          className="input"
+                          type="number"
+                          min={0}
+                          max={1}
+                          step={0.01}
+                          value={config.aiGating.minChangeScore}
+                          onChange={(e) => setAiGating("minChangeScore", parseNumber(e.target.value))}
+                        />
+                      </label>
+                    </div>
+                  </div>
+                ) : null}
+              </div>
+
+              <div className={`settingsAccordionItem ${openIndicatorSections.liquiditySweeps ? "settingsAccordionItemOpen" : ""}`}>
+                <button type="button" className="settingsAccordionTrigger" onClick={() => toggleIndicatorSection("liquiditySweeps")} aria-expanded={openIndicatorSections.liquiditySweeps}>
+                  <span>Liquidity Sweeps (Prepared)</span>
+                  <span className={`settingsAccordionChevron ${openIndicatorSections.liquiditySweeps ? "settingsAccordionChevronOpen" : ""}`}>▾</span>
+                </button>
+                {openIndicatorSections.liquiditySweeps ? (
+                  <div className="settingsAccordionBody">
+                    <div className="settingsMutedText indicatorConfigHint">
+                      Diese Parameter sind vorbereitet, aber aktuell noch nicht in den Prediction-Features verdrahtet.
+                    </div>
+                    <div className="indicatorConfigGrid">
+                      <label className="settingsField">
+                        <span className="mutedTiny">Sweep len</span>
+                        <input className="input" type="number" value={config.liquiditySweeps.len} onChange={(e) => setLiquiditySweepsNumber("len", parseNumber(e.target.value))} />
+                      </label>
+                      <label className="settingsField">
+                        <span className="mutedTiny">Mode</span>
+                        <select className="input" value={config.liquiditySweeps.mode} onChange={(e) => setLiquiditySweepsMode(parseLiquiditySweepsMode(e.target.value))}>
+                          <option value="wicks">wicks</option>
+                          <option value="outbreak_retest">outbreak_retest</option>
+                          <option value="both">both</option>
+                        </select>
+                      </label>
+                      <label className="settingsField">
+                        <span className="mutedTiny">Max bars</span>
+                        <input className="input" type="number" value={config.liquiditySweeps.maxBars} onChange={(e) => setLiquiditySweepsNumber("maxBars", parseNumber(e.target.value))} />
+                      </label>
+                      <label className="settingsField">
+                        <span className="mutedTiny">Max recent events</span>
+                        <input className="input" type="number" value={config.liquiditySweeps.maxRecentEvents} onChange={(e) => setLiquiditySweepsNumber("maxRecentEvents", parseNumber(e.target.value))} />
+                      </label>
+                      <label className="settingsField">
+                        <span className="mutedTiny">Max active zones</span>
+                        <input className="input" type="number" value={config.liquiditySweeps.maxActiveZones} onChange={(e) => setLiquiditySweepsNumber("maxActiveZones", parseNumber(e.target.value))} />
+                      </label>
+                    </div>
+                    <div className="indicatorInlineChecks">
+                      <label className="inlineCheck">
+                        <input type="checkbox" checked={config.liquiditySweeps.extend} onChange={(e) => setLiquiditySweepsExtend(e.target.checked)} />
+                        Extend zones
+                      </label>
+                    </div>
+                  </div>
+                ) : null}
               </div>
             </div>
 

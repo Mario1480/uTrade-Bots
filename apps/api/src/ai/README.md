@@ -9,7 +9,10 @@
 - `AI_PROVIDER` (`openai` default, `off`/`disabled` to disable AI)
 - `AI_API_KEY` (required for OpenAI calls)
 - `AI_MODEL` (default: `gpt-4o-mini`)
-- `AI_TIMEOUT_MS` (default: `8000`)
+- `AI_TIMEOUT_MS` (default: `15000`)
+- `AI_EXPLAINER_TIMEOUT_MS` (optional override for prediction explainer calls)
+- `AI_EXPLAINER_MAX_TOKENS` (default: `650` for prediction explainer calls)
+- `AI_EXPLAINER_RETRY_MAX_TOKENS` (default: max(`AI_EXPLAINER_MAX_TOKENS` + 350, 1.5x))
 - `AI_CACHE_TTL_SEC` (default: `300`)
 - `AI_RATE_LIMIT_PER_MIN` (default: `60`)
 
