@@ -13,6 +13,7 @@
 - `AI_EXPLAINER_TIMEOUT_MS` (optional override for prediction explainer calls)
 - `AI_EXPLAINER_MAX_TOKENS` (default: `650` for prediction explainer calls)
 - `AI_EXPLAINER_RETRY_MAX_TOKENS` (default: max(`AI_EXPLAINER_MAX_TOKENS` + 350, 1.5x))
+- `AI_PROMPT_OHLCV_MAX_BARS` (default: `500`, min `20`, max `500`) - hard cap for stored OHLCV bars
 - `AI_CACHE_TTL_SEC` (default: `300`)
 - `AI_RATE_LIMIT_PER_MIN` (default: `60`)
 
@@ -48,6 +49,11 @@ Predictions enrich `featureSnapshot.indicators` with deterministic OHLCV-based v
   - daily (`1d`): `rolling_20` VWAP
 - `adx` (`14`: `adx_14`, `plus_di_14`, `minus_di_14`)
 - `atr_pct` (ATR(14) / close)
+- `ohlcvSeries` (compact raw bar sequence used for AI reasoning):
+  - `timeframe`
+  - `format`: `["ts","open","high","low","close","volume"]`
+  - `bars`: tuple rows with latest N candles (stored up to `AI_PROMPT_OHLCV_MAX_BARS`)
+  - prompt runtime trims bars by prompt setting `ohlcvBars` (default `100`)
 
 If candle history is insufficient, indicators are set to `null` and `featureSnapshot.riskFlags.dataGap=true`.
 

@@ -8,6 +8,11 @@ test("filterFeatureSnapshotForAiPrompt keeps only selected indicators and contex
     emaSpread: 0.02,
     prefillExchange: "paper",
     meta: { indicatorSettingsHash: "abc" },
+    ohlcvSeries: {
+      timeframe: "15m",
+      format: ["ts", "open", "high", "low", "close", "volume"],
+      bars: [[1771099200000, 70000, 70100, 69900, 70050, 1234.56]]
+    },
     indicators: {
       rsi_14: 77.16
     },
@@ -25,6 +30,8 @@ test("filterFeatureSnapshotForAiPrompt keeps only selected indicators and contex
   assert.equal("emaSpread" in filtered, false);
   assert.equal(filtered.prefillExchange, "paper");
   assert.deepEqual(filtered.meta, { indicatorSettingsHash: "abc" });
+  assert.equal((filtered as any).ohlcvSeries?.timeframe, "15m");
+  assert.equal(Array.isArray((filtered as any).ohlcvSeries?.bars), true);
   assert.equal(
     (filtered as any).advancedIndicators?.smartMoneyConcepts?.internal?.trend,
     "bullish"

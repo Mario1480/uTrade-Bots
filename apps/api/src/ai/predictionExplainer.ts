@@ -211,6 +211,44 @@ function clamp(value: number, min: number, max: number): number {
   return Math.max(min, Math.min(max, value));
 }
 
+function normalizeOhlcvBarsLimit(value: unknown): number {
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed)) return 100;
+  return Math.max(20, Math.min(500, Math.trunc(parsed)));
+}
+
+function applyOhlcvBarsLimit(
+  snapshot: Record<string, unknown>,
+  maxBars: number
+): Record<string, unknown> {
+  const seriesRaw = snapshot.ohlcvSeries;
+  if (!seriesRaw || typeof seriesRaw !== "object" || Array.isArray(seriesRaw)) {
+    return snapshot;
+  }
+  const series = seriesRaw as Record<string, unknown>;
+  const bars = Array.isArray(series.bars) ? series.bars : [];
+  const limit = normalizeOhlcvBarsLimit(maxBars);
+  if (bars.length <= limit) {
+    if (Number(series.count) === bars.length) return snapshot;
+    return {
+      ...snapshot,
+      ohlcvSeries: {
+        ...series,
+        count: bars.length
+      }
+    };
+  }
+  const trimmedBars = bars.slice(-limit);
+  return {
+    ...snapshot,
+    ohlcvSeries: {
+      ...series,
+      bars: trimmedBars,
+      count: trimmedBars.length
+    }
+  };
+}
+
 function normalizeAiPrediction(
   value: unknown
 ): { signal: "up" | "down" | "neutral"; expectedMovePct: number; confidence: number } | null {
@@ -582,7 +620,7 @@ export function buildPredictionExplainerCacheKey(input: ExplainerInput): string 
 
 function buildPromptPayload(
   input: ExplainerInput,
-  settings: Pick<AiPromptRuntimeSettings, "promptText" | "indicatorKeys">
+  settings: Pick<AiPromptRuntimeSettings, "promptText" | "indicatorKeys" | "ohlcvBars">
 ) {
   return {
     symbol: input.symbol,
@@ -601,6 +639,7 @@ function buildPromptPayload(
     },
     operatorPrompt: settings.promptText,
     selectedIndicatorKeys: settings.indicatorKeys,
+    ohlcvBars: settings.ohlcvBars,
     groundingRules: [
       "Only reference values that exist in featureSnapshot",
       "Only reference stochrsi/volume/fvg when present and non-null",
@@ -649,9 +688,13 @@ export async function buildPredictionExplainerPromptPreview(
     input.featureSnapshot ?? {},
     runtimeSettings.indicatorKeys
   );
+  const runtimeFeatureSnapshot = applyOhlcvBarsLimit(
+    filteredFeatureSnapshot,
+    runtimeSettings.ohlcvBars
+  );
   const promptInput: ExplainerInput = {
     ...input,
-    featureSnapshot: filteredFeatureSnapshot
+    featureSnapshot: runtimeFeatureSnapshot
   };
   const userPayload = buildPromptPayload(promptInput, runtimeSettings);
   const systemMessage = buildSystemMessage(runtimeSettings.promptText);
@@ -659,6 +702,7 @@ export async function buildPredictionExplainerPromptPreview(
     `${buildPredictionExplainerCacheKey(promptInput)}:${hashStableObject({
       promptText: runtimeSettings.promptText,
       indicatorKeys: runtimeSettings.indicatorKeys,
+      ohlcvBars: runtimeSettings.ohlcvBars,
       activePromptId: runtimeSettings.activePromptId,
       activePromptName: runtimeSettings.activePromptName,
       selectedFrom: runtimeSettings.selectedFrom,

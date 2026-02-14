@@ -16,6 +16,7 @@ type PromptTemplate = {
   name: string;
   promptText: string;
   indicatorKeys: string[];
+  ohlcvBars: number;
   timeframe: "5m" | "15m" | "1h" | "4h" | "1d" | null;
   directionPreference: "long" | "short" | "either";
   confidenceTargetPct: number;
@@ -51,6 +52,7 @@ type PreviewResponse = {
   runtimeSettings: {
     promptText: string;
     indicatorKeys: string[];
+    ohlcvBars: number;
     timeframe: "5m" | "15m" | "1h" | "4h" | "1d" | null;
     directionPreference: "long" | "short" | "either";
     confidenceTargetPct: number;
@@ -84,6 +86,9 @@ function clonePrompts(prompts: PromptTemplate[]): PromptTemplate[] {
     name: item.name,
     promptText: item.promptText,
     indicatorKeys: [...item.indicatorKeys],
+    ohlcvBars: Number.isFinite(Number(item.ohlcvBars))
+      ? Math.max(20, Math.min(500, Math.trunc(Number(item.ohlcvBars))))
+      : 100,
     timeframe: item.timeframe ?? null,
     directionPreference:
       item.directionPreference === "long" || item.directionPreference === "short"
@@ -126,6 +131,7 @@ export default function AdminAiPromptsPage() {
   const [promptTimeframe, setPromptTimeframe] = useState<"" | "5m" | "15m" | "1h" | "4h" | "1d">("");
   const [promptDirectionPreference, setPromptDirectionPreference] = useState<"long" | "short" | "either">("either");
   const [promptConfidenceTargetPct, setPromptConfidenceTargetPct] = useState("60");
+  const [promptOhlcvBars, setPromptOhlcvBars] = useState("100");
 
   const [previewExchange, setPreviewExchange] = useState("bitget");
   const [previewAccountId, setPreviewAccountId] = useState("");
@@ -211,6 +217,7 @@ export default function AdminAiPromptsPage() {
     setPromptTimeframe("");
     setPromptDirectionPreference("either");
     setPromptConfidenceTargetPct("60");
+    setPromptOhlcvBars("100");
   }
 
   function loadPromptIntoForm(prompt: PromptTemplate) {
@@ -222,6 +229,7 @@ export default function AdminAiPromptsPage() {
     setPromptTimeframe(prompt.timeframe ?? "");
     setPromptDirectionPreference(prompt.directionPreference ?? "either");
     setPromptConfidenceTargetPct(String(prompt.confidenceTargetPct ?? 60));
+    setPromptOhlcvBars(String(prompt.ohlcvBars ?? 100));
   }
 
   function togglePromptIndicator(key: string) {
@@ -239,12 +247,17 @@ export default function AdminAiPromptsPage() {
     setNotice(null);
     const name = promptName.trim();
     const confidenceTargetPct = Number(promptConfidenceTargetPct);
+    const ohlcvBars = Number(promptOhlcvBars);
     if (!name) {
       setError("Please enter a prompt name.");
       return;
     }
     if (!Number.isFinite(confidenceTargetPct) || confidenceTargetPct < 0 || confidenceTargetPct > 100) {
       setError("Confidence target must be between 0 and 100.");
+      return;
+    }
+    if (!Number.isFinite(ohlcvBars) || ohlcvBars < 20 || ohlcvBars > 500) {
+      setError("OHLCV bars must be between 20 and 500.");
       return;
     }
 
@@ -254,6 +267,7 @@ export default function AdminAiPromptsPage() {
       name,
       promptText,
       indicatorKeys: Array.from(new Set(promptIndicatorKeys)),
+      ohlcvBars: Math.round(ohlcvBars),
       timeframe: promptTimeframe || null,
       directionPreference: promptDirectionPreference,
       confidenceTargetPct: Math.round(confidenceTargetPct),
@@ -503,6 +517,18 @@ export default function AdminAiPromptsPage() {
                     onChange={(e) => setPromptConfidenceTargetPct(e.target.value)}
                   />
                 </label>
+                <label className="settingsField">
+                  <span className="settingsFieldLabel">OHLCV bars for AI</span>
+                  <input
+                    className="input"
+                    type="number"
+                    min={20}
+                    max={500}
+                    step={1}
+                    value={promptOhlcvBars}
+                    onChange={(e) => setPromptOhlcvBars(e.target.value)}
+                  />
+                </label>
               </div>
 
               <label className="settingsField" style={{ marginBottom: 8 }}>
@@ -549,6 +575,7 @@ export default function AdminAiPromptsPage() {
                       <th>TF</th>
                       <th>Dir</th>
                       <th>Conf %</th>
+                      <th>OHLCV</th>
                       <th>Indicators</th>
                       <th>Updated</th>
                       <th>Active</th>
@@ -563,6 +590,7 @@ export default function AdminAiPromptsPage() {
                         <td>{prompt.timeframe ?? "-"}</td>
                         <td>{prompt.directionPreference ?? "either"}</td>
                         <td>{Number.isFinite(Number(prompt.confidenceTargetPct)) ? Number(prompt.confidenceTargetPct).toFixed(0) : "60"}</td>
+                        <td>{Number.isFinite(Number(prompt.ohlcvBars)) ? Math.trunc(Number(prompt.ohlcvBars)) : 100}</td>
                         <td>{prompt.indicatorKeys.length}</td>
                         <td>{prompt.updatedAt ? new Date(prompt.updatedAt).toLocaleString() : "-"}</td>
                         <td>{activePromptId === prompt.id ? "active" : "-"}</td>

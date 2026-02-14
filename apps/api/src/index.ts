@@ -443,6 +443,7 @@ const aiPromptTemplateSchema = z.object({
   name: z.string().trim().min(1).max(64),
   promptText: z.string().max(8000).default(""),
   indicatorKeys: z.array(z.string().trim().min(1)).max(128).default([]),
+  ohlcvBars: z.number().int().min(20).max(500).default(100),
   timeframe: z.enum(["5m", "15m", "1h", "4h", "1d"]).nullable().default(null),
   directionPreference: z.enum(["long", "short", "either"]).default("either"),
   confidenceTargetPct: z.number().min(0).max(100).default(60),
@@ -1653,6 +1654,18 @@ type CandleBar = {
   volume: number | null;
 };
 
+type OhlcvSeriesRow = [number | null, number, number, number, number, number | null];
+
+const AI_PROMPT_OHLCV_FORMAT = ["ts", "open", "high", "low", "close", "volume"] as const;
+
+function readAiPromptOhlcvMaxBars(): number {
+  const parsed = Number(process.env.AI_PROMPT_OHLCV_MAX_BARS ?? "500");
+  if (!Number.isFinite(parsed)) return 500;
+  return Math.max(20, Math.min(500, Math.trunc(parsed)));
+}
+
+const AI_PROMPT_OHLCV_MAX_BARS = readAiPromptOhlcvMaxBars();
+
 function toRecordSafe(value: unknown): Record<string, unknown> | null {
   if (!value || typeof value !== "object" || Array.isArray(value)) return null;
   return value as Record<string, unknown>;
@@ -1715,6 +1728,41 @@ function stddev(values: number[]): number {
 
 function clamp(value: number, min: number, max: number): number {
   return Math.max(min, Math.min(max, value));
+}
+
+function buildOhlcvSeriesFeature(
+  candles: CandleBar[],
+  timeframe: PredictionTimeframe
+): {
+  timeframe: PredictionTimeframe;
+  format: readonly ["ts", "open", "high", "low", "close", "volume"];
+  bars: OhlcvSeriesRow[];
+  count: number;
+} {
+  const source = candles.slice(-AI_PROMPT_OHLCV_MAX_BARS);
+  const bars: OhlcvSeriesRow[] = [];
+  for (const row of source) {
+    if (!Number.isFinite(row.open) || !Number.isFinite(row.high) || !Number.isFinite(row.low) || !Number.isFinite(row.close)) {
+      continue;
+    }
+    const ts = Number.isFinite(row.ts) ? Math.trunc(Number(row.ts)) : null;
+    const volume = Number.isFinite(row.volume) ? Number(Number(row.volume).toFixed(8)) : null;
+    bars.push([
+      ts,
+      Number(row.open.toFixed(8)),
+      Number(row.high.toFixed(8)),
+      Number(row.low.toFixed(8)),
+      Number(row.close.toFixed(8)),
+      volume
+    ]);
+  }
+
+  return {
+    timeframe,
+    format: AI_PROMPT_OHLCV_FORMAT,
+    bars,
+    count: bars.length
+  };
 }
 
 function computeRsi(closes: number[], period = 14): number | null {
@@ -2424,6 +2472,10 @@ async function generateAutoPredictionForUser(
     inferred.featureSnapshot.qualitySlCount = quality.slCount;
     inferred.featureSnapshot.qualityExpiredCount = quality.expiredCount;
     inferred.featureSnapshot.advancedIndicators = advancedIndicators;
+    inferred.featureSnapshot.ohlcvSeries = buildOhlcvSeriesFeature(
+      alignedCandles,
+      effectiveTimeframe
+    );
     inferred.featureSnapshot.aiPromptTemplateRequestedId = requestedPromptTemplateId;
     inferred.featureSnapshot.aiPromptTemplateId =
       selectedPromptSettings?.activePromptId ?? requestedPromptTemplateId;
@@ -4707,6 +4759,10 @@ async function refreshPredictionStateForTemplate(params: {
     inferred.featureSnapshot.qualitySlCount = quality.slCount;
     inferred.featureSnapshot.qualityExpiredCount = quality.expiredCount;
     inferred.featureSnapshot.advancedIndicators = advancedIndicators;
+    inferred.featureSnapshot.ohlcvSeries = buildOhlcvSeriesFeature(
+      candles,
+      template.timeframe
+    );
     inferred.featureSnapshot.meta = {
       ...(asRecord(inferred.featureSnapshot.meta) ?? {}),
       indicatorSettingsHash: indicatorSettingsResolution.hash
@@ -6650,6 +6706,7 @@ function normalizeAiPromptSettingsPayload(
       name: row.name.trim(),
       promptText: row.promptText.trim(),
       indicatorKeys: normalizeIndicatorKeyList(row.indicatorKeys),
+      ohlcvBars: row.ohlcvBars,
       timeframe: row.timeframe ?? null,
       directionPreference: row.directionPreference,
       confidenceTargetPct: row.confidenceTargetPct,
@@ -6839,6 +6896,7 @@ app.get("/settings/ai-prompts/public", requireAuth, async (_req, res) => {
       name: item.name,
       promptText: item.promptText,
       indicatorKeys: item.indicatorKeys,
+      ohlcvBars: item.ohlcvBars,
       timeframe: item.timeframe,
       directionPreference: item.directionPreference,
       confidenceTargetPct: item.confidenceTargetPct,

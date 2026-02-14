@@ -7,6 +7,7 @@ import { ApiError, apiDelete, apiGet, apiPost, apiPut } from "../../lib/api";
 type MeResponse = {
   user: { id: string; email: string };
   isSuperadmin?: boolean;
+  hasAdminBackendAccess?: boolean;
 };
 
 type ExchangeAccountItem = {
@@ -67,6 +68,7 @@ function errMsgWithDetails(e: unknown): string {
 export default function SettingsPage() {
   const [me, setMe] = useState<MeResponse["user"] | null>(null);
   const [isSuperadmin, setIsSuperadmin] = useState(false);
+  const [hasAdminBackendAccess, setHasAdminBackendAccess] = useState(false);
   const [accounts, setAccounts] = useState<ExchangeAccountItem[]>([]);
   const [exchangeOptions, setExchangeOptions] = useState<ExchangeOption[]>([]);
   const [loading, setLoading] = useState(true);
@@ -128,6 +130,7 @@ export default function SettingsPage() {
         setResetEmail(meRes.user.email);
       }
       setIsSuperadmin(Boolean(meRes.isSuperadmin));
+      setHasAdminBackendAccess(Boolean(meRes.isSuperadmin || meRes.hasAdminBackendAccess));
       setAccounts(accountRes.items ?? []);
       const dataAccounts = (accountRes.items ?? []).filter((item) => item.exchange !== "paper");
       if (!marketDataExchangeAccountId && dataAccounts.length > 0) {
@@ -412,7 +415,7 @@ export default function SettingsPage() {
         </div>
       ) : null}
 
-      {isSuperadmin ? (
+      {isSuperadmin || hasAdminBackendAccess ? (
         <section className="card settingsSection">
           <div className="settingsSectionHeader">
             <h3 style={{ margin: 0 }}>Admin</h3>
