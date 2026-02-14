@@ -358,6 +358,10 @@ const adminUserPasswordSchema = z.object({
   password: z.string().trim().min(8)
 });
 
+const adminUserAdminAccessSchema = z.object({
+  enabled: z.boolean().default(false)
+});
+
 const adminTelegramSchema = z.object({
   telegramBotToken: z.string().trim().nullable().optional(),
   telegramChatId: z.string().trim().nullable().optional()
@@ -780,6 +784,7 @@ const GLOBAL_SETTING_SECURITY_KEY = "settings.security";
 const GLOBAL_SETTING_API_KEYS_KEY = "admin.apiKeys";
 const GLOBAL_SETTING_PREDICTION_REFRESH_KEY = "admin.predictionRefresh";
 const GLOBAL_SETTING_PREDICTION_DEFAULTS_KEY = "admin.predictionDefaults";
+const GLOBAL_SETTING_ADMIN_BACKEND_ACCESS_KEY = "admin.backendAccess";
 const GLOBAL_SETTING_AI_PROMPTS_KEY = AI_PROMPT_SETTINGS_GLOBAL_SETTING_KEY;
 const GLOBAL_SETTING_AI_TRACE_KEY = AI_TRACE_SETTINGS_GLOBAL_SETTING_KEY;
 const DEFAULT_PREDICTION_SIGNAL_MODE = normalizePredictionSignalMode(
@@ -1070,6 +1075,32 @@ async function getGlobalSettingValue(key: string): Promise<unknown> {
     select: { value: true }
   });
   return row?.value;
+}
+
+function parseStoredAdminBackendAccess(value: unknown): { userIds: string[] } {
+  const record = parseJsonObject(value);
+  const raw = Array.isArray(record.userIds) ? record.userIds : [];
+  const userIds = Array.from(
+    new Set(
+      raw
+        .map((entry) => (typeof entry === "string" ? entry.trim() : ""))
+        .filter(Boolean)
+    )
+  );
+  return { userIds };
+}
+
+async function getAdminBackendAccessUserIdSet(): Promise<Set<string>> {
+  const stored = parseStoredAdminBackendAccess(
+    await getGlobalSettingValue(GLOBAL_SETTING_ADMIN_BACKEND_ACCESS_KEY)
+  );
+  return new Set(stored.userIds);
+}
+
+async function hasAdminBackendAccess(user: { id: string; email: string }): Promise<boolean> {
+  if (isSuperadminEmail(user.email)) return true;
+  const ids = await getAdminBackendAccessUserIdSet();
+  return ids.has(user.id);
 }
 
 async function setGlobalSettingValue(key: string, value: unknown) {
@@ -1390,13 +1421,15 @@ async function ensureWorkspaceMembership(userId: string, userEmail: string) {
 async function resolveUserContext(user: { id: string; email: string }) {
   const member = await ensureWorkspaceMembership(user.id, user.email);
   const isSuperadmin = isSuperadminEmail(user.email);
-  const permissions = isSuperadmin
+  const hasAdminAccess = isSuperadmin || (await hasAdminBackendAccess(user));
+  const permissions = hasAdminAccess
     ? buildPermissions(PERMISSION_KEYS)
     : member.permissions;
   return {
     workspaceId: member.workspaceId,
     permissions,
-    isSuperadmin
+    isSuperadmin,
+    hasAdminBackendAccess: hasAdminAccess
   };
 }
 
@@ -1406,8 +1439,8 @@ function readUserFromLocals(res: express.Response): { id: string; email: string 
 
 async function requireSuperadmin(res: express.Response): Promise<boolean> {
   const user = readUserFromLocals(res);
-  if (!isSuperadminEmail(user.email)) {
-    res.status(403).json({ error: "forbidden", message: "superadmin_required" });
+  if (!(await hasAdminBackendAccess(user))) {
+    res.status(403).json({ error: "forbidden", message: "admin_backend_access_required" });
     return false;
   }
   return true;
@@ -2608,7 +2641,12 @@ function toSafeUser(user: { id: string; email: string }) {
 
 function toAuthMePayload(
   user: { id: string; email: string },
-  ctx: { workspaceId: string; permissions: Record<string, unknown>; isSuperadmin: boolean }
+  ctx: {
+    workspaceId: string;
+    permissions: Record<string, unknown>;
+    isSuperadmin: boolean;
+    hasAdminBackendAccess: boolean;
+  }
 ) {
   const safeUser = toSafeUser(user);
   return {
@@ -2617,7 +2655,8 @@ function toAuthMePayload(
     email: safeUser.email,
     workspaceId: ctx.workspaceId,
     permissions: ctx.permissions,
-    isSuperadmin: ctx.isSuperadmin
+    isSuperadmin: ctx.isSuperadmin,
+    hasAdminBackendAccess: ctx.hasAdminBackendAccess
   };
 }
 
@@ -3303,7 +3342,6 @@ async function notifyTradablePrediction(params: {
     `Confidence: ${confidencePct.toFixed(1)}% (target ${params.confidenceTargetPct.toFixed(0)}%)`,
     `Expected move: ${params.expectedMovePct.toFixed(2)}%`,
     `Exchange: ${params.exchangeAccountLabel}`,
-    params.predictionId ? `Signal ID: ${params.predictionId}` : null,
     explanation ? `Reason: ${explanation}` : null
   ]);
 
@@ -5831,6 +5869,7 @@ app.post("/alerts/test", requireAuth, async (_req, res) => {
 
 app.get("/admin/users", requireAuth, async (_req, res) => {
   if (!(await requireSuperadmin(res))) return;
+  const adminAccessIds = await getAdminBackendAccessUserIdSet();
 
   const users = await db.user.findMany({
     orderBy: { createdAt: "desc" },
@@ -5854,6 +5893,7 @@ app.get("/admin/users", requireAuth, async (_req, res) => {
     id: row.id,
     email: row.email,
     isSuperadmin: isSuperadminEmail(row.email),
+    hasAdminBackendAccess: isSuperadminEmail(row.email) || adminAccessIds.has(row.id),
     createdAt: row.createdAt,
     updatedAt: row.updatedAt,
     sessions: row._count?.sessions ?? 0,
@@ -5934,6 +5974,46 @@ app.put("/admin/users/:id/password", requireAuth, async (req, res) => {
   return res.json({ ok: true, sessionsRevoked: true });
 });
 
+app.put("/admin/users/:id/admin-access", requireAuth, async (req, res) => {
+  if (!(await requireSuperadmin(res))) return;
+  const actor = getUserFromLocals(res);
+  const id = req.params.id;
+  const parsed = adminUserAdminAccessSchema.safeParse(req.body ?? {});
+  if (!parsed.success) {
+    return res.status(400).json({ error: "invalid_payload", details: parsed.error.flatten() });
+  }
+
+  const user = await db.user.findUnique({
+    where: { id },
+    select: { id: true, email: true }
+  });
+  if (!user) return res.status(404).json({ error: "user_not_found" });
+  if (isSuperadminEmail(user.email)) {
+    return res.status(400).json({ error: "cannot_change_superadmin_admin_access" });
+  }
+
+  const settings = parseStoredAdminBackendAccess(
+    await getGlobalSettingValue(GLOBAL_SETTING_ADMIN_BACKEND_ACCESS_KEY)
+  );
+  const ids = new Set(settings.userIds);
+  if (parsed.data.enabled) {
+    ids.add(user.id);
+  } else {
+    ids.delete(user.id);
+    if (actor.id === user.id) {
+      await db.session.deleteMany({ where: { userId: user.id } });
+    }
+  }
+  const next = { userIds: Array.from(ids) };
+  await setGlobalSettingValue(GLOBAL_SETTING_ADMIN_BACKEND_ACCESS_KEY, next);
+
+  return res.json({
+    ok: true,
+    userId: user.id,
+    hasAdminBackendAccess: parsed.data.enabled
+  });
+});
+
 app.delete("/admin/users/:id", requireAuth, async (req, res) => {
   if (!(await requireSuperadmin(res))) return;
   const actor = getUserFromLocals(res);
@@ -5988,6 +6068,15 @@ app.delete("/admin/users/:id", requireAuth, async (req, res) => {
     await tx.session.deleteMany({ where: { userId: user.id } });
     await tx.user.delete({ where: { id: user.id } });
   });
+
+  const backendAccessSettings = parseStoredAdminBackendAccess(
+    await getGlobalSettingValue(GLOBAL_SETTING_ADMIN_BACKEND_ACCESS_KEY)
+  );
+  if (backendAccessSettings.userIds.includes(user.id)) {
+    await setGlobalSettingValue(GLOBAL_SETTING_ADMIN_BACKEND_ACCESS_KEY, {
+      userIds: backendAccessSettings.userIds.filter((entry) => entry !== user.id)
+    });
+  }
 
   return res.json({ ok: true, deletedUserId: user.id });
 });

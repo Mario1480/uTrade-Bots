@@ -8,6 +8,7 @@ type AdminUser = {
   id: string;
   email: string;
   isSuperadmin: boolean;
+  hasAdminBackendAccess: boolean;
   createdAt: string;
   updatedAt: string;
   sessions: number;
@@ -41,9 +42,9 @@ export default function AdminUsersPage() {
     try {
       const me = await apiGet<any>("/auth/me");
       setCurrentUserId(typeof me?.id === "string" ? me.id : null);
-      if (!me?.isSuperadmin) {
+      if (!(me?.isSuperadmin || me?.hasAdminBackendAccess)) {
         setIsSuperadmin(false);
-        setError("Superadmin access required.");
+        setError("Admin backend access required.");
         setUsers([]);
         return;
       }
@@ -111,6 +112,28 @@ export default function AdminUsersPage() {
       await apiDelete(`/admin/users/${user.id}`);
       setNotice(`Deleted ${user.email}.`);
       await loadAll();
+    } catch (e) {
+      setError(errMsg(e));
+    }
+  }
+
+  async function updateAdminBackendAccess(user: AdminUser, enabled: boolean) {
+    setError(null);
+    setNotice(null);
+    try {
+      await apiPut(`/admin/users/${user.id}/admin-access`, { enabled });
+      setUsers((prev) =>
+        prev.map((entry) =>
+          entry.id === user.id
+            ? { ...entry, hasAdminBackendAccess: enabled || entry.isSuperadmin }
+            : entry
+        )
+      );
+      setNotice(
+        enabled
+          ? `Admin backend access granted for ${user.email}.`
+          : `Admin backend access revoked for ${user.email}.`
+      );
     } catch (e) {
       setError(errMsg(e));
     }
@@ -188,6 +211,15 @@ export default function AdminUsersPage() {
                       <div style={{ fontSize: 12, color: "var(--muted)" }}>
                         Bots: {user.bots} · Accounts: {user.exchangeAccounts} · Sessions: {user.sessions}
                       </div>
+                      <label className="inlineCheck" style={{ marginTop: 8 }}>
+                        <input
+                          type="checkbox"
+                          checked={user.hasAdminBackendAccess}
+                          disabled={user.isSuperadmin}
+                          onChange={(e) => void updateAdminBackendAccess(user, e.target.checked)}
+                        />
+                        Admin backend access
+                      </label>
                     </div>
                     <div className="adminUserActions">
                       <input

@@ -102,8 +102,8 @@ export default function AdminPage() {
       setError(null);
       try {
         const me = await apiGet<any>("/auth/me");
-        setIsSuperadmin(Boolean(me?.isSuperadmin));
-        if (!me?.isSuperadmin) setError("Superadmin access required.");
+        setIsSuperadmin(Boolean(me?.isSuperadmin || me?.hasAdminBackendAccess));
+        if (!(me?.isSuperadmin || me?.hasAdminBackendAccess)) setError("Admin backend access required.");
       } catch (e) {
         setError(errMsg(e));
       } finally {

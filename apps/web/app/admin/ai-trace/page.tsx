@@ -100,9 +100,9 @@ export default function AdminAiTracePage() {
     setNotice(null);
     try {
       const me = await apiGet<any>("/auth/me");
-      if (!me?.isSuperadmin) {
+      if (!(me?.isSuperadmin || me?.hasAdminBackendAccess)) {
         setIsSuperadmin(false);
-        setError("Superadmin access required.");
+        setError("Admin backend access required.");
         return;
       }
       setIsSuperadmin(true);
