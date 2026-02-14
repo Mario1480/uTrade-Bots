@@ -2537,7 +2537,8 @@ async function generateAutoPredictionForUser(
       predictionId: created.rowId,
       explanation: created.explanation.explanation,
       source: "auto",
-      signalSource: created.signalSource
+      signalSource: created.signalSource,
+      aiPromptTemplateName: selectedPromptSettings?.activePromptName ?? null
     });
 
     return {
@@ -3206,7 +3207,10 @@ async function resolveTelegramConfig(): Promise<TelegramConfig | null> {
   return { botToken, chatId };
 }
 
-async function sendTelegramMessage(params: TelegramConfig & { text: string }): Promise<void> {
+async function sendTelegramMessage(params: TelegramConfig & {
+  text: string;
+  linkButton?: { text: string; url: string } | null;
+}): Promise<void> {
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), 10_000);
 
@@ -3219,7 +3223,17 @@ async function sendTelegramMessage(params: TelegramConfig & { text: string }): P
       body: JSON.stringify({
         chat_id: params.chatId,
         text: params.text,
-        disable_web_page_preview: true
+        disable_web_page_preview: true,
+        ...(params.linkButton
+          ? {
+              reply_markup: {
+                inline_keyboard: [[{
+                  text: params.linkButton.text,
+                  url: params.linkButton.url
+                }]]
+              }
+            }
+          : {})
       }),
       signal: controller.signal
     });
@@ -3231,6 +3245,15 @@ async function sendTelegramMessage(params: TelegramConfig & { text: string }): P
   } finally {
     clearTimeout(timeout);
   }
+}
+
+const TELEGRAM_TEXT_MAX_CHARS = 3900;
+
+function buildTelegramText(lines: Array<string | null | undefined>): string {
+  const text = lines.filter((line): line is string => Boolean(line)).join("\n");
+  if (text.length <= TELEGRAM_TEXT_MAX_CHARS) return text;
+  const truncated = text.slice(0, TELEGRAM_TEXT_MAX_CHARS - 14).trimEnd();
+  return `${truncated}\n…[truncated]`;
 }
 
 async function notifyTradablePrediction(params: {
@@ -3248,6 +3271,7 @@ async function notifyTradablePrediction(params: {
   explanation?: string | null;
   source: "manual" | "auto";
   signalSource: PredictionSignalSource;
+  aiPromptTemplateName?: string | null;
 }): Promise<void> {
   if (!isTradableSignal({
     signal: params.signal,
@@ -3265,27 +3289,29 @@ async function notifyTradablePrediction(params: {
   const confidencePct = confidenceToPct(params.confidence);
   const signalLabel = params.signal === "up" ? "LONG" : "SHORT";
   const explanation = typeof params.explanation === "string" ? params.explanation.trim() : "";
-  const shortExplanation = explanation.length > 180 ? `${explanation.slice(0, 177)}...` : explanation;
+  const promptName =
+    typeof params.aiPromptTemplateName === "string" && params.aiPromptTemplateName.trim()
+      ? params.aiPromptTemplateName.trim()
+      : null;
   const deskLink = buildManualDeskPredictionLink(params.predictionId);
 
-  const lines = [
+  const text = buildTelegramText([
     "🆕 SIGNAL ALERT",
     `${params.symbol} (${params.marketType}, ${params.timeframe})`,
     `Signal: ${signalLabel}`,
-    `Signal source: ${params.signalSource}`,
+    `Signal source: ${params.signalSource}${promptName ? ` (prompt: ${promptName})` : ""}`,
     `Confidence: ${confidencePct.toFixed(1)}% (target ${params.confidenceTargetPct.toFixed(0)}%)`,
     `Expected move: ${params.expectedMovePct.toFixed(2)}%`,
     `Exchange: ${params.exchangeAccountLabel}`,
-    `Source: ${params.source}`,
     params.predictionId ? `Signal ID: ${params.predictionId}` : null,
-    shortExplanation ? `Reason: ${shortExplanation}` : null,
-    deskLink ? `Open in Manual Desk: ${deskLink}` : null
-  ].filter((line): line is string => Boolean(line));
+    explanation ? `Reason: ${explanation}` : null
+  ]);
 
   try {
     await sendTelegramMessage({
       ...config,
-      text: lines.join("\n")
+      text,
+      linkButton: deskLink ? { text: "Open here", url: deskLink } : null
     });
   } catch (error) {
     // eslint-disable-next-line no-console
@@ -5067,7 +5093,8 @@ async function refreshPredictionStateForTemplate(params: {
           predictionId: historyRow.id,
           explanation: explainer.explanation,
           source: "auto",
-          signalSource: selectedPrediction.source
+          signalSource: selectedPrediction.source,
+          aiPromptTemplateName: template.aiPromptTemplateName
         });
       }
     }
@@ -7281,7 +7308,8 @@ app.post("/api/predictions/generate", requireAuth, async (req, res) => {
     predictionId: created.rowId,
     explanation: created.explanation.explanation,
     source: "manual",
-    signalSource: created.signalSource
+    signalSource: created.signalSource,
+    aiPromptTemplateName: readAiPromptTemplateName(snapshot)
   });
 
   return res.status(created.persisted ? 201 : 202).json({
