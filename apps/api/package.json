@@ -8,7 +8,7 @@
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test:ai": "tsx --test src/ai/qualityGate.test.ts src/ai/payloadBudget.test.ts src/ai/historyContext.test.ts src/ai/promptSettings.test.ts src/ai/predictionExplainer.test.ts",
     "test:composite-strategies": "tsx --test src/composite-strategies/graph.test.ts src/composite-strategies/runner.test.ts",
-    "test:local-strategies": "tsx --test src/local-strategies/registry.test.ts",
+    "test:local-strategies": "tsx --test src/local-strategies/registry.test.ts src/local-strategies/pythonClient.test.ts",
     "test:predictions-detail": "tsx --test src/dto/predictions.dto.test.ts src/controllers/predictionsController.test.ts",
     "test:predictions-refresh": "tsx --test src/predictions/refreshTriggers.test.ts src/predictions/refreshService.test.ts",
     "test:predictions-evaluator": "tsx --test src/jobs/predictionEvaluatorJob.test.ts",

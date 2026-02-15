@@ -174,6 +174,7 @@ import {
 import {
   getBuiltinLocalStrategyTemplates,
   getRegisteredLocalStrategy,
+  listPythonStrategyRegistry,
   listRegisteredLocalStrategies,
   runLocalStrategy
 } from "./local-strategies/registry.js";
@@ -505,6 +506,10 @@ type AdminAiPromptsPayload = z.infer<typeof adminAiPromptsSchema>;
 
 const localStrategyDefinitionSchema = z.object({
   strategyType: z.string().trim().min(1).max(128),
+  engine: z.enum(["ts", "python"]).default("ts"),
+  remoteStrategyType: z.string().trim().min(1).max(128).nullable().optional(),
+  fallbackStrategyType: z.string().trim().min(1).max(128).nullable().optional(),
+  timeoutMs: z.number().int().min(200).max(10000).nullable().optional(),
   name: z.string().trim().min(1).max(120),
   description: z.string().trim().max(2000).nullable().optional(),
   version: z.string().trim().min(1).max(64).default("1.0.0"),
@@ -515,6 +520,10 @@ const localStrategyDefinitionSchema = z.object({
 
 const localStrategyDefinitionUpdateSchema = z.object({
   strategyType: z.string().trim().min(1).max(128).optional(),
+  engine: z.enum(["ts", "python"]).optional(),
+  remoteStrategyType: z.string().trim().min(1).max(128).nullable().optional(),
+  fallbackStrategyType: z.string().trim().min(1).max(128).nullable().optional(),
+  timeoutMs: z.number().int().min(200).max(10000).nullable().optional(),
   name: z.string().trim().min(1).max(120).optional(),
   description: z.string().trim().max(2000).nullable().optional(),
   version: z.string().trim().min(1).max(64).optional(),
@@ -7904,6 +7913,19 @@ function mapLocalStrategyDefinitionPublic(row: any) {
   return {
     id: row.id,
     strategyType: row.strategyType,
+    engine: row.engine === "python" ? "python" : "ts",
+    remoteStrategyType:
+      typeof row.remoteStrategyType === "string" && row.remoteStrategyType.trim()
+        ? row.remoteStrategyType.trim()
+        : null,
+    fallbackStrategyType:
+      typeof row.fallbackStrategyType === "string" && row.fallbackStrategyType.trim()
+        ? row.fallbackStrategyType.trim()
+        : null,
+    timeoutMs:
+      Number.isFinite(Number(row.timeoutMs))
+        ? Math.max(200, Math.min(10000, Math.trunc(Number(row.timeoutMs))))
+        : null,
     name: row.name,
     description: row.description ?? null,
     version: row.version,
@@ -8250,10 +8272,18 @@ app.get("/settings/ai-prompts/public", requireAuth, async (_req, res) => {
 
 app.get("/admin/local-strategies/registry", requireAuth, async (_req, res) => {
   if (!(await requireSuperadmin(res))) return;
+  const pythonRegistry = await listPythonStrategyRegistry();
   return res.json({
     items: listLocalStrategyRegistryPublic(),
-    templates: getBuiltinLocalStrategyTemplates()
+    templates: getBuiltinLocalStrategyTemplates(),
+    pythonRegistry
   });
+});
+
+app.get("/admin/local-strategies/python/registry", requireAuth, async (_req, res) => {
+  if (!(await requireSuperadmin(res))) return;
+  const pythonRegistry = await listPythonStrategyRegistry();
+  return res.json(pythonRegistry);
 });
 
 app.get("/admin/local-strategies", requireAuth, async (_req, res) => {
@@ -8266,10 +8296,12 @@ app.get("/admin/local-strategies", requireAuth, async (_req, res) => {
     orderBy: { updatedAt: "desc" }
   });
 
+  const pythonRegistry = await listPythonStrategyRegistry();
   return res.json({
     items: rows.map((row: any) => mapLocalStrategyDefinitionPublic(row)),
     registry: listLocalStrategyRegistryPublic(),
-    templates: getBuiltinLocalStrategyTemplates()
+    templates: getBuiltinLocalStrategyTemplates(),
+    pythonRegistry
   });
 });
 
@@ -8291,9 +8323,11 @@ app.get("/admin/local-strategies/:id", requireAuth, async (req, res) => {
     return res.status(404).json({ error: "not_found" });
   }
 
+  const pythonRegistry = await listPythonStrategyRegistry();
   return res.json({
     item: mapLocalStrategyDefinitionPublic(row),
-    registry: listLocalStrategyRegistryPublic()
+    registry: listLocalStrategyRegistryPublic(),
+    pythonRegistry
   });
 });
 
@@ -8309,9 +8343,19 @@ app.post("/admin/local-strategies", requireAuth, async (req, res) => {
   }
 
   const registration = getRegisteredLocalStrategy(parsed.data.strategyType);
-  if (!registration) {
+  if (parsed.data.engine === "ts" && !registration) {
     return res.status(400).json({
       error: "unknown_strategy_type",
+      availableTypes: listRegisteredLocalStrategies().map((entry) => entry.type)
+    });
+  }
+  if (
+    parsed.data.engine === "python"
+    && typeof parsed.data.fallbackStrategyType === "string"
+    && !getRegisteredLocalStrategy(parsed.data.fallbackStrategyType)
+  ) {
+    return res.status(400).json({
+      error: "unknown_fallback_strategy_type",
       availableTypes: listRegisteredLocalStrategies().map((entry) => entry.type)
     });
   }
@@ -8322,12 +8366,25 @@ app.post("/admin/local-strategies", requireAuth, async (req, res) => {
   );
   const configJson = Object.keys(parsed.data.configJson).length > 0
     ? parsed.data.configJson
-    : registration.defaultConfig;
+    : (registration?.defaultConfig ?? {});
   const inputSchema = parsed.data.inputSchema ?? template?.inputSchema ?? null;
 
   const created = await db.localStrategyDefinition.create({
     data: {
       strategyType: parsed.data.strategyType,
+      engine: parsed.data.engine,
+      remoteStrategyType:
+        parsed.data.engine === "python"
+          ? (parsed.data.remoteStrategyType?.trim() || parsed.data.strategyType)
+          : null,
+      fallbackStrategyType:
+        parsed.data.engine === "python"
+          ? (
+            parsed.data.fallbackStrategyType?.trim()
+            || (registration ? parsed.data.strategyType : null)
+          )
+          : null,
+      timeoutMs: parsed.data.engine === "python" ? (parsed.data.timeoutMs ?? null) : null,
       name: parsed.data.name.trim(),
       description:
         typeof parsed.data.description === "string" && parsed.data.description.trim()
@@ -8362,24 +8419,65 @@ app.put("/admin/local-strategies/:id", requireAuth, async (req, res) => {
     return res.status(400).json({ error: "invalid_payload", details: parsed.error.flatten() });
   }
 
-  if (typeof parsed.data.strategyType === "string") {
-    const registration = getRegisteredLocalStrategy(parsed.data.strategyType);
+  const existing = await db.localStrategyDefinition.findUnique({
+    where: { id: params.data.id },
+    select: { id: true, strategyType: true, engine: true }
+  });
+  if (!existing) {
+    return res.status(404).json({ error: "not_found" });
+  }
+
+  const effectiveEngine =
+    parsed.data.engine !== undefined
+      ? parsed.data.engine
+      : (existing.engine === "python" ? "python" : "ts");
+  const effectiveStrategyType =
+    typeof parsed.data.strategyType === "string"
+      ? parsed.data.strategyType
+      : existing.strategyType;
+
+  if (effectiveEngine === "ts") {
+    const registration = getRegisteredLocalStrategy(effectiveStrategyType);
     if (!registration) {
       return res.status(400).json({
         error: "unknown_strategy_type",
         availableTypes: listRegisteredLocalStrategies().map((entry) => entry.type)
       });
     }
+  } else if (
+    typeof parsed.data.fallbackStrategyType === "string"
+    && !getRegisteredLocalStrategy(parsed.data.fallbackStrategyType)
+  ) {
+    return res.status(400).json({
+      error: "unknown_fallback_strategy_type",
+      availableTypes: listRegisteredLocalStrategies().map((entry) => entry.type)
+    });
   }
 
   const data: Record<string, unknown> = {};
   if (parsed.data.strategyType !== undefined) data.strategyType = parsed.data.strategyType;
+  if (parsed.data.engine !== undefined) data.engine = parsed.data.engine;
+  if (parsed.data.remoteStrategyType !== undefined) data.remoteStrategyType = parsed.data.remoteStrategyType;
+  if (parsed.data.fallbackStrategyType !== undefined) data.fallbackStrategyType = parsed.data.fallbackStrategyType;
+  if (parsed.data.timeoutMs !== undefined) data.timeoutMs = parsed.data.timeoutMs;
   if (parsed.data.name !== undefined) data.name = parsed.data.name.trim();
   if (parsed.data.description !== undefined) {
     data.description =
       typeof parsed.data.description === "string" && parsed.data.description.trim()
         ? parsed.data.description.trim()
         : null;
+  }
+  if (effectiveEngine === "ts") {
+    if (parsed.data.remoteStrategyType === undefined) data.remoteStrategyType = null;
+    if (parsed.data.fallbackStrategyType === undefined) data.fallbackStrategyType = null;
+    if (parsed.data.timeoutMs === undefined) data.timeoutMs = null;
+  } else {
+    if (parsed.data.remoteStrategyType === undefined && existing.engine !== "python") {
+      data.remoteStrategyType = effectiveStrategyType;
+    }
+    if (parsed.data.fallbackStrategyType === undefined && existing.engine !== "python") {
+      data.fallbackStrategyType = effectiveStrategyType;
+    }
   }
   if (parsed.data.version !== undefined) data.version = parsed.data.version.trim();
   if (parsed.data.inputSchema !== undefined) data.inputSchema = parsed.data.inputSchema;

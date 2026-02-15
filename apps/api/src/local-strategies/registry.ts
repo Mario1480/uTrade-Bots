@@ -1,5 +1,15 @@
 import { prisma } from "@mm/db";
 import { hashStableObject } from "../ai/analyzer.js";
+import { logger } from "../logger.js";
+import {
+  executePythonStrategy,
+  getPythonRunnerMetrics
+} from "./pythonRunner.js";
+import {
+  type PythonStrategyRunContext,
+  getPythonStrategyHealth,
+  listPythonStrategies
+} from "./pythonClient.js";
 
 const db = prisma as any;
 
@@ -34,6 +44,10 @@ export type LocalStrategyResult = {
 export type LocalStrategyDefinitionRecord = {
   id: string;
   strategyType: string;
+  engine: "ts" | "python";
+  remoteStrategyType: string | null;
+  fallbackStrategyType: string | null;
+  timeoutMs: number | null;
   name: string;
   description: string | null;
   version: string;
@@ -151,6 +165,18 @@ function normalizeDefinitionRecord(value: unknown): LocalStrategyDefinitionRecor
 
   const id = typeof row.id === "string" ? row.id.trim() : "";
   const strategyType = typeof row.strategyType === "string" ? row.strategyType.trim() : "";
+  const engine = row.engine === "python" ? "python" : "ts";
+  const remoteStrategyType =
+    typeof row.remoteStrategyType === "string" && row.remoteStrategyType.trim()
+      ? row.remoteStrategyType.trim()
+      : null;
+  const fallbackStrategyType =
+    typeof row.fallbackStrategyType === "string" && row.fallbackStrategyType.trim()
+      ? row.fallbackStrategyType.trim()
+      : null;
+  const timeoutMsRaw = normalizeFiniteNumber(row.timeoutMs);
+  const timeoutMs =
+    timeoutMsRaw !== null ? Math.max(200, Math.min(10_000, Math.trunc(timeoutMsRaw))) : null;
   const name = typeof row.name === "string" ? row.name.trim() : "";
   const version = typeof row.version === "string" ? row.version.trim() : "1.0.0";
   const isEnabled = row.isEnabled !== false;
@@ -171,6 +197,10 @@ function normalizeDefinitionRecord(value: unknown): LocalStrategyDefinitionRecor
   return {
     id,
     strategyType,
+    engine,
+    remoteStrategyType,
+    fallbackStrategyType,
+    timeoutMs,
     name,
     description,
     version,
@@ -514,12 +544,76 @@ export function getBuiltinLocalStrategyTemplates(): Array<{
   }));
 }
 
+export async function listPythonStrategyRegistry(): Promise<{
+  enabled: boolean;
+  health: { status: string; version: string } | null;
+  items: Array<{
+    type: string;
+    name: string;
+    version: string;
+    defaultConfig: Record<string, unknown>;
+    uiSchema: Record<string, unknown>;
+  }>;
+  metrics: {
+    calls: number;
+    failures: number;
+    timeouts: number;
+  };
+}> {
+  const enabled = String(process.env.PY_STRATEGY_ENABLED ?? "false").trim().toLowerCase() === "true";
+  if (!enabled) {
+    return {
+      enabled,
+      health: null,
+      items: [],
+      metrics: getPythonRunnerMetrics()
+    };
+  }
+  try {
+    const [health, items] = await Promise.all([
+      getPythonStrategyHealth(),
+      listPythonStrategies()
+    ]);
+    return {
+      enabled,
+      health,
+      items,
+      metrics: getPythonRunnerMetrics()
+    };
+  } catch (error) {
+    logger.warn("local_strategy_python_registry_unavailable", {
+      reason: String(error)
+    });
+    return {
+      enabled,
+      health: null,
+      items: [],
+      metrics: getPythonRunnerMetrics()
+    };
+  }
+}
+
 export async function runLocalStrategy(
   strategyId: string,
   featureSnapshot: Record<string, unknown>,
   ctx: LocalStrategyExecutionContext = {},
   deps?: {
     getStrategyById?: (id: string) => Promise<LocalStrategyDefinitionRecord | null>;
+    runPythonStrategy?: (params: {
+      strategyType: string;
+      strategyVersion?: string;
+      config: Record<string, unknown>;
+      featureSnapshot: Record<string, unknown>;
+      context: PythonStrategyRunContext;
+      timeoutMs?: number | null;
+      trace?: {
+        runId?: string;
+        source?: string;
+      };
+    }) => Promise<
+      | { ok: true; result: { allow: boolean; score: number; reasonCodes: string[]; tags: string[]; explanation: string; meta: Record<string, unknown> } }
+      | { ok: false; errorCode: string; status: number | null; message: string }
+    >;
   }
 ): Promise<LocalStrategyResult> {
   const normalizedId = strategyId.trim();
@@ -542,20 +636,26 @@ export async function runLocalStrategy(
     throw new Error("strategy_not_found");
   }
 
-  const registration = getRegisteredLocalStrategy(definition.strategyType);
-  if (!registration) {
-    throw new Error(`strategy_type_not_registered:${definition.strategyType}`);
-  }
-
   const normalizedFeatureSnapshot = safeObject(featureSnapshot);
-  const effectiveConfig = mergeConfig(registration.defaultConfig, definition.configJson);
-  const configHash = hashStableObject(effectiveConfig);
+  const normalizedCtx = sanitizeUnknown(ctx) as LocalStrategyExecutionContext;
+  const pythonStrategyType =
+    definition.remoteStrategyType && definition.remoteStrategyType.trim()
+      ? definition.remoteStrategyType.trim()
+      : definition.strategyType;
+  const configHash = hashStableObject({
+    strategyType: definition.strategyType,
+    engine: definition.engine,
+    remoteStrategyType: pythonStrategyType,
+    fallbackStrategyType: definition.fallbackStrategyType,
+    timeoutMs: definition.timeoutMs,
+    configJson: definition.configJson
+  });
   const snapshotHash = buildSnapshotHash({
     strategyId: definition.id,
     strategyType: definition.strategyType,
     featureSnapshot: normalizedFeatureSnapshot,
-    config: effectiveConfig,
-    ctx
+    config: definition.configJson,
+    ctx: normalizedCtx
   });
 
   if (!definition.isEnabled) {
@@ -579,33 +679,143 @@ export async function runLocalStrategy(
     };
   }
 
-  const raw = registration.handler(
-    normalizedFeatureSnapshot,
-    effectiveConfig,
-    sanitizeUnknown(ctx) as LocalStrategyExecutionContext
-  );
-  const score = normalizeFiniteNumber(raw.score);
-
-  const result: LocalStrategyResult = {
-    strategyId: definition.id,
-    strategyType: definition.strategyType,
-    strategyName: definition.name,
-    version: definition.version,
-    isEnabled: true,
-    allow: raw.allow !== false,
-    score: Math.max(0, Math.min(100, score ?? 0)),
-    reasonCodes: normalizeReasonCodes(raw.reasonCodes),
-    tags: normalizeTags(raw.tags),
-    explanation:
-      typeof raw.explanation === "string" && raw.explanation.trim()
-        ? raw.explanation.trim()
-        : (raw.allow !== false
-          ? "Strategy check passed."
-          : "Strategy check blocked."),
-    configHash,
-    snapshotHash,
-    meta: safeObject(raw.meta)
+  const toResult = (raw: {
+    allow: boolean;
+    score?: number;
+    reasonCodes?: string[];
+    tags?: string[];
+    explanation?: string;
+    meta?: Record<string, unknown>;
+  }): LocalStrategyResult => {
+    const score = normalizeFiniteNumber(raw.score);
+    return {
+      strategyId: definition.id,
+      strategyType: definition.strategyType,
+      strategyName: definition.name,
+      version: definition.version,
+      isEnabled: true,
+      allow: raw.allow !== false,
+      score: Math.max(0, Math.min(100, score ?? 0)),
+      reasonCodes: normalizeReasonCodes(raw.reasonCodes),
+      tags: normalizeTags(raw.tags),
+      explanation:
+        typeof raw.explanation === "string" && raw.explanation.trim()
+          ? raw.explanation.trim()
+          : (raw.allow !== false
+            ? "Strategy check passed."
+            : "Strategy check blocked."),
+      configHash,
+      snapshotHash,
+      meta: safeObject(raw.meta)
+    };
   };
 
-  return sanitizeUnknown(result) as LocalStrategyResult;
+  const runTsStrategy = (
+    registration: LocalStrategyRegistration,
+    mode: "primary" | "fallback",
+    fallbackReason?: string
+  ): LocalStrategyResult => {
+    const effectiveConfig = mergeConfig(registration.defaultConfig, definition.configJson);
+    const raw = registration.handler(
+      normalizedFeatureSnapshot,
+      effectiveConfig,
+      normalizedCtx
+    );
+    return toResult({
+      ...raw,
+      meta: {
+        ...safeObject(raw.meta),
+        engine: "ts",
+        strategyType: definition.strategyType,
+        strategyRegistrationType: registration.type,
+        mode,
+        ...(fallbackReason ? { fallbackReason } : {})
+      }
+    });
+  };
+
+  const resolveFallbackRegistration = (): LocalStrategyRegistration | null => {
+    if (definition.fallbackStrategyType && definition.fallbackStrategyType.trim()) {
+      return getRegisteredLocalStrategy(definition.fallbackStrategyType.trim());
+    }
+    return getRegisteredLocalStrategy(definition.strategyType);
+  };
+
+  if (definition.engine === "python") {
+    const pythonExecutor = deps?.runPythonStrategy ?? executePythonStrategy;
+    const pythonResult = await pythonExecutor({
+      strategyType: pythonStrategyType,
+      strategyVersion: definition.version,
+      config: safeObject(definition.configJson),
+      featureSnapshot: normalizedFeatureSnapshot,
+      context: {
+        ...normalizedCtx,
+        nowTs: new Date().toISOString()
+      },
+      timeoutMs: definition.timeoutMs,
+      trace: {
+        runId: snapshotHash.slice(0, 32),
+        source: "api_local_strategy"
+      }
+    });
+
+    if (pythonResult.ok) {
+      return sanitizeUnknown(toResult({
+        allow: pythonResult.result.allow,
+        score: pythonResult.result.score,
+        reasonCodes: pythonResult.result.reasonCodes,
+        tags: pythonResult.result.tags,
+        explanation: pythonResult.result.explanation,
+        meta: {
+          ...safeObject(pythonResult.result.meta),
+          engine: "python",
+          strategyType: definition.strategyType,
+          remoteStrategyType: pythonStrategyType,
+          timeoutMs: definition.timeoutMs
+        }
+      })) as LocalStrategyResult;
+    }
+
+    const fallbackRegistration = resolveFallbackRegistration();
+    logger.warn("local_strategy_python_fallback", {
+      strategyId: definition.id,
+      strategyType: definition.strategyType,
+      remoteStrategyType: pythonStrategyType,
+      fallbackStrategyType: definition.fallbackStrategyType ?? definition.strategyType,
+      errorCode: pythonResult.errorCode,
+      status: pythonResult.status,
+      message: pythonResult.message
+    });
+    if (fallbackRegistration) {
+      return sanitizeUnknown(runTsStrategy(
+        fallbackRegistration,
+        "fallback",
+        `python_${pythonResult.errorCode}`
+      )) as LocalStrategyResult;
+    }
+    return sanitizeUnknown(toResult({
+      allow: false,
+      score: 0,
+      reasonCodes: ["python_unavailable_no_fallback", pythonResult.errorCode],
+      tags: ["python_error", "fallback_missing"],
+      explanation: "Python strategy unavailable and no TS fallback is configured.",
+      meta: {
+        engine: "python",
+        strategyType: definition.strategyType,
+        remoteStrategyType: pythonStrategyType,
+        timeoutMs: definition.timeoutMs,
+        pythonError: {
+          code: pythonResult.errorCode,
+          status: pythonResult.status,
+          message: pythonResult.message
+        }
+      }
+    })) as LocalStrategyResult;
+  }
+
+  const registration = getRegisteredLocalStrategy(definition.strategyType);
+  if (!registration) {
+    throw new Error(`strategy_type_not_registered:${definition.strategyType}`);
+  }
+  return sanitizeUnknown(runTsStrategy(registration, "primary")) as LocalStrategyResult;
 }

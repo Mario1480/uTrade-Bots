@@ -13,6 +13,10 @@ type RegistryItem = {
 type LocalStrategyItem = {
   id: string;
   strategyType: string;
+  engine: "ts" | "python";
+  remoteStrategyType: string | null;
+  fallbackStrategyType: string | null;
+  timeoutMs: number | null;
   name: string;
   description: string | null;
   version: string;
@@ -31,6 +35,22 @@ type LocalStrategyItem = {
 type LocalStrategiesResponse = {
   items: LocalStrategyItem[];
   registry: RegistryItem[];
+  pythonRegistry?: {
+    enabled: boolean;
+    health: { status: string; version: string } | null;
+    items: Array<{
+      type: string;
+      name: string;
+      version: string;
+      defaultConfig: Record<string, unknown>;
+      uiSchema: Record<string, unknown>;
+    }>;
+    metrics?: {
+      calls: number;
+      failures: number;
+      timeouts: number;
+    };
+  };
   templates: Array<{
     strategyType: string;
     name: string;
@@ -94,9 +114,18 @@ export default function AdminLocalStrategiesPage() {
 
   const [items, setItems] = useState<LocalStrategyItem[]>([]);
   const [registry, setRegistry] = useState<RegistryItem[]>([]);
+  const [pythonRegistry, setPythonRegistry] = useState<NonNullable<LocalStrategiesResponse["pythonRegistry"]>>({
+    enabled: false,
+    health: null,
+    items: []
+  });
 
   const [editingId, setEditingId] = useState<string | null>(null);
+  const [engine, setEngine] = useState<"ts" | "python">("ts");
   const [strategyType, setStrategyType] = useState("");
+  const [remoteStrategyType, setRemoteStrategyType] = useState("");
+  const [fallbackStrategyType, setFallbackStrategyType] = useState("");
+  const [timeoutMs, setTimeoutMs] = useState("1200");
   const [name, setName] = useState("");
   const [description, setDescription] = useState("");
   const [version, setVersion] = useState("1.0.0");
@@ -126,8 +155,11 @@ export default function AdminLocalStrategiesPage() {
   const [runOutput, setRunOutput] = useState<string>("");
 
   const selectedRegistry = useMemo(
-    () => registry.find((entry) => entry.type === strategyType) ?? null,
-    [registry, strategyType]
+    () =>
+      (engine === "python"
+        ? pythonRegistry.items.find((entry) => entry.type === strategyType)
+        : registry.find((entry) => entry.type === strategyType)) ?? null,
+    [engine, pythonRegistry.items, registry, strategyType]
   );
 
   async function loadAll() {
@@ -145,6 +177,7 @@ export default function AdminLocalStrategiesPage() {
       const response = await apiGet<LocalStrategiesResponse>("/admin/local-strategies");
       setItems(Array.isArray(response.items) ? response.items : []);
       setRegistry(Array.isArray(response.registry) ? response.registry : []);
+      setPythonRegistry(response.pythonRegistry ?? { enabled: false, health: null, items: [] });
 
       if (!editingId && Array.isArray(response.registry) && response.registry.length > 0) {
         const first = response.registry[0];
@@ -165,7 +198,11 @@ export default function AdminLocalStrategiesPage() {
   function resetForm() {
     const first = registry[0];
     setEditingId(null);
+    setEngine("ts");
     setStrategyType(first?.type ?? "");
+    setRemoteStrategyType("");
+    setFallbackStrategyType(first?.type ?? "");
+    setTimeoutMs("1200");
     setName("");
     setDescription("");
     setVersion("1.0.0");
@@ -178,7 +215,11 @@ export default function AdminLocalStrategiesPage() {
 
   function applyItem(item: LocalStrategyItem) {
     setEditingId(item.id);
+    setEngine(item.engine === "python" ? "python" : "ts");
     setStrategyType(item.strategyType);
+    setRemoteStrategyType(item.remoteStrategyType ?? item.strategyType);
+    setFallbackStrategyType(item.fallbackStrategyType ?? item.strategyType);
+    setTimeoutMs(item.timeoutMs !== null && Number.isFinite(item.timeoutMs) ? String(item.timeoutMs) : "1200");
     setName(item.name);
     setDescription(item.description ?? "");
     setVersion(item.version);
@@ -209,6 +250,17 @@ export default function AdminLocalStrategiesPage() {
 
       const payload = {
         strategyType: strategyType.trim(),
+        engine,
+        remoteStrategyType: engine === "python" ? (remoteStrategyType.trim() || strategyType.trim()) : null,
+        fallbackStrategyType: engine === "python" ? (fallbackStrategyType.trim() || strategyType.trim()) : null,
+        timeoutMs:
+          engine === "python"
+            ? (() => {
+              const parsedTimeout = Number(timeoutMs);
+              if (!Number.isFinite(parsedTimeout)) return 1200;
+              return Math.max(200, Math.min(10000, Math.trunc(parsedTimeout)));
+            })()
+            : null,
         name: name.trim(),
         description: description.trim() || null,
         version: version.trim(),
@@ -280,9 +332,16 @@ export default function AdminLocalStrategiesPage() {
 
   function applyRegistryDefaults(type: string) {
     setStrategyType(type);
-    const match = registry.find((item) => item.type === type);
+    const match =
+      engine === "python"
+        ? pythonRegistry.items.find((item) => item.type === type) ?? registry.find((item) => item.type === type)
+        : registry.find((item) => item.type === type);
     if (match) {
       setConfigJsonText(pretty(match.defaultConfig ?? {}));
+    }
+    if (engine === "python") {
+      setRemoteStrategyType(type);
+      setFallbackStrategyType(type);
     }
   }
 
@@ -314,19 +373,76 @@ export default function AdminLocalStrategiesPage() {
 
             <div className="settingsTwoColGrid" style={{ marginBottom: 10 }}>
               <label className="settingsField">
+                <span className="settingsFieldLabel">Engine</span>
+                <select
+                  className="input"
+                  value={engine}
+                  onChange={(e) => setEngine(e.target.value === "python" ? "python" : "ts")}
+                >
+                  <option value="ts">TS (local registry)</option>
+                  <option value="python">Python sidecar</option>
+                </select>
+              </label>
+
+              <label className="settingsField">
                 <span className="settingsFieldLabel">Strategy type</span>
                 <select
                   className="input"
                   value={strategyType}
                   onChange={(e) => applyRegistryDefaults(e.target.value)}
-                  disabled={Boolean(editingId)}
+                  disabled={Boolean(editingId) && engine === "ts"}
                 >
                   <option value="">Select type...</option>
-                  {registry.map((item) => (
+                  {(engine === "python" ? pythonRegistry.items : registry).map((item) => (
                     <option key={item.type} value={item.type}>{item.type}</option>
                   ))}
+                  {strategyType
+                    && !(engine === "python" ? pythonRegistry.items : registry).some((item) => item.type === strategyType)
+                    ? <option value={strategyType}>{strategyType}</option>
+                    : null}
                 </select>
               </label>
+            </div>
+
+            {engine === "python" ? (
+              <div className="settingsTwoColGrid" style={{ marginBottom: 10 }}>
+                <label className="settingsField">
+                  <span className="settingsFieldLabel">Remote strategy type</span>
+                  <input
+                    className="input"
+                    value={remoteStrategyType}
+                    onChange={(e) => setRemoteStrategyType(e.target.value)}
+                    placeholder={strategyType || "regime_gate"}
+                  />
+                </label>
+
+                <label className="settingsField">
+                  <span className="settingsFieldLabel">Fallback strategy type (TS)</span>
+                  <input
+                    className="input"
+                    value={fallbackStrategyType}
+                    onChange={(e) => setFallbackStrategyType(e.target.value)}
+                    placeholder={strategyType || "regime_gate"}
+                  />
+                </label>
+              </div>
+            ) : null}
+
+            <div className="settingsTwoColGrid" style={{ marginBottom: 10 }}>
+              {engine === "python" ? (
+                <label className="settingsField">
+                  <span className="settingsFieldLabel">Python timeout (ms)</span>
+                  <input
+                    className="input"
+                    type="number"
+                    min={200}
+                    max={10000}
+                    step={100}
+                    value={timeoutMs}
+                    onChange={(e) => setTimeoutMs(e.target.value)}
+                  />
+                </label>
+              ) : <div />}
 
               <label className="settingsField">
                 <span className="settingsFieldLabel">Version</span>
@@ -381,6 +497,15 @@ export default function AdminLocalStrategiesPage() {
                 </button>
               ) : null}
             </div>
+            {engine === "python" ? (
+              <p className="settingsMutedText" style={{ marginTop: 10, marginBottom: 0 }}>
+                Python sidecar: {pythonRegistry.enabled ? "enabled" : "disabled"}
+                {" · "}
+                health: {pythonRegistry.health?.status ?? "unknown"}
+                {" · "}
+                version: {pythonRegistry.health?.version ?? "-"}
+              </p>
+            ) : null}
           </section>
 
           <section className="card settingsSection" style={{ marginBottom: 12 }}>
@@ -394,6 +519,7 @@ export default function AdminLocalStrategiesPage() {
                     <tr>
                       <th align="left">Name</th>
                       <th align="left">Type</th>
+                      <th align="left">Engine</th>
                       <th align="left">Version</th>
                       <th align="left">Status</th>
                       <th align="left">Updated</th>
@@ -405,6 +531,7 @@ export default function AdminLocalStrategiesPage() {
                       <tr key={item.id}>
                         <td>{item.name}</td>
                         <td><code>{item.strategyType}</code></td>
+                        <td><code>{item.engine}</code></td>
                         <td>{item.version}</td>
                         <td>{item.isEnabled ? "enabled" : "disabled"}</td>
                         <td>{item.updatedAt ? new Date(item.updatedAt).toLocaleString() : "-"}</td>

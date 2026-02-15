@@ -10,6 +10,10 @@ function buildDefinition(overrides: Partial<LocalStrategyDefinitionRecord> = {})
   return {
     id: "strategy_1",
     strategyType: "regime_gate",
+    engine: "ts",
+    remoteStrategyType: null,
+    fallbackStrategyType: null,
+    timeoutMs: null,
     name: "Regime Gate",
     description: null,
     version: "1.0.0",
@@ -124,4 +128,77 @@ test("disabled strategy returns deterministic skipped result", async () => {
 
   assert.equal(result.allow, false);
   assert.deepEqual(result.reasonCodes, ["strategy_disabled"]);
+});
+
+test("python engine returns python result when remote call succeeds", async () => {
+  const definition = buildDefinition({
+    strategyType: "regime_gate",
+    engine: "python",
+    remoteStrategyType: "regime_gate_py",
+    timeoutMs: 900
+  });
+
+  const result = await runLocalStrategy(definition.id, baseSnapshot, { signal: "up" }, {
+    getStrategyById: async () => definition,
+    runPythonStrategy: async () => ({
+      ok: true,
+      result: {
+        allow: true,
+        score: 88,
+        reasonCodes: ["regime_aligned"],
+        tags: ["trend_up"],
+        explanation: "Python regime gate passed.",
+        meta: { runtimeMs: 22 }
+      }
+    })
+  });
+
+  assert.equal(result.allow, true);
+  assert.equal(result.score, 88);
+  assert.equal(result.meta.engine, "python");
+  assert.equal(result.meta.remoteStrategyType, "regime_gate_py");
+});
+
+test("python engine falls back to TS strategy on remote error", async () => {
+  const definition = buildDefinition({
+    strategyType: "regime_gate",
+    engine: "python",
+    remoteStrategyType: "regime_gate_py",
+    fallbackStrategyType: "signal_filter"
+  });
+
+  const result = await runLocalStrategy(definition.id, baseSnapshot, { signal: "up" }, {
+    getStrategyById: async () => definition,
+    runPythonStrategy: async () => ({
+      ok: false,
+      errorCode: "timeout",
+      status: null,
+      message: "timed out"
+    })
+  });
+
+  assert.equal(result.meta.engine, "ts");
+  assert.equal(result.meta.mode, "fallback");
+  assert.equal(result.meta.fallbackReason, "python_timeout");
+});
+
+test("python engine without fallback returns blocked result", async () => {
+  const definition = buildDefinition({
+    strategyType: "unregistered_python_strategy",
+    engine: "python",
+    fallbackStrategyType: null
+  });
+
+  const result = await runLocalStrategy(definition.id, baseSnapshot, { signal: "up" }, {
+    getStrategyById: async () => definition,
+    runPythonStrategy: async () => ({
+      ok: false,
+      errorCode: "network_error",
+      status: null,
+      message: "connection refused"
+    })
+  });
+
+  assert.equal(result.allow, false);
+  assert.deepEqual(result.reasonCodes, ["python_unavailable_no_fallback", "network_error"]);
 });

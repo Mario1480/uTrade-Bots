@@ -17,7 +17,9 @@ Deterministic local strategies can be registered and executed through `apps/api/
 ## Runner behavior
 
 - Loads strategy definition by DB `id`.
-- Merges persisted `configJson` over strategy default config.
+- Supports `engine: "ts" | "python"` per strategy definition.
+- For `ts`, merges persisted `configJson` over strategy default config.
+- For `python`, calls the sidecar (`PY_STRATEGY_URL`) with timeout/auth and fail-open TS fallback (`fallbackStrategyType`) when available.
 - Returns deterministic result with:
   - `allow`, `score`, `reasonCodes`, `tags`, `explanation`
   - `configHash` and `snapshotHash` for idempotency checks.

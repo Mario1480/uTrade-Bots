@@ -746,6 +746,10 @@ model IndicatorSetting {
 model LocalStrategyDefinition {
   id           String   @id @default(cuid())
   strategyType String   @map("strategy_type")
+  engine       String   @default("ts")
+  remoteStrategyType String? @map("remote_strategy_type")
+  fallbackStrategyType String? @map("fallback_strategy_type")
+  timeoutMs    Int?     @map("timeout_ms")
   name         String
   description  String?
   version      String
