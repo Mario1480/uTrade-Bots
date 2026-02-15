@@ -2,7 +2,9 @@
 
 import Link from "next/link";
 import { useEffect, useState } from "react";
+import { useLocale, useTranslations } from "next-intl";
 import { ApiError, apiDelete, apiGet } from "../../../lib/api";
+import { withLocalePath, type AppLocale } from "../../../i18n/config";
 
 type Bot = {
   id: string;
@@ -14,6 +16,9 @@ type Bot = {
 };
 
 export default function Setup() {
+  const t = useTranslations("settings.setup");
+  const tCommon = useTranslations("settings.common");
+  const locale = useLocale() as AppLocale;
   const [msg, setMsg] = useState("");
   const [bots, setBots] = useState<Bot[]>([]);
   const [loading, setLoading] = useState(false);
@@ -37,12 +42,12 @@ export default function Setup() {
   }
 
   async function removeBot(bot: Bot) {
-    const ok = window.confirm(`Delete bot "${bot.name}" (${bot.symbol})? This cannot be undone.`);
+    const ok = window.confirm(t("confirmDelete", { name: bot.name, symbol: bot.symbol }));
     if (!ok) return;
     setDeletingId(bot.id);
     try {
       await apiDelete(`/bots/${bot.id}`);
-      setMsg(`deleted ${bot.name}`);
+      setMsg(t("deleted", { name: bot.name }));
       await loadBots();
     } catch (e: any) {
       setMsg(errMsg(e));
@@ -58,30 +63,30 @@ export default function Setup() {
   return (
     <div>
       <div style={{ marginBottom: 10, display: "flex", gap: 8, flexWrap: "wrap" }}>
-        <Link href="/settings" className="btn">
-          ← Back to settings
+        <Link href={withLocalePath("/settings", locale)} className="btn">
+          ← {tCommon("backToSettings")}
         </Link>
-        <Link href="/" className="btn">
-          ← Back to dashboard
+        <Link href={withLocalePath("/", locale)} className="btn">
+          ← {tCommon("backToDashboard")}
         </Link>
       </div>
-      <h2>Setup</h2>
+      <h2>{t("title")}</h2>
       <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 12 }}>
-        <Link href="/bots/new" className="btn btnPrimary">
-          New Bot
+        <Link href={withLocalePath("/bots/new", locale)} className="btn btnPrimary">
+          {t("newBot")}
         </Link>
         <button onClick={loadBots} className="btn">
-          Refresh list
+          {t("refreshList")}
         </button>
       </div>
       {msg ? <p>{msg}</p> : null}
 
       <div className="card" style={{ padding: 12 }}>
-        <div style={{ fontWeight: 700, marginBottom: 8 }}>Bots</div>
+        <div style={{ fontWeight: 700, marginBottom: 8 }}>{t("botsTitle")}</div>
         {loading ? (
-          <div style={{ fontSize: 12, color: "var(--muted)" }}>Loading...</div>
+          <div style={{ fontSize: 12, color: "var(--muted)" }}>{tCommon("loading")}</div>
         ) : bots.length === 0 ? (
-          <div style={{ fontSize: 12, color: "var(--muted)" }}>No bots yet.</div>
+          <div style={{ fontSize: 12, color: "var(--muted)" }}>{t("noBots")}</div>
         ) : (
           <div style={{ display: "grid", gap: 10 }}>
             {bots.map((bot) => (
@@ -104,15 +109,15 @@ export default function Setup() {
                   </div>
                 </div>
                 <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-                  <Link href={`/bots/${bot.id}`} className="btn">
-                    Open
+                  <Link href={withLocalePath(`/bots/${bot.id}`, locale)} className="btn">
+                    {t("open")}
                   </Link>
                   <button
                     className="btn btnStop"
                     onClick={() => removeBot(bot)}
                     disabled={deletingId === bot.id}
                   >
-                    {deletingId === bot.id ? "Deleting..." : "Delete"}
+                    {deletingId === bot.id ? t("deleting") : t("delete")}
                   </button>
                 </div>
               </div>

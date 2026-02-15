@@ -2,7 +2,9 @@
 
 import Link from "next/link";
 import { useEffect, useState } from "react";
+import { useLocale, useTranslations } from "next-intl";
 import { ApiError, apiGet, apiPut } from "../../../lib/api";
+import { withLocalePath, type AppLocale } from "../../../i18n/config";
 
 type SignalMode = "local_only" | "ai_only" | "both";
 
@@ -21,13 +23,16 @@ function errMsg(e: unknown): string {
   return String(e);
 }
 
-function signalModeLabel(value: SignalMode): string {
-  if (value === "local_only") return "Local only";
-  if (value === "ai_only") return "AI only";
-  return "Local + AI";
+function signalModeLabel(value: SignalMode, t: (key: string) => string): string {
+  if (value === "local_only") return t("modes.localOnly");
+  if (value === "ai_only") return t("modes.aiOnly");
+  return t("modes.both");
 }
 
 export default function AdminPredictionDefaultsPage() {
+  const t = useTranslations("admin.predictionDefaults");
+  const tCommon = useTranslations("admin.common");
+  const locale = useLocale() as AppLocale;
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [isSuperadmin, setIsSuperadmin] = useState(false);
@@ -43,7 +48,7 @@ export default function AdminPredictionDefaultsPage() {
       const me = await apiGet<any>("/auth/me");
       if (!(me?.isSuperadmin || me?.hasAdminBackendAccess)) {
         setIsSuperadmin(false);
-        setError("Admin backend access required.");
+        setError(t("messages.accessRequired"));
         return;
       }
       setIsSuperadmin(true);
@@ -64,7 +69,7 @@ export default function AdminPredictionDefaultsPage() {
   function loadDefaults() {
     if (!settings?.defaults) return;
     setSignalMode(settings.defaults.signalMode);
-    setNotice("Default values loaded into form (not saved yet).");
+    setNotice(t("messages.defaultsLoaded"));
   }
 
   async function save() {
@@ -77,7 +82,7 @@ export default function AdminPredictionDefaultsPage() {
       });
       setSettings(res);
       setSignalMode(res.signalMode);
-      setNotice("Prediction default settings saved.");
+      setNotice(t("messages.saved"));
     } catch (e) {
       setError(errMsg(e));
     } finally {
@@ -88,19 +93,19 @@ export default function AdminPredictionDefaultsPage() {
   return (
     <div className="settingsWrap">
       <div className="adminTopActions">
-        <Link href="/admin" className="btn">
-          ← Back to admin
+        <Link href={withLocalePath("/admin", locale)} className="btn">
+          ← {tCommon("backToAdmin")}
         </Link>
-        <Link href="/settings" className="btn">
-          ← Back to settings
+        <Link href={withLocalePath("/settings", locale)} className="btn">
+          ← {tCommon("backToSettings")}
         </Link>
       </div>
-      <h2 style={{ marginTop: 0 }}>Admin · Prediction Defaults</h2>
+      <h2 style={{ marginTop: 0 }}>{t("title")}</h2>
       <div className="adminPageIntro">
-        Global defaults for newly created prediction schedules.
+        {t("subtitle")}
       </div>
 
-      {loading ? <div className="settingsMutedText">Loading...</div> : null}
+      {loading ? <div className="settingsMutedText">{t("loading")}</div> : null}
       {error ? (
         <div className="card settingsSection settingsAlert settingsAlertError">
           {error}
@@ -115,35 +120,35 @@ export default function AdminPredictionDefaultsPage() {
       {isSuperadmin ? (
         <section className="card settingsSection">
           <div className="settingsSectionHeader">
-            <h3 style={{ margin: 0 }}>Global Create Defaults</h3>
+            <h3 style={{ margin: 0 }}>{t("globalDefaultsTitle")}</h3>
           </div>
           <div style={{ fontSize: 12, color: "var(--muted)", marginBottom: 10 }}>
-            Source: {settings?.source ?? "env"} · Last updated:{" "}
-            {settings?.updatedAt ? new Date(settings.updatedAt).toLocaleString() : "never"}
+            {t("sourceLabel")}: {settings?.source ?? "env"} · {t("lastUpdatedLabel")}:{" "}
+            {settings?.updatedAt ? new Date(settings.updatedAt).toLocaleString() : t("never")}
           </div>
 
           <label style={{ display: "grid", gap: 6, maxWidth: 320 }}>
-            <span style={{ fontSize: 12, color: "var(--muted)" }}>Signal mode</span>
+            <span style={{ fontSize: 12, color: "var(--muted)" }}>{t("signalMode")}</span>
             <select
               className="input"
               value={signalMode}
               onChange={(e) => setSignalMode(e.target.value as SignalMode)}
             >
-              <option value="local_only">Local only</option>
-              <option value="ai_only">AI only</option>
-              <option value="both">Local + AI</option>
+              <option value="local_only">{t("modes.localOnly")}</option>
+              <option value="ai_only">{t("modes.aiOnly")}</option>
+              <option value="both">{t("modes.both")}</option>
             </select>
             <span style={{ fontSize: 11, color: "var(--muted)" }}>
-              Applies to newly created predictions. Current: {signalModeLabel(signalMode)}.
+              {t("signalModeHint", { current: signalModeLabel(signalMode, t) })}.
             </span>
           </label>
 
           <div style={{ display: "flex", gap: 8, marginTop: 12, flexWrap: "wrap" }}>
             <button className="btn" type="button" onClick={loadDefaults}>
-              Load defaults
+              {t("loadDefaults")}
             </button>
             <button className="btn btnPrimary" type="button" onClick={() => void save()} disabled={saving}>
-              {saving ? "Saving..." : "Save settings"}
+              {saving ? t("saving") : t("saveSettings")}
             </button>
           </div>
         </section>

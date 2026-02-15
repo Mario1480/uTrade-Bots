@@ -2,7 +2,9 @@
 
 import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
+import { useLocale, useTranslations } from "next-intl";
 import { ApiError, apiGet } from "../../lib/api";
+import { withLocalePath, type AppLocale } from "../../i18n/config";
 
 function errMsg(e: unknown): string {
   if (e instanceof ApiError) return `${e.message} (HTTP ${e.status})`;
@@ -12,8 +14,7 @@ function errMsg(e: unknown): string {
 
 type AdminLinkItem = {
   href: string;
-  title: string;
-  description: string;
+  i18nKey: string;
   category: "Access" | "Integrations" | "Strategy";
 };
 
@@ -28,79 +29,71 @@ function adminCategoryClassName(category: AdminLinkItem["category"]): string {
 const ADMIN_LINKS: AdminLinkItem[] = [
   {
     href: "/admin/users",
-    title: "Users",
-    description: "Search, create, update password and delete users.",
+    i18nKey: "users",
     category: "Access"
   },
   {
     href: "/admin/telegram",
-    title: "Global Telegram",
-    description: "Set global bot token/chat and send test alerts.",
+    i18nKey: "telegram",
     category: "Integrations"
   },
   {
     href: "/admin/exchanges",
-    title: "Offered Exchanges",
-    description: "Select which CEX options are available to users.",
+    i18nKey: "exchanges",
     category: "Integrations"
   },
   {
     href: "/admin/smtp",
-    title: "SMTP",
-    description: "Configure SMTP transport and send test email.",
+    i18nKey: "smtp",
     category: "Integrations"
   },
   {
     href: "/admin/api-keys",
-    title: "API Keys",
-    description: "Store global API keys (starting with OpenAI) encrypted in DB.",
+    i18nKey: "apiKeys",
     category: "Integrations"
   },
   {
     href: "/admin/indicator-settings",
-    title: "Indicator Settings",
-    description: "Configure feature packs and indicator params with scoped overrides.",
+    i18nKey: "indicatorSettings",
     category: "Strategy"
   },
   {
     href: "/admin/strategies/local",
-    title: "Local Strategies",
-    description: "Create and manage deterministic local strategy instances.",
+    i18nKey: "localStrategies",
     category: "Strategy"
   },
   {
     href: "/admin/strategies/builder",
-    title: "Composite Builder",
-    description: "Combine Local + AI nodes into pipeline strategies with dry-run preview.",
+    i18nKey: "compositeBuilder",
     category: "Strategy"
   },
   {
     href: "/admin/strategies/ai",
-    title: "AI Strategies",
-    description: "Manage AI prompt strategies and prompt-level runtime defaults.",
+    i18nKey: "aiStrategies",
     category: "Strategy"
   },
   {
     href: "/admin/prediction-refresh",
-    title: "Prediction Refresh",
-    description: "Tune debounce, hysteresis, cooldown and event throttle for auto predictions.",
+    i18nKey: "predictionRefresh",
     category: "Strategy"
   },
   {
     href: "/admin/prediction-defaults",
-    title: "Prediction Defaults",
-    description: "Configure global defaults like signal mode for newly created predictions.",
+    i18nKey: "predictionDefaults",
     category: "Strategy"
   },
   {
     href: "/admin/ai-trace",
-    title: "AI Trace Logs",
-    description: "Inspect AI request payloads/responses with on/off toggle and cleanup.",
+    i18nKey: "aiTrace",
     category: "Strategy"
   }
 ];
 
 export default function AdminPage() {
+  const tLanding = useTranslations("admin.landing");
+  const tLinks = useTranslations("admin.links");
+  const tCommon = useTranslations("admin.common");
+  const locale = useLocale() as AppLocale;
   const [loading, setLoading] = useState(true);
   const [isSuperadmin, setIsSuperadmin] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -110,11 +103,15 @@ export default function AdminPage() {
     const needle = query.trim().toLowerCase();
     if (!needle) return ADMIN_LINKS;
     return ADMIN_LINKS.filter((item) =>
-      [item.title, item.description, item.category].some((value) =>
-        value.toLowerCase().includes(needle)
+      [
+        tLinks(`${item.i18nKey}.title`),
+        tLinks(`${item.i18nKey}.description`),
+        tLanding(`categories.${item.category}`)
+      ].some((value) =>
+        String(value).toLowerCase().includes(needle)
       )
     );
-  }, [query]);
+  }, [query, tLanding, tLinks]);
 
   const groupedLinks = useMemo(
     () =>
@@ -134,7 +131,7 @@ export default function AdminPage() {
       try {
         const me = await apiGet<any>("/auth/me");
         setIsSuperadmin(Boolean(me?.isSuperadmin || me?.hasAdminBackendAccess));
-        if (!(me?.isSuperadmin || me?.hasAdminBackendAccess)) setError("Admin backend access required.");
+        if (!(me?.isSuperadmin || me?.hasAdminBackendAccess)) setError(tLanding("accessRequired"));
       } catch (e) {
         setError(errMsg(e));
       } finally {
@@ -144,23 +141,21 @@ export default function AdminPage() {
     void load();
   }, []);
 
-  if (loading) {
-    return <div className="settingsWrap">Loading admin backend...</div>;
-  }
+  if (loading) return <div className="settingsWrap">{tLanding("loading")}</div>;
 
   return (
     <div className="settingsWrap">
       <div className="adminTopActions">
-        <Link href="/settings" className="btn">
-          ← Back to settings
+        <Link href={withLocalePath("/settings", locale)} className="btn">
+          ← {tCommon("backToSettings")}
         </Link>
-        <Link href="/" className="btn">
-          ← Back to dashboard
+        <Link href={withLocalePath("/", locale)} className="btn">
+          ← {tCommon("backToDashboard")}
         </Link>
       </div>
-      <h2 style={{ marginTop: 0 }}>Admin Backend</h2>
+      <h2 style={{ marginTop: 0 }}>{tLanding("title")}</h2>
       <div style={{ fontSize: 13, color: "var(--muted)", marginBottom: 12 }}>
-        Select a section.
+        {tLanding("subtitle")}
       </div>
 
       {error ? (
@@ -174,11 +169,11 @@ export default function AdminPage() {
           <section className="card settingsSection">
             <div className="adminLandingToolbar">
               <div className="adminLandingMeta">
-                {filteredLinks.length} of {ADMIN_LINKS.length} sections
+                {tLanding("sectionsCount", { filtered: filteredLinks.length, total: ADMIN_LINKS.length })}
               </div>
               <input
                 className="input adminLandingSearch"
-                placeholder="Search admin sections..."
+                placeholder={tLanding("searchPlaceholder")}
                 value={query}
                 onChange={(event) => setQuery(event.target.value)}
               />
@@ -187,7 +182,7 @@ export default function AdminPage() {
 
           {filteredLinks.length === 0 ? (
             <section className="card settingsSection">
-              <div className="settingsMutedText">No admin section matches your search.</div>
+              <div className="settingsMutedText">{tLanding("noMatch")}</div>
             </section>
           ) : null}
 
@@ -198,21 +193,21 @@ export default function AdminPage() {
                 className={`card settingsSection adminLandingGroupCard ${adminCategoryClassName(group.category)}`}
               >
                 <div className="settingsSectionHeader">
-                  <h3 style={{ margin: 0 }}>{group.category}</h3>
-                  <div className="settingsSectionMeta">{group.items.length} sections</div>
+                  <h3 style={{ margin: 0 }}>{tLanding(`categories.${group.category}`)}</h3>
+                  <div className="settingsSectionMeta">{tLanding("groupSectionCount", { count: group.items.length })}</div>
                 </div>
                 <div className="adminLandingGrid adminLandingGroupGrid">
                   {group.items.map((item) => (
                     <article key={item.href} className="card adminLandingCard">
                       <div className="adminLandingCardHeader">
-                        <h3 style={{ margin: 0 }}>{item.title}</h3>
+                        <h3 style={{ margin: 0 }}>{tLinks(`${item.i18nKey}.title`)}</h3>
                       </div>
                       <div className="adminLandingDesc">
-                        {item.description}
+                        {tLinks(`${item.i18nKey}.description`)}
                       </div>
                       <div className="adminLandingActions">
-                        <Link href={item.href} className="btn btnPrimary">
-                          Open {item.title}
+                        <Link href={withLocalePath(item.href, locale)} className="btn btnPrimary">
+                          {tCommon("openSection", { title: tLinks(`${item.i18nKey}.title`) })}
                         </Link>
                       </div>
                     </article>

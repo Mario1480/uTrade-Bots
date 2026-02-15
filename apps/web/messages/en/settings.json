@@ -1,0 +1,184 @@
+{
+  "common": {
+    "backToSettings": "Back to settings",
+    "backToDashboard": "Back to dashboard",
+    "loading": "Loading...",
+    "saving": "Saving...",
+    "reload": "Reload",
+    "saveSettings": "Save settings"
+  },
+  "globalDefaults": {
+    "title": "Global Defaults",
+    "superadminOnly": "Superadmin only.",
+    "key": "Key",
+    "jsonValue": "JSON Value",
+    "save": "Save",
+    "saving": "saving...",
+    "saved": "saved"
+  },
+  "notifications": {
+    "title": "Notifications",
+    "telegram": {
+      "title": "Telegram alerts",
+      "openBot": "Open Bot (@utrade_ai_signals_bot)",
+      "description": "Bot token is managed globally by admin. You only need your Chat ID here.",
+      "tokenMissing": "Telegram bot token is not configured by admin yet.",
+      "tip": "Tip: For Telegram groups, the Chat ID usually starts with <strong>-100</strong>.",
+      "chatId": "Chat ID"
+    },
+    "messages": {
+      "saved": "Saved.",
+      "testSent": "Test alert sent to Telegram.",
+      "sending": "Sending...",
+      "sendTest": "Send test message"
+    }
+  },
+  "setup": {
+    "title": "Setup",
+    "newBot": "New Bot",
+    "refreshList": "Refresh list",
+    "botsTitle": "Bots",
+    "noBots": "No bots yet.",
+    "open": "Open",
+    "delete": "Delete",
+    "deleting": "Deleting...",
+    "confirmDelete": "Delete bot \"{name}\" ({symbol})? This cannot be undone.",
+    "deleted": "deleted {name}"
+  },
+  "subscription": {
+    "title": "License Management",
+    "confirmRemove": "Remove the stored license key? This will disable licensed features until a new key is saved.",
+    "messages": {
+      "savedVerified": "Saved and verified.",
+      "removed": "License removed."
+    },
+    "status": {
+      "title": "License status",
+      "status": "Status",
+      "unknown": "UNKNOWN",
+      "notConfigured": "NOT CONFIGURED",
+      "validUntil": "Valid until",
+      "checkedAt": "Checked at",
+      "source": "Source",
+      "error": "Error",
+      "limits": "Limits",
+      "usage": "Usage",
+      "features": "Features",
+      "overrides": "Overrides",
+      "bots": "bots"
+    },
+    "config": {
+      "title": "License configuration",
+      "description": "License changes are picked up automatically by the runner during the next verification cycle.",
+      "licenseKey": "License key",
+      "currentKeyPlaceholder": "Current: {key}",
+      "instanceId": "Instance ID is automatically set to your workspace ID:",
+      "saveVerify": "Save & verify",
+      "refreshStatus": "Refresh status",
+      "removeLicense": "Remove license"
+    }
+  },
+  "users": {
+    "title": "My Account",
+    "password": {
+      "title": "Password",
+      "description": "Create a new password for your account. For security, your current password is required.",
+      "current": "Current password",
+      "new": "New password",
+      "confirm": "Confirm new password",
+      "submit": "Create new password"
+    },
+    "security": {
+      "title": "Security",
+      "description": "Session and re-authentication settings for your account.",
+      "autoLogout": "Enable auto-logout",
+      "idleMinutes": "Idle minutes",
+      "otp": "Require OTP re-auth for sensitive actions"
+    },
+    "reset": {
+      "title": "Reset via Email Code",
+      "description": "Use this if you forgot your current password.",
+      "email": "Account email",
+      "emailPlaceholder": "you@example.com",
+      "sendCode": "Send reset code",
+      "code": "Reset code (6 digits)",
+      "codePlaceholder": "123456",
+      "newPassword": "New password",
+      "confirmPassword": "Confirm new password",
+      "submit": "Reset password",
+      "devCode": "Dev reset code:"
+    },
+    "messages": {
+      "saved": "Saved.",
+      "passwordMismatch": "Passwords do not match.",
+      "updated": "updated",
+      "sendingCode": "sending code...",
+      "validFor": "valid {minutes} min",
+      "resetCodeSent": "If the account exists, a reset code was sent{expires}.",
+      "updatingPassword": "updating password...",
+      "newPasswordMismatch": "New password and confirmation do not match.",
+      "passwordUpdated": "Password updated. Please sign in again if your session expires."
+    }
+  },
+  "roles": {
+    "title": "Members & Roles",
+    "confirm": {
+      "removeMember": "Remove member from workspace?",
+      "deleteRole": "Delete this role?"
+    },
+    "messages": {
+      "reauthRequired": "Re-auth required.",
+      "reauthRequiredMembers": "Re-auth required to manage members.",
+      "inviting": "inviting...",
+      "invited": "invited",
+      "creating": "creating...",
+      "created": "created"
+    },
+    "members": {
+      "title": "Workspace members",
+      "description": "Invite users and assign roles for this workspace.",
+      "superadmin": "Superadmin",
+      "remove": "Remove",
+      "empty": "No members yet.",
+      "inviteTitle": "Invite member",
+      "invitePlaceholder": "email@domain.com",
+      "inviteResetPassword": "Reset password and include a temporary password in the email",
+      "invite": "Invite",
+      "noPermission": "You don’t have permission to manage members."
+    },
+    "roles": {
+      "noPermission": "You don’t have permission to manage roles.",
+      "systemRole": "System role",
+      "delete": "Delete",
+      "createTitle": "Create role",
+      "namePlaceholder": "Role name",
+      "create": "Create role"
+    },
+    "permissions": {
+      "botsView": "View bots",
+      "botsCreate": "Create bots",
+      "botsEditConfig": "Edit configs",
+      "botsStartPauseStop": "Start/pause/stop",
+      "botsDelete": "Delete bots",
+      "tradingManualLimit": "Manual limit trades",
+      "tradingManualMarket": "Manual market trades",
+      "tradingPriceSupport": "Price support",
+      "exchangeKeysViewPresent": "View keys configured",
+      "exchangeKeysEdit": "Edit exchange keys",
+      "riskEdit": "Edit risk",
+      "presetsView": "View presets",
+      "presetsCreate": "Create presets",
+      "presetsApply": "Apply presets",
+      "presetsDelete": "Delete presets",
+      "usersManageMembers": "Manage members",
+      "usersManageRoles": "Manage roles",
+      "settingsSecurity": "Security settings",
+      "auditView": "View audit log"
+    }
+  },
+  "audit": {
+    "title": "Audit Log",
+    "noPermission": "You don’t have permission to view audit logs.",
+    "empty": "No audit events yet."
+  }
+}

@@ -2,7 +2,9 @@
 
 import Link from "next/link";
 import { useEffect, useState } from "react";
+import { useLocale, useTranslations } from "next-intl";
 import { ApiError, apiGet, apiPut } from "../../../lib/api";
+import { withLocalePath, type AppLocale } from "../../../i18n/config";
 
 function errMsg(e: unknown): string {
   if (e instanceof ApiError) return `${e.message} (HTTP ${e.status})`;
@@ -31,6 +33,9 @@ type ApiKeyHealthResponse = {
 };
 
 export default function AdminApiKeysPage() {
+  const t = useTranslations("admin.apiKeys");
+  const tCommon = useTranslations("admin.common");
+  const locale = useLocale() as AppLocale;
   const [loading, setLoading] = useState(true);
   const [isSuperadmin, setIsSuperadmin] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -93,7 +98,7 @@ export default function AdminApiKeysPage() {
       const me = await apiGet<any>("/auth/me");
       if (!(me?.isSuperadmin || me?.hasAdminBackendAccess)) {
         setIsSuperadmin(false);
-        setError("Admin backend access required.");
+        setError(t("messages.accessRequired"));
         return;
       }
       setIsSuperadmin(true);
@@ -124,7 +129,7 @@ export default function AdminApiKeysPage() {
   async function saveOpenAiKey() {
     const trimmed = openaiApiKey.trim();
     if (!trimmed) {
-      setError("Please enter an OpenAI API key.");
+      setError(t("messages.openAiKeyRequired"));
       return;
     }
     setError(null);
@@ -140,7 +145,7 @@ export default function AdminApiKeysPage() {
       setFmpApiKeyMasked(res.fmpApiKeyMasked ?? null);
       setHasFmpApiKey(Boolean(res.hasFmpApiKey));
       setUpdatedAt(res.updatedAt ?? null);
-      setNotice("OpenAI API key saved.");
+      setNotice(t("messages.openAiKeySaved"));
       await loadHealthStatus();
     } catch (e) {
       setError(errMsg(e));
@@ -148,7 +153,7 @@ export default function AdminApiKeysPage() {
   }
 
   async function clearOpenAiKey() {
-    const confirmed = window.confirm("Remove the stored OpenAI API key?");
+    const confirmed = window.confirm(t("messages.confirmClearOpenAi"));
     if (!confirmed) return;
     setError(null);
     setNotice(null);
@@ -162,7 +167,7 @@ export default function AdminApiKeysPage() {
       setFmpApiKeyMasked(res.fmpApiKeyMasked ?? null);
       setHasFmpApiKey(Boolean(res.hasFmpApiKey));
       setUpdatedAt(res.updatedAt ?? null);
-      setNotice("OpenAI API key removed.");
+      setNotice(t("messages.openAiKeyRemoved"));
       await loadHealthStatus();
     } catch (e) {
       setError(errMsg(e));
@@ -172,7 +177,7 @@ export default function AdminApiKeysPage() {
   async function saveFmpKey() {
     const trimmed = fmpApiKey.trim();
     if (!trimmed) {
-      setError("Please enter an FMP API key.");
+      setError(t("messages.fmpKeyRequired"));
       return;
     }
     setError(null);
@@ -188,7 +193,7 @@ export default function AdminApiKeysPage() {
       setFmpApiKeyMasked(res.fmpApiKeyMasked ?? null);
       setHasFmpApiKey(Boolean(res.hasFmpApiKey));
       setUpdatedAt(res.updatedAt ?? null);
-      setNotice("FMP API key saved.");
+      setNotice(t("messages.fmpKeySaved"));
       await loadFmpHealthStatus();
     } catch (e) {
       setError(errMsg(e));
@@ -196,7 +201,7 @@ export default function AdminApiKeysPage() {
   }
 
   async function clearFmpKey() {
-    const confirmed = window.confirm("Remove the stored FMP API key?");
+    const confirmed = window.confirm(t("messages.confirmClearFmp"));
     if (!confirmed) return;
     setError(null);
     setNotice(null);
@@ -210,7 +215,7 @@ export default function AdminApiKeysPage() {
       setFmpApiKeyMasked(res.fmpApiKeyMasked ?? null);
       setHasFmpApiKey(Boolean(res.hasFmpApiKey));
       setUpdatedAt(res.updatedAt ?? null);
-      setNotice("FMP API key removed.");
+      setNotice(t("messages.fmpKeyRemoved"));
       await loadFmpHealthStatus();
     } catch (e) {
       setError(errMsg(e));
@@ -220,19 +225,19 @@ export default function AdminApiKeysPage() {
   return (
     <div className="settingsWrap">
       <div className="adminTopActions">
-        <Link href="/admin" className="btn">
-          ← Back to admin
+        <Link href={withLocalePath("/admin", locale)} className="btn">
+          ← {tCommon("backToAdmin")}
         </Link>
-        <Link href="/settings" className="btn">
-          ← Back to settings
+        <Link href={withLocalePath("/settings", locale)} className="btn">
+          ← {tCommon("backToSettings")}
         </Link>
       </div>
-      <h2 style={{ marginTop: 0 }}>Admin · API Keys</h2>
+      <h2 style={{ marginTop: 0 }}>{t("title")}</h2>
       <div className="adminPageIntro">
-        Manage encrypted provider keys and run availability checks.
+        {t("subtitle")}
       </div>
 
-      {loading ? <div className="settingsMutedText">Loading...</div> : null}
+      {loading ? <div className="settingsMutedText">{t("loading")}</div> : null}
       {error ? (
         <div className="card settingsSection settingsAlert settingsAlertError">
           {error}
@@ -248,14 +253,14 @@ export default function AdminApiKeysPage() {
         <>
           <section className="card settingsSection">
           <div className="settingsSectionHeader">
-            <h3 style={{ margin: 0 }}>OpenAI Key (Global)</h3>
+            <h3 style={{ margin: 0 }}>{t("openAi.sectionTitle")}</h3>
           </div>
           <div style={{ fontSize: 12, color: "var(--muted)", marginBottom: 8 }}>
-            Stored key: {hasOpenAiApiKey ? "yes" : "no"}
+            {t("storedKey")}: {hasOpenAiApiKey ? t("yes") : t("no")}
             {openaiApiKeyMasked ? ` · ${openaiApiKeyMasked}` : ""}
           </div>
           <div style={{ fontSize: 12, color: "var(--muted)", marginBottom: 8 }}>
-            Last updated: {updatedAt ? new Date(updatedAt).toLocaleString() : "never"}
+            {t("lastUpdated")}: {updatedAt ? new Date(updatedAt).toLocaleString() : t("never")}
           </div>
           <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap", marginBottom: 10 }}>
             <span
@@ -266,24 +271,24 @@ export default function AdminApiKeysPage() {
                     ? "badgeWarn"
                     : "badgeDanger"
               }`}
-              title={health?.message ?? "Status not checked yet."}
+              title={health?.message ?? t("statusNotChecked")}
             >
-              OpenAI status:{" "}
+              {t("openAi.statusLabel")}:{" "}
               {healthLoading
-                ? "checking..."
+                ? t("checking")
                 : health?.status === "ok"
                   ? "OK"
                   : health?.status === "missing_key"
-                    ? "missing key"
-                    : "error"}
+                    ? t("missingKey")
+                    : t("errorStatus")}
             </span>
             <span style={{ fontSize: 12, color: "var(--muted)" }}>
-              Source: {health?.source ?? (envOverride ? "env" : hasOpenAiApiKey ? "db" : "none")}
+              {t("source")}: {health?.source ?? (envOverride ? "env" : hasOpenAiApiKey ? "db" : "none")}
               {typeof health?.latencyMs === "number" ? ` · ${health.latencyMs}ms` : ""}
-              {health?.checkedAt ? ` · checked ${new Date(health.checkedAt).toLocaleString()}` : ""}
+              {health?.checkedAt ? ` · ${t("checked")} ${new Date(health.checkedAt).toLocaleString()}` : ""}
             </span>
             <button className="btn" type="button" onClick={() => void loadHealthStatus()} disabled={healthLoading}>
-              {healthLoading ? "Checking..." : "Refresh status"}
+              {healthLoading ? t("checkingButton") : t("refreshStatus")}
             </button>
           </div>
           {health?.message ? (
@@ -293,11 +298,11 @@ export default function AdminApiKeysPage() {
           ) : null}
           {envOverride ? (
             <div style={{ fontSize: 12, color: "#f59e0b", marginBottom: 10 }}>
-              ENV `AI_API_KEY` is still set. Remove it from `.env.prod` if you want DB-only key handling.
+              {t("openAi.envOverrideHint")}
             </div>
           ) : null}
           <label style={{ display: "grid", gap: 6, marginBottom: 10 }}>
-            <span style={{ fontSize: 12, color: "var(--muted)" }}>New OpenAI API key</span>
+            <span style={{ fontSize: 12, color: "var(--muted)" }}>{t("openAi.newKey")}</span>
             <input
               className="input"
               type="password"
@@ -308,24 +313,24 @@ export default function AdminApiKeysPage() {
           </label>
           <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
             <button className="btn btnPrimary" onClick={() => void saveOpenAiKey()}>
-              Save OpenAI key
+              {t("openAi.save")}
             </button>
             <button className="btn btnStop" onClick={() => void clearOpenAiKey()} disabled={!hasOpenAiApiKey}>
-              Remove stored key
+              {t("removeStoredKey")}
             </button>
           </div>
           </section>
 
           <section className="card settingsSection">
           <div className="settingsSectionHeader">
-            <h3 style={{ margin: 0 }}>FMP Key (Economic Calendar)</h3>
+            <h3 style={{ margin: 0 }}>{t("fmp.sectionTitle")}</h3>
           </div>
           <div style={{ fontSize: 12, color: "var(--muted)", marginBottom: 8 }}>
-            Stored key: {hasFmpApiKey ? "yes" : "no"}
+            {t("storedKey")}: {hasFmpApiKey ? t("yes") : t("no")}
             {fmpApiKeyMasked ? ` · ${fmpApiKeyMasked}` : ""}
           </div>
           <div style={{ fontSize: 12, color: "var(--muted)", marginBottom: 8 }}>
-            Last updated: {updatedAt ? new Date(updatedAt).toLocaleString() : "never"}
+            {t("lastUpdated")}: {updatedAt ? new Date(updatedAt).toLocaleString() : t("never")}
           </div>
           <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap", marginBottom: 10 }}>
             <span
@@ -336,24 +341,24 @@ export default function AdminApiKeysPage() {
                     ? "badgeWarn"
                     : "badgeDanger"
               }`}
-              title={fmpHealth?.message ?? "Status not checked yet."}
+              title={fmpHealth?.message ?? t("statusNotChecked")}
             >
-              FMP status:{" "}
+              {t("fmp.statusLabel")}:{" "}
               {fmpHealthLoading
-                ? "checking..."
+                ? t("checking")
                 : fmpHealth?.status === "ok"
                   ? "OK"
                   : fmpHealth?.status === "missing_key"
-                    ? "missing key"
-                    : "error"}
+                    ? t("missingKey")
+                    : t("errorStatus")}
             </span>
             <span style={{ fontSize: 12, color: "var(--muted)" }}>
-              Source: {fmpHealth?.source ?? (envOverrideFmp ? "env" : hasFmpApiKey ? "db" : "none")}
+              {t("source")}: {fmpHealth?.source ?? (envOverrideFmp ? "env" : hasFmpApiKey ? "db" : "none")}
               {typeof fmpHealth?.latencyMs === "number" ? ` · ${fmpHealth.latencyMs}ms` : ""}
-              {fmpHealth?.checkedAt ? ` · checked ${new Date(fmpHealth.checkedAt).toLocaleString()}` : ""}
+              {fmpHealth?.checkedAt ? ` · ${t("checked")} ${new Date(fmpHealth.checkedAt).toLocaleString()}` : ""}
             </span>
             <button className="btn" type="button" onClick={() => void loadFmpHealthStatus()} disabled={fmpHealthLoading}>
-              {fmpHealthLoading ? "Checking..." : "Refresh status"}
+              {fmpHealthLoading ? t("checkingButton") : t("refreshStatus")}
             </button>
           </div>
           {fmpHealth?.message ? (
@@ -363,11 +368,11 @@ export default function AdminApiKeysPage() {
           ) : null}
           {envOverrideFmp ? (
             <div style={{ fontSize: 12, color: "#f59e0b", marginBottom: 10 }}>
-              ENV `FMP_API_KEY` is still set. Remove it from `.env.prod` if you want DB-only key handling.
+              {t("fmp.envOverrideHint")}
             </div>
           ) : null}
           <label style={{ display: "grid", gap: 6, marginBottom: 10 }}>
-            <span style={{ fontSize: 12, color: "var(--muted)" }}>New FMP API key</span>
+            <span style={{ fontSize: 12, color: "var(--muted)" }}>{t("fmp.newKey")}</span>
             <input
               className="input"
               type="password"
@@ -378,10 +383,10 @@ export default function AdminApiKeysPage() {
           </label>
           <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
             <button className="btn btnPrimary" onClick={() => void saveFmpKey()}>
-              Save FMP key
+              {t("fmp.save")}
             </button>
             <button className="btn btnStop" onClick={() => void clearFmpKey()} disabled={!hasFmpApiKey}>
-              Remove stored key
+              {t("removeStoredKey")}
             </button>
           </div>
           </section>

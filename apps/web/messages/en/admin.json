@@ -1,0 +1,291 @@
+{
+  "common": {
+    "backToAdmin": "Back to admin",
+    "backToSettings": "Back to settings",
+    "backToDashboard": "Back to dashboard",
+    "openSection": "Open {title}"
+  },
+  "landing": {
+    "title": "Admin Backend",
+    "subtitle": "Select a section.",
+    "accessRequired": "Admin backend access required.",
+    "loading": "Loading admin backend...",
+    "searchPlaceholder": "Search admin sections...",
+    "sectionsCount": "{filtered} of {total} sections",
+    "groupSectionCount": "{count} sections",
+    "noMatch": "No admin section matches your search.",
+    "categories": {
+      "Access": "Access",
+      "Integrations": "Integrations",
+      "Strategy": "Strategy"
+    }
+  },
+  "strategiesIndex": {
+    "title": "Strategies",
+    "subtitle": "Manage local, AI, and composite strategies.",
+    "local": "Local Strategies",
+    "ai": "AI Strategies",
+    "builder": "Composite Builder"
+  },
+  "predictionDefaults": {
+    "title": "Admin · Prediction Defaults",
+    "subtitle": "Global defaults for newly created prediction schedules.",
+    "loading": "Loading...",
+    "globalDefaultsTitle": "Global Create Defaults",
+    "sourceLabel": "Source",
+    "lastUpdatedLabel": "Last updated",
+    "never": "never",
+    "signalMode": "Signal mode",
+    "signalModeHint": "Applies to newly created predictions. Current: {current}",
+    "modes": {
+      "localOnly": "Local only",
+      "aiOnly": "AI only",
+      "both": "Local + AI"
+    },
+    "loadDefaults": "Load defaults",
+    "saveSettings": "Save settings",
+    "saving": "Saving...",
+    "messages": {
+      "accessRequired": "Admin backend access required.",
+      "defaultsLoaded": "Default values loaded into form (not saved yet).",
+      "saved": "Prediction default settings saved."
+    }
+  },
+  "predictionRefresh": {
+    "title": "Admin · Prediction Refresh",
+    "subtitle": "Tune scheduler stability and AI refresh behavior for auto predictions.",
+    "loading": "Loading...",
+    "controlsTitle": "Scheduler Stability Controls",
+    "sourceLabel": "Source",
+    "lastUpdatedLabel": "Last updated",
+    "never": "never",
+    "quickPresets": "Quick presets",
+    "presetTip": "Tip: Load a preset first, then click \"Save settings\".",
+    "loadDefaults": "Load defaults",
+    "saveSettings": "Save settings",
+    "saving": "Saving...",
+    "presets": {
+      "conservative": {
+        "label": "Conservative",
+        "description": "Fewer signal flips and fewer AI calls."
+      },
+      "balanced": {
+        "label": "Balanced",
+        "description": "Recommended default for most markets."
+      },
+      "aggressive": {
+        "label": "Aggressive",
+        "description": "Faster reactions with higher noise risk."
+      }
+    },
+    "fields": {
+      "triggerDebounce": {
+        "label": "Trigger debounce (sec)",
+        "hint": "Trigger must stay stable before a refresh starts."
+      },
+      "aiCooldown": {
+        "label": "AI cooldown (sec)",
+        "hint": "Minimum delay between OpenAI explanations per symbol/timeframe."
+      },
+      "eventThrottle": {
+        "label": "Event throttle (sec)",
+        "hint": "Repeated identical events are suppressed within this window."
+      },
+      "hysteresisRatio": {
+        "label": "Hysteresis ratio (0.2 - 0.95)",
+        "hint": "Higher values are steadier (fewer flips), lower values react faster."
+      },
+      "unstableFlipLimit": {
+        "label": "Unstable flip limit",
+        "hint": "Number of flips required before the market is marked unstable."
+      },
+      "unstableFlipWindow": {
+        "label": "Unstable flip window (sec)",
+        "hint": "Time window used to count unstable signal flips."
+      }
+    },
+    "messages": {
+      "accessRequired": "Admin backend access required.",
+      "defaultsLoaded": "Default values loaded into form (not saved yet).",
+      "presetLoaded": "{label} preset loaded (not saved yet).",
+      "saved": "Prediction refresh settings saved."
+    }
+  },
+  "telegram": {
+    "title": "Admin · Global Telegram",
+    "subtitle": "Configure global Telegram credentials and delivery checks.",
+    "loading": "Loading...",
+    "sectionTitle": "Telegram Settings",
+    "configured": "Configured",
+    "yes": "yes",
+    "no": "no",
+    "currentToken": "current token",
+    "botToken": "Bot token",
+    "chatId": "Chat ID",
+    "saveTelegram": "Save Telegram",
+    "sendTest": "Send test",
+    "messages": {
+      "accessRequired": "Admin backend access required.",
+      "saved": "Telegram settings saved.",
+      "testSent": "Telegram test sent."
+    }
+  },
+  "smtp": {
+    "title": "Admin · SMTP",
+    "subtitle": "Manage SMTP transport used for system and reset emails.",
+    "loading": "Loading...",
+    "sectionTitle": "SMTP Settings",
+    "passwordStored": "Password stored",
+    "yes": "yes",
+    "no": "no",
+    "host": "Host",
+    "port": "Port",
+    "user": "User",
+    "from": "From",
+    "secureConnection": "Use secure connection",
+    "passwordHint": "Password (leave empty to keep)",
+    "saveSmtp": "Save SMTP",
+    "testRecipient": "Test recipient",
+    "sendTest": "Send SMTP test",
+    "messages": {
+      "accessRequired": "Admin backend access required.",
+      "saved": "SMTP settings saved.",
+      "testSent": "SMTP test email sent."
+    }
+  },
+  "exchanges": {
+    "title": "Admin · Offered Exchanges",
+    "subtitle": "Choose which exchanges are available for user account onboarding.",
+    "loading": "Loading...",
+    "sectionTitle": "Exchange Availability",
+    "description": "Enabled exchanges are offered to users in exchange account setup.",
+    "save": "Save exchanges",
+    "messages": {
+      "accessRequired": "Admin backend access required.",
+      "saved": "Exchange offer updated."
+    }
+  },
+  "users": {
+    "title": "Admin · Users",
+    "subtitle": "Manage users, credentials and account access.",
+    "loading": "Loading...",
+    "createUserTitle": "Create User",
+    "email": "Email",
+    "temporaryPassword": "Temporary password (optional)",
+    "createUser": "Create user",
+    "userListTitle": "User List",
+    "searchUser": "Search user",
+    "searchPlaceholder": "Filter by email...",
+    "superadmin": "superadmin",
+    "stats": "Bots: {bots} · Accounts: {accounts} · Sessions: {sessions}",
+    "adminBackendAccess": "Admin backend access",
+    "newPassword": "New password",
+    "setPassword": "Set password",
+    "delete": "Delete",
+    "noUsers": "No users match the filter.",
+    "confirmDelete": "Delete user {email}? This cannot be undone.",
+    "messages": {
+      "accessRequired": "Admin backend access required.",
+      "userCreated": "User created.",
+      "userCreatedWithPassword": "User created. Temporary password: {password}",
+      "passwordUpdated": "Password updated and sessions revoked.",
+      "deleted": "Deleted {email}.",
+      "adminAccessGranted": "Admin backend access granted for {email}.",
+      "adminAccessRevoked": "Admin backend access revoked for {email}."
+    }
+  },
+  "apiKeys": {
+    "title": "Admin · API Keys",
+    "subtitle": "Manage encrypted provider keys and run availability checks.",
+    "loading": "Loading...",
+    "storedKey": "Stored key",
+    "lastUpdated": "Last updated",
+    "statusNotChecked": "Status not checked yet.",
+    "source": "Source",
+    "checked": "checked",
+    "refreshStatus": "Refresh status",
+    "checking": "checking...",
+    "checkingButton": "Checking...",
+    "missingKey": "missing key",
+    "errorStatus": "error",
+    "yes": "yes",
+    "no": "no",
+    "never": "never",
+    "removeStoredKey": "Remove stored key",
+    "openAi": {
+      "sectionTitle": "OpenAI Key (Global)",
+      "statusLabel": "OpenAI status",
+      "newKey": "New OpenAI API key",
+      "save": "Save OpenAI key",
+      "envOverrideHint": "ENV `AI_API_KEY` is still set. Remove it from `.env.prod` if you want DB-only key handling."
+    },
+    "fmp": {
+      "sectionTitle": "FMP Key (Economic Calendar)",
+      "statusLabel": "FMP status",
+      "newKey": "New FMP API key",
+      "save": "Save FMP key",
+      "envOverrideHint": "ENV `FMP_API_KEY` is still set. Remove it from `.env.prod` if you want DB-only key handling."
+    },
+    "messages": {
+      "accessRequired": "Admin backend access required.",
+      "openAiKeyRequired": "Please enter an OpenAI API key.",
+      "openAiKeySaved": "OpenAI API key saved.",
+      "openAiKeyRemoved": "OpenAI API key removed.",
+      "confirmClearOpenAi": "Remove the stored OpenAI API key?",
+      "fmpKeyRequired": "Please enter an FMP API key.",
+      "fmpKeySaved": "FMP API key saved.",
+      "fmpKeyRemoved": "FMP API key removed.",
+      "confirmClearFmp": "Remove the stored FMP API key?"
+    }
+  },
+  "links": {
+    "users": {
+      "title": "Users",
+      "description": "Search, create, update password and delete users."
+    },
+    "telegram": {
+      "title": "Global Telegram",
+      "description": "Set global bot token/chat and send test alerts."
+    },
+    "exchanges": {
+      "title": "Offered Exchanges",
+      "description": "Select which CEX options are available to users."
+    },
+    "smtp": {
+      "title": "SMTP",
+      "description": "Configure SMTP transport and send test email."
+    },
+    "apiKeys": {
+      "title": "API Keys",
+      "description": "Store global API keys (starting with OpenAI) encrypted in DB."
+    },
+    "indicatorSettings": {
+      "title": "Indicator Settings",
+      "description": "Configure feature packs and indicator params with scoped overrides."
+    },
+    "localStrategies": {
+      "title": "Local Strategies",
+      "description": "Create and manage deterministic local strategy instances."
+    },
+    "compositeBuilder": {
+      "title": "Composite Builder",
+      "description": "Combine Local + AI nodes into pipeline strategies with dry-run preview."
+    },
+    "aiStrategies": {
+      "title": "AI Strategies",
+      "description": "Manage AI prompt strategies and prompt-level runtime defaults."
+    },
+    "predictionRefresh": {
+      "title": "Prediction Refresh",
+      "description": "Tune debounce, hysteresis, cooldown and event throttle for auto predictions."
+    },
+    "predictionDefaults": {
+      "title": "Prediction Defaults",
+      "description": "Configure global defaults like signal mode for newly created predictions."
+    },
+    "aiTrace": {
+      "title": "AI Trace Logs",
+      "description": "Inspect AI request payloads/responses with on/off toggle and cleanup."
+    }
+  }
+}

@@ -2,7 +2,9 @@
 
 import Link from "next/link";
 import { useEffect, useState } from "react";
+import { useLocale, useTranslations } from "next-intl";
 import { ApiError, apiDelete, apiGet, apiPut } from "../../../lib/api";
+import { withLocalePath, type AppLocale } from "../../../i18n/config";
 
 type SubscriptionStatus = {
   configured: boolean;
@@ -37,6 +39,9 @@ type SubscriptionStatus = {
 };
 
 export default function SubscriptionPage() {
+  const t = useTranslations("settings.subscription");
+  const tCommon = useTranslations("settings.common");
+  const locale = useLocale() as AppLocale;
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [msg, setMsg] = useState<string | null>(null);
@@ -79,7 +84,7 @@ export default function SubscriptionPage() {
       const res = await apiPut<SubscriptionStatus>("/settings/subscription", payload);
       setStatus(res);
       setLicenseKey("");
-      setMsg("Saved and verified.");
+      setMsg(t("messages.savedVerified"));
     } catch (e) {
       setMsg(errMsg(e));
     } finally {
@@ -88,7 +93,7 @@ export default function SubscriptionPage() {
   }
 
   async function clearLicense() {
-    if (!confirm("Remove the stored license key? This will disable licensed features until a new key is saved.")) {
+    if (!confirm(t("confirmRemove"))) {
       return;
     }
     setSaving(true);
@@ -98,7 +103,7 @@ export default function SubscriptionPage() {
       setStatus(res);
       setLicenseKey("");
       setWorkspaceId("");
-      setMsg("License removed.");
+      setMsg(t("messages.removed"));
     } catch (e) {
       setMsg(errMsg(e));
     } finally {
@@ -113,49 +118,49 @@ export default function SubscriptionPage() {
   return (
     <div style={{ maxWidth: 980 }}>
       <div style={{ marginBottom: 10, display: "flex", gap: 8, flexWrap: "wrap" }}>
-        <Link href="/settings" className="btn">
-          ← Back to settings
+        <Link href={withLocalePath("/settings", locale)} className="btn">
+          ← {tCommon("backToSettings")}
         </Link>
-        <Link href="/" className="btn">
-          ← Back to dashboard
+        <Link href={withLocalePath("/", locale)} className="btn">
+          ← {tCommon("backToDashboard")}
         </Link>
       </div>
-      <h2 style={{ marginTop: 0 }}>License Management</h2>
+      <h2 style={{ marginTop: 0 }}>{t("title")}</h2>
       <div className="card" style={{ padding: 12, fontSize: 13 }}>
-        <div style={{ fontWeight: 700, marginBottom: 6 }}>License status</div>
+        <div style={{ fontWeight: 700, marginBottom: 6 }}>{t("status.title")}</div>
         {loading ? (
-          <div style={{ color: "var(--muted)" }}>Loading...</div>
+          <div style={{ color: "var(--muted)" }}>{tCommon("loading")}</div>
         ) : status ? (
           <div style={{ display: "grid", gap: 6 }}>
             <div>
-              <b>Status:</b>{" "}
-              {status.status ?? (status.configured ? "UNKNOWN" : "NOT CONFIGURED")}
+              <b>{t("status.status")}:</b>{" "}
+              {status.status ?? (status.configured ? t("status.unknown") : t("status.notConfigured"))}
             </div>
             <div>
-              <b>Valid until:</b> {status.validUntil ?? "—"}
+              <b>{t("status.validUntil")}:</b> {status.validUntil ?? "—"}
             </div>
             <div>
-              <b>Checked at:</b> {status.checkedAt ?? "—"}
+              <b>{t("status.checkedAt")}:</b> {status.checkedAt ?? "—"}
             </div>
             <div>
-              <b>Source:</b> {status.source}
+              <b>{t("status.source")}:</b> {status.source}
             </div>
             {status.error ? (
               <div style={{ color: "var(--warn)" }}>
-                Error: {status.error.code}
+                {t("status.error")}: {status.error.code}
                 {status.error.status ? ` (HTTP ${status.error.status})` : ""}
                 {status.error.message ? ` — ${status.error.message}` : ""}
               </div>
             ) : null}
             {status.limits ? (
               <div>
-                <b>Limits:</b> bots {status.limits.includedBots + status.limits.addOnBots}
+                <b>{t("status.limits")}:</b> {t("status.bots")} {status.limits.includedBots + status.limits.addOnBots}
                 {", "}cex {status.limits.includedCex + status.limits.addOnCex}
               </div>
             ) : null}
             {status.usage ? (
               <div>
-                <b>Usage:</b> bots {status.usage.bots}
+                <b>{t("status.usage")}:</b> {t("status.bots")} {status.usage.bots}
                 {status.limits ? ` / ${status.limits.includedBots + status.limits.addOnBots}` : ""}
                 {", "}cex {status.usage.cex}
                 {status.limits ? ` / ${status.limits.includedCex + status.limits.addOnCex}` : ""}
@@ -163,7 +168,7 @@ export default function SubscriptionPage() {
             ) : null}
             {status.features ? (
               <div>
-                <b>Features:</b>{" "}
+                <b>{t("status.features")}:</b>{" "}
                 {`priceSupport=${status.features.priceSupport ? "on" : "off"}, `}
                 {`priceFollow=${status.features.priceFollow ? "on" : "off"}, `}
                 {`ai=${status.features.aiRecommendations ? "on" : "off"}, `}
@@ -172,7 +177,7 @@ export default function SubscriptionPage() {
             ) : null}
             {status.overrides ? (
               <div>
-                <b>Overrides:</b>{" "}
+                <b>{t("status.overrides")}:</b>{" "}
                 {`manual=${status.overrides.manual ? "on" : "off"}, `}
                 {`unlimited=${status.overrides.unlimited ? "on" : "off"}`}
                 {status.overrides.note ? ` — ${status.overrides.note}` : ""}
@@ -183,22 +188,26 @@ export default function SubscriptionPage() {
       </div>
 
       <div className="card" style={{ padding: 12, fontSize: 13, marginTop: 12 }}>
-        <div style={{ fontWeight: 700, marginBottom: 6 }}>License configuration</div>
+        <div style={{ fontWeight: 700, marginBottom: 6 }}>{t("config.title")}</div>
         <div style={{ color: "var(--muted)", marginBottom: 10 }}>
-          License changes are picked up automatically by the runner during the next verification cycle.
+          {t("config.description")}
         </div>
         <div style={{ display: "grid", gap: 10, marginBottom: 10 }}>
           <label style={{ display: "grid", gap: 6 }}>
-            <span style={{ fontSize: 12, color: "var(--muted)" }}>License key</span>
+            <span style={{ fontSize: 12, color: "var(--muted)" }}>{t("config.licenseKey")}</span>
             <input
               className="input"
-              placeholder={status?.licenseKeyMasked ? `Current: ${status.licenseKeyMasked}` : "UUID"}
+              placeholder={
+                status?.licenseKeyMasked
+                  ? t("config.currentKeyPlaceholder", { key: status.licenseKeyMasked })
+                  : "UUID"
+              }
               value={licenseKey}
               onChange={(e) => setLicenseKey(e.target.value)}
             />
           </label>
           <div style={{ fontSize: 12, color: "var(--muted)" }}>
-            Instance ID is automatically set to your workspace ID:
+            {t("config.instanceId")}
             <span style={{ marginLeft: 6, fontWeight: 600 }}>
               {workspaceId || status?.instanceId || "—"}
             </span>
@@ -206,13 +215,13 @@ export default function SubscriptionPage() {
         </div>
         <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 10 }}>
           <button className="btn btnPrimary" onClick={save} disabled={saving}>
-            {saving ? "Saving..." : "Save & verify"}
+            {saving ? tCommon("saving") : t("config.saveVerify")}
           </button>
           <button className="btn" onClick={loadStatus} disabled={loading}>
-            Refresh status
+            {t("config.refreshStatus")}
           </button>
           <button className="btn btnStop" onClick={clearLicense} disabled={saving || loading}>
-            Remove license
+            {t("config.removeLicense")}
           </button>
         </div>
         {msg ? <div style={{ marginTop: 10, color: "var(--muted)" }}>{msg}</div> : null}

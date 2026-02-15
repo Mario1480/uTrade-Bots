@@ -2,32 +2,37 @@
 
 import Link from "next/link";
 import { useEffect, useState } from "react";
+import { useLocale, useTranslations } from "next-intl";
 import ReauthDialog from "../../components/ReauthDialog";
 import { ApiError, apiGet, apiPost, apiPut, apiDel } from "../../../lib/api";
+import { withLocalePath, type AppLocale } from "../../../i18n/config";
 
 const PERMISSIONS = [
-  { key: "bots.view", label: "View bots" },
-  { key: "bots.create", label: "Create bots" },
-  { key: "bots.edit_config", label: "Edit configs" },
-  { key: "bots.start_pause_stop", label: "Start/pause/stop" },
-  { key: "bots.delete", label: "Delete bots" },
-  { key: "trading.manual_limit", label: "Manual limit trades" },
-  { key: "trading.manual_market", label: "Manual market trades" },
-  { key: "trading.price_support", label: "Price support" },
-  { key: "exchange_keys.view_present", label: "View keys configured" },
-  { key: "exchange_keys.edit", label: "Edit exchange keys" },
-  { key: "risk.edit", label: "Edit risk" },
-  { key: "presets.view", label: "View presets" },
-  { key: "presets.create", label: "Create presets" },
-  { key: "presets.apply", label: "Apply presets" },
-  { key: "presets.delete", label: "Delete presets" },
-  { key: "users.manage_members", label: "Manage members" },
-  { key: "users.manage_roles", label: "Manage roles" },
-  { key: "settings.security", label: "Security settings" },
-  { key: "audit.view", label: "View audit log" }
+  { key: "bots.view", labelKey: "botsView" },
+  { key: "bots.create", labelKey: "botsCreate" },
+  { key: "bots.edit_config", labelKey: "botsEditConfig" },
+  { key: "bots.start_pause_stop", labelKey: "botsStartPauseStop" },
+  { key: "bots.delete", labelKey: "botsDelete" },
+  { key: "trading.manual_limit", labelKey: "tradingManualLimit" },
+  { key: "trading.manual_market", labelKey: "tradingManualMarket" },
+  { key: "trading.price_support", labelKey: "tradingPriceSupport" },
+  { key: "exchange_keys.view_present", labelKey: "exchangeKeysViewPresent" },
+  { key: "exchange_keys.edit", labelKey: "exchangeKeysEdit" },
+  { key: "risk.edit", labelKey: "riskEdit" },
+  { key: "presets.view", labelKey: "presetsView" },
+  { key: "presets.create", labelKey: "presetsCreate" },
+  { key: "presets.apply", labelKey: "presetsApply" },
+  { key: "presets.delete", labelKey: "presetsDelete" },
+  { key: "users.manage_members", labelKey: "usersManageMembers" },
+  { key: "users.manage_roles", labelKey: "usersManageRoles" },
+  { key: "settings.security", labelKey: "settingsSecurity" },
+  { key: "audit.view", labelKey: "auditView" }
 ];
 
 export default function RolesPage() {
+  const t = useTranslations("settings.roles");
+  const tCommon = useTranslations("settings.common");
+  const locale = useLocale() as AppLocale;
   const [me, setMe] = useState<any>(null);
   const [roles, setRoles] = useState<any[]>([]);
   const [members, setMembers] = useState<any[]>([]);
@@ -59,7 +64,7 @@ export default function RolesPage() {
 
   function handleReauthError(e: any, retry: () => Promise<void>) {
     if (isReauthError(e)) {
-      setError("Re-auth required.");
+      setError(t("messages.reauthRequired"));
       requireReauth(retry);
       return true;
     }
@@ -115,7 +120,7 @@ export default function RolesPage() {
 
   function handleMemberReauthError(e: any, retry: () => Promise<void>) {
     if (isReauthError(e)) {
-      setMemberError("Re-auth required to manage members.");
+      setMemberError(t("messages.reauthRequiredMembers"));
       requireReauth(retry);
       return true;
     }
@@ -124,7 +129,7 @@ export default function RolesPage() {
 
   async function invite() {
     if (!inviteEmail || !inviteRoleId || !me?.workspaceId) return;
-    setMemberStatus("inviting...");
+    setMemberStatus(t("messages.inviting"));
     setMemberError("");
     try {
       await apiPost(`/workspaces/${me.workspaceId}/members/invite`, {
@@ -134,7 +139,7 @@ export default function RolesPage() {
       });
       setInviteEmail("");
       setInviteResetPassword(false);
-      setMemberStatus("invited");
+      setMemberStatus(t("messages.invited"));
       await load();
       setTimeout(() => setMemberStatus(""), 1200);
     } catch (e) {
@@ -163,7 +168,7 @@ export default function RolesPage() {
 
   async function removeMember(memberId: string) {
     if (!me?.workspaceId) return;
-    if (!confirm("Remove member from workspace?")) return;
+    if (!confirm(t("confirm.removeMember"))) return;
     setSavingMemberId(memberId);
     setMemberError("");
     try {
@@ -206,13 +211,13 @@ export default function RolesPage() {
 
   async function createRole() {
     if (!newRoleName) return;
-    setStatus("creating...");
+    setStatus(t("messages.creating"));
     setError("");
     try {
       const role = await apiPost(`/workspaces/${me.workspaceId}/roles`, { name: newRoleName, permissions: {} });
       setRoles((prev) => [...prev, role]);
       setNewRoleName("");
-      setStatus("created");
+      setStatus(t("messages.created"));
       setTimeout(() => setStatus(""), 1200);
     } catch (e) {
       setStatus("");
@@ -223,7 +228,7 @@ export default function RolesPage() {
   }
 
   async function deleteRole(roleId: string) {
-    if (!confirm("Delete this role?")) return;
+    if (!confirm(t("confirm.deleteRole"))) return;
     setError("");
     try {
       await apiDel(`/workspaces/${me.workspaceId}/roles/${roleId}`);
@@ -238,14 +243,14 @@ export default function RolesPage() {
   return (
     <div style={{ maxWidth: 980 }}>
       <div style={{ marginBottom: 10, display: "flex", gap: 8, flexWrap: "wrap" }}>
-        <Link href="/settings" className="btn">← Back to settings</Link>
-        <Link href="/" className="btn">← Back to dashboard</Link>
+        <Link href={withLocalePath("/settings", locale)} className="btn">← {tCommon("backToSettings")}</Link>
+        <Link href={withLocalePath("/", locale)} className="btn">← {tCommon("backToDashboard")}</Link>
       </div>
-      <h2 style={{ marginTop: 0 }}>Members & Roles</h2>
+      <h2 style={{ marginTop: 0 }}>{t("title")}</h2>
       <div className="card" style={{ padding: 12, marginBottom: 14 }}>
-        <div style={{ fontWeight: 700, marginBottom: 6 }}>Workspace members</div>
+        <div style={{ fontWeight: 700, marginBottom: 6 }}>{t("members.title")}</div>
         <div style={{ fontSize: 12, color: "var(--muted)", marginBottom: 10 }}>
-          Invite users and assign roles for this workspace.
+          {t("members.description")}
         </div>
         <div style={{ display: "grid", gap: 8 }}>
           {members.length ? (
@@ -256,7 +261,7 @@ export default function RolesPage() {
                   <div style={{ fontSize: 12, color: "var(--muted)" }}>{m.status}</div>
                 </div>
                 {["admin@utrade.vip", "admin@uliquid.vip"].includes(String(m.email ?? "").toLowerCase()) ? (
-                  <div style={{ fontSize: 12, color: "var(--muted)" }}>Superadmin</div>
+                  <div style={{ fontSize: 12, color: "var(--muted)" }}>{t("members.superadmin")}</div>
                 ) : (
                   <>
                     <select
@@ -277,24 +282,24 @@ export default function RolesPage() {
                       onClick={() => removeMember(m.id)}
                       disabled={!canManageMembers || savingMemberId === m.id}
                     >
-                      Remove
+                      {t("members.remove")}
                     </button>
                   </>
                 )}
               </div>
             ))
           ) : (
-            <div style={{ fontSize: 12, color: "var(--muted)" }}>No members yet.</div>
+            <div style={{ fontSize: 12, color: "var(--muted)" }}>{t("members.empty")}</div>
           )}
         </div>
         {canManageMembers ? (
           <div style={{ marginTop: 12, display: "grid", gap: 8 }}>
-            <div style={{ fontWeight: 600 }}>Invite member</div>
+            <div style={{ fontWeight: 600 }}>{t("members.inviteTitle")}</div>
             <input
               className="input"
               value={inviteEmail}
               onChange={(e) => setInviteEmail(e.target.value)}
-              placeholder="email@domain.com"
+              placeholder={t("members.invitePlaceholder")}
             />
             <select
               className="input"
@@ -313,15 +318,15 @@ export default function RolesPage() {
                 checked={inviteResetPassword}
                 onChange={(e) => setInviteResetPassword(e.target.checked)}
               />
-              Reset password and include a temporary password in the email
+              {t("members.inviteResetPassword")}
             </label>
             <button className="btn btnPrimary" onClick={invite} disabled={!inviteEmail || !inviteRoleId}>
-              Invite
+              {t("members.invite")}
             </button>
           </div>
         ) : (
           <div style={{ fontSize: 12, color: "var(--muted)", marginTop: 8 }}>
-            You don’t have permission to manage members.
+            {t("members.noPermission")}
           </div>
         )}
         {memberStatus ? <div style={{ fontSize: 12, opacity: 0.7, marginTop: 8 }}>{memberStatus}</div> : null}
@@ -329,7 +334,7 @@ export default function RolesPage() {
       </div>
       {!canManage ? (
         <div className="card" style={{ padding: 12, fontSize: 12, color: "var(--muted)" }}>
-          You don’t have permission to manage roles.
+          {t("roles.noPermission")}
         </div>
       ) : null}
 
@@ -348,10 +353,10 @@ export default function RolesPage() {
                 onChange={(e) => renameRole(role.id, e.target.value)}
               />
               {role.isSystem ? (
-                <span style={{ fontSize: 12, color: "var(--muted)" }}>System role</span>
+                <span style={{ fontSize: 12, color: "var(--muted)" }}>{t("roles.systemRole")}</span>
               ) : (
                 <button className="btn btnStop" disabled={!canManage} onClick={() => deleteRole(role.id)}>
-                  Delete
+                  {t("roles.delete")}
                 </button>
               )}
             </div>
@@ -364,7 +369,7 @@ export default function RolesPage() {
                     disabled={!canManage}
                     onChange={(e) => togglePerm(role.id, p.key, e.target.checked)}
                   />
-                  {p.label}
+                  {t(`permissions.${p.labelKey}`)}
                 </label>
               ))}
             </div>
@@ -374,15 +379,15 @@ export default function RolesPage() {
 
       {canManage ? (
         <div className="card" style={{ padding: 12, marginTop: 14 }}>
-          <div style={{ fontWeight: 700, marginBottom: 8 }}>Create role</div>
+          <div style={{ fontWeight: 700, marginBottom: 8 }}>{t("roles.createTitle")}</div>
           <input
             className="input"
             value={newRoleName}
             onChange={(e) => setNewRoleName(e.target.value)}
-            placeholder="Role name"
+            placeholder={t("roles.namePlaceholder")}
           />
           <button className="btn btnPrimary" style={{ marginTop: 8 }} onClick={createRole}>
-            Create role
+            {t("roles.create")}
           </button>
           {status ? <div style={{ fontSize: 12, opacity: 0.7, marginTop: 6 }}>{status}</div> : null}
         </div>

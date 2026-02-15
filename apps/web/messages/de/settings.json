@@ -1,0 +1,184 @@
+{
+  "common": {
+    "backToSettings": "Zurück zu Einstellungen",
+    "backToDashboard": "Zurück zum Dashboard",
+    "loading": "Lädt...",
+    "saving": "Speichern...",
+    "reload": "Neu laden",
+    "saveSettings": "Einstellungen speichern"
+  },
+  "globalDefaults": {
+    "title": "Globale Standardwerte",
+    "superadminOnly": "Nur für Superadmin.",
+    "key": "Schlüssel",
+    "jsonValue": "JSON-Wert",
+    "save": "Speichern",
+    "saving": "speichere...",
+    "saved": "gespeichert"
+  },
+  "notifications": {
+    "title": "Benachrichtigungen",
+    "telegram": {
+      "title": "Telegram-Benachrichtigungen",
+      "openBot": "Bot öffnen (@utrade_ai_signals_bot)",
+      "description": "Der Bot-Token wird global vom Admin verwaltet. Hier wird nur deine Chat-ID benötigt.",
+      "tokenMissing": "Der Telegram-Bot-Token ist durch den Admin noch nicht konfiguriert.",
+      "tip": "Tipp: Bei Telegram-Gruppen beginnt die Chat-ID meist mit <strong>-100</strong>.",
+      "chatId": "Chat-ID"
+    },
+    "messages": {
+      "saved": "Gespeichert.",
+      "testSent": "Test-Benachrichtigung wurde an Telegram gesendet.",
+      "sending": "Senden...",
+      "sendTest": "Testnachricht senden"
+    }
+  },
+  "setup": {
+    "title": "Setup",
+    "newBot": "Neuer Bot",
+    "refreshList": "Liste aktualisieren",
+    "botsTitle": "Bots",
+    "noBots": "Noch keine Bots vorhanden.",
+    "open": "Öffnen",
+    "delete": "Löschen",
+    "deleting": "Löschen...",
+    "confirmDelete": "Bot \"{name}\" ({symbol}) löschen? Das kann nicht rückgängig gemacht werden.",
+    "deleted": "{name} gelöscht"
+  },
+  "subscription": {
+    "title": "Lizenzverwaltung",
+    "confirmRemove": "Gespeicherten Lizenzschlüssel entfernen? Lizenzierte Features bleiben deaktiviert, bis ein neuer Schlüssel gespeichert wird.",
+    "messages": {
+      "savedVerified": "Gespeichert und verifiziert.",
+      "removed": "Lizenz entfernt."
+    },
+    "status": {
+      "title": "Lizenzstatus",
+      "status": "Status",
+      "unknown": "UNBEKANNT",
+      "notConfigured": "NICHT KONFIGURIERT",
+      "validUntil": "Gültig bis",
+      "checkedAt": "Geprüft am",
+      "source": "Quelle",
+      "error": "Fehler",
+      "limits": "Limits",
+      "usage": "Nutzung",
+      "features": "Features",
+      "overrides": "Overrides",
+      "bots": "Bots"
+    },
+    "config": {
+      "title": "Lizenzkonfiguration",
+      "description": "Lizenzänderungen werden vom Runner im nächsten Verifizierungszyklus automatisch übernommen.",
+      "licenseKey": "Lizenzschlüssel",
+      "currentKeyPlaceholder": "Aktuell: {key}",
+      "instanceId": "Die Instanz-ID wird automatisch aus deiner Workspace-ID gesetzt:",
+      "saveVerify": "Speichern & verifizieren",
+      "refreshStatus": "Status aktualisieren",
+      "removeLicense": "Lizenz entfernen"
+    }
+  },
+  "users": {
+    "title": "Mein Konto",
+    "password": {
+      "title": "Passwort",
+      "description": "Lege ein neues Passwort für dein Konto fest. Aus Sicherheitsgründen ist das aktuelle Passwort erforderlich.",
+      "current": "Aktuelles Passwort",
+      "new": "Neues Passwort",
+      "confirm": "Neues Passwort bestätigen",
+      "submit": "Neues Passwort erstellen"
+    },
+    "security": {
+      "title": "Sicherheit",
+      "description": "Sitzungs- und Re-Authentifizierungs-Einstellungen für dein Konto.",
+      "autoLogout": "Auto-Logout aktivieren",
+      "idleMinutes": "Inaktive Minuten",
+      "otp": "OTP-Re-Auth für sensible Aktionen erzwingen"
+    },
+    "reset": {
+      "title": "Zurücksetzen per E-Mail-Code",
+      "description": "Nutze dies, wenn du dein aktuelles Passwort vergessen hast.",
+      "email": "Konto-E-Mail",
+      "emailPlaceholder": "you@example.com",
+      "sendCode": "Reset-Code senden",
+      "code": "Reset-Code (6 Stellen)",
+      "codePlaceholder": "123456",
+      "newPassword": "Neues Passwort",
+      "confirmPassword": "Neues Passwort bestätigen",
+      "submit": "Passwort zurücksetzen",
+      "devCode": "Dev-Reset-Code:"
+    },
+    "messages": {
+      "saved": "Gespeichert.",
+      "passwordMismatch": "Passwörter stimmen nicht überein.",
+      "updated": "aktualisiert",
+      "sendingCode": "Code wird gesendet...",
+      "validFor": "{minutes} Min gültig",
+      "resetCodeSent": "Falls das Konto existiert, wurde ein Reset-Code gesendet{expires}.",
+      "updatingPassword": "Passwort wird aktualisiert...",
+      "newPasswordMismatch": "Neues Passwort und Bestätigung stimmen nicht überein.",
+      "passwordUpdated": "Passwort aktualisiert. Bitte melde dich erneut an, wenn die Sitzung abläuft."
+    }
+  },
+  "roles": {
+    "title": "Mitglieder & Rollen",
+    "confirm": {
+      "removeMember": "Mitglied aus dem Workspace entfernen?",
+      "deleteRole": "Diese Rolle löschen?"
+    },
+    "messages": {
+      "reauthRequired": "Re-Authentifizierung erforderlich.",
+      "reauthRequiredMembers": "Re-Authentifizierung zur Mitgliederverwaltung erforderlich.",
+      "inviting": "Einladung wird gesendet...",
+      "invited": "eingeladen",
+      "creating": "wird erstellt...",
+      "created": "erstellt"
+    },
+    "members": {
+      "title": "Workspace-Mitglieder",
+      "description": "Benutzer einladen und Rollen für diesen Workspace zuweisen.",
+      "superadmin": "Superadmin",
+      "remove": "Entfernen",
+      "empty": "Noch keine Mitglieder vorhanden.",
+      "inviteTitle": "Mitglied einladen",
+      "invitePlaceholder": "email@domain.com",
+      "inviteResetPassword": "Passwort zurücksetzen und temporäres Passwort in die E-Mail aufnehmen",
+      "invite": "Einladen",
+      "noPermission": "Du hast keine Berechtigung, Mitglieder zu verwalten."
+    },
+    "roles": {
+      "noPermission": "Du hast keine Berechtigung, Rollen zu verwalten.",
+      "systemRole": "Systemrolle",
+      "delete": "Löschen",
+      "createTitle": "Rolle erstellen",
+      "namePlaceholder": "Rollenname",
+      "create": "Rolle erstellen"
+    },
+    "permissions": {
+      "botsView": "Bots anzeigen",
+      "botsCreate": "Bots erstellen",
+      "botsEditConfig": "Konfigurationen bearbeiten",
+      "botsStartPauseStop": "Start/Pause/Stopp",
+      "botsDelete": "Bots löschen",
+      "tradingManualLimit": "Manuelle Limit-Trades",
+      "tradingManualMarket": "Manuelle Market-Trades",
+      "tradingPriceSupport": "Price Support",
+      "exchangeKeysViewPresent": "Vorhandene Keys anzeigen",
+      "exchangeKeysEdit": "Exchange-Keys bearbeiten",
+      "riskEdit": "Risiko bearbeiten",
+      "presetsView": "Presets anzeigen",
+      "presetsCreate": "Presets erstellen",
+      "presetsApply": "Presets anwenden",
+      "presetsDelete": "Presets löschen",
+      "usersManageMembers": "Mitglieder verwalten",
+      "usersManageRoles": "Rollen verwalten",
+      "settingsSecurity": "Sicherheitseinstellungen",
+      "auditView": "Audit-Log anzeigen"
+    }
+  },
+  "audit": {
+    "title": "Audit-Log",
+    "noPermission": "Du hast keine Berechtigung, Audit-Logs einzusehen.",
+    "empty": "Noch keine Audit-Events vorhanden."
+  }
+}

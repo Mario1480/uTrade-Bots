@@ -2,7 +2,9 @@
 
 import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
+import { useLocale, useTranslations } from "next-intl";
 import { ApiError, apiDelete, apiGet, apiPost, apiPut } from "../../../lib/api";
+import { withLocalePath, type AppLocale } from "../../../i18n/config";
 
 type AdminUser = {
   id: string;
@@ -24,6 +26,9 @@ function errMsg(e: unknown): string {
 }
 
 export default function AdminUsersPage() {
+  const t = useTranslations("admin.users");
+  const tCommon = useTranslations("admin.common");
+  const locale = useLocale() as AppLocale;
   const [loading, setLoading] = useState(true);
   const [isSuperadmin, setIsSuperadmin] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -44,7 +49,7 @@ export default function AdminUsersPage() {
       setCurrentUserId(typeof me?.id === "string" ? me.id : null);
       if (!(me?.isSuperadmin || me?.hasAdminBackendAccess)) {
         setIsSuperadmin(false);
-        setError("Admin backend access required.");
+        setError(t("messages.accessRequired"));
         setUsers([]);
         return;
       }
@@ -81,8 +86,8 @@ export default function AdminUsersPage() {
       setNewPassword("");
       setNotice(
         res.temporaryPassword
-          ? `User created. Temporary password: ${res.temporaryPassword}`
-          : "User created."
+          ? t("messages.userCreatedWithPassword", { password: res.temporaryPassword })
+          : t("messages.userCreated")
       );
       await loadAll();
     } catch (e) {
@@ -98,19 +103,19 @@ export default function AdminUsersPage() {
     try {
       await apiPut(`/admin/users/${userId}/password`, { password: value });
       setResetPassword((prev) => ({ ...prev, [userId]: "" }));
-      setNotice("Password updated and sessions revoked.");
+      setNotice(t("messages.passwordUpdated"));
     } catch (e) {
       setError(errMsg(e));
     }
   }
 
   async function deleteUser(user: AdminUser) {
-    if (!confirm(`Delete user ${user.email}? This cannot be undone.`)) return;
+    if (!confirm(t("confirmDelete", { email: user.email }))) return;
     setError(null);
     setNotice(null);
     try {
       await apiDelete(`/admin/users/${user.id}`);
-      setNotice(`Deleted ${user.email}.`);
+      setNotice(t("messages.deleted", { email: user.email }));
       await loadAll();
     } catch (e) {
       setError(errMsg(e));
@@ -131,8 +136,8 @@ export default function AdminUsersPage() {
       );
       setNotice(
         enabled
-          ? `Admin backend access granted for ${user.email}.`
-          : `Admin backend access revoked for ${user.email}.`
+          ? t("messages.adminAccessGranted", { email: user.email })
+          : t("messages.adminAccessRevoked", { email: user.email })
       );
     } catch (e) {
       setError(errMsg(e));
@@ -142,19 +147,19 @@ export default function AdminUsersPage() {
   return (
     <div className="settingsWrap">
       <div className="adminTopActions">
-        <Link href="/admin" className="btn">
-          ← Back to admin
+        <Link href={withLocalePath("/admin", locale)} className="btn">
+          ← {tCommon("backToAdmin")}
         </Link>
-        <Link href="/settings" className="btn">
-          ← Back to settings
+        <Link href={withLocalePath("/settings", locale)} className="btn">
+          ← {tCommon("backToSettings")}
         </Link>
       </div>
-      <h2 style={{ marginTop: 0 }}>Admin · Users</h2>
+      <h2 style={{ marginTop: 0 }}>{t("title")}</h2>
       <div className="adminPageIntro">
-        Manage users, credentials and account access.
+        {t("subtitle")}
       </div>
 
-      {loading ? <div className="settingsMutedText">Loading...</div> : null}
+      {loading ? <div className="settingsMutedText">{t("loading")}</div> : null}
       {error ? (
         <div className="card settingsSection settingsAlert settingsAlertError">
           {error}
@@ -170,32 +175,32 @@ export default function AdminUsersPage() {
         <>
           <section className="card settingsSection">
             <div className="settingsSectionHeader">
-              <h3 style={{ margin: 0 }}>Create User</h3>
+              <h3 style={{ margin: 0 }}>{t("createUserTitle")}</h3>
             </div>
             <form onSubmit={createUser} className="settingsFormGrid">
               <label className="settingsField">
-                <span className="settingsFieldLabel">Email</span>
+                <span className="settingsFieldLabel">{t("email")}</span>
                 <input className="input" value={newEmail} onChange={(e) => setNewEmail(e.target.value)} required />
               </label>
               <label className="settingsField">
-                <span className="settingsFieldLabel">Temporary password (optional)</span>
+                <span className="settingsFieldLabel">{t("temporaryPassword")}</span>
                 <input className="input" value={newPassword} onChange={(e) => setNewPassword(e.target.value)} />
               </label>
               <button className="btn btnPrimary" type="submit">
-                Create user
+                {t("createUser")}
               </button>
             </form>
           </section>
 
           <section className="card settingsSection">
             <div className="settingsSectionHeader">
-              <h3 style={{ margin: 0 }}>User List</h3>
+              <h3 style={{ margin: 0 }}>{t("userListTitle")}</h3>
             </div>
             <label className="settingsField" style={{ marginBottom: 12 }}>
-              <span className="settingsFieldLabel">Search user</span>
+              <span className="settingsFieldLabel">{t("searchUser")}</span>
               <input
                 className="input"
-                placeholder="Filter by email..."
+                placeholder={t("searchPlaceholder")}
                 value={query}
                 onChange={(e) => setQuery(e.target.value)}
               />
@@ -205,11 +210,15 @@ export default function AdminUsersPage() {
                 <div key={user.id} className="card settingsSection adminUserCard">
                   <div className="adminUserHead">
                     <div>
-                      <div style={{ fontWeight: 700 }}>
-                        {user.email} {user.isSuperadmin ? "· superadmin" : ""}
+                  <div style={{ fontWeight: 700 }}>
+                        {user.email} {user.isSuperadmin ? `· ${t("superadmin")}` : ""}
                       </div>
                       <div style={{ fontSize: 12, color: "var(--muted)" }}>
-                        Bots: {user.bots} · Accounts: {user.exchangeAccounts} · Sessions: {user.sessions}
+                        {t("stats", {
+                          bots: user.bots,
+                          accounts: user.exchangeAccounts,
+                          sessions: user.sessions
+                        })}
                       </div>
                       <label className="inlineCheck" style={{ marginTop: 8 }}>
                         <input
@@ -218,34 +227,34 @@ export default function AdminUsersPage() {
                           disabled={user.isSuperadmin}
                           onChange={(e) => void updateAdminBackendAccess(user, e.target.checked)}
                         />
-                        Admin backend access
+                        {t("adminBackendAccess")}
                       </label>
                     </div>
                     <div className="adminUserActions">
                       <input
                         className="input adminUserPasswordInput"
-                        placeholder="New password"
+                        placeholder={t("newPassword")}
                         value={resetPassword[user.id] ?? ""}
                         onChange={(e) =>
                           setResetPassword((prev) => ({ ...prev, [user.id]: e.target.value }))
                         }
                       />
                       <button className="btn" onClick={() => void updateUserPassword(user.id)}>
-                        Set password
+                        {t("setPassword")}
                       </button>
                       <button
                         className="btn btnStop"
                         disabled={user.isSuperadmin || user.id === currentUserId}
                         onClick={() => void deleteUser(user)}
                       >
-                        Delete
+                        {t("delete")}
                       </button>
                     </div>
                   </div>
                 </div>
               ))}
               {filtered.length === 0 ? (
-                <div style={{ fontSize: 12, color: "var(--muted)" }}>No users match the filter.</div>
+                <div style={{ fontSize: 12, color: "var(--muted)" }}>{t("noUsers")}</div>
               ) : null}
             </div>
           </section>

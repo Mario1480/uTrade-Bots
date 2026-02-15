@@ -2,8 +2,10 @@
 
 import Link from "next/link";
 import { useRouter } from "next/navigation";
+import { useLocale, useTranslations } from "next-intl";
 import { Fragment, useEffect, useMemo, useState } from "react";
 import { ApiError, apiGet, apiPost } from "../../lib/api";
+import { withLocalePath, type AppLocale } from "../../i18n/config";
 import {
   buildTradeDeskPrefillPayload,
   TRADE_DESK_PREFILL_SESSION_KEY,
@@ -306,15 +308,26 @@ function fmtMs(ms: number): string {
 
 function nextAutoRunText(
   row: Pick<PredictionListItem, "autoScheduleEnabled" | "timeframe" | "tsCreated">,
-  nowMs: number
+  nowMs: number,
+  labels: {
+    disabled: string;
+    unknown: string;
+    dueNow: string;
+    inPrefix: string;
+  } = {
+    disabled: "disabled",
+    unknown: "unknown",
+    dueNow: "due now",
+    inPrefix: "in"
+  }
 ): string {
-  if (!row.autoScheduleEnabled) return "disabled";
+  if (!row.autoScheduleEnabled) return labels.disabled;
   const ts = new Date(row.tsCreated).getTime();
-  if (!Number.isFinite(ts)) return "unknown";
+  if (!Number.isFinite(ts)) return labels.unknown;
   const dueAt = ts + timeframeMs(row.timeframe);
   const diff = dueAt - nowMs;
-  if (diff <= 0) return "due now";
-  return `in ${fmtMs(diff)}`;
+  if (diff <= 0) return labels.dueNow;
+  return `${labels.inPrefix} ${fmtMs(diff)}`;
 }
 
 function errMsg(e: unknown): string {
@@ -386,10 +399,21 @@ function resolveExpectedMove(row: PredictionListItem, source: SignalSource): num
   return row.expectedMovePct;
 }
 
-function signalModeLabel(mode?: CreateSignalMode): string {
-  if (mode === "local_only") return "local only";
-  if (mode === "ai_only") return "ai only";
-  return "both";
+function signalModeLabel(
+  mode: CreateSignalMode | undefined,
+  labels: {
+    localOnly: string;
+    aiOnly: string;
+    both: string;
+  } = {
+    localOnly: "local only",
+    aiOnly: "ai only",
+    both: "both"
+  }
+): string {
+  if (mode === "local_only") return labels.localOnly;
+  if (mode === "ai_only") return labels.aiOnly;
+  return labels.both;
 }
 
 function normalizeStrategyRef(value: unknown): StrategyRef | null {
@@ -505,7 +529,20 @@ function canSendToDesk(row: PredictionListItem, source: SignalSource): boolean {
 
 function resolvePredictionActionState(
   row: PredictionListItem,
-  source: SignalSource
+  source: SignalSource,
+  labels: {
+    noAccount: string;
+    noTradeSetup: string;
+    belowConfidenceTarget: string;
+    localAiDisagreement: string;
+    readyToSend: string;
+  } = {
+    noAccount: "No account",
+    noTradeSetup: "No trade setup",
+    belowConfidenceTarget: "Below confidence target",
+    localAiDisagreement: "Local/AI disagreement",
+    readyToSend: "Ready to send"
+  }
 ): { state: PredictionActionState; label: string; canSend: boolean } {
   const targetPct =
     typeof row.confidenceTargetPct === "number" && Number.isFinite(row.confidenceTargetPct)
@@ -517,17 +554,17 @@ function resolvePredictionActionState(
   const aiDisagrees = Boolean(row.aiPrediction) && row.aiPrediction!.signal !== localSignal;
   const canSend = canSendToDesk(row, source);
 
-  if (!row.accountId) return { state: "no_account", label: "No account", canSend };
-  if (signal === "neutral") return { state: "neutral", label: "No trade setup", canSend };
+  if (!row.accountId) return { state: "no_account", label: labels.noAccount, canSend };
+  if (signal === "neutral") return { state: "neutral", label: labels.noTradeSetup, canSend };
   if (confidencePct < targetPct) {
     return {
       state: "below_target",
-      label: `Below confidence target (${targetPct.toFixed(0)}%)`,
+      label: `${labels.belowConfidenceTarget} (${targetPct.toFixed(0)}%)`,
       canSend
     };
   }
-  if (aiDisagrees) return { state: "disagreement", label: "Local/AI disagreement", canSend };
-  return { state: "ready", label: "Ready to send", canSend };
+  if (aiDisagrees) return { state: "disagreement", label: labels.localAiDisagreement, canSend };
+  return { state: "ready", label: labels.readyToSend, canSend };
 }
 
 function rowStateClass(state: PredictionActionState): string {
@@ -645,7 +682,37 @@ function describeManualReason(params: {
 }
 
 export default function PredictionsPage() {
+  const tPred = useTranslations("predictions");
+  const locale = useLocale() as AppLocale;
   const router = useRouter();
+
+  const modeLabels = useMemo(
+    () => ({
+      localOnly: tPred("modes.localOnly"),
+      aiOnly: tPred("modes.aiOnly"),
+      both: tPred("modes.both")
+    }),
+    [tPred]
+  );
+  const nextRunLabels = useMemo(
+    () => ({
+      disabled: tPred("misc.disabled"),
+      unknown: tPred("misc.unknown"),
+      dueNow: tPred("running.dueNow"),
+      inPrefix: tPred("running.inPrefix")
+    }),
+    [tPred]
+  );
+  const actionStateLabels = useMemo(
+    () => ({
+      noAccount: tPred("feed.actionStates.noAccount"),
+      noTradeSetup: tPred("feed.actionStates.noTradeSetup"),
+      belowConfidenceTarget: tPred("feed.actionStates.belowConfidenceTarget"),
+      localAiDisagreement: tPred("feed.actionStates.localAiDisagreement"),
+      readyToSend: tPred("feed.actionStates.readyToSend")
+    }),
+    [tPred]
+  );
 
   const [rows, setRows] = useState<PredictionListItem[]>([]);
   const [loading, setLoading] = useState(true);
@@ -1166,7 +1233,7 @@ export default function PredictionsPage() {
         prefill: "1",
         exchangeAccountId: built.payload.accountId
       });
-      router.push(`/trading-desk?${params.toString()}`);
+      router.push(`${withLocalePath("/trading-desk", locale)}?${params.toString()}`);
     } catch (e) {
       setActionError(errMsg(e));
     } finally {
@@ -1210,7 +1277,7 @@ export default function PredictionsPage() {
     } catch {
       setEventsErrorByStateId((prev) => ({
         ...prev,
-        [stateId]: "Unable to load events."
+        [stateId]: tPred("create.eventsLoadFailed")
       }));
     } finally {
       setEventsLoadingStateId(null);
@@ -1233,15 +1300,15 @@ export default function PredictionsPage() {
     const leverage = Number(newLeverage);
 
     if (!createAccountId) {
-      setActionError("Please select an exchange account first.");
+      setActionError(tPred("create.validationSelectExchangeAccount"));
       return;
     }
     if (!symbol) {
-      setActionError("Please select a pair.");
+      setActionError(tPred("create.validationSelectPair"));
       return;
     }
     if (newMarketType === "perp" && (!Number.isFinite(leverage) || leverage < 1 || leverage > 125)) {
-      setActionError("Leverage must be between 1 and 125 for futures.");
+      setActionError(tPred("create.validationLeverageRange"));
       return;
     }
 
@@ -1277,21 +1344,27 @@ export default function PredictionsPage() {
       });
       const modeLabel =
         response.signalMode === "local_only"
-          ? "Local only"
+          ? tPred("modes.localOnly")
           : response.signalMode === "ai_only"
-            ? "AI only"
-            : "Local + AI";
+            ? tPred("modes.aiOnly")
+            : tPred("modes.both");
 
       setNotice(
-        `Prediction created for ${symbol} (${response.prediction.timeframe}) with signal ${response.prediction.signal} ` +
-        `and confidence ${fmtConfidence(response.prediction.confidence)}. ` +
-        `Mode: ${modeLabel}, active source: ${response.signalSource.toUpperCase()}.` +
-        ` Strategy: ${strategyRefLabel(response.strategyRef, {
-          aiPromptTemplateName: response.aiPromptTemplateName,
-          localStrategyName: response.localStrategyName,
-          compositeStrategyName: response.compositeStrategyName
-        })}.` +
-        ` Dir: ${response.directionPreference}, conf target: ${response.confidenceTargetPct.toFixed(0)}%.`
+        tPred("create.createdNotice", {
+          symbol,
+          timeframe: response.prediction.timeframe,
+          signal: response.prediction.signal,
+          confidence: fmtConfidence(response.prediction.confidence),
+          modeLabel,
+          source: response.signalSource.toUpperCase(),
+          strategy: strategyRefLabel(response.strategyRef, {
+            aiPromptTemplateName: response.aiPromptTemplateName,
+            localStrategyName: response.localStrategyName,
+            compositeStrategyName: response.compositeStrategyName
+          }),
+          direction: response.directionPreference,
+          target: response.confidenceTargetPct.toFixed(0)
+        })
       );
       await Promise.all([
         loadPredictions(),
@@ -1318,8 +1391,8 @@ export default function PredictionsPage() {
       );
       setNotice(
         response.paused
-          ? `Prediction paused (${response.updatedCount} template rows updated).`
-          : `Prediction resumed (${response.updatedCount} template rows updated).`
+          ? tPred("running.pausedNotice", { count: response.updatedCount })
+          : tPred("running.resumedNotice", { count: response.updatedCount })
       );
       await Promise.all([
         loadPredictions(),
@@ -1336,7 +1409,7 @@ export default function PredictionsPage() {
 
   async function deleteRunningPrediction(id: string) {
     const confirmed = window.confirm(
-      "Delete this auto-prediction schedule and related template rows? This cannot be undone."
+      tPred("running.confirmDelete")
     );
     if (!confirmed) return;
 
@@ -1345,7 +1418,7 @@ export default function PredictionsPage() {
     setRunningActionId(id);
     try {
       const response = await apiPost<{ deletedCount: number }>(`/api/predictions/${id}/delete-schedule`, {});
-      setNotice(`Auto prediction deleted (${response.deletedCount} rows removed).`);
+      setNotice(tPred("running.deletedNotice", { count: response.deletedCount }));
       await Promise.all([
         loadPredictions(),
         loadRunningPredictions(),
@@ -1470,7 +1543,7 @@ export default function PredictionsPage() {
             {signalSource === "ai" && !aiPrediction ? " (AI value unavailable, using local)" : ""}
           </div>
           <div className="predictionContextReason">
-            Signal mode: {signalModeLabel(row.signalMode)}
+            {tPred("create.signalMode")}: {signalModeLabel(row.signalMode, modeLabels)}
           </div>
           <div className="predictionContextReason">
             Strategy: {strategyRefLabel(strategyRef, {
@@ -1700,36 +1773,36 @@ export default function PredictionsPage() {
     <div className="predictionsWrap">
       <div className="dashboardHeader">
         <div>
-          <h2 style={{ margin: 0 }}>AI Predictions</h2>
+          <h2 style={{ margin: 0 }}>{tPred("title")}</h2>
           <div style={{ fontSize: 13, color: "var(--muted)" }}>
-            Select a prediction and prefill the Manual Trading Desk ticket.
+            {tPred("subtitle")}
           </div>
         </div>
         <div className="predictionsHeaderActions">
-          <Link href="/dashboard" className="btn">Dashboard</Link>
-          <Link href="/trade" className="btn">Manual Trading</Link>
+          <Link href={withLocalePath("/dashboard", locale)} className="btn">{tPred("header.dashboard")}</Link>
+          <Link href={withLocalePath("/trade", locale)} className="btn">{tPred("header.manualTrading")}</Link>
         </div>
       </div>
 
       <section className="card predictionsSection predictionQuickStatsSection">
         <div className="predictionQuickStatsGrid">
           <div className="predictionQuickStat">
-            <div className="predictionQuickStatLabel">Listed</div>
+            <div className="predictionQuickStatLabel">{tPred("quickStats.listed")}</div>
             <div className="predictionQuickStatValue">
               {filteredRows.length}
-              <span className="predictionQuickStatMeta"> / {rows.length} total</span>
+              <span className="predictionQuickStatMeta"> / {rows.length} {tPred("quickStats.total")}</span>
             </div>
           </div>
           <div className="predictionQuickStat">
-            <div className="predictionQuickStatLabel">Actionable Now</div>
+            <div className="predictionQuickStatLabel">{tPred("quickStats.actionableNow")}</div>
             <div className="predictionQuickStatValue">{actionableRowsCount}</div>
           </div>
           <div className="predictionQuickStat">
-            <div className="predictionQuickStatLabel">Auto Enabled</div>
+            <div className="predictionQuickStatLabel">{tPred("quickStats.autoEnabled")}</div>
             <div className="predictionQuickStatValue">{autoEnabledRowsCount}</div>
           </div>
           <div className="predictionQuickStat">
-            <div className="predictionQuickStatLabel">Local/AI Disagreements</div>
+            <div className="predictionQuickStatLabel">{tPred("quickStats.disagreements")}</div>
             <div
               className={`predictionQuickStatValue ${
                 aiDisagreementRowsCount > 0 ? "predictionQuickStatValueWarn" : ""
@@ -1744,29 +1817,31 @@ export default function PredictionsPage() {
       <section className="card predictionsSection predictionCreateSection">
         <div className="predictionCreateHeader">
           <div>
-            <div className="predictionCreateTitle">Create Prediction</div>
+            <div className="predictionCreateTitle">{tPred("create.title")}</div>
             <div className="predictionsSectionHint">
-              Configure prediction templates. Auto scheduling is always active.
+              {tPred("create.hint")}
             </div>
           </div>
           <div className="predictionCreateBadges">
-            <span className="badge badgeOk">Auto Schedule: Always On</span>
+            <span className="badge badgeOk">{tPred("create.autoScheduleAlwaysOn")}</span>
             <span className="badge">
-              Signal mode:{" "}
+              {tPred("create.signalMode")}:{" "}
               {effectiveCreateSignalMode === "local_only"
-                ? "Local only"
+                ? tPred("modes.localOnly")
                 : effectiveCreateSignalMode === "ai_only"
-                  ? "AI only"
-                  : "Local + AI"}
-              {forcedCreateSignalMode ? " (strategy-enforced)" : " (global default)"}
+                  ? tPred("modes.aiOnly")
+                  : tPred("modes.both")}
+              {forcedCreateSignalMode
+                ? ` (${tPred("create.strategyEnforced")})`
+                : ` (${tPred("create.globalDefault")})`}
             </span>
           </div>
         </div>
         <div className="predictionCreateGrid">
           <label className="predictionCreateField predictionCreateFieldPrompt">
-            <div className="predictionCreateLabel">Strategy</div>
+            <div className="predictionCreateLabel">{tPred("create.strategy")}</div>
             <div className="predictionCreateHint">
-              Unified selector für AI Prompt, Local Strategy oder Composite Strategy.
+              {tPred("create.strategyHint")}
             </div>
             <select
               className="input"
@@ -1775,23 +1850,23 @@ export default function PredictionsPage() {
               disabled={publicAiPromptsLoading || localStrategiesLoading || compositeStrategiesLoading}
             >
               {!aiDefaultAllowed && allowedAiPrompts.length === 0 && allowedLocalStrategies.length === 0 && allowedCompositeStrategies.length === 0 ? (
-                <option value="ai:default">No licensed strategy available</option>
+                <option value="ai:default">{tPred("create.noLicensedStrategy")}</option>
               ) : null}
               {aiDefaultAllowed ? (
-                <option value="ai:default">AI · System default prompt</option>
+                <option value="ai:default">{tPred("create.aiSystemDefault")}</option>
               ) : null}
               {aiKindAllowed ? (
-                <optgroup label="AI Prompt Strategies">
+                <optgroup label={tPred("create.aiPromptStrategies")}>
                   {allowedAiPrompts.map((prompt) => (
                     <option key={prompt.id} value={encodeStrategySelectValue({ kind: "ai", id: prompt.id, name: prompt.name })}>
                       {prompt.name}
-                      {prompt.isPublic === false ? " (private)" : ""}
+                      {prompt.isPublic === false ? ` (${tPred("create.private")})` : ""}
                     </option>
                   ))}
                 </optgroup>
               ) : null}
               {localKindAllowed ? (
-                <optgroup label="Local Strategies">
+                <optgroup label={tPred("create.localStrategies")}>
                   {allowedLocalStrategies.map((strategy) => (
                     <option key={strategy.id} value={encodeStrategySelectValue({ kind: "local", id: strategy.id, name: strategy.name })}>
                       {strategy.name}
@@ -1800,7 +1875,7 @@ export default function PredictionsPage() {
                 </optgroup>
               ) : null}
               {compositeKindAllowed ? (
-                <optgroup label="Composite Strategies">
+                <optgroup label={tPred("create.compositeStrategies")}>
                   {allowedCompositeStrategies.map((strategy) => (
                     <option key={strategy.id} value={encodeStrategySelectValue({ kind: "composite", id: strategy.id, name: strategy.name })}>
                       {strategy.name}
@@ -1810,30 +1885,33 @@ export default function PredictionsPage() {
               ) : null}
             </select>
             <div className="predictionCreateHint">
-              Selected: {strategyRefLabel(selectedStrategyRef, {
+              {tPred("create.selected")}: {strategyRefLabel(selectedStrategyRef, {
                 aiPromptTemplateName: selectedPrompt?.name ?? null,
                 localStrategyName: selectedLocalStrategy?.name ?? null,
                 compositeStrategyName: selectedCompositeStrategy?.name ?? null
               })}
             </div>
             <div className="predictionCreateHint">
-              AI license mode: {publicAiPromptLicensePolicy?.mode ?? "off"}
-              {publicAiPromptLicensePolicy?.enforcementActive ? " (enforced)" : " (preview/off)"}.
+              {tPred("create.aiLicenseMode")}: {publicAiPromptLicensePolicy?.mode ?? "off"}
+              {publicAiPromptLicensePolicy?.enforcementActive
+                ? ` (${tPred("create.enforced")})`
+                : ` (${tPred("create.previewOff")})`}
+              .
             </div>
             <div className="predictionCreateHint predictionCreateHintCompact">
               {selectedStrategyRef?.kind === "ai"
-                ? `Prompt lock timeframe: ${selectedPromptLockedTimeframe ?? "none"}`
+                ? `${tPred("create.promptLockTimeframe")}: ${selectedPromptLockedTimeframe ?? "none"}`
                 : selectedStrategyRef?.kind === "local"
-                  ? `Local type: ${selectedLocalStrategy?.strategyType ?? "n/a"}`
+                  ? `${tPred("create.localType")}: ${selectedLocalStrategy?.strategyType ?? tPred("misc.na")}`
                   : selectedStrategyRef?.kind === "composite"
-                    ? `Composite version: ${selectedCompositeStrategy?.version ?? "n/a"}`
-                    : "No explicit strategy selected (AI system default)."}
+                    ? `${tPred("create.compositeVersion")}: ${selectedCompositeStrategy?.version ?? tPred("misc.na")}`
+                    : tPred("create.noExplicitStrategy")}
             </div>
           </label>
 
           <label className="predictionCreateField">
-            <div className="predictionCreateLabel">Exchange account</div>
-            <div className="predictionCreateHint">Welcher Account später beim Trading-Prefill genutzt wird.</div>
+            <div className="predictionCreateLabel">{tPred("create.exchangeAccount")}</div>
+            <div className="predictionCreateHint">{tPred("create.exchangeAccountHint")}</div>
             <select
               className="input"
               value={createAccountId}
@@ -1841,7 +1919,7 @@ export default function PredictionsPage() {
               disabled={accounts.length === 0}
             >
               {accounts.length === 0 ? (
-                <option value="">No account available</option>
+                <option value="">{tPred("create.noAccountAvailable")}</option>
               ) : (
                 accounts.map((account) => (
                   <option key={account.id} value={account.id}>
@@ -1853,8 +1931,8 @@ export default function PredictionsPage() {
           </label>
 
           <label className="predictionCreateField">
-            <div className="predictionCreateLabel">Pair</div>
-            <div className="predictionCreateHint">Handelspaar für die Vorhersage (aus Exchange-Symbolen).</div>
+            <div className="predictionCreateLabel">{tPred("create.pair")}</div>
+            <div className="predictionCreateHint">{tPred("create.pairHint")}</div>
             <select
               className="input"
               value={newSymbol}
@@ -1862,13 +1940,13 @@ export default function PredictionsPage() {
               disabled={symbolsLoading || createSymbols.length === 0}
             >
               {symbolsLoading ? (
-                <option value="">Loading pairs...</option>
+                <option value="">{tPred("create.loadingPairs")}</option>
               ) : createSymbols.length === 0 ? (
-                <option value="">No pair available</option>
+                <option value="">{tPred("create.noPairAvailable")}</option>
               ) : (
                 createSymbols.map((symbol) => (
                   <option key={symbol.symbol} value={symbol.symbol}>
-                    {symbol.symbol} {symbol.tradable ? "" : "(restricted)"}
+                    {symbol.symbol} {symbol.tradable ? "" : `(${tPred("create.restricted")})`}
                   </option>
                 ))
               )}
@@ -1876,8 +1954,8 @@ export default function PredictionsPage() {
           </label>
 
           <label className="predictionCreateField">
-            <div className="predictionCreateLabel">Market type</div>
-            <div className="predictionCreateHint">Spot oder Perpetual für die Interpretation.</div>
+            <div className="predictionCreateLabel">{tPred("create.marketType")}</div>
+            <div className="predictionCreateHint">{tPred("create.marketTypeHint")}</div>
             <select className="input" value={newMarketType} onChange={(e) => setNewMarketType(e.target.value as PredictionMarketType)}>
               <option value="perp">perp</option>
               <option value="spot">spot</option>
@@ -1885,11 +1963,11 @@ export default function PredictionsPage() {
           </label>
 
           <label className="predictionCreateField">
-            <div className="predictionCreateLabel">Timeframe</div>
+            <div className="predictionCreateLabel">{tPred("create.timeframe")}</div>
             <div className="predictionCreateHint">
               {selectedPromptLockedTimeframe
-                ? `Vom Prompt vorgegeben: ${selectedPromptLockedTimeframe}`
-                : "Zeithorizont der Prognose."}
+                ? tPred("create.timeframePromptLocked", { timeframe: selectedPromptLockedTimeframe })
+                : tPred("create.timeframeHint")}
             </div>
             <select
               className="input"
@@ -1904,8 +1982,8 @@ export default function PredictionsPage() {
           </label>
 
           <label className="predictionCreateField">
-            <div className="predictionCreateLabel">Leverage (futures)</div>
-            <div className="predictionCreateHint">Wird als Futures-Hinweis im Ticket übernommen.</div>
+            <div className="predictionCreateLabel">{tPred("create.leverage")}</div>
+            <div className="predictionCreateHint">{tPred("create.leverageHint")}</div>
             <input
               className="input"
               type="number"
@@ -1923,27 +2001,27 @@ export default function PredictionsPage() {
         <div className="predictionCreateFooter">
           {symbolsError ? (
           <div className="predictionCreateAlert predictionCreateAlertWarn">
-            Pairs konnten nicht geladen werden: {symbolsError}
+            {tPred("create.pairsLoadFailed")}: {symbolsError}
           </div>
           ) : null}
           {aiKindAllowed && !publicAiPromptsLoading && allowedAiPrompts.length === 0 ? (
           <div className="predictionCreateAlert predictionCreateAlertInfo">
-            Keine öffentlichen AI-Prompts vorhanden. Es wird der System-Standard verwendet.
+            {tPred("create.noPublicPrompts")}
           </div>
           ) : null}
           {localKindAllowed && !localStrategiesLoading && allowedLocalStrategies.length === 0 ? (
           <div className="predictionCreateAlert predictionCreateAlertInfo">
-            Keine aktiven Local-Strategien verfügbar.
+            {tPred("create.noLocalStrategies")}
           </div>
           ) : null}
           {compositeKindAllowed && !compositeStrategiesLoading && allowedCompositeStrategies.length === 0 ? (
           <div className="predictionCreateAlert predictionCreateAlertInfo">
-            Keine aktiven Composite-Strategien verfügbar.
+            {tPred("create.noCompositeStrategies")}
           </div>
           ) : null}
           {aiKindAllowed && publicAiPromptLicensePolicy ? (
           <div className="predictionCreateAlert predictionCreateAlertInfo">
-            Allowed prompt IDs:{" "}
+            {tPred("create.allowedPromptIds")}:{" "}
             {publicAiPromptLicensePolicy.allowedPublicPromptIds.length > 0
               ? publicAiPromptLicensePolicy.allowedPublicPromptIds.join(", ")
               : "*"}
@@ -1952,21 +2030,24 @@ export default function PredictionsPage() {
 
           <div className="predictionCreateActions">
             <button className="btn btnPrimary" type="button" disabled={creating} onClick={() => void createPrediction()}>
-              {creating ? "Creating..." : "Create Prediction"}
+              {creating ? tPred("create.creating") : tPred("create.createPrediction")}
             </button>
           </div>
         </div>
 
         <div className="card predictionSubCard">
           <div className="predictionSubCardHeader">
-            <div className="predictionSubCardTitle">Auto Prediction Schedules</div>
+            <div className="predictionSubCardTitle">{tPred("running.title")}</div>
             <div className="predictionSubCardHint">
-              Manage active schedules created with the form above.
+              {tPred("running.hint")}
             </div>
           </div>
           <div className="predictionsRunningHeader">
             <div style={{ fontWeight: 700 }}>
-              Running Auto Predictions ({filteredRunningRows.length}/{runningRows.length})
+              {tPred("running.runningAutoPredictions", {
+                filtered: filteredRunningRows.length,
+                total: runningRows.length
+              })}
             </div>
             <div className="predictionsRunningActions">
               <select
@@ -1975,9 +2056,9 @@ export default function PredictionsPage() {
                 onChange={(e) => setRunningStatusFilter(e.target.value as RunningStatusFilter)}
                 style={{ minWidth: 150 }}
               >
-                <option value="all">Status: all</option>
-                <option value="running">Status: running</option>
-                <option value="paused">Status: paused</option>
+                <option value="all">{tPred("running.statusAll")}</option>
+                <option value="running">{tPred("running.statusRunning")}</option>
+                <option value="paused">{tPred("running.statusPaused")}</option>
               </select>
               <button
                 className="btn"
@@ -1987,20 +2068,20 @@ export default function PredictionsPage() {
                 }}
                 disabled={runningLoading}
               >
-                {runningLoading ? "Refreshing..." : "Refresh"}
+                {runningLoading ? tPred("running.refreshing") : tPred("running.refresh")}
               </button>
             </div>
           </div>
 
           {runningLoading ? (
-            <div style={{ color: "var(--muted)" }}>Loading running schedules…</div>
+            <div style={{ color: "var(--muted)" }}>{tPred("running.loading")}</div>
           ) : runningRows.length === 0 ? (
             <div style={{ color: "var(--muted)" }}>
-              No running auto-predictions yet.
+              {tPred("running.empty")}
             </div>
           ) : filteredRunningRows.length === 0 ? (
             <div style={{ color: "var(--muted)" }}>
-              No entries for selected status filter.
+              {tPred("running.emptyFilter")}
             </div>
           ) : (
             <>
@@ -2008,14 +2089,14 @@ export default function PredictionsPage() {
               <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
                 <thead>
                   <tr style={{ textAlign: "left", color: "var(--muted)" }}>
-                    <th style={{ padding: "8px 6px" }}>Pair</th>
-                    <th style={{ padding: "8px 6px" }}>TF</th>
-                    <th style={{ padding: "8px 6px" }}>Market</th>
-                    <th style={{ padding: "8px 6px" }}>Account</th>
-                    <th style={{ padding: "8px 6px" }}>Prefs</th>
-                    <th style={{ padding: "8px 6px" }}>Status</th>
-                    <th style={{ padding: "8px 6px" }}>Next run</th>
-                    <th style={{ padding: "8px 6px" }}>Actions</th>
+                    <th style={{ padding: "8px 6px" }}>{tPred("running.pair")}</th>
+                    <th style={{ padding: "8px 6px" }}>{tPred("running.tf")}</th>
+                    <th style={{ padding: "8px 6px" }}>{tPred("running.market")}</th>
+                    <th style={{ padding: "8px 6px" }}>{tPred("running.account")}</th>
+                    <th style={{ padding: "8px 6px" }}>{tPred("running.prefs")}</th>
+                    <th style={{ padding: "8px 6px" }}>{tPred("running.status")}</th>
+                    <th style={{ padding: "8px 6px" }}>{tPred("running.nextRun")}</th>
+                    <th style={{ padding: "8px 6px" }}>{tPred("running.actions")}</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -2030,7 +2111,7 @@ export default function PredictionsPage() {
                       <td style={{ padding: "8px 6px" }}>
                         Dir: {row.directionPreference}, conf: {row.confidenceTargetPct}%
                         {row.marketType === "perp" && row.leverage ? `, lev: ${row.leverage}x` : ""}
-                        {`, mode: ${signalModeLabel(row.signalMode)}`}
+                        {`, ${tPred("feed.mode")}: ${signalModeLabel(row.signalMode, modeLabels)}`}
                         {`, strategy: ${strategyRefLabel(row.strategyRef, {
                           aiPromptTemplateName: row.aiPromptTemplateName,
                           localStrategyName: row.localStrategyName,
@@ -2038,10 +2119,14 @@ export default function PredictionsPage() {
                         })}`}
                       </td>
                       <td style={{ padding: "8px 6px" }}>
-                        {row.paused ? "paused" : "running"}
+                        {row.paused ? tPred("running.paused") : "running"}
                       </td>
                       <td style={{ padding: "8px 6px" }}>
-                        {row.paused ? "paused" : row.dueInSec <= 0 ? "due now" : `in ${fmtMs(row.dueInSec * 1000)}`}
+                        {row.paused
+                          ? tPred("running.paused")
+                          : row.dueInSec <= 0
+                            ? tPred("running.dueNow")
+                            : tPred("running.in", { value: fmtMs(row.dueInSec * 1000) })}
                       </td>
                       <td style={{ padding: "8px 6px", display: "flex", gap: 6, flexWrap: "wrap" }}>
                         <button
@@ -2050,7 +2135,7 @@ export default function PredictionsPage() {
                           disabled={runningActionId === row.id}
                           onClick={() => void togglePausePrediction(row)}
                         >
-                          {row.paused ? "Resume" : "Pause prediction"}
+                          {row.paused ? tPred("running.resume") : tPred("running.pausePrediction")}
                         </button>
                         <button
                           className="btn"
@@ -2058,7 +2143,7 @@ export default function PredictionsPage() {
                           disabled={runningActionId === row.id}
                           onClick={() => void deleteRunningPrediction(row.id)}
                         >
-                          Delete
+                          {tPred("running.delete")}
                         </button>
                       </td>
                     </tr>
@@ -2081,22 +2166,22 @@ export default function PredictionsPage() {
                     <span>{row.exchange.toUpperCase()}</span>
                   </div>
                   <div className="predictionRunningCardLine">
-                    <span>Account</span>
+                    <span>{tPred("running.account")}</span>
                     <strong>{row.label}</strong>
                   </div>
                   <div className="predictionRunningCardLine">
-                    <span>Prefs</span>
+                    <span>{tPred("running.prefs")}</span>
                     <strong>
                       {row.directionPreference}, {row.confidenceTargetPct}%
                       {row.marketType === "perp" && row.leverage ? `, ${row.leverage}x` : ""}
                     </strong>
                   </div>
                   <div className="predictionRunningCardLine">
-                    <span>Mode</span>
-                    <strong>{signalModeLabel(row.signalMode)}</strong>
+                    <span>{tPred("create.signalMode")}</span>
+                    <strong>{signalModeLabel(row.signalMode, modeLabels)}</strong>
                   </div>
                   <div className="predictionRunningCardLine">
-                    <span>Strategy</span>
+                    <span>{tPred("create.strategy")}</span>
                     <strong>{strategyRefLabel(row.strategyRef, {
                       aiPromptTemplateName: row.aiPromptTemplateName,
                       localStrategyName: row.localStrategyName,
@@ -2104,8 +2189,12 @@ export default function PredictionsPage() {
                     })}</strong>
                   </div>
                   <div className="predictionRunningCardLine">
-                    <span>Next run</span>
-                    <strong>{row.paused ? "paused" : row.dueInSec <= 0 ? "due now" : `in ${fmtMs(row.dueInSec * 1000)}`}</strong>
+                    <span>{tPred("running.nextRun")}</span>
+                    <strong>{row.paused
+                      ? tPred("running.paused")
+                      : row.dueInSec <= 0
+                        ? tPred("running.dueNow")
+                        : tPred("running.in", { value: fmtMs(row.dueInSec * 1000) })}</strong>
                   </div>
                   <div className="predictionRunningCardActions">
                     <button
@@ -2114,7 +2203,7 @@ export default function PredictionsPage() {
                       disabled={runningActionId === row.id}
                       onClick={() => void togglePausePrediction(row)}
                     >
-                      {row.paused ? "Resume" : "Pause prediction"}
+                      {row.paused ? tPred("running.resume") : tPred("running.pausePrediction")}
                     </button>
                     <button
                       className="btn"
@@ -2122,7 +2211,7 @@ export default function PredictionsPage() {
                       disabled={runningActionId === row.id}
                       onClick={() => void deleteRunningPrediction(row.id)}
                     >
-                      Delete
+                      {tPred("running.delete")}
                     </button>
                   </div>
                 </div>
@@ -2134,25 +2223,25 @@ export default function PredictionsPage() {
 
       </section>
 
-      {error ? <PredictionAlert tone="error" title="Load error" message={error} /> : null}
+      {error ? <PredictionAlert tone="error" title={tPred("alerts.loadError")} message={error} /> : null}
 
-      {actionError ? <PredictionAlert tone="error" title="Action failed" message={actionError} /> : null}
+      {actionError ? <PredictionAlert tone="error" title={tPred("alerts.actionFailed")} message={actionError} /> : null}
 
-      {detailsError ? <PredictionAlert tone="error" title="Detail load failed" message={detailsError} /> : null}
+      {detailsError ? <PredictionAlert tone="error" title={tPred("alerts.detailLoadFailed")} message={detailsError} /> : null}
 
-      {notice ? <PredictionAlert tone="warning" title="Notice" message={notice} /> : null}
+      {notice ? <PredictionAlert tone="warning" title={tPred("alerts.notice")} message={notice} /> : null}
 
       <section className="card predictionsSection">
         <div className="predictionsListHeader">
-          <div className="predictionsListTitle">Prediction Feed</div>
+          <div className="predictionsListTitle">{tPred("feed.title")}</div>
           <div className="predictionsListHint">
-            Review generated signals, filter the list, and open details or send ready setups to the Trading Desk.
+            {tPred("feed.hint")}
           </div>
         </div>
         <div className="predictionsFiltersHeader">
           <div className="predictionsFiltersSummary">
-            {filteredRows.length} listed, {actionableRowsCount} actionable
-            {activeFiltersCount > 0 ? `, ${activeFiltersCount} active filter(s)` : ""}
+            {tPred("feed.summary", { listed: filteredRows.length, actionable: actionableRowsCount })}
+            {activeFiltersCount > 0 ? `, ${tPred("feed.activeFilters", { count: activeFiltersCount })}` : ""}
           </div>
           <div className="predictionsFiltersActions">
             <button
@@ -2161,37 +2250,37 @@ export default function PredictionsPage() {
               onClick={resetFilters}
               disabled={activeFiltersCount === 0}
             >
-              Reset filters
+              {tPred("feed.resetFilters")}
             </button>
           </div>
         </div>
         <div className="predictionsFiltersGrid">
           <input
             className="input"
-            placeholder="Filter symbol..."
+            placeholder={tPred("feed.filterSymbol")}
             value={filterSymbol}
             onChange={(e) => setFilterSymbol(e.target.value)}
           />
           <select className="input" value={filterSignal} onChange={(e) => setFilterSignal(e.target.value as PredictionSignal | "all")}>
-            <option value="all">All signals</option>
+            <option value="all">{tPred("feed.allSignals")}</option>
             <option value="up">up</option>
             <option value="down">down</option>
             <option value="neutral">neutral</option>
           </select>
           <select className="input" value={filterTimeframe} onChange={(e) => setFilterTimeframe(e.target.value as PredictionTimeframe | "all")}>
-            <option value="all">All TF</option>
+            <option value="all">{tPred("feed.allTf")}</option>
             {TIMEFRAMES.map((tf) => (
               <option key={tf} value={tf}>{tf}</option>
             ))}
           </select>
           <select className="input" value={signalSource} onChange={(e) => setSignalSource(e.target.value as SignalSource)}>
-            <option value="local">Signal Source: Local</option>
-            <option value="ai">Signal Source: AI (fallback local)</option>
+            <option value="local">{tPred("feed.signalSourceLocal")}</option>
+            <option value="ai">{tPred("feed.signalSourceAi")}</option>
           </select>
           <select className="input" value={sortMode} onChange={(e) => setSortMode(e.target.value as SortMode)}>
-            <option value="newest">Sort: Newest</option>
-            <option value="confidence">Sort: Confidence</option>
-            <option value="move">Sort: Move size</option>
+            <option value="newest">{tPred("feed.sortNewest")}</option>
+            <option value="confidence">{tPred("feed.sortConfidence")}</option>
+            <option value="move">{tPred("feed.sortMove")}</option>
           </select>
           <button
             className="btn"
@@ -2205,18 +2294,18 @@ export default function PredictionsPage() {
             }}
             disabled={loading}
           >
-            {loading ? "Refreshing..." : "Refresh"}
+            {loading ? tPred("running.refreshing") : tPred("running.refresh")}
           </button>
         </div>
 
         <div className="predictionsListContent">
           {loading ? (
-            <div className="predictionsListState">Loading predictions…</div>
+            <div className="predictionsListState">{tPred("feed.loading")}</div>
           ) : filteredRows.length === 0 ? (
             <div className="predictionsListState">
-              <div style={{ fontWeight: 700, marginBottom: 8 }}>No predictions found</div>
+              <div style={{ fontWeight: 700, marginBottom: 8 }}>{tPred("feed.noPredictions")}</div>
               <div style={{ color: "var(--muted)" }}>
-                Adjust filters or create a new prediction above.
+                {tPred("feed.adjustFilters")}
               </div>
             </div>
           ) : (
@@ -2225,20 +2314,20 @@ export default function PredictionsPage() {
             <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
               <thead>
                 <tr style={{ textAlign: "left", color: "var(--muted)" }}>
-                  <th style={{ padding: "8px 6px" }}>Symbol</th>
-                  <th style={{ padding: "8px 6px" }}>Market</th>
-                  <th style={{ padding: "8px 6px" }}>TF</th>
-                  <th style={{ padding: "8px 6px" }}>Signal</th>
-                  <th style={{ padding: "8px 6px" }}>Confidence</th>
-                  <th style={{ padding: "8px 6px" }}>Move</th>
-                  <th style={{ padding: "8px 6px" }}>Auto</th>
-                  <th style={{ padding: "8px 6px" }}>Outcome</th>
-                  <th style={{ padding: "8px 6px" }}>Outcome PnL</th>
-                  <th style={{ padding: "8px 6px" }}>Tags / Explanation</th>
-                  <th style={{ padding: "8px 6px" }}>Last Updated</th>
-                  <th style={{ padding: "8px 6px" }}>Change</th>
-                  <th style={{ padding: "8px 6px" }}>Created</th>
-                  <th style={{ padding: "8px 6px" }}>Action</th>
+                  <th style={{ padding: "8px 6px" }}>{tPred("feed.table.symbol")}</th>
+                  <th style={{ padding: "8px 6px" }}>{tPred("feed.table.market")}</th>
+                  <th style={{ padding: "8px 6px" }}>{tPred("feed.table.tf")}</th>
+                  <th style={{ padding: "8px 6px" }}>{tPred("feed.table.signal")}</th>
+                  <th style={{ padding: "8px 6px" }}>{tPred("feed.table.confidence")}</th>
+                  <th style={{ padding: "8px 6px" }}>{tPred("feed.table.move")}</th>
+                  <th style={{ padding: "8px 6px" }}>{tPred("feed.table.auto")}</th>
+                  <th style={{ padding: "8px 6px" }}>{tPred("feed.table.outcome")}</th>
+                  <th style={{ padding: "8px 6px" }}>{tPred("feed.table.outcomePnl")}</th>
+                  <th style={{ padding: "8px 6px" }}>{tPred("feed.table.tagsExplanation")}</th>
+                  <th style={{ padding: "8px 6px" }}>{tPred("feed.table.lastUpdated")}</th>
+                  <th style={{ padding: "8px 6px" }}>{tPred("feed.table.change")}</th>
+                  <th style={{ padding: "8px 6px" }}>{tPred("feed.table.created")}</th>
+                  <th style={{ padding: "8px 6px" }}>{tPred("feed.table.action")}</th>
                 </tr>
               </thead>
               <tbody>
@@ -2249,7 +2338,7 @@ export default function PredictionsPage() {
                   const localComparisonSignal = row.localPrediction?.signal ?? row.signal;
                   const aiComparisonAvailable = Boolean(row.aiPrediction);
                   const aiDisagrees = aiComparisonAvailable && row.aiPrediction!.signal !== localComparisonSignal;
-                  const actionState = resolvePredictionActionState(row, signalSource);
+                  const actionState = resolvePredictionActionState(row, signalSource, actionStateLabels);
                   const expanded = expandedDetailId === row.id;
                   const loadingDetail = detailsLoadingId === row.id;
                   const updatedAtIso = row.lastUpdatedAt ?? row.tsCreated;
@@ -2286,16 +2375,16 @@ export default function PredictionsPage() {
                           ) : null}
                           {signalSource === "ai" && !aiComparisonAvailable ? (
                             <div style={{ color: "var(--muted)", fontSize: 11, marginTop: 4 }}>
-                              ai n/a, using local
+                              {tPred("feed.aiUnavailableUsingLocal")}
                             </div>
                           ) : null}
                           {aiDisagrees ? (
                             <div style={{ color: "#f59e0b", fontSize: 11, marginTop: 4 }}>
-                              disagreement
+                              {tPred("feed.disagreement")}
                             </div>
                           ) : null}
                           <div style={{ color: "var(--muted)", fontSize: 11, marginTop: 4 }}>
-                            mode {signalModeLabel(row.signalMode)}
+                            {tPred("feed.mode")} {signalModeLabel(row.signalMode, modeLabels)}
                           </div>
                           <div style={{ color: "var(--muted)", fontSize: 11, marginTop: 2 }}>
                             {strategyRefLabel(row.strategyRef, {
@@ -2310,7 +2399,7 @@ export default function PredictionsPage() {
                         <td style={{ padding: "8px 6px" }}>
                           <div>{row.autoScheduleEnabled ? "enabled" : "off"}</div>
                           <div style={{ color: "var(--muted)", fontSize: 12 }}>
-                            Next: {nextAutoRunText(row, nowMs)}
+                            {tPred("feed.next")}: {nextAutoRunText(row, nowMs, nextRunLabels)}
                           </div>
                         </td>
                         <td style={{ padding: "8px 6px" }}>
@@ -2369,7 +2458,7 @@ export default function PredictionsPage() {
                                 disabled={sendingId === row.id || !actionState.canSend}
                                 title={row.accountId ? "Prefill trade ticket" : "Create an exchange account first"}
                               >
-                                {sendingId === row.id ? "Sending..." : "Send to Trading Desk"}
+                                {sendingId === row.id ? tPred("feed.sending") : tPred("feed.sendToTradingDesk")}
                               </button>
                             ) : null}
                             <button
@@ -2378,7 +2467,7 @@ export default function PredictionsPage() {
                               onClick={() => void togglePredictionDetail(row.id)}
                               disabled={loadingDetail && !expanded}
                             >
-                              {expanded ? "Hide details" : "Details"}
+                              {expanded ? tPred("feed.hideDetails") : tPred("feed.details")}
                             </button>
                           </div>
                         </td>
@@ -2402,7 +2491,7 @@ export default function PredictionsPage() {
               const activeSignal = resolveSignal(row, signalSource);
               const activeConfidence = resolveConfidence(row, signalSource);
               const activeMove = resolveExpectedMove(row, signalSource);
-              const actionState = resolvePredictionActionState(row, signalSource);
+              const actionState = resolvePredictionActionState(row, signalSource, actionStateLabels);
               const expanded = expandedDetailId === row.id;
               const loadingDetail = detailsLoadingId === row.id;
               const updatedAtIso = row.lastUpdatedAt ?? row.tsCreated;
@@ -2433,7 +2522,7 @@ export default function PredictionsPage() {
                   <div className="predictionRowCardMeta">
                     <span>{row.marketType}</span>
                     <span>{row.timeframe}</span>
-                    <span>{signalModeLabel(row.signalMode)}</span>
+                    <span>{signalModeLabel(row.signalMode, modeLabels)}</span>
                     <span>{strategyRefLabel(row.strategyRef, {
                       aiPromptTemplateName: row.aiPromptTemplateName,
                       localStrategyName: row.localStrategyName,
@@ -2441,7 +2530,7 @@ export default function PredictionsPage() {
                     })}</span>
                     <span>{new Date(row.tsCreated).toLocaleString()}</span>
                     <span title={updatedAtIso ? new Date(updatedAtIso).toLocaleString() : "n/a"}>
-                      Updated {formatRelativeTime(updatedAtIso, nowMs)}
+                      {tPred("feed.updated")} {formatRelativeTime(updatedAtIso, nowMs)}
                     </span>
                   </div>
 
@@ -2489,8 +2578,8 @@ export default function PredictionsPage() {
                   </div>
 
                   <div className="predictionRowCardAuto">
-                    <span>{row.autoScheduleEnabled ? "Auto: enabled" : "Auto: off"}</span>
-                    <span>Next: {nextAutoRunText(row, nowMs)}</span>
+                    <span>{row.autoScheduleEnabled ? `Auto: ${tPred("feed.autoEnabled")}` : `Auto: ${tPred("feed.autoOff")}`}</span>
+                    <span>{tPred("feed.next")}: {nextAutoRunText(row, nowMs, nextRunLabels)}</span>
                   </div>
 
                   <div className="predictionRowCardActions">
@@ -2504,7 +2593,7 @@ export default function PredictionsPage() {
                         disabled={sendingId === row.id || !actionState.canSend}
                         title={row.accountId ? "Prefill trade ticket" : "Create an exchange account first"}
                       >
-                        {sendingId === row.id ? "Sending..." : "Send to Trading Desk"}
+                        {sendingId === row.id ? tPred("feed.sending") : tPred("feed.sendToTradingDesk")}
                       </button>
                     ) : null}
                     <button
@@ -2513,7 +2602,7 @@ export default function PredictionsPage() {
                       onClick={() => void togglePredictionDetail(row.id)}
                       disabled={loadingDetail && !expanded}
                     >
-                      {expanded ? "Hide details" : "Details"}
+                      {expanded ? tPred("feed.hideDetails") : tPred("feed.details")}
                     </button>
                   </div>
 
@@ -2532,17 +2621,17 @@ export default function PredictionsPage() {
       </section>
 
       <section className="card predictionsSection">
-        <div className="predictionCreateTitle">Performance & Calibration</div>
+        <div className="predictionCreateTitle">{tPred("performance.title")}</div>
         <div className="predictionsSectionHint">
-          Historical quality of generated predictions.
+          {tPred("performance.hint")}
         </div>
         <div className="predictionsQualityGrid">
           <div className="card" style={{ margin: 0, padding: 10 }}>
-            <div style={{ color: "var(--muted)", fontSize: 12 }}>Evaluated Signals</div>
+            <div style={{ color: "var(--muted)", fontSize: 12 }}>{tPred("performance.evaluatedSignals")}</div>
             <div style={{ fontSize: 20, fontWeight: 800 }}>{quality?.sampleSize ?? 0}</div>
           </div>
           <div className="card" style={{ margin: 0, padding: 10 }}>
-            <div style={{ color: "var(--muted)", fontSize: 12 }}>TP Win Rate</div>
+            <div style={{ color: "var(--muted)", fontSize: 12 }}>{tPred("performance.tpWinRate")}</div>
             <div style={{ fontSize: 20, fontWeight: 800 }}>
               {quality?.winRatePct !== null && quality?.winRatePct !== undefined
                 ? `${quality.winRatePct.toFixed(2)}%`
@@ -2550,7 +2639,7 @@ export default function PredictionsPage() {
             </div>
           </div>
           <div className="card" style={{ margin: 0, padding: 10 }}>
-            <div style={{ color: "var(--muted)", fontSize: 12 }}>Avg Outcome PnL</div>
+            <div style={{ color: "var(--muted)", fontSize: 12 }}>{tPred("performance.avgOutcomePnl")}</div>
             <div style={{ fontSize: 20, fontWeight: 800 }}>
               {quality?.avgOutcomePnlPct !== null && quality?.avgOutcomePnlPct !== undefined
                 ? `${quality.avgOutcomePnlPct.toFixed(2)}%`
@@ -2558,24 +2647,24 @@ export default function PredictionsPage() {
             </div>
           </div>
           <div className="card" style={{ margin: 0, padding: 10 }}>
-            <div style={{ color: "var(--muted)", fontSize: 12 }}>TP / SL / Expired</div>
+            <div style={{ color: "var(--muted)", fontSize: 12 }}>{tPred("performance.tpSlExpired")}</div>
             <div style={{ fontSize: 16, fontWeight: 700 }}>
               {(quality?.tp ?? 0)} / {(quality?.sl ?? 0)} / {(quality?.expired ?? 0)}
             </div>
           </div>
           <div className="card" style={{ margin: 0, padding: 10 }}>
-            <div style={{ color: "var(--muted)", fontSize: 12 }}>Directional Hit Rate</div>
+            <div style={{ color: "var(--muted)", fontSize: 12 }}>{tPred("performance.directionalHitRate")}</div>
             <div style={{ fontSize: 20, fontWeight: 800 }}>
               {metrics?.hitRate !== null && metrics?.hitRate !== undefined
                 ? `${metrics.hitRate.toFixed(2)}%`
                 : "-"}
             </div>
             <div style={{ color: "var(--muted)", fontSize: 11 }}>
-              Evaluated: {metrics?.evaluatedCount ?? 0}
+              {tPred("performance.evaluated", { count: metrics?.evaluatedCount ?? 0 })}
             </div>
           </div>
           <div className="card" style={{ margin: 0, padding: 10 }}>
-            <div style={{ color: "var(--muted)", fontSize: 12 }}>MAE (Move %)</div>
+            <div style={{ color: "var(--muted)", fontSize: 12 }}>{tPred("performance.mae")}</div>
             <div style={{ fontSize: 20, fontWeight: 800 }}>
               {metrics?.mae !== null && metrics?.mae !== undefined
                 ? metrics.mae.toFixed(4)
@@ -2583,7 +2672,7 @@ export default function PredictionsPage() {
             </div>
           </div>
           <div className="card" style={{ margin: 0, padding: 10 }}>
-            <div style={{ color: "var(--muted)", fontSize: 12 }}>MSE</div>
+            <div style={{ color: "var(--muted)", fontSize: 12 }}>{tPred("performance.mse")}</div>
             <div style={{ fontSize: 20, fontWeight: 800 }}>
               {metrics?.mse !== null && metrics?.mse !== undefined
                 ? metrics.mse.toFixed(4)
@@ -2593,21 +2682,21 @@ export default function PredictionsPage() {
         </div>
         <div className="predictionCalibrationWrap">
           <div className="predictionCalibrationHeader">
-            <strong>Confidence Calibration (10 bins)</strong>
+            <strong>{tPred("performance.calibrationTitle")}</strong>
             <span style={{ color: "var(--muted)", fontSize: 12 }}>
-              predicted confidence vs. empirical accuracy
+              {tPred("performance.calibrationHint")}
             </span>
           </div>
           {!metrics || metrics.calibrationBins.filter((bin) => bin.n > 0).length === 0 ? (
-            <div className="predictionCalibrationEmpty">No evaluated bins yet.</div>
+            <div className="predictionCalibrationEmpty">{tPred("performance.noBins")}</div>
           ) : (
             <div className="predictionCalibrationTableWrap">
               <table className="predictionCalibrationTable">
                 <thead>
                   <tr>
-                    <th>Bin</th>
-                    <th>Avg conf</th>
-                    <th>Accuracy</th>
+                    <th>{tPred("performance.bin")}</th>
+                    <th>{tPred("performance.avgConf")}</th>
+                    <th>{tPred("performance.accuracy")}</th>
                     <th>N</th>
                   </tr>
                 </thead>

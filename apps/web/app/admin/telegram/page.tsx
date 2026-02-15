@@ -2,7 +2,9 @@
 
 import Link from "next/link";
 import { useEffect, useState } from "react";
+import { useLocale, useTranslations } from "next-intl";
 import { ApiError, apiGet, apiPost, apiPut } from "../../../lib/api";
+import { withLocalePath, type AppLocale } from "../../../i18n/config";
 
 function errMsg(e: unknown): string {
   if (e instanceof ApiError) return `${e.message} (HTTP ${e.status})`;
@@ -11,6 +13,9 @@ function errMsg(e: unknown): string {
 }
 
 export default function AdminTelegramPage() {
+  const t = useTranslations("admin.telegram");
+  const tCommon = useTranslations("admin.common");
+  const locale = useLocale() as AppLocale;
   const [loading, setLoading] = useState(true);
   const [isSuperadmin, setIsSuperadmin] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -28,7 +33,7 @@ export default function AdminTelegramPage() {
       const me = await apiGet<any>("/auth/me");
       if (!(me?.isSuperadmin || me?.hasAdminBackendAccess)) {
         setIsSuperadmin(false);
-        setError("Admin backend access required.");
+        setError(t("messages.accessRequired"));
         return;
       }
       setIsSuperadmin(true);
@@ -61,7 +66,7 @@ export default function AdminTelegramPage() {
       setTelegramConfigured(Boolean(res.configured));
       setTelegramMasked(res.telegramBotTokenMasked ?? null);
       setTelegramToken("");
-      setNotice("Telegram settings saved.");
+      setNotice(t("messages.saved"));
     } catch (e) {
       setError(errMsg(e));
     }
@@ -72,7 +77,7 @@ export default function AdminTelegramPage() {
     setNotice(null);
     try {
       await apiPost("/admin/settings/telegram/test");
-      setNotice("Telegram test sent.");
+      setNotice(t("messages.testSent"));
     } catch (e) {
       setError(errMsg(e));
     }
@@ -81,19 +86,19 @@ export default function AdminTelegramPage() {
   return (
     <div className="settingsWrap">
       <div className="adminTopActions">
-        <Link href="/admin" className="btn">
-          ← Back to admin
+        <Link href={withLocalePath("/admin", locale)} className="btn">
+          ← {tCommon("backToAdmin")}
         </Link>
-        <Link href="/settings" className="btn">
-          ← Back to settings
+        <Link href={withLocalePath("/settings", locale)} className="btn">
+          ← {tCommon("backToSettings")}
         </Link>
       </div>
-      <h2 style={{ marginTop: 0 }}>Admin · Global Telegram</h2>
+      <h2 style={{ marginTop: 0 }}>{t("title")}</h2>
       <div className="adminPageIntro">
-        Configure global Telegram credentials and delivery checks.
+        {t("subtitle")}
       </div>
 
-      {loading ? <div className="settingsMutedText">Loading...</div> : null}
+      {loading ? <div className="settingsMutedText">{t("loading")}</div> : null}
       {error ? (
         <div className="card settingsSection settingsAlert settingsAlertError">
           {error}
@@ -108,15 +113,15 @@ export default function AdminTelegramPage() {
       {isSuperadmin ? (
         <section className="card settingsSection">
           <div className="settingsSectionHeader">
-            <h3 style={{ margin: 0 }}>Telegram Settings</h3>
+            <h3 style={{ margin: 0 }}>{t("sectionTitle")}</h3>
           </div>
           <div style={{ fontSize: 12, color: "var(--muted)", marginBottom: 8 }}>
-            Configured: {telegramConfigured ? "yes" : "no"}
-            {telegramMasked ? ` · current token ${telegramMasked}` : ""}
+            {t("configured")}: {telegramConfigured ? t("yes") : t("no")}
+            {telegramMasked ? ` · ${t("currentToken")} ${telegramMasked}` : ""}
           </div>
           <div className="settingsFormGrid">
             <label className="settingsField">
-              <span className="settingsFieldLabel">Bot token</span>
+              <span className="settingsFieldLabel">{t("botToken")}</span>
               <input
                 className="input"
                 placeholder={telegramMasked ?? "123456:ABC..."}
@@ -125,15 +130,15 @@ export default function AdminTelegramPage() {
               />
             </label>
             <label className="settingsField">
-              <span className="settingsFieldLabel">Chat ID</span>
+              <span className="settingsFieldLabel">{t("chatId")}</span>
               <input className="input" value={telegramChatId} onChange={(e) => setTelegramChatId(e.target.value)} />
             </label>
             <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
               <button className="btn btnPrimary" onClick={() => void saveTelegram()}>
-                Save Telegram
+                {t("saveTelegram")}
               </button>
               <button className="btn" onClick={() => void testTelegram()}>
-                Send test
+                {t("sendTest")}
               </button>
             </div>
           </div>

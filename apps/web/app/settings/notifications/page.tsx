@@ -2,9 +2,14 @@
 
 import Link from "next/link";
 import { useEffect, useState } from "react";
+import { useLocale, useTranslations } from "next-intl";
 import { ApiError, apiGet, apiPost, apiPut } from "../../../lib/api";
+import { withLocalePath, type AppLocale } from "../../../i18n/config";
 
 export default function NotificationsPage() {
+  const t = useTranslations("settings.notifications");
+  const tCommon = useTranslations("settings.common");
+  const locale = useLocale() as AppLocale;
   const [sending, setSending] = useState(false);
   const [msg, setMsg] = useState<string | null>(null);
   const [chatId, setChatId] = useState("");
@@ -24,7 +29,7 @@ export default function NotificationsPage() {
     setMsg(null);
     try {
       await apiPost("/alerts/test");
-      setMsg("Test alert sent to Telegram.");
+      setMsg(t("messages.testSent"));
     } catch (e) {
       const message = errMsg(e);
       setMsg(message.includes("telegram_not_configured") ? message : message);
@@ -55,7 +60,7 @@ export default function NotificationsPage() {
       await apiPut("/settings/alerts", {
         telegramChatId: chatId.trim() || null
       });
-      setMsg("Saved.");
+      setMsg(t("messages.saved"));
     } catch (e) {
       setMsg(errMsg(e));
     } finally {
@@ -70,40 +75,42 @@ export default function NotificationsPage() {
   return (
     <div className="settingsWrap">
       <div style={{ marginBottom: 10, display: "flex", gap: 8, flexWrap: "wrap" }}>
-        <Link href="/settings" className="btn">
-          ← Back to settings
+        <Link href={withLocalePath("/settings", locale)} className="btn">
+          ← {tCommon("backToSettings")}
         </Link>
-        <Link href="/" className="btn">
-          ← Back to dashboard
+        <Link href={withLocalePath("/", locale)} className="btn">
+          ← {tCommon("backToDashboard")}
         </Link>
       </div>
-      <h2 style={{ marginTop: 0 }}>Notifications</h2>
+      <h2 style={{ marginTop: 0 }}>{t("title")}</h2>
       <div className="card settingsSection" style={{ fontSize: 13 }}>
         <div className="settingsSectionHeader">
-          <div style={{ fontWeight: 700 }}>Telegram alerts</div>
+          <div style={{ fontWeight: 700 }}>{t("telegram.title")}</div>
           <a
             className="btn"
             href="https://t.me/utrade_ai_signals_bot"
             target="_blank"
             rel="noreferrer"
           >
-            Open Bot (@utrade_ai_signals_bot)
+            {t("telegram.openBot")}
           </a>
         </div>
         <div style={{ color: "var(--muted)", marginBottom: 10 }}>
-          Bot token is managed globally by admin. You only need your Chat ID here.
+          {t("telegram.description")}
         </div>
         {!tokenConfigured ? (
           <div style={{ color: "#fca5a5", marginBottom: 10, fontSize: 12 }}>
-            Telegram bot token is not configured by admin yet.
+            {t("telegram.tokenMissing")}
           </div>
         ) : null}
         <div style={{ color: "var(--muted)", marginBottom: 10 }}>
-          Tip: For Telegram groups, the Chat ID usually starts with <b>-100</b>.
+          {t.rich("telegram.tip", {
+            strong: (chunks) => <b>{chunks}</b>
+          })}
         </div>
         <div style={{ display: "grid", gap: 10, marginBottom: 10 }}>
           <label style={{ display: "grid", gap: 6 }}>
-            <span style={{ fontSize: 12, color: "var(--muted)" }}>Chat ID</span>
+            <span style={{ fontSize: 12, color: "var(--muted)" }}>{t("telegram.chatId")}</span>
             <input
               className="input"
               placeholder="123456789"
@@ -114,10 +121,10 @@ export default function NotificationsPage() {
         </div>
         <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 10 }}>
           <button className="btn btnPrimary" onClick={saveConfig} disabled={saving}>
-            {saving ? "Saving..." : "Save settings"}
+            {saving ? tCommon("saving") : tCommon("saveSettings")}
           </button>
           <button className="btn" onClick={sendTest} disabled={sending}>
-            {sending ? "Sending..." : "Send test message"}
+            {sending ? t("messages.sending") : t("messages.sendTest")}
           </button>
         </div>
         {msg ? (

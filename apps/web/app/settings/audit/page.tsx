@@ -2,9 +2,14 @@
 
 import Link from "next/link";
 import { useEffect, useState } from "react";
+import { useLocale, useTranslations } from "next-intl";
 import { ApiError, apiGet } from "../../../lib/api";
+import { withLocalePath, type AppLocale } from "../../../i18n/config";
 
 export default function AuditPage() {
+  const t = useTranslations("settings.audit");
+  const tCommon = useTranslations("settings.common");
+  const locale = useLocale() as AppLocale;
   const [me, setMe] = useState<any>(null);
   const [items, setItems] = useState<any[]>([]);
   const [error, setError] = useState("");
@@ -34,18 +39,18 @@ export default function AuditPage() {
   return (
     <div style={{ maxWidth: 980 }}>
       <div style={{ marginBottom: 10, display: "flex", gap: 8, flexWrap: "wrap" }}>
-        <Link href="/settings" className="btn">← Back to settings</Link>
-        <Link href="/" className="btn">← Back to dashboard</Link>
+        <Link href={withLocalePath("/settings", locale)} className="btn">← {tCommon("backToSettings")}</Link>
+        <Link href={withLocalePath("/", locale)} className="btn">← {tCommon("backToDashboard")}</Link>
       </div>
-      <h2 style={{ marginTop: 0 }}>Audit Log</h2>
+      <h2 style={{ marginTop: 0 }}>{t("title")}</h2>
       {!allowed ? (
         <div className="card" style={{ padding: 12, fontSize: 12, color: "var(--muted)" }}>
-          You don’t have permission to view audit logs.
+          {t("noPermission")}
         </div>
       ) : (
         <div className="card" style={{ padding: 12 }}>
           {items.length === 0 ? (
-            <div style={{ fontSize: 12, color: "var(--muted)" }}>No audit events yet.</div>
+            <div style={{ fontSize: 12, color: "var(--muted)" }}>{t("empty")}</div>
           ) : (
             <div style={{ display: "grid", gap: 8 }}>
               {items.map((item) => (

@@ -2,9 +2,14 @@
 
 import Link from "next/link";
 import { useEffect, useState } from "react";
+import { useLocale, useTranslations } from "next-intl";
 import { ApiError, apiGet, apiPost, apiPut } from "../../../lib/api";
+import { withLocalePath, type AppLocale } from "../../../i18n/config";
 
 export default function UsersPage() {
+  const t = useTranslations("settings.users");
+  const tCommon = useTranslations("settings.common");
+  const locale = useLocale() as AppLocale;
   const [error, setError] = useState("");
   const [currentPassword, setCurrentPassword] = useState("");
   const [newPassword, setNewPassword] = useState("");
@@ -73,7 +78,7 @@ export default function UsersPage() {
       setAutoLogoutMinutes(Number(data.autoLogoutMinutes) || safeMinutes);
       setOtpEnabled(data.reauthOtpEnabled !== false);
       setIsSuperadmin(Boolean(data.isSuperadmin));
-      setSecurityMsg("Saved.");
+      setSecurityMsg(t("messages.saved"));
     } catch (e) {
       setSecurityMsg(errMsg(e));
     } finally {
@@ -86,11 +91,11 @@ export default function UsersPage() {
   }, []);
 
   async function savePassword() {
-    setPwdStatus("saving...");
+    setPwdStatus(tCommon("saving"));
     setPwdError("");
     if (newPassword !== confirmPassword) {
       setPwdStatus("");
-      setPwdError("Passwords do not match.");
+      setPwdError(t("messages.passwordMismatch"));
       return;
     }
     try {
@@ -98,7 +103,7 @@ export default function UsersPage() {
         currentPassword,
         newPassword
       });
-      setPwdStatus("updated");
+      setPwdStatus(t("messages.updated"));
       setCurrentPassword("");
       setNewPassword("");
       setConfirmPassword("");
@@ -110,7 +115,7 @@ export default function UsersPage() {
   }
 
   async function requestResetCode() {
-    setResetStatus("sending code...");
+    setResetStatus(t("messages.sendingCode"));
     setResetError("");
     setResetDevCode(null);
     try {
@@ -119,7 +124,9 @@ export default function UsersPage() {
         { email: resetEmail }
       );
       setResetStatus(
-        `If the account exists, a reset code was sent${payload?.expiresInMinutes ? ` (valid ${payload.expiresInMinutes} min)` : ""}.`
+        t("messages.resetCodeSent", {
+          expires: payload?.expiresInMinutes ? ` (${t("messages.validFor", { minutes: payload.expiresInMinutes })})` : ""
+        })
       );
       if (payload?.devCode) setResetDevCode(payload.devCode);
     } catch (e) {
@@ -129,11 +136,11 @@ export default function UsersPage() {
   }
 
   async function confirmResetPassword() {
-    setResetStatus("updating password...");
+    setResetStatus(t("messages.updatingPassword"));
     setResetError("");
     if (resetNewPassword !== resetConfirmPassword) {
       setResetStatus("");
-      setResetError("New password and confirmation do not match.");
+      setResetError(t("messages.newPasswordMismatch"));
       return;
     }
     try {
@@ -142,7 +149,7 @@ export default function UsersPage() {
         code: resetCode,
         newPassword: resetNewPassword
       });
-      setResetStatus("Password updated. Please sign in again if your session expires.");
+      setResetStatus(t("messages.passwordUpdated"));
       setResetCode("");
       setResetNewPassword("");
       setResetConfirmPassword("");
@@ -158,24 +165,24 @@ export default function UsersPage() {
   return (
     <div className="settingsWrap" style={{ maxWidth: 760 }}>
       <div style={{ marginBottom: 10, display: "flex", gap: 8, flexWrap: "wrap" }}>
-        <Link href="/settings" className="btn">
-          ← Back to settings
+        <Link href={withLocalePath("/settings", locale)} className="btn">
+          ← {tCommon("backToSettings")}
         </Link>
-        <Link href="/" className="btn">
-          ← Back to dashboard
+        <Link href={withLocalePath("/", locale)} className="btn">
+          ← {tCommon("backToDashboard")}
         </Link>
       </div>
-      <h2 style={{ marginTop: 0 }}>My Account</h2>
+      <h2 style={{ marginTop: 0 }}>{t("title")}</h2>
       <div className="card settingsSection" style={{ marginTop: 14 }}>
         <div className="settingsSectionHeader">
-          <div style={{ fontWeight: 700 }}>Password</div>
+          <div style={{ fontWeight: 700 }}>{t("password.title")}</div>
         </div>
         <div style={{ fontSize: 12, color: "var(--muted)", marginBottom: 10 }}>
-          Create a new password for your account. For security, your current password is required.
+          {t("password.description")}
         </div>
         <div style={{ display: "grid", gap: 10 }}>
           <label style={{ fontSize: 13 }}>
-            Current password
+            {t("password.current")}
             <input
               className="input"
               type="password"
@@ -184,7 +191,7 @@ export default function UsersPage() {
             />
           </label>
           <label style={{ fontSize: 13 }}>
-            New password
+            {t("password.new")}
             <input
               className="input"
               type="password"
@@ -193,7 +200,7 @@ export default function UsersPage() {
             />
           </label>
           <label style={{ fontSize: 13 }}>
-            Confirm new password
+            {t("password.confirm")}
             <input
               className="input"
               type="password"
@@ -203,7 +210,7 @@ export default function UsersPage() {
           </label>
           <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
             <button className="btn btnPrimary" onClick={savePassword} disabled={!currentPassword || !newPassword}>
-              Create new password
+              {t("password.submit")}
             </button>
             <span style={{ fontSize: 12, opacity: 0.7 }}>{pwdStatus}</span>
           </div>
@@ -213,10 +220,10 @@ export default function UsersPage() {
 
       <div className="card settingsSection" style={{ marginTop: 14 }}>
         <div className="settingsSectionHeader">
-          <div style={{ fontWeight: 700 }}>Security</div>
+          <div style={{ fontWeight: 700 }}>{t("security.title")}</div>
         </div>
         <div style={{ fontSize: 12, color: "var(--muted)", marginBottom: 10 }}>
-          Session and re-authentication settings for your account.
+          {t("security.description")}
         </div>
         <div style={{ display: "grid", gap: 10, marginBottom: 10, maxWidth: 360 }}>
           <label style={{ display: "flex", gap: 8, alignItems: "center" }}>
@@ -226,10 +233,10 @@ export default function UsersPage() {
               onChange={(e) => setAutoLogoutEnabled(e.target.checked)}
               disabled={securityLoading || securitySaving}
             />
-            <span>Enable auto-logout</span>
+            <span>{t("security.autoLogout")}</span>
           </label>
           <label style={{ display: "grid", gap: 6 }}>
-            <span style={{ fontSize: 12, color: "var(--muted)" }}>Idle minutes</span>
+            <span style={{ fontSize: 12, color: "var(--muted)" }}>{t("security.idleMinutes")}</span>
             <input
               className="input"
               type="number"
@@ -248,16 +255,16 @@ export default function UsersPage() {
                 onChange={(e) => setOtpEnabled(e.target.checked)}
                 disabled={securityLoading || securitySaving}
               />
-              <span>Require OTP re-auth for sensitive actions</span>
+              <span>{t("security.otp")}</span>
             </label>
           ) : null}
         </div>
         <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
           <button className="btn btnPrimary" onClick={saveSecuritySettings} disabled={securityLoading || securitySaving}>
-            {securitySaving ? "Saving..." : "Save settings"}
+            {securitySaving ? tCommon("saving") : tCommon("saveSettings")}
           </button>
           <button className="btn" onClick={loadSecuritySettings} disabled={securityLoading || securitySaving}>
-            {securityLoading ? "Loading..." : "Reload"}
+            {securityLoading ? tCommon("loading") : tCommon("reload")}
           </button>
         </div>
         {securityMsg ? (
@@ -267,39 +274,39 @@ export default function UsersPage() {
 
       <div className="card settingsSection" style={{ marginTop: 14 }}>
         <div className="settingsSectionHeader">
-          <div style={{ fontWeight: 700 }}>Reset via Email Code</div>
+          <div style={{ fontWeight: 700 }}>{t("reset.title")}</div>
         </div>
         <div style={{ fontSize: 12, color: "var(--muted)", marginBottom: 10 }}>
-          Use this if you forgot your current password.
+          {t("reset.description")}
         </div>
         <div style={{ display: "grid", gap: 10, maxWidth: 420 }}>
           <label style={{ fontSize: 13 }}>
-            Account email
+            {t("reset.email")}
             <input
               className="input"
               type="email"
               value={resetEmail}
               onChange={(e) => setResetEmail(e.target.value)}
-              placeholder="you@example.com"
+              placeholder={t("reset.emailPlaceholder")}
             />
           </label>
           <div>
             <button className="btn" onClick={() => void requestResetCode()} disabled={!resetEmail}>
-              Send reset code
+              {t("reset.sendCode")}
             </button>
           </div>
           <label style={{ fontSize: 13 }}>
-            Reset code (6 digits)
+            {t("reset.code")}
             <input
               className="input"
               value={resetCode}
               onChange={(e) => setResetCode(e.target.value)}
               maxLength={6}
-              placeholder="123456"
+              placeholder={t("reset.codePlaceholder")}
             />
           </label>
           <label style={{ fontSize: 13 }}>
-            New password
+            {t("reset.newPassword")}
             <input
               className="input"
               type="password"
@@ -309,7 +316,7 @@ export default function UsersPage() {
             />
           </label>
           <label style={{ fontSize: 13 }}>
-            Confirm new password
+            {t("reset.confirmPassword")}
             <input
               className="input"
               type="password"
@@ -324,13 +331,13 @@ export default function UsersPage() {
               onClick={() => void confirmResetPassword()}
               disabled={!resetEmail || resetCode.length !== 6 || resetNewPassword.length < 8}
             >
-              Reset password
+              {t("reset.submit")}
             </button>
           </div>
           {resetStatus ? <div style={{ fontSize: 12, color: "var(--muted)" }}>{resetStatus}</div> : null}
           {resetDevCode ? (
             <div style={{ fontSize: 12, color: "#facc15" }}>
-              Dev reset code: <b>{resetDevCode}</b>
+              {t("reset.devCode")} <b>{resetDevCode}</b>
             </div>
           ) : null}
           {resetError ? <div style={{ fontSize: 12, color: "#ff6b6b" }}>{resetError}</div> : null}

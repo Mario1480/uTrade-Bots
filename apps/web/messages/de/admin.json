@@ -1,0 +1,291 @@
+{
+  "common": {
+    "backToAdmin": "Zurück zu Admin",
+    "backToSettings": "Zurück zu Einstellungen",
+    "backToDashboard": "Zurück zum Dashboard",
+    "openSection": "{title} öffnen"
+  },
+  "landing": {
+    "title": "Admin-Backend",
+    "subtitle": "Bereich auswählen.",
+    "accessRequired": "Admin-Backend-Zugriff erforderlich.",
+    "loading": "Admin-Backend wird geladen...",
+    "searchPlaceholder": "Admin-Bereiche durchsuchen...",
+    "sectionsCount": "{filtered} von {total} Bereichen",
+    "groupSectionCount": "{count} Bereiche",
+    "noMatch": "Kein Admin-Bereich passt zur Suche.",
+    "categories": {
+      "Access": "Zugriff",
+      "Integrations": "Integrationen",
+      "Strategy": "Strategie"
+    }
+  },
+  "strategiesIndex": {
+    "title": "Strategien",
+    "subtitle": "Lokale, AI- und Composite-Strategien verwalten.",
+    "local": "Lokale Strategien",
+    "ai": "AI-Strategien",
+    "builder": "Composite Builder"
+  },
+  "predictionDefaults": {
+    "title": "Admin · Prediction-Defaults",
+    "subtitle": "Globale Standardwerte für neu erstellte Prediction-Schedules.",
+    "loading": "Lädt...",
+    "globalDefaultsTitle": "Globale Create-Defaults",
+    "sourceLabel": "Quelle",
+    "lastUpdatedLabel": "Zuletzt aktualisiert",
+    "never": "nie",
+    "signalMode": "Signal-Modus",
+    "signalModeHint": "Gilt für neu erstellte Predictions. Aktuell: {current}",
+    "modes": {
+      "localOnly": "Nur lokal",
+      "aiOnly": "Nur AI",
+      "both": "Lokal + AI"
+    },
+    "loadDefaults": "Defaults laden",
+    "saveSettings": "Einstellungen speichern",
+    "saving": "Speichern...",
+    "messages": {
+      "accessRequired": "Admin-Backend-Zugriff erforderlich.",
+      "defaultsLoaded": "Default-Werte ins Formular geladen (noch nicht gespeichert).",
+      "saved": "Prediction-Default-Einstellungen gespeichert."
+    }
+  },
+  "predictionRefresh": {
+    "title": "Admin · Prediction Refresh",
+    "subtitle": "Scheduler-Stabilität und AI-Refresh-Verhalten für Auto-Predictions abstimmen.",
+    "loading": "Lädt...",
+    "controlsTitle": "Scheduler-Stabilitätskontrollen",
+    "sourceLabel": "Quelle",
+    "lastUpdatedLabel": "Zuletzt aktualisiert",
+    "never": "nie",
+    "quickPresets": "Schnell-Presets",
+    "presetTip": "Tipp: Erst ein Preset laden, dann auf \"Einstellungen speichern\" klicken.",
+    "loadDefaults": "Defaults laden",
+    "saveSettings": "Einstellungen speichern",
+    "saving": "Speichern...",
+    "presets": {
+      "conservative": {
+        "label": "Konservativ",
+        "description": "Weniger Signalwechsel und weniger AI-Calls."
+      },
+      "balanced": {
+        "label": "Ausgewogen",
+        "description": "Empfohlener Standard für die meisten Märkte."
+      },
+      "aggressive": {
+        "label": "Aggressiv",
+        "description": "Schnellere Reaktion mit höherem Rauschrisiko."
+      }
+    },
+    "fields": {
+      "triggerDebounce": {
+        "label": "Trigger-Debounce (Sek)",
+        "hint": "Trigger muss stabil bleiben, bevor ein Refresh startet."
+      },
+      "aiCooldown": {
+        "label": "AI-Cooldown (Sek)",
+        "hint": "Mindestabstand zwischen OpenAI-Erklärungen pro Symbol/Timeframe."
+      },
+      "eventThrottle": {
+        "label": "Event-Throttle (Sek)",
+        "hint": "Wiederholte identische Events werden in diesem Fenster unterdrückt."
+      },
+      "hysteresisRatio": {
+        "label": "Hysterese-Ratio (0.2 - 0.95)",
+        "hint": "Höhere Werte sind stabiler (weniger Flips), niedrigere reagieren schneller."
+      },
+      "unstableFlipLimit": {
+        "label": "Limit für instabile Flips",
+        "hint": "Anzahl von Flips, bevor der Markt als instabil markiert wird."
+      },
+      "unstableFlipWindow": {
+        "label": "Instabiles Flip-Fenster (Sek)",
+        "hint": "Zeitfenster zur Zählung instabiler Signal-Flips."
+      }
+    },
+    "messages": {
+      "accessRequired": "Admin-Backend-Zugriff erforderlich.",
+      "defaultsLoaded": "Default-Werte ins Formular geladen (noch nicht gespeichert).",
+      "presetLoaded": "{label}-Preset geladen (noch nicht gespeichert).",
+      "saved": "Prediction-Refresh-Einstellungen gespeichert."
+    }
+  },
+  "telegram": {
+    "title": "Admin · Globales Telegram",
+    "subtitle": "Globale Telegram-Zugangsdaten und Zustellungschecks konfigurieren.",
+    "loading": "Lädt...",
+    "sectionTitle": "Telegram-Einstellungen",
+    "configured": "Konfiguriert",
+    "yes": "ja",
+    "no": "nein",
+    "currentToken": "aktueller Token",
+    "botToken": "Bot-Token",
+    "chatId": "Chat-ID",
+    "saveTelegram": "Telegram speichern",
+    "sendTest": "Test senden",
+    "messages": {
+      "accessRequired": "Admin-Backend-Zugriff erforderlich.",
+      "saved": "Telegram-Einstellungen gespeichert.",
+      "testSent": "Telegram-Test gesendet."
+    }
+  },
+  "smtp": {
+    "title": "Admin · SMTP",
+    "subtitle": "SMTP-Transport für System- und Reset-E-Mails verwalten.",
+    "loading": "Lädt...",
+    "sectionTitle": "SMTP-Einstellungen",
+    "passwordStored": "Passwort gespeichert",
+    "yes": "ja",
+    "no": "nein",
+    "host": "Host",
+    "port": "Port",
+    "user": "Benutzer",
+    "from": "Von",
+    "secureConnection": "Sichere Verbindung verwenden",
+    "passwordHint": "Passwort (leer lassen, um beizubehalten)",
+    "saveSmtp": "SMTP speichern",
+    "testRecipient": "Testempfänger",
+    "sendTest": "SMTP-Test senden",
+    "messages": {
+      "accessRequired": "Admin-Backend-Zugriff erforderlich.",
+      "saved": "SMTP-Einstellungen gespeichert.",
+      "testSent": "SMTP-Test-E-Mail gesendet."
+    }
+  },
+  "exchanges": {
+    "title": "Admin · Angebotene Exchanges",
+    "subtitle": "Festlegen, welche Exchanges für Benutzer beim Onboarding verfügbar sind.",
+    "loading": "Lädt...",
+    "sectionTitle": "Exchange-Verfügbarkeit",
+    "description": "Aktivierte Exchanges werden Benutzern in der Exchange-Account-Einrichtung angeboten.",
+    "save": "Exchanges speichern",
+    "messages": {
+      "accessRequired": "Admin-Backend-Zugriff erforderlich.",
+      "saved": "Exchange-Angebot aktualisiert."
+    }
+  },
+  "users": {
+    "title": "Admin · Benutzer",
+    "subtitle": "Benutzer, Zugangsdaten und Account-Zugriffe verwalten.",
+    "loading": "Lädt...",
+    "createUserTitle": "Benutzer erstellen",
+    "email": "E-Mail",
+    "temporaryPassword": "Temporäres Passwort (optional)",
+    "createUser": "Benutzer erstellen",
+    "userListTitle": "Benutzerliste",
+    "searchUser": "Benutzer suchen",
+    "searchPlaceholder": "Nach E-Mail filtern...",
+    "superadmin": "Superadmin",
+    "stats": "Bots: {bots} · Accounts: {accounts} · Sessions: {sessions}",
+    "adminBackendAccess": "Admin-Backend-Zugriff",
+    "newPassword": "Neues Passwort",
+    "setPassword": "Passwort setzen",
+    "delete": "Löschen",
+    "noUsers": "Keine Benutzer passen zum Filter.",
+    "confirmDelete": "Benutzer {email} löschen? Das kann nicht rückgängig gemacht werden.",
+    "messages": {
+      "accessRequired": "Admin-Backend-Zugriff erforderlich.",
+      "userCreated": "Benutzer erstellt.",
+      "userCreatedWithPassword": "Benutzer erstellt. Temporäres Passwort: {password}",
+      "passwordUpdated": "Passwort aktualisiert und Sessions widerrufen.",
+      "deleted": "{email} gelöscht.",
+      "adminAccessGranted": "Admin-Backend-Zugriff für {email} gewährt.",
+      "adminAccessRevoked": "Admin-Backend-Zugriff für {email} entzogen."
+    }
+  },
+  "apiKeys": {
+    "title": "Admin · API-Keys",
+    "subtitle": "Verschlüsselte Provider-Keys verwalten und Verfügbarkeitschecks ausführen.",
+    "loading": "Lädt...",
+    "storedKey": "Gespeicherter Key",
+    "lastUpdated": "Zuletzt aktualisiert",
+    "statusNotChecked": "Status noch nicht geprüft.",
+    "source": "Quelle",
+    "checked": "geprüft",
+    "refreshStatus": "Status aktualisieren",
+    "checking": "prüfe...",
+    "checkingButton": "Prüfe...",
+    "missingKey": "Key fehlt",
+    "errorStatus": "Fehler",
+    "yes": "ja",
+    "no": "nein",
+    "never": "nie",
+    "removeStoredKey": "Gespeicherten Key entfernen",
+    "openAi": {
+      "sectionTitle": "OpenAI-Key (Global)",
+      "statusLabel": "OpenAI-Status",
+      "newKey": "Neuer OpenAI-API-Key",
+      "save": "OpenAI-Key speichern",
+      "envOverrideHint": "ENV `AI_API_KEY` ist noch gesetzt. Entferne ihn aus `.env.prod`, wenn du nur DB-Keys nutzen willst."
+    },
+    "fmp": {
+      "sectionTitle": "FMP-Key (Wirtschaftskalender)",
+      "statusLabel": "FMP-Status",
+      "newKey": "Neuer FMP-API-Key",
+      "save": "FMP-Key speichern",
+      "envOverrideHint": "ENV `FMP_API_KEY` ist noch gesetzt. Entferne ihn aus `.env.prod`, wenn du nur DB-Keys nutzen willst."
+    },
+    "messages": {
+      "accessRequired": "Admin-Backend-Zugriff erforderlich.",
+      "openAiKeyRequired": "Bitte einen OpenAI-API-Key eingeben.",
+      "openAiKeySaved": "OpenAI-API-Key gespeichert.",
+      "openAiKeyRemoved": "OpenAI-API-Key entfernt.",
+      "confirmClearOpenAi": "Gespeicherten OpenAI-API-Key entfernen?",
+      "fmpKeyRequired": "Bitte einen FMP-API-Key eingeben.",
+      "fmpKeySaved": "FMP-API-Key gespeichert.",
+      "fmpKeyRemoved": "FMP-API-Key entfernt.",
+      "confirmClearFmp": "Gespeicherten FMP-API-Key entfernen?"
+    }
+  },
+  "links": {
+    "users": {
+      "title": "Benutzer",
+      "description": "Benutzer suchen, erstellen, Passwörter ändern und löschen."
+    },
+    "telegram": {
+      "title": "Globales Telegram",
+      "description": "Globalen Bot-Token/Chat setzen und Test-Alarme senden."
+    },
+    "exchanges": {
+      "title": "Angebotene Exchanges",
+      "description": "Auswählen, welche CEX-Optionen Nutzern angeboten werden."
+    },
+    "smtp": {
+      "title": "SMTP",
+      "description": "SMTP-Transport konfigurieren und Test-Mail senden."
+    },
+    "apiKeys": {
+      "title": "API Keys",
+      "description": "Globale API-Keys (beginnend mit OpenAI) verschlüsselt speichern."
+    },
+    "indicatorSettings": {
+      "title": "Indikator-Einstellungen",
+      "description": "Feature-Packs und Indikator-Parameter mit Scoped Overrides konfigurieren."
+    },
+    "localStrategies": {
+      "title": "Lokale Strategien",
+      "description": "Deterministische lokale Strategie-Instanzen erstellen und verwalten."
+    },
+    "compositeBuilder": {
+      "title": "Composite Builder",
+      "description": "Local + AI Knoten zu Pipeline-Strategien mit Dry-Run kombinieren."
+    },
+    "aiStrategies": {
+      "title": "AI-Strategien",
+      "description": "AI-Prompt-Strategien und Prompt-Runtime-Defaults verwalten."
+    },
+    "predictionRefresh": {
+      "title": "Prediction Refresh",
+      "description": "Debounce, Hysterese, Cooldown und Event-Drosselung abstimmen."
+    },
+    "predictionDefaults": {
+      "title": "Prediction-Defaults",
+      "description": "Globale Standardwerte wie Signal-Modus für neue Predictions konfigurieren."
+    },
+    "aiTrace": {
+      "title": "AI-Trace-Logs",
+      "description": "AI-Requests/Responses mit On/Off-Schalter und Cleanup prüfen."
+    }
+  }
+}

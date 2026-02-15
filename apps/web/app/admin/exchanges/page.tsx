@@ -2,7 +2,9 @@
 
 import Link from "next/link";
 import { useEffect, useState } from "react";
+import { useLocale, useTranslations } from "next-intl";
 import { ApiError, apiGet, apiPut } from "../../../lib/api";
+import { withLocalePath, type AppLocale } from "../../../i18n/config";
 
 type ExchangeOption = {
   value: string;
@@ -17,6 +19,9 @@ function errMsg(e: unknown): string {
 }
 
 export default function AdminExchangesPage() {
+  const t = useTranslations("admin.exchanges");
+  const tCommon = useTranslations("admin.common");
+  const locale = useLocale() as AppLocale;
   const [loading, setLoading] = useState(true);
   const [isSuperadmin, setIsSuperadmin] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -30,7 +35,7 @@ export default function AdminExchangesPage() {
       const me = await apiGet<any>("/auth/me");
       if (!(me?.isSuperadmin || me?.hasAdminBackendAccess)) {
         setIsSuperadmin(false);
-        setError("Admin backend access required.");
+        setError(t("messages.accessRequired"));
         return;
       }
       setIsSuperadmin(true);
@@ -55,7 +60,7 @@ export default function AdminExchangesPage() {
       const allowed = exchangeOptions.filter((item) => item.enabled).map((item) => item.value);
       const res = await apiPut<{ options: ExchangeOption[] }>("/admin/settings/exchanges", { allowed });
       setExchangeOptions(res.options ?? []);
-      setNotice("Exchange offer updated.");
+      setNotice(t("messages.saved"));
     } catch (e) {
       setError(errMsg(e));
     }
@@ -64,19 +69,19 @@ export default function AdminExchangesPage() {
   return (
     <div className="settingsWrap">
       <div className="adminTopActions">
-        <Link href="/admin" className="btn">
-          ← Back to admin
+        <Link href={withLocalePath("/admin", locale)} className="btn">
+          ← {tCommon("backToAdmin")}
         </Link>
-        <Link href="/settings" className="btn">
-          ← Back to settings
+        <Link href={withLocalePath("/settings", locale)} className="btn">
+          ← {tCommon("backToSettings")}
         </Link>
       </div>
-      <h2 style={{ marginTop: 0 }}>Admin · Offered Exchanges</h2>
+      <h2 style={{ marginTop: 0 }}>{t("title")}</h2>
       <div className="adminPageIntro">
-        Choose which exchanges are available for user account onboarding.
+        {t("subtitle")}
       </div>
 
-      {loading ? <div className="settingsMutedText">Loading...</div> : null}
+      {loading ? <div className="settingsMutedText">{t("loading")}</div> : null}
       {error ? (
         <div className="card settingsSection settingsAlert settingsAlertError">
           {error}
@@ -91,10 +96,10 @@ export default function AdminExchangesPage() {
       {isSuperadmin ? (
         <section className="card settingsSection">
           <div className="settingsSectionHeader">
-            <h3 style={{ margin: 0 }}>Exchange Availability</h3>
+            <h3 style={{ margin: 0 }}>{t("sectionTitle")}</h3>
           </div>
           <div style={{ fontSize: 12, color: "var(--muted)", marginBottom: 10 }}>
-            Enabled exchanges are offered to users in exchange account setup.
+            {t("description")}
           </div>
           <div style={{ display: "grid", gap: 6 }}>
             {exchangeOptions.map((option, idx) => (
@@ -114,7 +119,7 @@ export default function AdminExchangesPage() {
           </div>
           <div style={{ marginTop: 10 }}>
             <button className="btn btnPrimary" onClick={() => void saveExchanges()}>
-              Save exchanges
+              {t("save")}
             </button>
           </div>
         </section>

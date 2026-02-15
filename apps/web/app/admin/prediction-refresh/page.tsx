@@ -2,7 +2,9 @@
 
 import Link from "next/link";
 import { useEffect, useState } from "react";
+import { useLocale, useTranslations } from "next-intl";
 import { ApiError, apiGet, apiPut } from "../../../lib/api";
+import { withLocalePath, type AppLocale } from "../../../i18n/config";
 
 type PredictionRefreshSettingsResponse = {
   triggerDebounceSec: number;
@@ -25,8 +27,6 @@ type PredictionRefreshSettingsResponse = {
 
 type RefreshPreset = {
   key: "conservative" | "balanced" | "aggressive";
-  label: string;
-  description: string;
   values: {
     triggerDebounceSec: number;
     aiCooldownSec: number;
@@ -40,8 +40,6 @@ type RefreshPreset = {
 const REFRESH_PRESETS: RefreshPreset[] = [
   {
     key: "conservative",
-    label: "Conservative",
-    description: "Fewer signal flips and fewer AI calls.",
     values: {
       triggerDebounceSec: 180,
       aiCooldownSec: 900,
@@ -53,8 +51,6 @@ const REFRESH_PRESETS: RefreshPreset[] = [
   },
   {
     key: "balanced",
-    label: "Balanced",
-    description: "Recommended default for most markets.",
     values: {
       triggerDebounceSec: 120,
       aiCooldownSec: 600,
@@ -66,8 +62,6 @@ const REFRESH_PRESETS: RefreshPreset[] = [
   },
   {
     key: "aggressive",
-    label: "Aggressive",
-    description: "Faster reactions with higher noise risk.",
     values: {
       triggerDebounceSec: 60,
       aiCooldownSec: 300,
@@ -86,6 +80,9 @@ function errMsg(e: unknown): string {
 }
 
 export default function AdminPredictionRefreshPage() {
+  const t = useTranslations("admin.predictionRefresh");
+  const tCommon = useTranslations("admin.common");
+  const locale = useLocale() as AppLocale;
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [isSuperadmin, setIsSuperadmin] = useState(false);
@@ -107,7 +104,7 @@ export default function AdminPredictionRefreshPage() {
       const me = await apiGet<any>("/auth/me");
       if (!(me?.isSuperadmin || me?.hasAdminBackendAccess)) {
         setIsSuperadmin(false);
-        setError("Admin backend access required.");
+        setError(t("messages.accessRequired"));
         return;
       }
       setIsSuperadmin(true);
@@ -138,7 +135,7 @@ export default function AdminPredictionRefreshPage() {
     setHysteresisRatio(String(settings.defaults.hysteresisRatio));
     setUnstableFlipLimit(String(settings.defaults.unstableFlipLimit));
     setUnstableFlipWindowSeconds(String(settings.defaults.unstableFlipWindowSeconds));
-    setNotice("Default values loaded into form (not saved yet).");
+    setNotice(t("messages.defaultsLoaded"));
   }
 
   function applyPreset(values: RefreshPreset["values"], label: string) {
@@ -148,7 +145,7 @@ export default function AdminPredictionRefreshPage() {
     setHysteresisRatio(String(values.hysteresisRatio));
     setUnstableFlipLimit(String(values.unstableFlipLimit));
     setUnstableFlipWindowSeconds(String(values.unstableFlipWindowSeconds));
-    setNotice(`${label} preset loaded (not saved yet).`);
+    setNotice(t("messages.presetLoaded", { label }));
   }
 
   async function save() {
@@ -175,7 +172,7 @@ export default function AdminPredictionRefreshPage() {
       setHysteresisRatio(String(res.hysteresisRatio));
       setUnstableFlipLimit(String(res.unstableFlipLimit));
       setUnstableFlipWindowSeconds(String(res.unstableFlipWindowSeconds));
-      setNotice("Prediction refresh settings saved.");
+      setNotice(t("messages.saved"));
     } catch (e) {
       setError(errMsg(e));
     } finally {
@@ -186,19 +183,19 @@ export default function AdminPredictionRefreshPage() {
   return (
     <div className="settingsWrap">
       <div className="adminTopActions">
-        <Link href="/admin" className="btn">
-          ← Back to admin
+        <Link href={withLocalePath("/admin", locale)} className="btn">
+          ← {tCommon("backToAdmin")}
         </Link>
-        <Link href="/settings" className="btn">
-          ← Back to settings
+        <Link href={withLocalePath("/settings", locale)} className="btn">
+          ← {tCommon("backToSettings")}
         </Link>
       </div>
-      <h2 style={{ marginTop: 0 }}>Admin · Prediction Refresh</h2>
+      <h2 style={{ marginTop: 0 }}>{t("title")}</h2>
       <div className="adminPageIntro">
-        Tune scheduler stability and AI refresh behavior for auto predictions.
+        {t("subtitle")}
       </div>
 
-      {loading ? <div className="settingsMutedText">Loading...</div> : null}
+      {loading ? <div className="settingsMutedText">{t("loading")}</div> : null}
       {error ? (
         <div className="card settingsSection settingsAlert settingsAlertError">
           {error}
@@ -213,89 +210,89 @@ export default function AdminPredictionRefreshPage() {
       {isSuperadmin ? (
         <section className="card settingsSection">
           <div className="settingsSectionHeader">
-            <h3 style={{ margin: 0 }}>Scheduler Stability Controls</h3>
+            <h3 style={{ margin: 0 }}>{t("controlsTitle")}</h3>
           </div>
           <div style={{ fontSize: 12, color: "var(--muted)", marginBottom: 10 }}>
-            Source: {settings?.source ?? "env"} · Last updated:{" "}
-            {settings?.updatedAt ? new Date(settings.updatedAt).toLocaleString() : "never"}
+            {t("sourceLabel")}: {settings?.source ?? "env"} · {t("lastUpdatedLabel")}:{" "}
+            {settings?.updatedAt ? new Date(settings.updatedAt).toLocaleString() : t("never")}
           </div>
 
           <div style={{ marginBottom: 12 }}>
-            <div style={{ fontSize: 12, color: "var(--muted)", marginBottom: 6 }}>Quick presets</div>
+            <div style={{ fontSize: 12, color: "var(--muted)", marginBottom: 6 }}>{t("quickPresets")}</div>
             <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
               {REFRESH_PRESETS.map((preset) => (
                 <button
                   key={preset.key}
                   className="btn"
                   type="button"
-                  title={preset.description}
-                  onClick={() => applyPreset(preset.values, preset.label)}
+                  title={t(`presets.${preset.key}.description`)}
+                  onClick={() => applyPreset(preset.values, t(`presets.${preset.key}.label`))}
                 >
-                  {preset.label}
+                  {t(`presets.${preset.key}.label`)}
                 </button>
               ))}
             </div>
             <div style={{ marginTop: 6, fontSize: 12, color: "var(--muted)" }}>
-              Tip: Load a preset first, then click "Save settings".
+              {t("presetTip")}
             </div>
           </div>
 
           <div style={{ display: "grid", gap: 10, gridTemplateColumns: "repeat(auto-fit,minmax(220px,1fr))" }}>
             <label style={{ display: "grid", gap: 6 }}>
-              <span style={{ fontSize: 12, color: "var(--muted)" }}>Trigger debounce (sec)</span>
+              <span style={{ fontSize: 12, color: "var(--muted)" }}>{t("fields.triggerDebounce.label")}</span>
               <input className="input" type="number" min={0} max={3600} value={triggerDebounceSec} onChange={(e) => setTriggerDebounceSec(e.target.value)} />
               <span style={{ fontSize: 11, color: "var(--muted)" }}>
-                Trigger must stay stable before a refresh starts.
+                {t("fields.triggerDebounce.hint")}
               </span>
             </label>
 
             <label style={{ display: "grid", gap: 6 }}>
-              <span style={{ fontSize: 12, color: "var(--muted)" }}>AI cooldown (sec)</span>
+              <span style={{ fontSize: 12, color: "var(--muted)" }}>{t("fields.aiCooldown.label")}</span>
               <input className="input" type="number" min={30} max={3600} value={aiCooldownSec} onChange={(e) => setAiCooldownSec(e.target.value)} />
               <span style={{ fontSize: 11, color: "var(--muted)" }}>
-                Minimum delay between OpenAI explanations per symbol/timeframe.
+                {t("fields.aiCooldown.hint")}
               </span>
             </label>
 
             <label style={{ display: "grid", gap: 6 }}>
-              <span style={{ fontSize: 12, color: "var(--muted)" }}>Event throttle (sec)</span>
+              <span style={{ fontSize: 12, color: "var(--muted)" }}>{t("fields.eventThrottle.label")}</span>
               <input className="input" type="number" min={0} max={3600} value={eventThrottleSec} onChange={(e) => setEventThrottleSec(e.target.value)} />
               <span style={{ fontSize: 11, color: "var(--muted)" }}>
-                Repeated identical events are suppressed within this window.
+                {t("fields.eventThrottle.hint")}
               </span>
             </label>
 
             <label style={{ display: "grid", gap: 6 }}>
-              <span style={{ fontSize: 12, color: "var(--muted)" }}>Hysteresis ratio (0.2 - 0.95)</span>
+              <span style={{ fontSize: 12, color: "var(--muted)" }}>{t("fields.hysteresisRatio.label")}</span>
               <input className="input" type="number" min={0.2} max={0.95} step={0.01} value={hysteresisRatio} onChange={(e) => setHysteresisRatio(e.target.value)} />
               <span style={{ fontSize: 11, color: "var(--muted)" }}>
-                Higher values are steadier (fewer flips), lower values react faster.
+                {t("fields.hysteresisRatio.hint")}
               </span>
             </label>
 
             <label style={{ display: "grid", gap: 6 }}>
-              <span style={{ fontSize: 12, color: "var(--muted)" }}>Unstable flip limit</span>
+              <span style={{ fontSize: 12, color: "var(--muted)" }}>{t("fields.unstableFlipLimit.label")}</span>
               <input className="input" type="number" min={2} max={20} value={unstableFlipLimit} onChange={(e) => setUnstableFlipLimit(e.target.value)} />
               <span style={{ fontSize: 11, color: "var(--muted)" }}>
-                Number of flips required before the market is marked unstable.
+                {t("fields.unstableFlipLimit.hint")}
               </span>
             </label>
 
             <label style={{ display: "grid", gap: 6 }}>
-              <span style={{ fontSize: 12, color: "var(--muted)" }}>Unstable flip window (sec)</span>
+              <span style={{ fontSize: 12, color: "var(--muted)" }}>{t("fields.unstableFlipWindow.label")}</span>
               <input className="input" type="number" min={60} max={86400} value={unstableFlipWindowSeconds} onChange={(e) => setUnstableFlipWindowSeconds(e.target.value)} />
               <span style={{ fontSize: 11, color: "var(--muted)" }}>
-                Time window used to count unstable signal flips.
+                {t("fields.unstableFlipWindow.hint")}
               </span>
             </label>
           </div>
 
           <div style={{ display: "flex", gap: 8, marginTop: 12, flexWrap: "wrap" }}>
             <button className="btn" type="button" onClick={restoreDefaults}>
-              Load defaults
+              {t("loadDefaults")}
             </button>
             <button className="btn btnPrimary" type="button" onClick={() => void save()} disabled={saving}>
-              {saving ? "Saving..." : "Save settings"}
+              {saving ? t("saving") : t("saveSettings")}
             </button>
           </div>
         </section>

@@ -1,0 +1,63 @@
+{
+  "title": "Support & Hilfe",
+  "subtitle": "Leitfäden für Setup, Sicherheit und Fehlerbehebung.",
+  "quickLinks": "Quick Links",
+  "contactTitle": "Support kontaktieren",
+  "contactBody": "Bitte Workspace-Name, Bot-Name oder ID, Zeitstempel, Screenshot und relevante API/Runner-Logs angeben.",
+  "sections": {
+    "gettingStarted": {
+      "title": "Erste Schritte",
+      "line1": "Erstelle einen Bot durch Auswahl von Exchange und Trading-Paar, speichere die Konfiguration und starte den Bot.",
+      "line2": "Tipp: Nutze Config Presets, um bewährte Setups schnell auf neue Bots anzuwenden."
+    },
+    "exchangeKeys": {
+      "title": "Exchange API Keys",
+      "line1": "Benötigte Berechtigungen: nur Trading (keine Auszahlungen).",
+      "line2": "Keys sind geschützt; Anzeigen/Bearbeiten erfordert Re-Auth (OTP).",
+      "line3": "Häufige Probleme: ungültiger Key, IP-Whitelist nicht aktualisiert, fehlende Trading-Rechte."
+    },
+    "botSettings": {
+      "title": "Bot-Einstellungen erklärt",
+      "line1": "Futures Strategy: Spread, Levels, Step, Distribution, Jitter, Skew, Max Skew.",
+      "line2": "Volume Bot: Tagesziel, Min/Max Trade, Modus.",
+      "line3": "Risk: Min Balance, Max Deviation, Max Open Orders, Daily Loss."
+    },
+    "priceSupport": {
+      "title": "Price Support",
+      "line1": "Wenn der Mid-Preis unter die Floor-Linie fällt, kauft Price Support bis der Mid-Preis wieder darüber liegt.",
+      "line2": "Es verwendet ein separates Budget und stoppt automatisch bei Budgetverbrauch.",
+      "line3": "Bei Budget-Depletion wird eine Telegram-Nachricht gesendet; manueller Neustart ist erforderlich."
+    },
+    "priceFollow": {
+      "title": "Price Follow (Master / Slave)",
+      "line1": "Die Master-Exchange liefert den Preis-Feed (kein Bot auf Master nötig).",
+      "line2": "Die Slave-Exchange führt Trades basierend auf diesem Feed aus.",
+      "line3": "Stale-Feed- und Deviation-Schutz verhindern unsichere Orders."
+    },
+    "manualTrading": {
+      "title": "Manuelles Trading",
+      "line1": "Manuelle Limit- und Market-Orders sind verfügbar, wenn vom Admin freigeschaltet.",
+      "line2": "Für manuelle Trading-Aktionen ist Re-Auth (OTP) erforderlich.",
+      "line3": "Market-Orders enthalten Slippage-Warnungen und sollten vorsichtig genutzt werden."
+    },
+    "roles": {
+      "title": "Benutzer, Rollen & Berechtigungen",
+      "line1": "Rollen umfassen Superadmin, Admin, Operator und Viewer.",
+      "line2": "Berechtigungen sind pro Workspace-Rolle konfigurierbar.",
+      "line3": "Best Practice: Least Privilege im Tagesbetrieb."
+    },
+    "security": {
+      "title": "Sicherheit",
+      "line1": "Cookie-basierte Sessions sind durch CSRF-Schutz abgesichert.",
+      "line2": "Re-Auth (OTP) ist für sensible Aktionen erforderlich.",
+      "line3": "Optionale Email-2FA ist verfügbar.",
+      "line4": "Audit-Logs helfen beim Nachverfolgen sensibler Änderungen und Aktionen."
+    },
+    "troubleshooting": {
+      "title": "Fehlerbehebung",
+      "line1": "Bot zeigt ERROR: Runtime-Grund, Keys, Balances und Exchange-Health prüfen.",
+      "line2": "Keine Orders: Konfig zu streng, Price-Follow-Deviation oder Post-only-Rejects.",
+      "line3": "Runner aktualisiert nicht: Runner-Status und Readiness-Endpunkte prüfen."
+    }
+  }
+}
