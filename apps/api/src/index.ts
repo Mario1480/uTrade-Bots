@@ -1138,6 +1138,15 @@ function resolvePreferredSignalSourceForMode(
   return fallback;
 }
 
+function resolveStrategyBoundSignalMode(
+  baseMode: PredictionSignalMode,
+  strategyKind: "ai" | "local" | "composite" | null
+): PredictionSignalMode {
+  if (strategyKind === "local") return "local_only";
+  if (strategyKind === "ai") return "ai_only";
+  return baseMode;
+}
+
 function withPredictionSnapshots(params: {
   snapshot: Record<string, unknown>;
   localPrediction: {
@@ -2565,7 +2574,7 @@ async function generateAutoPredictionForUser(
       throw new ManualTradingError("symbol_required", 400, "symbol_required");
     }
     const predictionDefaults = await getPredictionDefaultsSettings();
-    const signalMode = predictionDefaults.signalMode;
+    const defaultSignalMode = predictionDefaults.signalMode;
     const requestedTimeframe = payload.timeframe;
     const promptScopeContextDraft = {
       exchange: account.exchange,
@@ -2608,6 +2617,10 @@ async function generateAutoPredictionForUser(
           : requestedPromptTemplateId
             ? { kind: "ai", id: requestedPromptTemplateId, name: null }
             : null;
+    const signalMode = resolveStrategyBoundSignalMode(
+      defaultSignalMode,
+      selectedStrategyRef?.kind ?? "ai"
+    );
     if (requestedLocalStrategyId && !selectedLocalStrategy) {
       throw new ManualTradingError(
         "Selected local strategy is not available.",
@@ -2686,8 +2699,12 @@ async function generateAutoPredictionForUser(
           requirePublic: !requestIsSuperadmin
         })
       : await getAiPromptRuntimeSettings(promptScopeContextDraft);
+    const allowPromptTimeframeOverride =
+      !selectedStrategyRef || selectedStrategyRef.kind === "ai";
     const effectiveTimeframe = (
-      selectedPromptSettings?.timeframe ?? requestedTimeframe
+      allowPromptTimeframeOverride
+        ? (selectedPromptSettings?.timeframe ?? requestedTimeframe)
+        : requestedTimeframe
     ) as PredictionTimeframe;
     const effectiveDirectionPreference = parseDirectionPreference(
       selectedPromptSettings?.directionPreference
@@ -9298,7 +9315,7 @@ app.post("/api/predictions/generate", requireAuth, async (req, res) => {
   }
 
   const payload = parsed.data;
-  const signalMode = normalizePredictionSignalMode(payload.signalMode);
+  const requestedSignalMode = normalizePredictionSignalMode(payload.signalMode);
   const tsCreated = payload.tsCreated ?? new Date().toISOString();
   const inputFeatureSnapshot = asRecord(payload.featureSnapshot);
   const payloadStrategyKind = normalizePredictionStrategyKind(payload.strategyRef?.kind);
@@ -9336,6 +9353,10 @@ app.post("/api/predictions/generate", requireAuth, async (req, res) => {
         : requestedPromptTemplateId
           ? { kind: "ai", id: requestedPromptTemplateId, name: null }
           : null;
+  const signalMode = resolveStrategyBoundSignalMode(
+    requestedSignalMode,
+    selectedStrategyRef?.kind ?? "ai"
+  );
   if (requestedLocalStrategyId && !selectedLocalStrategy) {
     return res.status(400).json({ error: "invalid_local_strategy" });
   }

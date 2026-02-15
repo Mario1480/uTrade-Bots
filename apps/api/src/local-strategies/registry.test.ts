@@ -264,3 +264,100 @@ test("shadowMode records python decision and enforces fallback decision", async 
   assert.equal(Array.isArray(result.meta.pythonDecision?.reasonCodes), true);
   assert.equal(result.reasonCodes.includes("shadow_mode_not_enforced"), true);
 });
+
+test("trend_vol_gate python success in shadow mode keeps effective fallback and stores python runtime", async () => {
+  const definition = buildDefinition({
+    strategyType: "trend_vol_gate",
+    engine: "python",
+    shadowMode: true,
+    remoteStrategyType: "trend_vol_gate",
+    fallbackStrategyType: "signal_filter"
+  });
+
+  const result = await runLocalStrategy(definition.id, baseSnapshot, { signal: "up" }, {
+    getStrategyById: async () => definition,
+    runPythonStrategy: async () => ({
+      ok: true,
+      result: {
+        allow: true,
+        score: 86,
+        reasonCodes: ["trend_vol_gate_pass"],
+        tags: ["trend_up"],
+        explanation: "TrendVolGate pass",
+        meta: { runtimeMs: 17, engine: "python" }
+      }
+    })
+  });
+
+  assert.equal(result.meta.shadowMode, true);
+  assert.equal(result.meta.engine, "ts");
+  assert.equal(result.meta.mode, "fallback");
+  assert.equal(result.meta.fallbackReason, "shadow_mode_not_enforced");
+  assert.equal(result.meta.pythonDecision?.allow, true);
+  assert.equal(result.meta.pythonDecision?.meta?.runtimeMs, 17);
+  assert.equal(result.meta.pythonDecision?.meta?.engine, "python");
+  assert.equal(result.reasonCodes.includes("shadow_mode_not_enforced"), true);
+});
+
+test("trend_vol_gate python success without shadow mode is enforced", async () => {
+  const definition = buildDefinition({
+    strategyType: "trend_vol_gate",
+    engine: "python",
+    shadowMode: false,
+    remoteStrategyType: "trend_vol_gate",
+    fallbackStrategyType: "signal_filter"
+  });
+
+  const result = await runLocalStrategy(definition.id, baseSnapshot, { signal: "up" }, {
+    getStrategyById: async () => definition,
+    runPythonStrategy: async () => ({
+      ok: true,
+      result: {
+        allow: true,
+        score: 84,
+        reasonCodes: ["trend_vol_gate_pass"],
+        tags: ["trend_up"],
+        explanation: "TrendVolGate pass",
+        meta: { runtimeMs: 19, engine: "python" }
+      }
+    })
+  });
+
+  assert.equal(result.allow, true);
+  assert.equal(result.score, 84);
+  assert.deepEqual(result.reasonCodes, ["trend_vol_gate_pass"]);
+  assert.deepEqual(result.tags, ["trend_up"]);
+  assert.equal(result.meta.engine, "python");
+  assert.equal(result.meta.remoteStrategyType, "trend_vol_gate");
+  assert.equal(result.meta.runtimeMs, 19);
+});
+
+test("trend_vol_gate cb_open skips python and uses fallback", async () => {
+  const definition = buildDefinition({
+    strategyType: "trend_vol_gate",
+    engine: "python",
+    shadowMode: false,
+    remoteStrategyType: "trend_vol_gate",
+    fallbackStrategyType: "signal_filter"
+  });
+
+  const result = await runLocalStrategy(definition.id, baseSnapshot, { signal: "up" }, {
+    getStrategyById: async () => definition,
+    runPythonStrategy: async () => ({
+      ok: false,
+      errorCode: "cb_open",
+      status: null,
+      message: "python circuit breaker is open",
+      meta: {
+        pythonSkipped: true,
+        skipReason: "circuit_breaker_open",
+        cbOpen: true
+      }
+    })
+  });
+
+  assert.equal(result.meta.engine, "ts");
+  assert.equal(result.meta.mode, "fallback");
+  assert.equal(result.meta.fallbackReason, "python_cb_open");
+  assert.equal(result.meta.pythonFailure?.errorCode, "cb_open");
+});

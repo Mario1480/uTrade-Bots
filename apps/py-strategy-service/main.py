@@ -7,7 +7,7 @@ from fastapi import Depends, FastAPI, Header, HTTPException
 
 from models import HealthResponse, StrategyRegistryResponse, StrategyRunRequest, StrategyRunResponse
 from registry import registry
-from strategies import regime_gate, signal_filter
+from strategies import regime_gate, signal_filter, trend_vol_gate
 
 SERVICE_VERSION = "1.0.0"
 AUTH_TOKEN = os.getenv("PY_STRATEGY_AUTH_TOKEN", "").strip()
@@ -76,6 +76,45 @@ def register_strategies() -> None:
             },
         },
         handler=signal_filter.run,
+    )
+
+    registry.register(
+        "trend_vol_gate",
+        name="Trend+Vol Gate",
+        version="1.0.0",
+        default_config={
+            "allowedStates": ["trend_up", "trend_down"],
+            "minRegimeConf": 55,
+            "requireStackAlignment": True,
+            "requireSlopeAlignment": True,
+            "minAbsD50Pct": 0.12,
+            "minAbsD200Pct": 0.20,
+            "maxVolZ": 2.5,
+            "maxRelVol": 1.8,
+            "minVolZ": -1.2,
+            "minRelVol": 0.6,
+            "minPassScore": 70,
+            "allowNeutralSignal": False,
+        },
+        ui_schema={
+            "title": "Trend+Vol Gate",
+            "description": "Deterministic gate on regime, EMA alignment, distance and volume pressure.",
+            "fields": {
+                "allowedStates": {"type": "multiselect", "options": ["trend_up", "trend_down", "range", "transition", "unknown"]},
+                "minRegimeConf": {"type": "number", "min": 0, "max": 100, "step": 1},
+                "requireStackAlignment": {"type": "boolean"},
+                "requireSlopeAlignment": {"type": "boolean"},
+                "minAbsD50Pct": {"type": "number", "min": 0, "max": 5, "step": 0.01},
+                "minAbsD200Pct": {"type": "number", "min": 0, "max": 5, "step": 0.01},
+                "maxVolZ": {"type": "number", "min": 0, "max": 10, "step": 0.1},
+                "maxRelVol": {"type": "number", "min": 0, "max": 5, "step": 0.1},
+                "minVolZ": {"type": "number", "min": -10, "max": 0, "step": 0.1},
+                "minRelVol": {"type": "number", "min": 0, "max": 2, "step": 0.1},
+                "minPassScore": {"type": "number", "min": 0, "max": 100, "step": 1},
+                "allowNeutralSignal": {"type": "boolean"},
+            },
+        },
+        handler=trend_vol_gate.run,
     )
 
 

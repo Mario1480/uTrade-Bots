@@ -13,6 +13,11 @@ Deterministic local strategies can be registered and executed through `apps/api/
 
 - `regime_gate`: uses `historyContext.reg` + `historyContext.ema.stk`.
 - `signal_filter`: blocks based on tags / volatility / range state.
+- `trend_vol_gate` (python): deterministic trend + volatility gate based on `historyContext.reg/ema/vol`.
+
+Strategy docs:
+
+- `docs/strategies/trend-vol-gate.md`
 
 ## Runner behavior
 

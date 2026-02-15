@@ -449,6 +449,21 @@ function decodeStrategySelectValue(value: string): StrategyRef | null {
   return { kind, id, name: null };
 }
 
+function strategyKindFromSelectValue(value: string): StrategyKind | null {
+  const trimmed = value.trim().toLowerCase();
+  if (!trimmed) return null;
+  if (trimmed.startsWith("ai:")) return "ai";
+  if (trimmed.startsWith("local:")) return "local";
+  if (trimmed.startsWith("composite:")) return "composite";
+  return null;
+}
+
+function forcedSignalModeForStrategyKind(kind: StrategyKind | null): CreateSignalMode | null {
+  if (kind === "local") return "local_only";
+  if (kind === "ai") return "ai_only";
+  return null;
+}
+
 function isStrategyAllowedByEntitlements(
   entitlements: StrategyEntitlements | null,
   kind: StrategyKind,
@@ -984,6 +999,15 @@ export default function PredictionsPage() {
     () => isStrategyAllowedByEntitlements(strategyEntitlements, "composite", null),
     [strategyEntitlements]
   );
+  const selectedStrategyKind = useMemo(
+    () => strategyKindFromSelectValue(newStrategySelectValue),
+    [newStrategySelectValue]
+  );
+  const forcedCreateSignalMode = useMemo(
+    () => forcedSignalModeForStrategyKind(selectedStrategyKind),
+    [selectedStrategyKind]
+  );
+  const effectiveCreateSignalMode = forcedCreateSignalMode ?? predictionDefaults?.signalMode ?? "both";
   const selectedPromptLockedTimeframe = selectedPrompt?.timeframe ?? null;
   const effectiveCreateTimeframe = selectedPromptLockedTimeframe ?? newTimeframe;
 
@@ -1729,11 +1753,12 @@ export default function PredictionsPage() {
             <span className="badge badgeOk">Auto Schedule: Always On</span>
             <span className="badge">
               Signal mode:{" "}
-              {predictionDefaults?.signalMode === "local_only"
+              {effectiveCreateSignalMode === "local_only"
                 ? "Local only"
-                : predictionDefaults?.signalMode === "ai_only"
+                : effectiveCreateSignalMode === "ai_only"
                   ? "AI only"
                   : "Local + AI"}
+              {forcedCreateSignalMode ? " (strategy-enforced)" : " (global default)"}
             </span>
           </div>
         </div>
