@@ -17,6 +17,14 @@ type AdminLinkItem = {
   category: "Access" | "Integrations" | "Strategy";
 };
 
+const ADMIN_CATEGORIES: AdminLinkItem["category"][] = ["Access", "Integrations", "Strategy"];
+
+function adminCategoryClassName(category: AdminLinkItem["category"]): string {
+  if (category === "Access") return "adminLandingGroupAccess";
+  if (category === "Integrations") return "adminLandingGroupIntegrations";
+  return "adminLandingGroupStrategy";
+}
+
 const ADMIN_LINKS: AdminLinkItem[] = [
   {
     href: "/admin/users",
@@ -108,6 +116,17 @@ export default function AdminPage() {
     );
   }, [query]);
 
+  const groupedLinks = useMemo(
+    () =>
+      ADMIN_CATEGORIES
+        .map((category) => ({
+          category,
+          items: filteredLinks.filter((item) => item.category === category)
+        }))
+        .filter((group) => group.items.length > 0),
+    [filteredLinks]
+  );
+
   useEffect(() => {
     const load = async () => {
       setLoading(true);
@@ -172,22 +191,34 @@ export default function AdminPage() {
             </section>
           ) : null}
 
-          <div className="adminLandingGrid">
-            {filteredLinks.map((item) => (
-              <article key={item.href} className="card settingsSection adminLandingCard">
-                <div className="adminLandingCardHeader">
-                  <h3 style={{ margin: 0 }}>{item.title}</h3>
-                  <span className="badge adminLandingBadge">{item.category}</span>
+          <div className="adminLandingGrouped">
+            {groupedLinks.map((group) => (
+              <section
+                key={group.category}
+                className={`card settingsSection adminLandingGroupCard ${adminCategoryClassName(group.category)}`}
+              >
+                <div className="settingsSectionHeader">
+                  <h3 style={{ margin: 0 }}>{group.category}</h3>
+                  <div className="settingsSectionMeta">{group.items.length} sections</div>
                 </div>
-                <div className="adminLandingDesc">
-                  {item.description}
+                <div className="adminLandingGrid adminLandingGroupGrid">
+                  {group.items.map((item) => (
+                    <article key={item.href} className="card adminLandingCard">
+                      <div className="adminLandingCardHeader">
+                        <h3 style={{ margin: 0 }}>{item.title}</h3>
+                      </div>
+                      <div className="adminLandingDesc">
+                        {item.description}
+                      </div>
+                      <div className="adminLandingActions">
+                        <Link href={item.href} className="btn btnPrimary">
+                          Open {item.title}
+                        </Link>
+                      </div>
+                    </article>
+                  ))}
                 </div>
-                <div className="adminLandingActions">
-                  <Link href={item.href} className="btn btnPrimary">
-                    Open {item.title}
-                  </Link>
-                </div>
-              </article>
+              </section>
             ))}
           </div>
         </>

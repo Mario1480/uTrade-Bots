@@ -415,31 +415,37 @@ export default function SettingsPage() {
         </div>
       ) : null}
 
-      {isSuperadmin || hasAdminBackendAccess ? (
-        <section className="card settingsSection">
+      <div className="settingsLandingGrouped">
+        {isSuperadmin || hasAdminBackendAccess ? (
+          <section className="card settingsSection settingsLandingGroupCard settingsLandingGroupAdmin">
+            <div className="settingsSectionHeader">
+              <h3 style={{ margin: 0 }}>Admin</h3>
+              <div className="settingsSectionMeta">Access</div>
+            </div>
+            <div className="settingsSectionMeta">
+              User management, global Telegram, offered CEX list and SMTP settings.
+            </div>
+            <Link href="/admin" className="btn btnPrimary">
+              Open admin backend
+            </Link>
+          </section>
+        ) : null}
+
+        <section className="card settingsSection settingsLandingGroupCard settingsLandingGroupAccount">
           <div className="settingsSectionHeader">
-            <h3 style={{ margin: 0 }}>Admin</h3>
+            <h3 style={{ margin: 0 }}>Account</h3>
+            <div className="settingsSectionMeta">Profile</div>
           </div>
-          <div className="settingsSectionMeta">
-            User management, global Telegram, offered CEX list and SMTP settings.
-          </div>
-          <Link href="/admin" className="btn btnPrimary">
-            Open admin backend
-          </Link>
+          {loading ? <div>Loading...</div> : <div>{me?.email ?? "-"}</div>}
         </section>
-      ) : null}
 
-      <section className="card settingsSection">
-        <h3 style={{ marginTop: 0 }}>Account</h3>
-        {loading ? <div>Loading...</div> : <div>{me?.email ?? "-"}</div>}
-      </section>
-
-      <section className="card settingsSection">
+        <section className="card settingsSection settingsLandingGroupCard settingsLandingGroupSettings">
         <div className="settingsSectionHeader">
           <h3 style={{ margin: 0 }}>Account Settings</h3>
+          <div className="settingsSectionMeta">Integrations / Security</div>
         </div>
         <div className="settingsAccordion">
-          <div className={`settingsAccordionItem ${openSettingsSection === "exchange_settings" ? "settingsAccordionItemOpen" : ""}`}>
+          <div className={`settingsAccordionItem settingsAccordionItemIntegrations ${openSettingsSection === "exchange_settings" ? "settingsAccordionItemOpen" : ""}`}>
             <button
               className="settingsAccordionTrigger"
               type="button"
@@ -585,7 +591,7 @@ export default function SettingsPage() {
             ) : null}
           </div>
 
-          <div className={`settingsAccordionItem ${openSettingsSection === "security" ? "settingsAccordionItemOpen" : ""}`}>
+          <div className={`settingsAccordionItem settingsAccordionItemAccess ${openSettingsSection === "security" ? "settingsAccordionItemOpen" : ""}`}>
             <button
               className="settingsAccordionTrigger"
               type="button"
@@ -777,7 +783,7 @@ export default function SettingsPage() {
             ) : null}
           </div>
 
-          <div className={`settingsAccordionItem ${openSettingsSection === "notifications" ? "settingsAccordionItemOpen" : ""}`}>
+          <div className={`settingsAccordionItem settingsAccordionItemIntegrations ${openSettingsSection === "notifications" ? "settingsAccordionItemOpen" : ""}`}>
             <button
               className="settingsAccordionTrigger"
               type="button"
@@ -849,7 +855,7 @@ export default function SettingsPage() {
             ) : null}
           </div>
 
-          <div className={`settingsAccordionItem ${openSettingsSection === "license_management" ? "settingsAccordionItemOpen" : ""} ${!licenseManagementEnabled ? "settingsAccordionItemDisabled" : ""}`}>
+          <div className={`settingsAccordionItem settingsAccordionItemStrategy ${openSettingsSection === "license_management" ? "settingsAccordionItemOpen" : ""} ${!licenseManagementEnabled ? "settingsAccordionItemDisabled" : ""}`}>
             <button
               className="settingsAccordionTrigger"
               type="button"
@@ -880,7 +886,8 @@ export default function SettingsPage() {
             ) : null}
           </div>
         </div>
-      </section>
+        </section>
+      </div>
     </div>
   );
 }

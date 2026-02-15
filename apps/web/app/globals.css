@@ -15,6 +15,16 @@ html, body {
   font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif;
 }
 
+html {
+  min-height: 100%;
+}
+
+body {
+  min-height: 100dvh;
+  display: flex;
+  flex-direction: column;
+}
+
 a { color: inherit; }
 
 * { box-sizing: border-box; }
@@ -112,6 +122,8 @@ a { color: inherit; }
 
 .appMain {
   padding-top: 24px;
+  flex: 1 0 auto;
+  width: 100%;
 }
 
 .dashboardHeader {
@@ -953,6 +965,44 @@ a { color: inherit; }
   padding: 14px;
 }
 
+.settingsLandingGrouped {
+  display: grid;
+  gap: 12px;
+}
+
+.settingsLandingGroupCard {
+  position: relative;
+  overflow: hidden;
+  --settings-group-accent: #facc15;
+  border-color: color-mix(in oklab, var(--settings-group-accent) 42%, transparent);
+  background: linear-gradient(
+    180deg,
+    color-mix(in oklab, var(--settings-group-accent) 8%, transparent),
+    rgba(255, 255, 255, 0.01) 58%,
+    rgba(255, 255, 255, 0.01)
+  );
+}
+
+.settingsLandingGroupCard::before {
+  content: "";
+  position: absolute;
+  inset: 0 0 auto 0;
+  height: 3px;
+  background: color-mix(in oklab, var(--settings-group-accent) 80%, #ffffff 20%);
+}
+
+.settingsLandingGroupAdmin {
+  --settings-group-accent: #38bdf8;
+}
+
+.settingsLandingGroupAccount {
+  --settings-group-accent: #a78bfa;
+}
+
+.settingsLandingGroupSettings {
+  --settings-group-accent: #34d399;
+}
+
 .settingsSectionHeader {
   display: flex;
   align-items: center;
@@ -999,6 +1049,33 @@ a { color: inherit; }
 .settingsAccordionItemOpen {
   border-color: rgba(255, 193, 7, 0.5);
   background: rgba(255, 193, 7, 0.04);
+}
+
+.settingsAccordionItemAccess {
+  border-color: rgba(56, 189, 248, 0.36);
+}
+
+.settingsAccordionItemAccess.settingsAccordionItemOpen {
+  border-color: rgba(56, 189, 248, 0.56);
+  background: rgba(56, 189, 248, 0.08);
+}
+
+.settingsAccordionItemIntegrations {
+  border-color: rgba(52, 211, 153, 0.36);
+}
+
+.settingsAccordionItemIntegrations.settingsAccordionItemOpen {
+  border-color: rgba(52, 211, 153, 0.56);
+  background: rgba(52, 211, 153, 0.08);
+}
+
+.settingsAccordionItemStrategy {
+  border-color: rgba(245, 158, 11, 0.36);
+}
+
+.settingsAccordionItemStrategy.settingsAccordionItemOpen {
+  border-color: rgba(245, 158, 11, 0.56);
+  background: rgba(245, 158, 11, 0.08);
 }
 
 .settingsAccordionTrigger {
@@ -1137,6 +1214,7 @@ a { color: inherit; }
   justify-content: space-between;
   gap: 10px;
   flex-wrap: wrap;
+  margin-bottom: 2px;
 }
 
 .adminLandingMeta {
@@ -1151,13 +1229,74 @@ a { color: inherit; }
 .adminLandingGrid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 10px;
+  gap: 12px;
+}
+
+.adminLandingGrouped {
+  display: grid;
+  gap: 14px;
+}
+
+.adminLandingGroupCard {
+  display: grid;
+  gap: 12px;
+  position: relative;
+  overflow: hidden;
+  --admin-group-accent: #facc15;
+  border-color: color-mix(in oklab, var(--admin-group-accent) 42%, transparent);
+  background: linear-gradient(
+    180deg,
+    color-mix(in oklab, var(--admin-group-accent) 8%, transparent),
+    rgba(255, 255, 255, 0.01) 55%,
+    rgba(255, 255, 255, 0.01)
+  );
+}
+
+.adminLandingGroupCard::before {
+  content: "";
+  position: absolute;
+  inset: 0 0 auto 0;
+  height: 3px;
+  background: color-mix(in oklab, var(--admin-group-accent) 80%, #ffffff 20%);
+}
+
+.adminLandingGroupCard .settingsSectionHeader {
+  margin-bottom: 0;
+}
+
+.adminLandingGroupCard .settingsSectionMeta {
+  margin-bottom: 0;
+  font-size: 12px;
+  padding: 2px 8px;
+  border-radius: 999px;
+  border: 1px solid color-mix(in oklab, var(--admin-group-accent) 38%, transparent);
+  color: color-mix(in oklab, var(--admin-group-accent) 80%, #ffffff 20%);
+  background: color-mix(in oklab, var(--admin-group-accent) 12%, transparent);
+}
+
+.adminLandingGroupAccess {
+  --admin-group-accent: #38bdf8;
+}
+
+.adminLandingGroupIntegrations {
+  --admin-group-accent: #34d399;
+}
+
+.adminLandingGroupStrategy {
+  --admin-group-accent: #f59e0b;
+}
+
+.adminLandingGroupGrid {
+  margin-top: 4px;
 }
 
 .adminLandingCard {
   display: grid;
   gap: 10px;
   align-content: start;
+  padding: 12px;
+  border-color: rgba(255, 193, 7, 0.22);
+  background: rgba(255, 255, 255, 0.01);
 }
 
 .adminLandingCardHeader {
@@ -1172,6 +1311,7 @@ a { color: inherit; }
   font-size: 13px;
   color: var(--muted);
   line-height: 1.35;
+  min-height: 34px;
 }
 
 .adminLandingActions {
@@ -2436,6 +2576,9 @@ a { color: inherit; }
   .settingsSection {
     padding: 12px;
   }
+  .settingsLandingGrouped {
+    gap: 8px;
+  }
   .settingsAccordion {
     gap: 5px;
   }
@@ -2504,6 +2647,22 @@ a { color: inherit; }
   .adminLandingGrid {
     grid-template-columns: 1fr;
     gap: 8px;
+  }
+  .adminLandingGrouped {
+    gap: 8px;
+  }
+  .adminLandingGroupCard {
+    gap: 8px;
+  }
+  .adminLandingGroupGrid {
+    margin-top: 0;
+  }
+  .adminLandingCard {
+    padding: 10px;
+    gap: 8px;
+  }
+  .adminLandingDesc {
+    min-height: 0;
   }
   .adminLandingActions .btn {
     width: 100%;
@@ -2842,10 +3001,17 @@ a { color: inherit; }
 }
 
 .appFooter {
-  margin-top: 40px;
+  margin-top: auto;
   padding: 0px 0 0px;
   border-top: 1px solid rgba(255,255,255,.08);
   background: rgba(0,0,0,.2);
+  flex-shrink: 0;
+}
+
+.appFooter.container,
+.appFooter .container {
+  padding-top: 14px;
+  padding-bottom: 16px;
 }
 
 .appFooterInner {
