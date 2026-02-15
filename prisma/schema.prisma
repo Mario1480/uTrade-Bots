@@ -587,6 +587,26 @@ model FeatureThreshold {
   @@map("feature_thresholds")
 }
 
+model MarketContextSnapshot {
+  id             String   @id @default(uuid())
+  exchange       String
+  symbol         String
+  marketType     String   @map("market_type")
+  timeframe      String
+  tsFrom         DateTime @map("ts_from")
+  tsTo           DateTime @map("ts_to")
+  contextVersion String   @map("context_version")
+  contextHash    String   @map("context_hash")
+  payload        Json
+  createdAt      DateTime @default(now()) @map("created_at")
+  updatedAt      DateTime @updatedAt @map("updated_at")
+
+  @@unique([exchange, symbol, marketType, timeframe])
+  @@index([exchange, symbol, marketType, timeframe, contextHash], map: "market_ctx_scope_hash_idx")
+  @@index([exchange, symbol, marketType, timeframe, tsTo(sort: Desc)], map: "market_ctx_scope_ts_to_desc_idx")
+  @@map("market_context_snapshots")
+}
+
 model EconomicCalendarConfig {
   key         String   @id @default("default")
   enabled     Boolean  @default(true)

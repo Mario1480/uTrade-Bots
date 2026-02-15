@@ -68,6 +68,13 @@ export const AI_PROMPT_INDICATOR_OPTIONS = [
     paths: ["indicators.fvg"]
   },
   {
+    key: "history_context",
+    label: "History Context Pack",
+    group: "Context",
+    description: "Derived multi-horizon context (windows, events, anchors, last bars).",
+    paths: ["historyContext"]
+  },
+  {
     key: "emas_cloud",
     label: "EMAs + Cloud",
     group: "Advanced",
@@ -200,6 +207,7 @@ const AI_PROMPT_CONTEXT_BASE_KEYS = new Set<string>([
   "thresholdWindowTo",
   "thresholdBars",
   "ohlcvSeries",
+  "historyContext",
   "qualitySampleSize",
   "qualityWinRatePct",
   "qualityTpCount",

@@ -44,6 +44,9 @@ import {
   type ExplainerOutput
 } from "./ai/predictionExplainer.js";
 import {
+  buildAndAttachHistoryContext
+} from "./ai/historyContext.js";
+import {
   AI_PROMPT_SETTINGS_GLOBAL_SETTING_KEY,
   DEFAULT_AI_PROMPT_SETTINGS,
   getAiPromptRuntimeSettings,
@@ -1666,6 +1669,36 @@ function readAiPromptOhlcvMaxBars(): number {
 
 const AI_PROMPT_OHLCV_MAX_BARS = readAiPromptOhlcvMaxBars();
 
+function readAiHistoryContextMaxEvents(): number {
+  const parsed = Number(process.env.AI_HISTORY_CONTEXT_MAX_EVENTS ?? "30");
+  if (!Number.isFinite(parsed)) return 30;
+  return Math.max(5, Math.min(30, Math.trunc(parsed)));
+}
+
+function readAiHistoryContextLastBars(): number {
+  const parsed = Number(process.env.AI_HISTORY_CONTEXT_LAST_BARS ?? "30");
+  if (!Number.isFinite(parsed)) return 30;
+  return Math.max(10, Math.min(30, Math.trunc(parsed)));
+}
+
+function readAiHistoryContextMaxBytes(): number {
+  const parsed = Number(process.env.AI_HISTORY_CONTEXT_MAX_BYTES ?? "8192");
+  if (!Number.isFinite(parsed)) return 8192;
+  return Math.max(4096, Math.min(8192, Math.trunc(parsed)));
+}
+
+function readAiHistoryContextEnabled(): boolean {
+  const raw = String(process.env.AI_HISTORY_CONTEXT_ENABLED ?? "true").trim().toLowerCase();
+  return raw !== "0" && raw !== "false" && raw !== "off";
+}
+
+const AI_HISTORY_CONTEXT_OPTIONS = {
+  enabled: readAiHistoryContextEnabled(),
+  maxEvents: readAiHistoryContextMaxEvents(),
+  lastBars: readAiHistoryContextLastBars(),
+  maxBytes: readAiHistoryContextMaxBytes()
+} as const;
+
 function toRecordSafe(value: unknown): Record<string, unknown> | null {
   if (!value || typeof value !== "object" || Array.isArray(value)) return null;
   return value as Record<string, unknown>;
@@ -2476,6 +2509,18 @@ async function generateAutoPredictionForUser(
       alignedCandles,
       effectiveTimeframe
     );
+    await buildAndAttachHistoryContext({
+      db,
+      featureSnapshot: inferred.featureSnapshot,
+      candles: alignedCandles,
+      timeframe: effectiveTimeframe,
+      indicators,
+      advancedIndicators,
+      exchange: account.exchange,
+      symbol: canonicalSymbol,
+      marketType: payload.marketType,
+      options: AI_HISTORY_CONTEXT_OPTIONS
+    });
     inferred.featureSnapshot.aiPromptTemplateRequestedId = requestedPromptTemplateId;
     inferred.featureSnapshot.aiPromptTemplateId =
       selectedPromptSettings?.activePromptId ?? requestedPromptTemplateId;
@@ -4763,6 +4808,18 @@ async function refreshPredictionStateForTemplate(params: {
       candles,
       template.timeframe
     );
+    await buildAndAttachHistoryContext({
+      db,
+      featureSnapshot: inferred.featureSnapshot,
+      candles,
+      timeframe: template.timeframe,
+      indicators,
+      advancedIndicators,
+      exchange: account.exchange,
+      symbol: template.symbol,
+      marketType: template.marketType,
+      options: AI_HISTORY_CONTEXT_OPTIONS
+    });
     inferred.featureSnapshot.meta = {
       ...(asRecord(inferred.featureSnapshot.meta) ?? {}),
       indicatorSettingsHash: indicatorSettingsResolution.hash

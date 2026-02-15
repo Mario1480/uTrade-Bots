@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { resetAiAnalyzerState } from "./analyzer.js";
 import {
+  buildPredictionExplainerPromptPreview,
   fallbackExplain,
   generatePredictionExplanation,
   validateExplainerOutput,
@@ -256,22 +257,57 @@ test("fallback path is used on bad JSON", async () => {
 
 test("fallback path is used on timeout error", async () => {
   resetAiAnalyzerState();
+  const promptSettings = {
+    promptText: "",
+    indicatorKeys: [
+      "rsi",
+      "macd",
+      "adx",
+      "bollinger",
+      "vwap",
+      "stochrsi",
+      "volume",
+      "fvg",
+      "history_context",
+      "emas_cloud",
+      "levels",
+      "ranges",
+      "sessions",
+      "pvsra",
+      "smc"
+    ] as const,
+    ohlcvBars: 100,
+    timeframe: null,
+    directionPreference: "either" as const,
+    confidenceTargetPct: 60,
+    source: "db" as const,
+    activePromptId: "test",
+    activePromptName: "test",
+    selectedFrom: "active_prompt" as const,
+    matchedScopeType: null,
+    matchedOverrideId: null
+  };
+
   const output = await generatePredictionExplanation(
     {
       ...baseInput,
       tsCreated: "2026-02-09T10:00:02.000Z"
     },
     {
+      promptSettings,
       callAiFn: async () => {
         throw new Error("timeout");
       }
     }
   );
 
-  const expectedFallback = fallbackExplain({
+  const preview = await buildPredictionExplainerPromptPreview({
     ...baseInput,
     tsCreated: "2026-02-09T10:00:02.000Z"
+  }, {
+    promptSettings
   });
+  const expectedFallback = fallbackExplain(preview.promptInput);
 
   assert.equal(output.disclaimer, "grounded_features_only");
   assert.equal(output.explanation, expectedFallback.explanation);
@@ -281,6 +317,124 @@ test("fallback derives v2-based tags when snapshot supports them", () => {
   const out = fallbackExplain(baseInput);
   assert.equal(out.tags.includes("mean_reversion"), true);
   assert.equal(out.tags.includes("breakout_risk"), true);
+});
+
+test("prompt preview trims ohlcvSeries and historyContext independently", async () => {
+  const ohlcvBars = Array.from({ length: 90 }, (_, idx) => [
+    1_771_100_000_000 + idx * 60_000,
+    70_000,
+    70_010,
+    69_990,
+    70_005,
+    123.45
+  ]);
+  const historyBars = Array.from({ length: 45 }, (_, idx) => [
+    1_771_100_000_000 + idx * 60_000,
+    70_000,
+    70_010,
+    69_990,
+    70_005,
+    123.45
+  ]);
+
+  const input: ExplainerInput = {
+    ...baseInput,
+    featureSnapshot: {
+      ...baseInput.featureSnapshot,
+      ohlcvSeries: {
+        timeframe: "15m",
+        format: ["ts", "open", "high", "low", "close", "volume"],
+        bars: ohlcvBars,
+        count: ohlcvBars.length
+      },
+      historyContext: {
+        v: 1,
+        tf: "15m",
+        ts_to: "2026-02-14T12:00:00.000Z",
+        lastBars: {
+          n: historyBars.length,
+          ohlc: historyBars.map((row) => ({
+            t: Math.trunc(Number(row[0]) / 1000),
+            o: Number(row[1]),
+            h: Number(row[2]),
+            l: Number(row[3]),
+            c: Number(row[4]),
+            v: Number(row[5])
+          }))
+        },
+        win: {
+          w20: { ret: 1, vr: 1, atr: 1, tr: 60, mx: 1.2, dd: -0.8 },
+          w50: { ret: 1, vr: 1, atr: 1, tr: 65, mx: 2.1, dd: -1.3 },
+          w200: { ret: 1, vr: 1, atr: 1, tr: 55, mx: 4.3, dd: -2.4 },
+          w800: { ret: 1, vr: 1, atr: 1, tr: 50, mx: 8.7, dd: -4.2 }
+        },
+        reg: {
+          state: "transition",
+          conf: 62,
+          since: "2026-02-14T11:30:00.000Z",
+          why: ["trend_strong"]
+        },
+        lvl: {
+          pivD: { pp: null, r1: null, s1: null, r2: null, s2: null },
+          hiLo: { yH: null, yL: null, wH: null, wL: null },
+          do: { p: null }
+        },
+        ema: {
+          e5: 1,
+          e13: 1,
+          e50: 1,
+          e200: 1,
+          e800: 1,
+          stk: "bull",
+          d50: 0.2,
+          d200: 0.5,
+          d800: 1.2,
+          sl50: 0.01,
+          sl200: 0.005
+        },
+        vol: { z: 0.8, rv: 1.1, tr: 0.3 },
+        fvg: {
+          ob: 2,
+          os: 1,
+          nb: { m: 70000, d: 0.12, a: 4 },
+          ns: { m: 69800, d: -0.18, a: 6 }
+        },
+        ls: { le: null, nb: null, ns: null },
+        ev: Array.from({ length: 42 }, (_, idx) => ({
+          t: new Date(1_771_100_000_000 + idx * 60_000).toISOString(),
+          ty: `event_${idx}`,
+          i: 3
+        })),
+        bud: {
+          bytes: 0,
+          trim: []
+        }
+      }
+    }
+  };
+
+  const preview = await buildPredictionExplainerPromptPreview(input, {
+    promptSettings: {
+      promptText: "",
+      indicatorKeys: ["smc"],
+      ohlcvBars: 25,
+      timeframe: null,
+      directionPreference: "either",
+      confidenceTargetPct: 60,
+      source: "db",
+      activePromptId: "prompt_test",
+      activePromptName: "Test",
+      selectedFrom: "active_prompt",
+      matchedScopeType: null,
+      matchedOverrideId: null
+    }
+  });
+
+  const snapshot = preview.promptInput.featureSnapshot as any;
+  assert.equal(snapshot.ohlcvSeries.bars.length, 25);
+  assert.ok(snapshot.historyContext.lastBars.ohlc.length <= 30);
+  assert.ok(snapshot.historyContext.ev.length <= 30);
+  assert.equal(snapshot.historyContext.lastBars.ohlc.length > snapshot.ohlcvSeries.bars.length, true);
 });
 
 test.afterEach(() => {

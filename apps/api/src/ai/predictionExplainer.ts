@@ -9,6 +9,11 @@ import {
   type AiPromptRuntimeSettings
 } from "./promptSettings.js";
 import { recordAiTraceLog } from "./traceLog.js";
+import {
+  HISTORY_CONTEXT_HARD_CAP_BYTES,
+  trimHistoryContextForAi,
+  type HistoryContextPack
+} from "./historyContext.js";
 
 export type ExplainerInput = {
   symbol: string;
@@ -93,6 +98,7 @@ const SYSTEM_MESSAGE =
   "If a value is missing, say 'unknown' or omit it. Do not mention news unless featureSnapshot contains a 'newsRisk' flag. " +
   "You may reference indicators only when values exist under featureSnapshot.indicators (including stochrsi, volume, fvg) " +
   "or under featureSnapshot.advancedIndicators (emas, cloud, levels, ranges, sessions, pvsra, smartMoneyConcepts). " +
+  "You may reference featureSnapshot.historyContext only when it is present. " +
   "Do not claim volume spikes or fair value gaps unless those fields explicitly support it. " +
   "Never mention TradingView.";
 
@@ -121,6 +127,15 @@ const EXPLAINER_RETRY_MAX_TOKENS = readEnvNumber(
   Math.max(EXPLAINER_MAX_TOKENS + 350, Math.trunc(EXPLAINER_MAX_TOKENS * 1.5)),
   EXPLAINER_MAX_TOKENS
 );
+const EXPLAINER_HISTORY_CONTEXT_MAX_EVENTS = normalizeHistoryContextMaxEvents(
+  process.env.AI_EXPLAINER_HISTORY_CONTEXT_MAX_EVENTS
+);
+const EXPLAINER_HISTORY_CONTEXT_LAST_BARS = normalizeHistoryContextLastBars(
+  process.env.AI_EXPLAINER_HISTORY_CONTEXT_LAST_BARS
+);
+const EXPLAINER_HISTORY_CONTEXT_MAX_BYTES = normalizeHistoryContextMaxBytes(
+  process.env.AI_EXPLAINER_HISTORY_CONTEXT_MAX_BYTES
+);
 
 function withTraceMetaPayload(
   userPayload: Record<string, unknown>,
@@ -145,6 +160,29 @@ function buildSystemMessage(customPromptText: string): string {
 function toNumber(value: unknown): number | null {
   const parsed = Number(value);
   return Number.isFinite(parsed) ? parsed : null;
+}
+
+function asObject(value: unknown): Record<string, unknown> | null {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  return value as Record<string, unknown>;
+}
+
+function normalizeHistoryContextMaxEvents(value: unknown): number {
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed)) return 30;
+  return Math.max(5, Math.min(30, Math.trunc(parsed)));
+}
+
+function normalizeHistoryContextLastBars(value: unknown): number {
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed)) return 30;
+  return Math.max(10, Math.min(30, Math.trunc(parsed)));
+}
+
+function normalizeHistoryContextMaxBytes(value: unknown): number {
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed)) return HISTORY_CONTEXT_HARD_CAP_BYTES;
+  return Math.max(1024, Math.min(HISTORY_CONTEXT_HARD_CAP_BYTES, Math.trunc(parsed)));
 }
 
 function toBoolean(value: unknown): boolean | null {
@@ -246,6 +284,27 @@ function applyOhlcvBarsLimit(
       bars: trimmedBars,
       count: trimmedBars.length
     }
+  };
+}
+
+function applyHistoryContextLimit(snapshot: Record<string, unknown>): Record<string, unknown> {
+  const historyContextRaw = asObject(snapshot.historyContext);
+  if (!historyContextRaw) return snapshot;
+  if (Number(historyContextRaw.v) !== 1) return snapshot;
+  const lastBars = asObject(historyContextRaw.lastBars);
+  if (!lastBars || !Array.isArray(lastBars.ohlc)) return snapshot;
+  if (!Array.isArray(historyContextRaw.ev)) {
+    return snapshot;
+  }
+  const trimmed = trimHistoryContextForAi(historyContextRaw as unknown as HistoryContextPack, {
+    maxEvents: EXPLAINER_HISTORY_CONTEXT_MAX_EVENTS,
+    lastBars: EXPLAINER_HISTORY_CONTEXT_LAST_BARS,
+    maxBytes: EXPLAINER_HISTORY_CONTEXT_MAX_BYTES
+  });
+
+  return {
+    ...snapshot,
+    historyContext: trimmed
   };
 }
 
@@ -644,6 +703,7 @@ function buildPromptPayload(
       "Only reference values that exist in featureSnapshot",
       "Only reference stochrsi/volume/fvg when present and non-null",
       "Only reference advancedIndicators fields when present and non-null",
+      "historyContext is derived and may be referenced only when present; do not invent missing history fields",
       "Do not claim volume spikes unless rel_vol or vol_z supports it",
       "Do not claim fair value gaps unless fvg counts or distances support it",
       "aiPrediction must be inferred from featureSnapshot and can differ from prediction"
@@ -692,17 +752,28 @@ export async function buildPredictionExplainerPromptPreview(
     filteredFeatureSnapshot,
     runtimeSettings.ohlcvBars
   );
+  const runtimeFeatureSnapshotWithHistory = applyHistoryContextLimit(
+    runtimeFeatureSnapshot
+  );
   const promptInput: ExplainerInput = {
     ...input,
-    featureSnapshot: runtimeFeatureSnapshot
+    featureSnapshot: runtimeFeatureSnapshotWithHistory
   };
   const userPayload = buildPromptPayload(promptInput, runtimeSettings);
   const systemMessage = buildSystemMessage(runtimeSettings.promptText);
+  const historyContextHash = hashStableObject(
+    asObject(promptInput.featureSnapshot)?.historyContext ?? null
+  );
+  const historyContextBytes = toNumber(
+    getByPath(promptInput.featureSnapshot ?? {}, "historyContext.bud.bytes")
+  );
   const cacheKey =
     `${buildPredictionExplainerCacheKey(promptInput)}:${hashStableObject({
       promptText: runtimeSettings.promptText,
       indicatorKeys: runtimeSettings.indicatorKeys,
       ohlcvBars: runtimeSettings.ohlcvBars,
+      historyContextHash,
+      historyContextBytes,
       activePromptId: runtimeSettings.activePromptId,
       activePromptName: runtimeSettings.activePromptName,
       selectedFrom: runtimeSettings.selectedFrom,
