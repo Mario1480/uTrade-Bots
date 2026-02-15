@@ -1,7 +1,7 @@
 from __future__ import annotations
 
+import hmac
 import os
-from typing import Callable
 
 from fastapi import Depends, FastAPI, Header, HTTPException
 
@@ -15,10 +15,16 @@ AUTH_TOKEN = os.getenv("PY_STRATEGY_AUTH_TOKEN", "").strip()
 app = FastAPI(title="py-strategy-service", version=SERVICE_VERSION)
 
 
+def is_token_authorized(received_token: str | None, expected_token: str) -> bool:
+    if not expected_token:
+        return True
+    if not received_token:
+        return False
+    return hmac.compare_digest(received_token.strip(), expected_token)
+
+
 def require_auth(x_py_strategy_token: str | None = Header(default=None)) -> None:
-    if not AUTH_TOKEN:
-        return
-    if x_py_strategy_token and x_py_strategy_token.strip() == AUTH_TOKEN:
+    if is_token_authorized(x_py_strategy_token, AUTH_TOKEN):
         return
     raise HTTPException(status_code=401, detail="unauthorized")
 

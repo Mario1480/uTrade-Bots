@@ -45,6 +45,7 @@ export type LocalStrategyDefinitionRecord = {
   id: string;
   strategyType: string;
   engine: "ts" | "python";
+  shadowMode: boolean;
   remoteStrategyType: string | null;
   fallbackStrategyType: string | null;
   timeoutMs: number | null;
@@ -166,6 +167,7 @@ function normalizeDefinitionRecord(value: unknown): LocalStrategyDefinitionRecor
   const id = typeof row.id === "string" ? row.id.trim() : "";
   const strategyType = typeof row.strategyType === "string" ? row.strategyType.trim() : "";
   const engine = row.engine === "python" ? "python" : "ts";
+  const shadowMode = row.shadowMode === true;
   const remoteStrategyType =
     typeof row.remoteStrategyType === "string" && row.remoteStrategyType.trim()
       ? row.remoteStrategyType.trim()
@@ -198,6 +200,7 @@ function normalizeDefinitionRecord(value: unknown): LocalStrategyDefinitionRecor
     id,
     strategyType,
     engine,
+    shadowMode,
     remoteStrategyType,
     fallbackStrategyType,
     timeoutMs,
@@ -558,6 +561,10 @@ export async function listPythonStrategyRegistry(): Promise<{
     calls: number;
     failures: number;
     timeouts: number;
+    cbOpenTotal: number;
+    cbSkippedTotal: number;
+    cbOpen: boolean;
+    cbUntilTs: string | null;
   };
 }> {
   const enabled = String(process.env.PY_STRATEGY_ENABLED ?? "false").trim().toLowerCase() === "true";
@@ -612,7 +619,7 @@ export async function runLocalStrategy(
       };
     }) => Promise<
       | { ok: true; result: { allow: boolean; score: number; reasonCodes: string[]; tags: string[]; explanation: string; meta: Record<string, unknown> } }
-      | { ok: false; errorCode: string; status: number | null; message: string }
+      | { ok: false; errorCode: string; status: number | null; message: string; meta: Record<string, unknown> }
     >;
   }
 ): Promise<LocalStrategyResult> {
@@ -645,6 +652,7 @@ export async function runLocalStrategy(
   const configHash = hashStableObject({
     strategyType: definition.strategyType,
     engine: definition.engine,
+    shadowMode: definition.shadowMode,
     remoteStrategyType: pythonStrategyType,
     fallbackStrategyType: definition.fallbackStrategyType,
     timeoutMs: definition.timeoutMs,
@@ -734,11 +742,45 @@ export async function runLocalStrategy(
     });
   };
 
+  const appendReasonCode = (codes: string[], code: string): string[] => {
+    if (!code.trim()) return codes;
+    if (codes.includes(code)) return codes;
+    return [...codes, code];
+  };
+
+  const appendTag = (tags: string[], tag: string): string[] => {
+    const normalized = tag.trim().toLowerCase();
+    if (!normalized) return tags;
+    if (tags.includes(normalized)) return tags;
+    return [...tags, normalized];
+  };
+
   const resolveFallbackRegistration = (): LocalStrategyRegistration | null => {
     if (definition.fallbackStrategyType && definition.fallbackStrategyType.trim()) {
       return getRegisteredLocalStrategy(definition.fallbackStrategyType.trim());
     }
     return getRegisteredLocalStrategy(definition.strategyType);
+  };
+
+  const logPythonRun = (params: {
+    runtimeMs: number;
+    errorCode: string | null;
+    fallbackUsed: boolean;
+    cbOpen: boolean;
+    cbUntilTs: string | null;
+  }) => {
+    logger.info("local_strategy_python_dispatch", {
+      engine: "python",
+      strategyId: definition.id,
+      strategyType: definition.strategyType,
+      remoteStrategyType: pythonStrategyType,
+      shadowMode: definition.shadowMode,
+      runtimeMs: params.runtimeMs,
+      cbOpen: params.cbOpen,
+      cbUntilTs: params.cbUntilTs,
+      fallbackUsed: params.fallbackUsed,
+      errorCode: params.errorCode
+    });
   };
 
   if (definition.engine === "python") {
@@ -759,7 +801,25 @@ export async function runLocalStrategy(
       }
     });
 
-    if (pythonResult.ok) {
+    const fallbackRegistration = resolveFallbackRegistration();
+    const runtimeMeta = pythonResult.ok
+      ? safeObject(pythonResult.result.meta)
+      : safeObject(pythonResult.meta);
+    const runtimeMs = Math.max(0, Number(runtimeMeta.runtimeMs ?? 0) || 0);
+    const cbOpen = runtimeMeta.cbOpen === true;
+    const cbUntilTs =
+      typeof runtimeMeta.cbUntilTs === "string" && runtimeMeta.cbUntilTs.trim()
+        ? runtimeMeta.cbUntilTs.trim()
+        : null;
+
+    if (pythonResult.ok && !definition.shadowMode) {
+      logPythonRun({
+        runtimeMs,
+        errorCode: null,
+        fallbackUsed: false,
+        cbOpen,
+        cbUntilTs
+      });
       return sanitizeUnknown(toResult({
         allow: pythonResult.result.allow,
         score: pythonResult.result.score,
@@ -771,32 +831,142 @@ export async function runLocalStrategy(
           engine: "python",
           strategyType: definition.strategyType,
           remoteStrategyType: pythonStrategyType,
-          timeoutMs: definition.timeoutMs
+          timeoutMs: definition.timeoutMs,
+          shadowMode: false
         }
       })) as LocalStrategyResult;
     }
 
-    const fallbackRegistration = resolveFallbackRegistration();
+    if (definition.shadowMode) {
+      let effective: LocalStrategyResult;
+      if (fallbackRegistration) {
+        effective = runTsStrategy(
+          fallbackRegistration,
+          "fallback",
+          pythonResult.ok ? "shadow_mode_not_enforced" : `python_${pythonResult.errorCode}`
+        );
+      } else {
+        effective = toResult({
+          allow: false,
+          score: 0,
+          reasonCodes: ["shadow_mode_no_fallback"],
+          tags: ["shadow_mode", "fallback_missing"],
+          explanation: "Shadow mode enabled. Python decision recorded but not enforced.",
+          meta: {
+            engine: "ts",
+            strategyType: definition.strategyType,
+            mode: "fallback",
+            fallbackReason: "shadow_mode_no_fallback"
+          }
+        });
+      }
+
+      effective.reasonCodes = appendReasonCode(effective.reasonCodes, "shadow_mode_not_enforced");
+      effective.tags = appendTag(effective.tags, "shadow_mode");
+      effective.meta = {
+        ...effective.meta,
+        shadowMode: true,
+        pythonDecision: pythonResult.ok
+          ? {
+            allow: pythonResult.result.allow,
+            score: pythonResult.result.score,
+            reasonCodes: pythonResult.result.reasonCodes,
+            tags: pythonResult.result.tags,
+            explanation: pythonResult.result.explanation,
+            meta: safeObject(pythonResult.result.meta)
+          }
+          : {
+            errorCode: pythonResult.errorCode,
+            status: pythonResult.status,
+            message: pythonResult.message,
+            meta: safeObject(pythonResult.meta)
+          },
+        effectiveDecision: {
+          allow: effective.allow,
+          score: effective.score,
+          reasonCodes: [...effective.reasonCodes],
+          tags: [...effective.tags]
+        }
+      };
+
+      logPythonRun({
+        runtimeMs,
+        errorCode: pythonResult.ok ? null : pythonResult.errorCode,
+        fallbackUsed: true,
+        cbOpen,
+        cbUntilTs
+      });
+      return sanitizeUnknown(effective) as LocalStrategyResult;
+    }
+
+    const pythonFailure = pythonResult.ok ? null : pythonResult;
+    if (!pythonFailure) {
+      const impossible = toResult({
+        allow: false,
+        score: 0,
+        reasonCodes: ["python_state_inconsistent"],
+        tags: ["python_error"],
+        explanation: "Python execution state inconsistent.",
+        meta: {
+          engine: "python",
+          strategyType: definition.strategyType,
+          remoteStrategyType: pythonStrategyType
+        }
+      });
+      logPythonRun({
+        runtimeMs,
+        errorCode: "python_state_inconsistent",
+        fallbackUsed: false,
+        cbOpen,
+        cbUntilTs
+      });
+      return sanitizeUnknown(impossible) as LocalStrategyResult;
+    }
+
     logger.warn("local_strategy_python_fallback", {
       strategyId: definition.id,
       strategyType: definition.strategyType,
       remoteStrategyType: pythonStrategyType,
       fallbackStrategyType: definition.fallbackStrategyType ?? definition.strategyType,
-      errorCode: pythonResult.errorCode,
-      status: pythonResult.status,
-      message: pythonResult.message
+      errorCode: pythonFailure.errorCode,
+      status: pythonFailure.status,
+      message: pythonFailure.message
     });
     if (fallbackRegistration) {
-      return sanitizeUnknown(runTsStrategy(
+      const fallback = runTsStrategy(
         fallbackRegistration,
         "fallback",
-        `python_${pythonResult.errorCode}`
-      )) as LocalStrategyResult;
+        `python_${pythonFailure.errorCode}`
+      );
+      fallback.meta = {
+        ...fallback.meta,
+        pythonFailure: {
+          errorCode: pythonFailure.errorCode,
+          status: pythonFailure.status,
+          message: pythonFailure.message,
+          meta: safeObject(pythonFailure.meta)
+        }
+      };
+      logPythonRun({
+        runtimeMs,
+        errorCode: pythonFailure.errorCode,
+        fallbackUsed: true,
+        cbOpen,
+        cbUntilTs
+      });
+      return sanitizeUnknown(fallback) as LocalStrategyResult;
     }
+    logPythonRun({
+      runtimeMs,
+      errorCode: pythonFailure.errorCode,
+      fallbackUsed: false,
+      cbOpen,
+      cbUntilTs
+    });
     return sanitizeUnknown(toResult({
       allow: false,
       score: 0,
-      reasonCodes: ["python_unavailable_no_fallback", pythonResult.errorCode],
+      reasonCodes: ["python_unavailable_no_fallback", pythonFailure.errorCode],
       tags: ["python_error", "fallback_missing"],
       explanation: "Python strategy unavailable and no TS fallback is configured.",
       meta: {
@@ -804,10 +974,12 @@ export async function runLocalStrategy(
         strategyType: definition.strategyType,
         remoteStrategyType: pythonStrategyType,
         timeoutMs: definition.timeoutMs,
+        shadowMode: false,
         pythonError: {
-          code: pythonResult.errorCode,
-          status: pythonResult.status,
-          message: pythonResult.message
+          code: pythonFailure.errorCode,
+          status: pythonFailure.status,
+          message: pythonFailure.message,
+          meta: safeObject(pythonFailure.meta)
         }
       }
     })) as LocalStrategyResult;

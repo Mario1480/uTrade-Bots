@@ -20,6 +20,12 @@ Deterministic local strategies can be registered and executed through `apps/api/
 - Supports `engine: "ts" | "python"` per strategy definition.
 - For `ts`, merges persisted `configJson` over strategy default config.
 - For `python`, calls the sidecar (`PY_STRATEGY_URL`) with timeout/auth and fail-open TS fallback (`fallbackStrategyType`) when available.
+- Python runner includes an in-memory circuit breaker (window + thresholds + cooldown) via:
+  - `PY_STRATEGY_CB_WINDOW_MS`
+  - `PY_STRATEGY_CB_MAX_FAILURES`
+  - `PY_STRATEGY_CB_MAX_TIMEOUTS`
+  - `PY_STRATEGY_CB_COOLDOWN_MS`
+- Optional `shadowMode=true` runs python for calibration, logs `pythonDecision`, but enforces fallback/default effective decision only.
 - Returns deterministic result with:
   - `allow`, `score`, `reasonCodes`, `tags`, `explanation`
   - `configHash` and `snapshotHash` for idempotency checks.

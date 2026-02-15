@@ -11,6 +11,7 @@ function buildDefinition(overrides: Partial<LocalStrategyDefinitionRecord> = {})
     id: "strategy_1",
     strategyType: "regime_gate",
     engine: "ts",
+    shadowMode: false,
     remoteStrategyType: null,
     fallbackStrategyType: null,
     timeoutMs: null,
@@ -173,13 +174,42 @@ test("python engine falls back to TS strategy on remote error", async () => {
       ok: false,
       errorCode: "timeout",
       status: null,
-      message: "timed out"
+      message: "timed out",
+      meta: {}
     })
   });
 
   assert.equal(result.meta.engine, "ts");
   assert.equal(result.meta.mode, "fallback");
   assert.equal(result.meta.fallbackReason, "python_timeout");
+});
+
+test("python engine falls back when circuit breaker is open", async () => {
+  const definition = buildDefinition({
+    strategyType: "regime_gate",
+    engine: "python",
+    remoteStrategyType: "regime_gate_py",
+    fallbackStrategyType: "signal_filter"
+  });
+
+  const result = await runLocalStrategy(definition.id, baseSnapshot, { signal: "up" }, {
+    getStrategyById: async () => definition,
+    runPythonStrategy: async () => ({
+      ok: false,
+      errorCode: "cb_open",
+      status: null,
+      message: "python circuit breaker is open",
+      meta: {
+        pythonSkipped: true,
+        skipReason: "circuit_breaker_open",
+        cbOpen: true
+      }
+    })
+  });
+
+  assert.equal(result.meta.mode, "fallback");
+  assert.equal(result.meta.fallbackReason, "python_cb_open");
+  assert.equal(result.meta.pythonFailure?.errorCode, "cb_open");
 });
 
 test("python engine without fallback returns blocked result", async () => {
@@ -195,10 +225,42 @@ test("python engine without fallback returns blocked result", async () => {
       ok: false,
       errorCode: "network_error",
       status: null,
-      message: "connection refused"
+      message: "connection refused",
+      meta: {}
     })
   });
 
   assert.equal(result.allow, false);
   assert.deepEqual(result.reasonCodes, ["python_unavailable_no_fallback", "network_error"]);
+});
+
+test("shadowMode records python decision and enforces fallback decision", async () => {
+  const definition = buildDefinition({
+    strategyType: "regime_gate",
+    engine: "python",
+    shadowMode: true,
+    fallbackStrategyType: "signal_filter"
+  });
+
+  const result = await runLocalStrategy(definition.id, baseSnapshot, { signal: "up" }, {
+    getStrategyById: async () => definition,
+    runPythonStrategy: async () => ({
+      ok: true,
+      result: {
+        allow: true,
+        score: 90,
+        reasonCodes: ["python_ok"],
+        tags: ["trend_up"],
+        explanation: "python pass",
+        meta: { runtimeMs: 5 }
+      }
+    })
+  });
+
+  assert.equal(result.meta.shadowMode, true);
+  assert.equal(result.meta.engine, "ts");
+  assert.equal(result.meta.mode, "fallback");
+  assert.equal(result.meta.fallbackReason, "shadow_mode_not_enforced");
+  assert.equal(Array.isArray(result.meta.pythonDecision?.reasonCodes), true);
+  assert.equal(result.reasonCodes.includes("shadow_mode_not_enforced"), true);
 });

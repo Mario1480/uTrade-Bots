@@ -14,6 +14,7 @@ type LocalStrategyItem = {
   id: string;
   strategyType: string;
   engine: "ts" | "python";
+  shadowMode: boolean;
   remoteStrategyType: string | null;
   fallbackStrategyType: string | null;
   timeoutMs: number | null;
@@ -122,6 +123,7 @@ export default function AdminLocalStrategiesPage() {
 
   const [editingId, setEditingId] = useState<string | null>(null);
   const [engine, setEngine] = useState<"ts" | "python">("ts");
+  const [shadowMode, setShadowMode] = useState(false);
   const [strategyType, setStrategyType] = useState("");
   const [remoteStrategyType, setRemoteStrategyType] = useState("");
   const [fallbackStrategyType, setFallbackStrategyType] = useState("");
@@ -199,6 +201,7 @@ export default function AdminLocalStrategiesPage() {
     const first = registry[0];
     setEditingId(null);
     setEngine("ts");
+    setShadowMode(false);
     setStrategyType(first?.type ?? "");
     setRemoteStrategyType("");
     setFallbackStrategyType(first?.type ?? "");
@@ -216,6 +219,7 @@ export default function AdminLocalStrategiesPage() {
   function applyItem(item: LocalStrategyItem) {
     setEditingId(item.id);
     setEngine(item.engine === "python" ? "python" : "ts");
+    setShadowMode(item.shadowMode === true);
     setStrategyType(item.strategyType);
     setRemoteStrategyType(item.remoteStrategyType ?? item.strategyType);
     setFallbackStrategyType(item.fallbackStrategyType ?? item.strategyType);
@@ -251,6 +255,7 @@ export default function AdminLocalStrategiesPage() {
       const payload = {
         strategyType: strategyType.trim(),
         engine,
+        shadowMode: engine === "python" ? shadowMode : false,
         remoteStrategyType: engine === "python" ? (remoteStrategyType.trim() || strategyType.trim()) : null,
         fallbackStrategyType: engine === "python" ? (fallbackStrategyType.trim() || strategyType.trim()) : null,
         timeoutMs:
@@ -428,6 +433,20 @@ export default function AdminLocalStrategiesPage() {
               </div>
             ) : null}
 
+            {engine === "python" ? (
+              <div className="settingsTwoColGrid" style={{ marginBottom: 10 }}>
+                <label className="settingsField" style={{ justifyContent: "end" }}>
+                  <span className="settingsFieldLabel">Shadow mode (log only)</span>
+                  <input
+                    type="checkbox"
+                    checked={shadowMode}
+                    onChange={(e) => setShadowMode(e.target.checked)}
+                  />
+                </label>
+                <div />
+              </div>
+            ) : null}
+
             <div className="settingsTwoColGrid" style={{ marginBottom: 10 }}>
               {engine === "python" ? (
                 <label className="settingsField">
@@ -520,6 +539,7 @@ export default function AdminLocalStrategiesPage() {
                       <th align="left">Name</th>
                       <th align="left">Type</th>
                       <th align="left">Engine</th>
+                      <th align="left">Shadow</th>
                       <th align="left">Version</th>
                       <th align="left">Status</th>
                       <th align="left">Updated</th>
@@ -532,6 +552,7 @@ export default function AdminLocalStrategiesPage() {
                         <td>{item.name}</td>
                         <td><code>{item.strategyType}</code></td>
                         <td><code>{item.engine}</code></td>
+                        <td>{item.shadowMode ? "on" : "off"}</td>
                         <td>{item.version}</td>
                         <td>{item.isEnabled ? "enabled" : "disabled"}</td>
                         <td>{item.updatedAt ? new Date(item.updatedAt).toLocaleString() : "-"}</td>

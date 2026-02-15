@@ -507,6 +507,7 @@ type AdminAiPromptsPayload = z.infer<typeof adminAiPromptsSchema>;
 const localStrategyDefinitionSchema = z.object({
   strategyType: z.string().trim().min(1).max(128),
   engine: z.enum(["ts", "python"]).default("ts"),
+  shadowMode: z.boolean().default(false),
   remoteStrategyType: z.string().trim().min(1).max(128).nullable().optional(),
   fallbackStrategyType: z.string().trim().min(1).max(128).nullable().optional(),
   timeoutMs: z.number().int().min(200).max(10000).nullable().optional(),
@@ -521,6 +522,7 @@ const localStrategyDefinitionSchema = z.object({
 const localStrategyDefinitionUpdateSchema = z.object({
   strategyType: z.string().trim().min(1).max(128).optional(),
   engine: z.enum(["ts", "python"]).optional(),
+  shadowMode: z.boolean().optional(),
   remoteStrategyType: z.string().trim().min(1).max(128).nullable().optional(),
   fallbackStrategyType: z.string().trim().min(1).max(128).nullable().optional(),
   timeoutMs: z.number().int().min(200).max(10000).nullable().optional(),
@@ -7914,6 +7916,7 @@ function mapLocalStrategyDefinitionPublic(row: any) {
     id: row.id,
     strategyType: row.strategyType,
     engine: row.engine === "python" ? "python" : "ts",
+    shadowMode: row.shadowMode === true,
     remoteStrategyType:
       typeof row.remoteStrategyType === "string" && row.remoteStrategyType.trim()
         ? row.remoteStrategyType.trim()
@@ -8373,6 +8376,7 @@ app.post("/admin/local-strategies", requireAuth, async (req, res) => {
     data: {
       strategyType: parsed.data.strategyType,
       engine: parsed.data.engine,
+      shadowMode: parsed.data.engine === "python" ? parsed.data.shadowMode : false,
       remoteStrategyType:
         parsed.data.engine === "python"
           ? (parsed.data.remoteStrategyType?.trim() || parsed.data.strategyType)
@@ -8421,7 +8425,7 @@ app.put("/admin/local-strategies/:id", requireAuth, async (req, res) => {
 
   const existing = await db.localStrategyDefinition.findUnique({
     where: { id: params.data.id },
-    select: { id: true, strategyType: true, engine: true }
+    select: { id: true, strategyType: true, engine: true, shadowMode: true }
   });
   if (!existing) {
     return res.status(404).json({ error: "not_found" });
@@ -8457,6 +8461,7 @@ app.put("/admin/local-strategies/:id", requireAuth, async (req, res) => {
   const data: Record<string, unknown> = {};
   if (parsed.data.strategyType !== undefined) data.strategyType = parsed.data.strategyType;
   if (parsed.data.engine !== undefined) data.engine = parsed.data.engine;
+  if (parsed.data.shadowMode !== undefined) data.shadowMode = parsed.data.shadowMode;
   if (parsed.data.remoteStrategyType !== undefined) data.remoteStrategyType = parsed.data.remoteStrategyType;
   if (parsed.data.fallbackStrategyType !== undefined) data.fallbackStrategyType = parsed.data.fallbackStrategyType;
   if (parsed.data.timeoutMs !== undefined) data.timeoutMs = parsed.data.timeoutMs;
@@ -8468,6 +8473,7 @@ app.put("/admin/local-strategies/:id", requireAuth, async (req, res) => {
         : null;
   }
   if (effectiveEngine === "ts") {
+    if (parsed.data.shadowMode === undefined) data.shadowMode = false;
     if (parsed.data.remoteStrategyType === undefined) data.remoteStrategyType = null;
     if (parsed.data.fallbackStrategyType === undefined) data.fallbackStrategyType = null;
     if (parsed.data.timeoutMs === undefined) data.timeoutMs = null;
