@@ -95,3 +95,24 @@ test("invalid json failure increments failure path and can open breaker", async 
     assert.equal(callCount, 2);
   });
 });
+
+test("successful python run always includes TS runtimeMs and engine meta", async () => {
+  resetPythonRunnerStateForTests();
+  let nowValues = [1000, 1023];
+  const nowMs = () => nowValues.shift() ?? 1023;
+  const runFn = async () => ({
+    allow: true,
+    score: 80,
+    reasonCodes: ["ok"],
+    tags: ["trend_up"],
+    explanation: "ok",
+    meta: {}
+  });
+
+  const result = await executePythonStrategy(baseInput, { runFn, nowMs });
+  assert.equal(result.ok, true);
+  if (result.ok) {
+    assert.equal(result.result.meta.runtimeMs, 23);
+    assert.equal(result.result.meta.engine, "python");
+  }
+});

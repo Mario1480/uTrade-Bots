@@ -44,6 +44,11 @@ type CircuitBreakerState = {
   openUntilMs: number;
 };
 
+function asRecord(value: unknown): Record<string, unknown> | null {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  return value as Record<string, unknown>;
+}
+
 const counters = {
   calls: 0,
   failures: 0,
@@ -181,6 +186,19 @@ export async function executePythonStrategy(
       trace: input.trace
     });
     const runtimeMs = Math.max(0, nowMs() - startMs);
+    const rawMeta = asRecord(result.meta) ?? {};
+    const engine =
+      typeof rawMeta.engine === "string" && rawMeta.engine.trim()
+        ? rawMeta.engine.trim()
+        : "python";
+    const enrichedResult: PythonStrategyRunResponse = {
+      ...result,
+      meta: {
+        ...rawMeta,
+        runtimeMs: Math.trunc(runtimeMs),
+        engine
+      }
+    };
     logger.info("local_strategy_python_run", {
       engine: "python",
       remoteStrategyType: input.strategyType,
@@ -192,7 +210,7 @@ export async function executePythonStrategy(
     });
     return {
       ok: true,
-      result
+      result: enrichedResult
     };
   } catch (error) {
     counters.failures += 1;
