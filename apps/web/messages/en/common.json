@@ -1,0 +1,18 @@
+{
+  "betaLabel": "Panel Beta v0.0.1",
+  "language": "Language",
+  "english": "English",
+  "german": "German",
+  "footer": {
+    "privacy": "Privacy Policy",
+    "terms": "Terms of Service"
+  },
+  "status": {
+    "loading": "Loading..."
+  },
+  "actions": {
+    "today": "Today",
+    "next3d": "Next 3d",
+    "refresh": "Refresh"
+  }
+}

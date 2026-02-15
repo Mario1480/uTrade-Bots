@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { useTranslations } from "next-intl";
 import { apiGet } from "../../lib/api";
 
 type SystemSettings = {
@@ -31,14 +32,15 @@ export function useSystemSettings() {
 }
 
 export default function SystemBanner() {
+  const t = useTranslations("system.maintenance");
   const settings = useSystemSettings();
   if (!settings.readOnlyMode) return null;
 
   return (
     <div className="card" style={{ padding: "8px 12px", margin: "10px auto", maxWidth: 980 }}>
-      <div style={{ fontSize: 13, fontWeight: 600 }}>Maintenance mode</div>
+      <div style={{ fontSize: 13, fontWeight: 600 }}>{t("title")}</div>
       <div style={{ fontSize: 12, color: "var(--muted)" }}>
-        Trading actions are disabled while the system is in read-only mode.
+        {t("description")}
       </div>
     </div>
   );

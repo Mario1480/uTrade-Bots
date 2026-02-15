@@ -9,11 +9,14 @@
     "start": "next start -p 3000",
     "typecheck": "next typegen && tsc --noEmit --incremental false -p tsconfig.json",
     "test:prefill": "tsx --test src/schemas/tradeDeskPrefill.test.ts",
-    "test:predictions-ui": "tsx --test src/predictions/refreshUi.test.ts"
+    "test:predictions-ui": "tsx --test src/predictions/refreshUi.test.ts",
+    "test:i18n-routing": "tsx --test src/i18n/localeRouting.test.ts",
+    "i18n:check": "tsx src/i18n/integrity.ts"
   },
   "dependencies": {
     "lightweight-charts": "^5.1.0",
     "next": "^15.0.0",
+    "next-intl": "^3.26.5",
     "react": "^19.0.0",
     "react-dom": "^19.0.0",
     "recharts": "^2.15.4",

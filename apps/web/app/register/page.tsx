@@ -2,9 +2,11 @@
 
 import Link from "next/link";
 import { useRouter } from "next/navigation";
+import { useLocale, useTranslations } from "next-intl";
 import { useState } from "react";
 import type { FormEvent } from "react";
 import { ApiError, apiPost } from "../../lib/api";
+import { withLocalePath, type AppLocale } from "../../i18n/config";
 
 function errMsg(e: unknown): string {
   if (e instanceof ApiError) return `${e.message} (HTTP ${e.status})`;
@@ -13,6 +15,8 @@ function errMsg(e: unknown): string {
 }
 
 export default function RegisterPage() {
+  const t = useTranslations("auth");
+  const locale = useLocale() as AppLocale;
   const router = useRouter();
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -21,11 +25,11 @@ export default function RegisterPage() {
 
   async function submit(e: FormEvent) {
     e.preventDefault();
-    setStatus("creating account...");
+    setStatus(t("creatingAccount"));
     setError("");
     try {
       await apiPost("/auth/register", { email, password });
-      router.push("/");
+      router.push(withLocalePath("/", locale));
     } catch (e) {
       setStatus("");
       setError(errMsg(e));
@@ -34,38 +38,38 @@ export default function RegisterPage() {
 
   return (
     <div className="container" style={{ maxWidth: 520 }}>
-      <h1 style={{ marginTop: 0 }}>Create Account</h1>
+      <h1 style={{ marginTop: 0 }}>{t("createAccountTitle")}</h1>
       <div className="card" style={{ padding: 16 }}>
         <form onSubmit={submit} style={{ display: "grid", gap: 12 }}>
           <label style={{ fontSize: 13 }}>
-            Email
+            {t("email")}
             <input
               className="input"
               type="email"
               value={email}
               onChange={(e) => setEmail(e.target.value)}
-              placeholder="you@example.com"
+              placeholder={t("placeholders.email")}
               required
             />
           </label>
           <label style={{ fontSize: 13 }}>
-            Password
+            {t("password")}
             <input
               className="input"
               type="password"
               value={password}
               onChange={(e) => setPassword(e.target.value)}
-              placeholder="at least 8 characters"
+              placeholder={t("placeholders.passwordMin")}
               minLength={8}
               required
             />
           </label>
           <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
             <button className="btn btnPrimary" type="submit" disabled={!email || password.length < 8}>
-              Register
+              {t("registerButton")}
             </button>
-            <Link href="/login" className="btn">
-              Back to login
+            <Link href={withLocalePath("/login", locale)} className="btn">
+              {t("backToLogin")}
             </Link>
             <span style={{ fontSize: 12, opacity: 0.7 }}>{status}</span>
           </div>

@@ -1,0 +1,73 @@
+{
+  "title": "Dashboard",
+  "subtitle": "One overview card per exchange account.",
+  "actions": {
+    "predictions": "Predictions",
+    "calendar": "Calendar",
+    "manualTrading": "Manual Trading",
+    "newFuturesBot": "New Futures Bot"
+  },
+  "stats": {
+    "exchangeAccounts": "Exchange Accounts",
+    "runningBots": "Running Bots",
+    "botsInError": "Bots in Error"
+  },
+  "totals": {
+    "equity": "Total Equity ({currency})",
+    "margin": "Total Available Margin ({currency})",
+    "pnl": "Total Today PnL ({currency})",
+    "includedAccounts": "Included accounts: {count}"
+  },
+  "alerts": {
+    "title": "Global Alerts",
+    "empty": "No active alerts.",
+    "now": "now",
+    "agoSeconds": "{count}s ago",
+    "agoMinutes": "{count}m ago",
+    "agoHours": "{count}h ago",
+    "agoDays": "{count}d ago"
+  },
+  "calendar": {
+    "title": "Economic Calendar (USD / high)",
+    "blackout": "Blackout active until {to} · {title}",
+    "nextEvent": "Next event: {title} at {ts}",
+    "none": "No upcoming high-impact events.",
+    "loading": "Loading calendar status..."
+  },
+  "errors": {
+    "load": "Load error:"
+  },
+  "empty": {
+    "title": "No exchange accounts yet",
+    "description": "Add your first exchange account to start manual trading and bot management.",
+    "cta": "Add Exchange Account"
+  },
+  "accountCard": {
+    "lastSync": "Last sync: {value}",
+    "status": {
+      "connected": "Connected",
+      "degraded": "Degraded",
+      "disconnected": "Disconnected"
+    },
+    "spotBudget": "Spot Budget",
+    "futuresBudget": "Futures Budget",
+    "todayPnl": "Today PnL",
+    "botsPredictions": "Bots / Predictions",
+    "run": "Run",
+    "stop": "Stop",
+    "err": "Err",
+    "pred": "Pred",
+    "lastSyncFailed": "Last sync failed",
+    "botErrorsDetected": "Bot errors detected.",
+    "viewErrors": "View errors",
+    "manualTrading": "Manual Trading",
+    "bots": "Bots",
+    "settings": "Settings",
+    "never": "Never",
+    "unknown": "Unknown",
+    "agoSeconds": "{count}s ago",
+    "agoMinutes": "{count}m ago",
+    "agoHours": "{count}h ago",
+    "agoDays": "{count}d ago"
+  }
+}

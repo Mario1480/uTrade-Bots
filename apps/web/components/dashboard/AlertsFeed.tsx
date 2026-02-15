@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import { useTranslations } from "next-intl";
 
 export type DashboardAlert = {
   id: string;
@@ -21,17 +22,17 @@ export type DashboardAlert = {
   link?: string;
 };
 
-function formatAgo(iso: string): string {
+function formatAgo(iso: string, t: ReturnType<typeof useTranslations>): string {
   const ts = new Date(iso).getTime();
-  if (!Number.isFinite(ts)) return "now";
+  if (!Number.isFinite(ts)) return t("now");
   const diffSec = Math.max(0, Math.floor((Date.now() - ts) / 1000));
-  if (diffSec < 60) return `${diffSec}s ago`;
+  if (diffSec < 60) return t("agoSeconds", { count: diffSec });
   const diffMin = Math.floor(diffSec / 60);
-  if (diffMin < 60) return `${diffMin}m ago`;
+  if (diffMin < 60) return t("agoMinutes", { count: diffMin });
   const diffHr = Math.floor(diffMin / 60);
-  if (diffHr < 24) return `${diffHr}h ago`;
+  if (diffHr < 24) return t("agoHours", { count: diffHr });
   const diffDay = Math.floor(diffHr / 24);
-  return `${diffDay}d ago`;
+  return t("agoDays", { count: diffDay });
 }
 
 function badgeClass(severity: DashboardAlert["severity"]): string {
@@ -41,11 +42,13 @@ function badgeClass(severity: DashboardAlert["severity"]): string {
 }
 
 export default function AlertsFeed({ alerts }: { alerts: DashboardAlert[] }) {
+  const t = useTranslations("dashboard.alerts");
+
   return (
     <section className="card dashboardAlertsCard">
-      <div className="dashboardAlertsTitle">Global Alerts</div>
+      <div className="dashboardAlertsTitle">{t("title")}</div>
       {alerts.length === 0 ? (
-        <div className="dashboardAlertsEmpty">No active alerts.</div>
+        <div className="dashboardAlertsEmpty">{t("empty")}</div>
       ) : (
         <div className="dashboardAlertsList">
           {alerts.map((alert) => {
@@ -54,7 +57,7 @@ export default function AlertsFeed({ alerts }: { alerts: DashboardAlert[] }) {
                 <div className="dashboardAlertTop">
                   <span className={badgeClass(alert.severity)}>{alert.severity.toUpperCase()}</span>
                   <span className="dashboardAlertTime" title={new Date(alert.ts).toLocaleString()}>
-                    {formatAgo(alert.ts)}
+                    {formatAgo(alert.ts, t)}
                   </span>
                 </div>
                 <div className="dashboardAlertText">{alert.title}</div>

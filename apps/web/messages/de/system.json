@@ -1,0 +1,6 @@
+{
+  "maintenance": {
+    "title": "Wartungsmodus",
+    "description": "Trading-Aktionen sind deaktiviert, solange das System im Read-Only-Modus läuft."
+  }
+}

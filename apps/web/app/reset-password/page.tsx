@@ -2,8 +2,10 @@
 
 import Link from "next/link";
 import { useRouter } from "next/navigation";
+import { useLocale, useTranslations } from "next-intl";
 import { useState } from "react";
 import { ApiError, apiPost } from "../../lib/api";
+import { withLocalePath, type AppLocale } from "../../i18n/config";
 
 function errMsg(e: unknown): string {
   if (e instanceof ApiError) return `${e.message} (HTTP ${e.status})`;
@@ -12,6 +14,8 @@ function errMsg(e: unknown): string {
 }
 
 export default function ResetPasswordPage() {
+  const t = useTranslations("auth");
+  const locale = useLocale() as AppLocale;
   const router = useRouter();
   const [email, setEmail] = useState("");
   const [code, setCode] = useState("");
@@ -22,7 +26,7 @@ export default function ResetPasswordPage() {
   const [devCode, setDevCode] = useState<string | null>(null);
 
   async function requestResetCode() {
-    setStatus("sending code...");
+    setStatus(t("sendingCode"));
     setError("");
     setDevCode(null);
     try {
@@ -30,9 +34,10 @@ export default function ResetPasswordPage() {
         "/auth/password-reset/request",
         { email }
       );
-      setStatus(
-        `If the account exists, a reset code was sent${payload?.expiresInMinutes ? ` (valid ${payload.expiresInMinutes} min)` : ""}.`
-      );
+      const validWindow = payload?.expiresInMinutes
+        ? ` (${t("validMinutes", { minutes: payload.expiresInMinutes })})`
+        : "";
+      setStatus(`${t("codeSent")}${validWindow}.`);
       if (payload?.devCode) setDevCode(payload.devCode);
     } catch (e) {
       setStatus("");
@@ -41,11 +46,11 @@ export default function ResetPasswordPage() {
   }
 
   async function confirmResetPassword() {
-    setStatus("updating password...");
+    setStatus(t("updatingPassword"));
     setError("");
     if (newPassword !== confirmPassword) {
       setStatus("");
-      setError("New password and confirmation do not match.");
+      setError(t("passwordMismatch"));
       return;
     }
     try {
@@ -54,12 +59,12 @@ export default function ResetPasswordPage() {
         code,
         newPassword
       });
-      setStatus("Password updated. Redirecting to login...");
+      setStatus(t("passwordUpdated"));
       setCode("");
       setNewPassword("");
       setConfirmPassword("");
       setTimeout(() => {
-        router.push("/login");
+        router.push(withLocalePath("/login", locale));
       }, 1000);
     } catch (e) {
       setStatus("");
@@ -69,55 +74,55 @@ export default function ResetPasswordPage() {
 
   return (
     <div className="container" style={{ maxWidth: 520 }}>
-      <h1 style={{ marginTop: 0 }}>Reset Password</h1>
+      <h1 style={{ marginTop: 0 }}>{t("resetPasswordTitle")}</h1>
       <div className="card" style={{ padding: 16 }}>
         <div style={{ display: "grid", gap: 12 }}>
           <label style={{ fontSize: 13 }}>
-            Account email
+            {t("accountEmail")}
             <input
               className="input"
               type="email"
               value={email}
               onChange={(e) => setEmail(e.target.value)}
-              placeholder="you@example.com"
+              placeholder={t("placeholders.email")}
               required
             />
           </label>
           <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
             <button className="btn" type="button" disabled={!email} onClick={() => void requestResetCode()}>
-              Send reset code
+              {t("requestResetCode")}
             </button>
           </div>
           <label style={{ fontSize: 13 }}>
-            Reset code (6 digits)
+            {t("resetCode")}
             <input
               className="input"
               type="text"
               value={code}
               onChange={(e) => setCode(e.target.value)}
-              placeholder="123456"
+              placeholder={t("placeholders.resetCode")}
               maxLength={6}
             />
           </label>
           <label style={{ fontSize: 13 }}>
-            New password
+            {t("newPassword")}
             <input
               className="input"
               type="password"
               value={newPassword}
               onChange={(e) => setNewPassword(e.target.value)}
-              placeholder="at least 8 characters"
+              placeholder={t("placeholders.passwordMin")}
               minLength={8}
             />
           </label>
           <label style={{ fontSize: 13 }}>
-            Confirm new password
+            {t("confirmNewPassword")}
             <input
               className="input"
               type="password"
               value={confirmPassword}
               onChange={(e) => setConfirmPassword(e.target.value)}
-              placeholder="repeat new password"
+              placeholder={t("placeholders.repeatPassword")}
               minLength={8}
             />
           </label>
@@ -128,16 +133,16 @@ export default function ResetPasswordPage() {
               disabled={!email || code.length !== 6 || newPassword.length < 8}
               onClick={() => void confirmResetPassword()}
             >
-              Set new password
+              {t("setNewPassword")}
             </button>
-            <Link href="/login" className="btn">
-              Back to login
+            <Link href={withLocalePath("/login", locale)} className="btn">
+              {t("backToLogin")}
             </Link>
           </div>
           {status ? <div style={{ fontSize: 12, color: "var(--muted)" }}>{status}</div> : null}
           {devCode ? (
             <div style={{ fontSize: 12, color: "#facc15" }}>
-              Dev reset code: <b>{devCode}</b>
+              {t("devResetCode")}: <b>{devCode}</b>
             </div>
           ) : null}
           {error ? <div style={{ fontSize: 12, color: "#ef4444" }}>{error}</div> : null}

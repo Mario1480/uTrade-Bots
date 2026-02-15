@@ -1,0 +1,73 @@
+{
+  "title": "Dashboard",
+  "subtitle": "Eine Übersichtskarte pro Exchange-Account.",
+  "actions": {
+    "predictions": "Prognosen",
+    "calendar": "Kalender",
+    "manualTrading": "Manuelles Trading",
+    "newFuturesBot": "Neuer Futures Bot"
+  },
+  "stats": {
+    "exchangeAccounts": "Exchange-Accounts",
+    "runningBots": "Laufende Bots",
+    "botsInError": "Bots mit Fehlern"
+  },
+  "totals": {
+    "equity": "Gesamte Equity ({currency})",
+    "margin": "Verfügbare Margin gesamt ({currency})",
+    "pnl": "Heutiges PnL gesamt ({currency})",
+    "includedAccounts": "Berücksichtigte Accounts: {count}"
+  },
+  "alerts": {
+    "title": "Globale Alarme",
+    "empty": "Keine aktiven Alarme.",
+    "now": "jetzt",
+    "agoSeconds": "vor {count}s",
+    "agoMinutes": "vor {count}m",
+    "agoHours": "vor {count}h",
+    "agoDays": "vor {count}d"
+  },
+  "calendar": {
+    "title": "Wirtschaftskalender (USD / hoch)",
+    "blackout": "Blackout aktiv bis {to} · {title}",
+    "nextEvent": "Nächstes Event: {title} um {ts}",
+    "none": "Keine kommenden High-Impact-Events.",
+    "loading": "Kalenderstatus wird geladen..."
+  },
+  "errors": {
+    "load": "Ladefehler:"
+  },
+  "empty": {
+    "title": "Noch keine Exchange-Accounts",
+    "description": "Füge deinen ersten Exchange-Account hinzu, um manuell zu traden und Bots zu verwalten.",
+    "cta": "Exchange-Account hinzufügen"
+  },
+  "accountCard": {
+    "lastSync": "Letzte Synchronisierung: {value}",
+    "status": {
+      "connected": "Verbunden",
+      "degraded": "Eingeschränkt",
+      "disconnected": "Getrennt"
+    },
+    "spotBudget": "Spot-Budget",
+    "futuresBudget": "Futures-Budget",
+    "todayPnl": "Heutiges PnL",
+    "botsPredictions": "Bots / Prognosen",
+    "run": "Run",
+    "stop": "Stop",
+    "err": "Err",
+    "pred": "Pred",
+    "lastSyncFailed": "Letzte Synchronisierung fehlgeschlagen",
+    "botErrorsDetected": "Bot-Fehler erkannt.",
+    "viewErrors": "Fehler anzeigen",
+    "manualTrading": "Manuelles Trading",
+    "bots": "Bots",
+    "settings": "Einstellungen",
+    "never": "Nie",
+    "unknown": "Unbekannt",
+    "agoSeconds": "vor {count}s",
+    "agoMinutes": "vor {count}m",
+    "agoHours": "vor {count}h",
+    "agoDays": "vor {count}d"
+  }
+}

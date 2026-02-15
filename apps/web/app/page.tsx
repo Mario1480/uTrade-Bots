@@ -2,12 +2,14 @@
 
 import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
+import { useLocale, useTranslations } from "next-intl";
 import ExchangeAccountOverviewCard, {
 type ExchangeAccountOverview
 } from "./components/ExchangeAccountOverviewCard";
 import AlertsFeed, { type DashboardAlert } from "../components/dashboard/AlertsFeed";
 import TotalsBar, { type DashboardTotals } from "../components/dashboard/TotalsBar";
 import { ApiError, apiGet } from "../lib/api";
+import { withLocalePath, type AppLocale } from "../i18n/config";
 
 type EconomicCalendarSummary = {
   currency: string;
@@ -81,6 +83,8 @@ function DashboardSkeletonCard() {
 }
 
 export default function Page() {
+  const t = useTranslations("dashboard");
+  const locale = useLocale() as AppLocale;
   const [overview, setOverview] = useState<ExchangeAccountOverview[]>([]);
   const [overviewTotals, setOverviewTotals] = useState<DashboardTotals | null>(null);
   const [alerts, setAlerts] = useState<DashboardAlert[]>([]);
@@ -158,30 +162,30 @@ export default function Page() {
     <div>
       <div className="dashboardHeader">
         <div>
-          <h2 style={{ margin: 0 }}>Dashboard</h2>
+          <h2 style={{ margin: 0 }}>{t("title")}</h2>
           <div style={{ fontSize: 13, color: "var(--muted)" }}>
-            One overview card per exchange account.
+            {t("subtitle")}
           </div>
         </div>
         <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-          <Link href="/predictions" className="btn">Predictions</Link>
-          <Link href="/calendar" className="btn">Calendar</Link>
-          <Link href="/trade" className="btn">Manual Trading</Link>
-          <Link href="/bots/new" className="btn btnPrimary">New Futures Bot</Link>
+          <Link href={withLocalePath("/predictions", locale)} className="btn">{t("actions.predictions")}</Link>
+          <Link href={withLocalePath("/calendar", locale)} className="btn">{t("actions.calendar")}</Link>
+          <Link href={withLocalePath("/trade", locale)} className="btn">{t("actions.manualTrading")}</Link>
+          <Link href={withLocalePath("/bots/new", locale)} className="btn btnPrimary">{t("actions.newFuturesBot")}</Link>
         </div>
       </div>
 
       <div className="statGrid">
         <div className="card statCard">
-          <div className="statLabel">Exchange Accounts</div>
+          <div className="statLabel">{t("stats.exchangeAccounts")}</div>
           <div className="statValue">{loading ? "…" : headlineStats.accounts}</div>
         </div>
         <div className="card statCard">
-          <div className="statLabel">Running Bots</div>
+          <div className="statLabel">{t("stats.runningBots")}</div>
           <div className="statValue">{loading ? "…" : headlineStats.running}</div>
         </div>
         <div className="card statCard">
-          <div className="statLabel">Bots in Error</div>
+          <div className="statLabel">{t("stats.botsInError")}</div>
           <div className="statValue">{loading ? "…" : headlineStats.errors}</div>
         </div>
       </div>
@@ -191,29 +195,33 @@ export default function Page() {
       <AlertsFeed alerts={alerts} />
 
       <div className="card" style={{ padding: 12, marginBottom: 12 }}>
-        <div style={{ fontWeight: 700, marginBottom: 4 }}>Economic Calendar (USD / high)</div>
+        <div style={{ fontWeight: 700, marginBottom: 4 }}>{t("calendar.title")}</div>
         {calendarSummary ? (
           calendarSummary.blackoutActive && calendarSummary.activeWindow ? (
             <div style={{ fontSize: 13, color: "#ef4444" }}>
-              Blackout active until {new Date(calendarSummary.activeWindow.to).toLocaleString()} ·{" "}
-              {calendarSummary.activeWindow.event.title}
+              {t("calendar.blackout", {
+                to: new Date(calendarSummary.activeWindow.to).toLocaleString(),
+                title: calendarSummary.activeWindow.event.title
+              })}
             </div>
           ) : calendarSummary.nextEvent ? (
             <div style={{ fontSize: 13, color: "var(--muted)" }}>
-              Next event: {calendarSummary.nextEvent.title} at{" "}
-              {new Date(calendarSummary.nextEvent.ts).toLocaleString()}
+              {t("calendar.nextEvent", {
+                title: calendarSummary.nextEvent.title,
+                ts: new Date(calendarSummary.nextEvent.ts).toLocaleString()
+              })}
             </div>
           ) : (
-            <div style={{ fontSize: 13, color: "var(--muted)" }}>No upcoming high-impact events.</div>
+            <div style={{ fontSize: 13, color: "var(--muted)" }}>{t("calendar.none")}</div>
           )
         ) : (
-          <div style={{ fontSize: 13, color: "var(--muted)" }}>Loading calendar status…</div>
+          <div style={{ fontSize: 13, color: "var(--muted)" }}>{t("calendar.loading")}</div>
         )}
       </div>
 
       {error ? (
         <div className="card" style={{ padding: 12, borderColor: "#ef4444", marginBottom: 12 }}>
-          <strong>Load error:</strong> {error}
+          <strong>{t("errors.load")}</strong> {error}
         </div>
       ) : null}
 
@@ -225,11 +233,11 @@ export default function Page() {
         </div>
       ) : overview.length === 0 ? (
         <div className="card exchangeOverviewEmpty">
-          <h3 style={{ marginTop: 0 }}>No exchange accounts yet</h3>
+          <h3 style={{ marginTop: 0 }}>{t("empty.title")}</h3>
           <p style={{ color: "var(--muted)", marginTop: 0 }}>
-            Add your first exchange account to start manual trading and bot management.
+            {t("empty.description")}
           </p>
-          <Link href="/settings" className="btn btnPrimary">Add Exchange Account</Link>
+          <Link href={withLocalePath("/settings", locale)} className="btn btnPrimary">{t("empty.cta")}</Link>
         </div>
       ) : (
         <div className="exchangeOverviewGrid">

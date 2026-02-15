@@ -1,5 +1,7 @@
 "use client";
 
+import { useTranslations } from "next-intl";
+
 export type DashboardTotals = {
   totalEquity: number;
   totalAvailableMargin: number;
@@ -16,23 +18,24 @@ function formatMoney(value: number): string {
 }
 
 export default function TotalsBar({ totals }: { totals: DashboardTotals | null }) {
+  const t = useTranslations("dashboard.totals");
   if (!totals) return null;
 
   return (
     <div className="statGrid dashboardTotalsBar">
       <div className="card statCard">
-        <div className="statLabel">Total Equity ({totals.currency})</div>
+        <div className="statLabel">{t("equity", { currency: totals.currency })}</div>
         <div className="statValue">{formatMoney(totals.totalEquity)}</div>
       </div>
       <div className="card statCard">
-        <div className="statLabel">Total Available Margin ({totals.currency})</div>
+        <div className="statLabel">{t("margin", { currency: totals.currency })}</div>
         <div className="statValue">{formatMoney(totals.totalAvailableMargin)}</div>
       </div>
       <div className="card statCard">
-        <div className="statLabel">Total Today PnL ({totals.currency})</div>
+        <div className="statLabel">{t("pnl", { currency: totals.currency })}</div>
         <div className="statValue">{formatMoney(totals.totalTodayPnl)}</div>
         <div className="dashboardTotalsMeta">
-          Included accounts: {totals.includedAccounts}
+          {t("includedAccounts", { count: totals.includedAccounts })}
         </div>
       </div>
     </div>

@@ -1,0 +1,6 @@
+{
+  "maintenance": {
+    "title": "Maintenance mode",
+    "description": "Trading actions are disabled while the system is in read-only mode."
+  }
+}

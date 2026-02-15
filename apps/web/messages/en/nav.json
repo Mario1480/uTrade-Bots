@@ -1,0 +1,12 @@
+{
+  "dashboard": "Dashboard",
+  "manualTrading": "Manual Trading Desk",
+  "bots": "Bots",
+  "predictions": "Predictions",
+  "calendar": "Economic Calendar",
+  "settings": "Settings",
+  "help": "Help",
+  "logout": "Logout",
+  "loggingOut": "Logging out...",
+  "toggleMenu": "Toggle menu"
+}

@@ -1,0 +1,12 @@
+{
+  "dashboard": "Dashboard",
+  "manualTrading": "Manuelles Trading",
+  "bots": "Bots",
+  "predictions": "Prognosen",
+  "calendar": "Wirtschaftskalender",
+  "settings": "Einstellungen",
+  "help": "Hilfe",
+  "logout": "Abmelden",
+  "loggingOut": "Melde ab...",
+  "toggleMenu": "Menü umschalten"
+}
