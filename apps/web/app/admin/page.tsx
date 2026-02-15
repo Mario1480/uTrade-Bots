@@ -55,6 +55,24 @@ const ADMIN_LINKS: AdminLinkItem[] = [
     category: "Strategy"
   },
   {
+    href: "/admin/strategies/local",
+    title: "Local Strategies",
+    description: "Create and manage deterministic local strategy instances.",
+    category: "Strategy"
+  },
+  {
+    href: "/admin/strategies/builder",
+    title: "Composite Builder",
+    description: "Combine Local + AI nodes into pipeline strategies with dry-run preview.",
+    category: "Strategy"
+  },
+  {
+    href: "/admin/strategies/ai",
+    title: "AI Strategies",
+    description: "Manage AI prompt strategies and prompt-level runtime defaults.",
+    category: "Strategy"
+  },
+  {
     href: "/admin/prediction-refresh",
     title: "Prediction Refresh",
     description: "Tune debounce, hysteresis, cooldown and event throttle for auto predictions.",
@@ -64,12 +82,6 @@ const ADMIN_LINKS: AdminLinkItem[] = [
     href: "/admin/prediction-defaults",
     title: "Prediction Defaults",
     description: "Configure global defaults like signal mode for newly created predictions.",
-    category: "Strategy"
-  },
-  {
-    href: "/admin/ai-prompts",
-    title: "AI Prompts",
-    description: "Manage explainer prompt text and indicator groups sent to AI.",
     category: "Strategy"
   },
   {

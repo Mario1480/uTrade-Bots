@@ -7,8 +7,8 @@ import LogoutButton from "./LogoutButton";
 
 export default function AppHeader() {
   const pathname = usePathname();
-  if (pathname === "/login" || pathname === "/register" || pathname === "/reset-password") return null;
   const [menuOpen, setMenuOpen] = useState(false);
+  if (pathname === "/login" || pathname === "/register" || pathname === "/reset-password") return null;
 
   return (
     <header className="appHeader">

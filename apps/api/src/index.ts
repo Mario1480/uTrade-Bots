@@ -21,9 +21,14 @@ import { sendReauthOtpEmail, sendSmtpTestEmail } from "./email.js";
 import { decryptSecret, encryptSecret } from "./secret-crypto.js";
 import {
   evaluateAiPromptAccess,
+  evaluateStrategyAccess,
   enforceBotStartLicense,
   getAiPromptAllowedPublicIds,
   getAiPromptLicenseMode,
+  isAiModelAllowed,
+  isStrategyIdAllowed,
+  isStrategyKindAllowed,
+  resolveStrategyEntitlementsForWorkspace,
   getStubEntitlements,
   isLicenseEnforcementEnabled,
   isLicenseStubEnabled
@@ -36,7 +41,7 @@ import {
   getRuntimeOrchestrationMode
 } from "./orchestration.js";
 import { ExchangeSyncError, syncExchangeAccount } from "./exchange-sync.js";
-import { invalidateAiApiKeyCache } from "./ai/provider.js";
+import { getAiModel, invalidateAiApiKeyCache } from "./ai/provider.js";
 import {
   buildPredictionExplainerPromptPreview,
   fallbackExplain,
@@ -166,6 +171,17 @@ import {
   shouldInvokeAiExplain,
   type AiQualityGateRollingState
 } from "./ai/qualityGate.js";
+import {
+  getBuiltinLocalStrategyTemplates,
+  getRegisteredLocalStrategy,
+  listRegisteredLocalStrategies,
+  runLocalStrategy
+} from "./local-strategies/registry.js";
+import {
+  normalizeCompositeGraph,
+  validateCompositeGraph
+} from "./composite-strategies/graph.js";
+import { runCompositeStrategy } from "./composite-strategies/runner.js";
 import { shouldRefreshTF, type TriggerDebounceState } from "./predictions/refreshTriggers.js";
 import {
   applyNewsRiskToFeatureSnapshot,
@@ -487,6 +503,96 @@ const adminAiPromptsPreviewSchema = z.object({
 
 type AdminAiPromptsPayload = z.infer<typeof adminAiPromptsSchema>;
 
+const localStrategyDefinitionSchema = z.object({
+  strategyType: z.string().trim().min(1).max(128),
+  name: z.string().trim().min(1).max(120),
+  description: z.string().trim().max(2000).nullable().optional(),
+  version: z.string().trim().min(1).max(64).default("1.0.0"),
+  inputSchema: z.record(z.any()).nullable().optional(),
+  configJson: z.record(z.any()).default({}),
+  isEnabled: z.boolean().default(true)
+});
+
+const localStrategyDefinitionUpdateSchema = z.object({
+  strategyType: z.string().trim().min(1).max(128).optional(),
+  name: z.string().trim().min(1).max(120).optional(),
+  description: z.string().trim().max(2000).nullable().optional(),
+  version: z.string().trim().min(1).max(64).optional(),
+  inputSchema: z.record(z.any()).nullable().optional(),
+  configJson: z.record(z.any()).optional(),
+  isEnabled: z.boolean().optional()
+}).refine(
+  (value) => Object.values(value).some((entry) => entry !== undefined),
+  { message: "Provide at least one field to update." }
+);
+
+const localStrategyIdParamSchema = z.object({
+  id: z.string().trim().min(1)
+});
+
+const localStrategyRunSchema = z.object({
+  featureSnapshot: z.record(z.any()).default({}),
+  ctx: z.object({
+    signal: z.enum(["up", "down", "neutral"]).optional(),
+    exchange: z.string().trim().optional(),
+    accountId: z.string().trim().optional(),
+    symbol: z.string().trim().optional(),
+    marketType: z.string().trim().optional(),
+    timeframe: z.string().trim().optional()
+  }).catchall(z.any()).default({})
+});
+
+const compositeNodeSchema = z.object({
+  id: z.string().trim().min(1).max(120),
+  kind: z.enum(["local", "ai"]),
+  refId: z.string().trim().min(1).max(160),
+  configOverrides: z.record(z.any()).optional(),
+  position: z.object({
+    x: z.number().finite().optional(),
+    y: z.number().finite().optional()
+  }).optional()
+});
+
+const compositeEdgeSchema = z.object({
+  from: z.string().trim().min(1).max(120),
+  to: z.string().trim().min(1).max(120),
+  rule: z.enum(["always", "if_signal_not_neutral", "if_confidence_gte"]).default("always"),
+  confidenceGte: z.number().min(0).max(100).optional()
+});
+
+const compositeStrategyCreateSchema = z.object({
+  name: z.string().trim().min(1).max(120),
+  description: z.string().trim().max(2000).nullable().optional(),
+  version: z.string().trim().min(1).max(64).default("1.0.0"),
+  nodesJson: z.array(compositeNodeSchema).min(1).max(30),
+  edgesJson: z.array(compositeEdgeSchema).max(120).default([]),
+  combineMode: z.enum(["pipeline", "vote"]).default("pipeline"),
+  outputPolicy: z.enum(["first_non_neutral", "override_by_confidence", "local_signal_ai_explain"]).default("local_signal_ai_explain"),
+  isEnabled: z.boolean().default(true)
+});
+
+const compositeStrategyUpdateSchema = z.object({
+  name: z.string().trim().min(1).max(120).optional(),
+  description: z.string().trim().max(2000).nullable().optional(),
+  version: z.string().trim().min(1).max(64).optional(),
+  nodesJson: z.array(compositeNodeSchema).min(1).max(30).optional(),
+  edgesJson: z.array(compositeEdgeSchema).max(120).optional(),
+  combineMode: z.enum(["pipeline", "vote"]).optional(),
+  outputPolicy: z.enum(["first_non_neutral", "override_by_confidence", "local_signal_ai_explain"]).optional(),
+  isEnabled: z.boolean().optional()
+}).refine(
+  (value) => Object.values(value).some((entry) => entry !== undefined),
+  { message: "Provide at least one field to update." }
+);
+
+const compositeStrategyIdParamSchema = z.object({
+  id: z.string().trim().min(1)
+});
+
+const compositeStrategyDryRunSchema = z.object({
+  predictionId: z.string().trim().min(1)
+});
+
 const adminIndicatorSettingsResolvedQuerySchema = z.object({
   exchange: z.string().trim().optional(),
   accountId: z.string().trim().optional(),
@@ -560,7 +666,12 @@ const predictionGenerateSchema = z.object({
   botId: z.string().trim().min(1).optional(),
   modelVersionBase: z.string().trim().min(1).optional(),
   signalMode: z.enum(["local_only", "ai_only", "both"]).default("both"),
-  aiPromptTemplateId: z.string().trim().min(1).max(128).nullish()
+  aiPromptTemplateId: z.string().trim().min(1).max(128).nullish(),
+  compositeStrategyId: z.string().trim().min(1).max(160).nullish(),
+  strategyRef: z.object({
+    kind: z.enum(["ai", "local", "composite"]),
+    id: z.string().trim().min(1).max(160)
+  }).nullish()
 });
 
 const predictionGenerateAutoSchema = z.object({
@@ -570,7 +681,12 @@ const predictionGenerateAutoSchema = z.object({
   timeframe: z.enum(["5m", "15m", "1h", "4h", "1d"]),
   leverage: z.number().int().min(1).max(125).optional(),
   modelVersionBase: z.string().trim().min(1).optional(),
-  aiPromptTemplateId: z.string().trim().min(1).max(128).nullish()
+  aiPromptTemplateId: z.string().trim().min(1).max(128).nullish(),
+  compositeStrategyId: z.string().trim().min(1).max(160).nullish(),
+  strategyRef: z.object({
+    kind: z.enum(["ai", "local", "composite"]),
+    id: z.string().trim().min(1).max(160)
+  }).nullish()
 });
 
 const predictionListQuerySchema = z.object({
@@ -859,6 +975,14 @@ type AiPredictionSnapshot = {
   confidence: number;
 };
 
+type PredictionStrategyKind = "ai" | "local" | "composite";
+
+type PredictionStrategyRef = {
+  kind: PredictionStrategyKind;
+  id: string;
+  name: string | null;
+};
+
 function normalizeSnapshotPrediction(value: Record<string, unknown>): AiPredictionSnapshot | null {
   const signal =
     value.signal === "up" || value.signal === "down" || value.signal === "neutral"
@@ -908,6 +1032,76 @@ function readAiPromptTemplateName(snapshot: Record<string, unknown>): string | n
   if (typeof snapshot.aiPromptTemplateName !== "string") return null;
   const trimmed = snapshot.aiPromptTemplateName.trim();
   return trimmed.length > 0 ? trimmed : null;
+}
+
+function readLocalStrategyId(snapshot: Record<string, unknown>): string | null {
+  if (typeof snapshot.localStrategyId !== "string") return null;
+  const trimmed = snapshot.localStrategyId.trim();
+  return trimmed.length > 0 ? trimmed : null;
+}
+
+function readLocalStrategyName(snapshot: Record<string, unknown>): string | null {
+  if (typeof snapshot.localStrategyName !== "string") return null;
+  const trimmed = snapshot.localStrategyName.trim();
+  return trimmed.length > 0 ? trimmed : null;
+}
+
+function readCompositeStrategyId(snapshot: Record<string, unknown>): string | null {
+  if (typeof snapshot.compositeStrategyId !== "string") return null;
+  const trimmed = snapshot.compositeStrategyId.trim();
+  return trimmed.length > 0 ? trimmed : null;
+}
+
+function readCompositeStrategyName(snapshot: Record<string, unknown>): string | null {
+  if (typeof snapshot.compositeStrategyName !== "string") return null;
+  const trimmed = snapshot.compositeStrategyName.trim();
+  return trimmed.length > 0 ? trimmed : null;
+}
+
+function normalizePredictionStrategyKind(value: unknown): PredictionStrategyKind | null {
+  if (value === "ai" || value === "local" || value === "composite") return value;
+  return null;
+}
+
+function readPredictionStrategyRef(snapshot: Record<string, unknown>): PredictionStrategyRef | null {
+  const direct = asRecord(snapshot.strategyRef);
+  const directKind = normalizePredictionStrategyKind(direct.kind);
+  const directId = typeof direct.id === "string" ? direct.id.trim() : "";
+  if (directKind && directId) {
+    return {
+      kind: directKind,
+      id: directId,
+      name: typeof direct.name === "string" && direct.name.trim() ? direct.name.trim() : null
+    };
+  }
+
+  const compositeId = readCompositeStrategyId(snapshot);
+  if (compositeId) {
+    return {
+      kind: "composite",
+      id: compositeId,
+      name: readCompositeStrategyName(snapshot)
+    };
+  }
+
+  const localId = readLocalStrategyId(snapshot);
+  if (localId) {
+    return {
+      kind: "local",
+      id: localId,
+      name: readLocalStrategyName(snapshot)
+    };
+  }
+
+  const aiId = readAiPromptTemplateId(snapshot);
+  if (aiId) {
+    return {
+      kind: "ai",
+      id: aiId,
+      name: readAiPromptTemplateName(snapshot)
+    };
+  }
+  return null;
 }
 
 function readStateSignalMode(
@@ -1450,6 +1644,17 @@ async function resolveUserContext(user: { id: string; email: string }) {
     isSuperadmin,
     hasAdminBackendAccess: hasAdminAccess
   };
+}
+
+async function resolveWorkspaceIdForUserId(userId: string): Promise<string | null> {
+  const member = await db.workspaceMember.findFirst({
+    where: { userId },
+    orderBy: { createdAt: "asc" },
+    select: { workspaceId: true }
+  });
+  if (!member?.workspaceId || typeof member.workspaceId !== "string") return null;
+  const trimmed = member.workspaceId.trim();
+  return trimmed || null;
 }
 
 function readUserFromLocals(res: express.Response): { id: string; email: string } {
@@ -2331,6 +2536,11 @@ async function generateAutoPredictionForUser(
   tsCreated: string;
   aiPromptTemplateId: string | null;
   aiPromptTemplateName: string | null;
+  localStrategyId: string | null;
+  localStrategyName: string | null;
+  compositeStrategyId: string | null;
+  compositeStrategyName: string | null;
+  strategyRef: PredictionStrategyRef | null;
 }> {
   const resolvedAccount = await resolveMarketDataTradingAccount(userId, payload.exchangeAccountId);
   const account = resolvedAccount.selectedAccount;
@@ -2352,10 +2562,81 @@ async function generateAutoPredictionForUser(
       symbol: canonicalSymbol,
       timeframe: requestedTimeframe
     };
-    const requestedPromptTemplateId =
-      typeof payload.aiPromptTemplateId === "string" && payload.aiPromptTemplateId.trim()
-        ? payload.aiPromptTemplateId.trim()
+    const payloadStrategyKind = normalizePredictionStrategyKind(payload.strategyRef?.kind);
+    const payloadStrategyId =
+      typeof payload.strategyRef?.id === "string" && payload.strategyRef.id.trim()
+        ? payload.strategyRef.id.trim()
         : null;
+    const requestedPromptTemplateId =
+      payloadStrategyKind === "ai"
+        ? payloadStrategyId
+        : (typeof payload.aiPromptTemplateId === "string" && payload.aiPromptTemplateId.trim()
+            ? payload.aiPromptTemplateId.trim()
+            : null);
+    const requestedLocalStrategyId =
+      payloadStrategyKind === "local"
+        ? payloadStrategyId
+        : null;
+    const requestedCompositeStrategyId =
+      payloadStrategyKind === "composite"
+        ? payloadStrategyId
+        : (typeof payload.compositeStrategyId === "string" && payload.compositeStrategyId.trim()
+            ? payload.compositeStrategyId.trim()
+            : null);
+    const selectedLocalStrategy = requestedLocalStrategyId
+      ? await getEnabledLocalStrategyById(requestedLocalStrategyId)
+      : null;
+    const selectedCompositeStrategy = requestedCompositeStrategyId
+      ? await getEnabledCompositeStrategyById(requestedCompositeStrategyId)
+      : null;
+    const selectedStrategyRef: PredictionStrategyRef | null =
+      selectedCompositeStrategy
+        ? { kind: "composite", id: selectedCompositeStrategy.id, name: selectedCompositeStrategy.name }
+        : selectedLocalStrategy
+          ? { kind: "local", id: selectedLocalStrategy.id, name: selectedLocalStrategy.name }
+          : requestedPromptTemplateId
+            ? { kind: "ai", id: requestedPromptTemplateId, name: null }
+            : null;
+    if (requestedLocalStrategyId && !selectedLocalStrategy) {
+      throw new ManualTradingError(
+        "Selected local strategy is not available.",
+        400,
+        "invalid_local_strategy"
+      );
+    }
+    if (requestedCompositeStrategyId && !selectedCompositeStrategy) {
+      throw new ManualTradingError(
+        "Selected composite strategy is not available.",
+        400,
+        "invalid_composite_strategy"
+      );
+    }
+    const workspaceId = await resolveWorkspaceIdForUserId(userId);
+    const strategyEntitlements = await resolveStrategyEntitlementsForWorkspace({
+      workspaceId: workspaceId ?? "unknown"
+    });
+    const selectedKind: "ai" | "local" | "composite" =
+      selectedStrategyRef?.kind ?? "ai";
+    const selectedId =
+      selectedStrategyRef?.id
+      ?? (selectedKind === "ai" ? (requestedPromptTemplateId ?? "default") : null);
+    const strategyAccess = evaluateStrategySelectionAccess({
+      entitlements: strategyEntitlements,
+      kind: selectedKind,
+      strategyId: selectedId,
+      aiModel: selectedKind === "ai" ? getAiModel() : null,
+      compositeNodes:
+        selectedKind === "composite"
+          ? countCompositeStrategyNodes(selectedCompositeStrategy)
+          : null
+    });
+    if (!strategyAccess.allowed) {
+      throw new ManualTradingError(
+        "Selected strategy is blocked by license entitlements.",
+        403,
+        `strategy_license_blocked:${strategyAccess.reason}`
+      );
+    }
     const promptLicenseDecision = evaluateAiPromptAccess({
       userId,
       selectedPromptId: requestedPromptTemplateId
@@ -2541,8 +2822,46 @@ async function generateAutoPredictionForUser(
       selectedPromptSettings?.activePromptId ?? requestedPromptTemplateId;
     inferred.featureSnapshot.aiPromptTemplateName =
       selectedPromptSettings?.activePromptName ?? null;
+    inferred.featureSnapshot.localStrategyId = selectedLocalStrategy?.id ?? null;
+    inferred.featureSnapshot.localStrategyName = selectedLocalStrategy?.name ?? null;
     inferred.featureSnapshot.aiPromptLicenseMode = promptLicenseDecision.mode;
     inferred.featureSnapshot.aiPromptLicenseWouldBlock = promptLicenseDecision.wouldBlock;
+    inferred.featureSnapshot.compositeStrategyId = requestedCompositeStrategyId ?? null;
+    inferred.featureSnapshot.compositeStrategyName = selectedCompositeStrategy?.name ?? null;
+    inferred.featureSnapshot.strategyRef = selectedStrategyRef
+      ? { kind: selectedStrategyRef.kind, id: selectedStrategyRef.id, name: selectedStrategyRef.name }
+      : null;
+    const strategyRefForInitialSnapshot: PredictionStrategyRef | null =
+      selectedStrategyRef?.kind === "ai"
+        ? {
+            kind: "ai",
+            id: selectedPromptSettings?.activePromptId ?? selectedStrategyRef.id,
+            name: selectedPromptSettings?.activePromptName ?? selectedStrategyRef.name
+          }
+        : selectedStrategyRef;
+    inferred.featureSnapshot = withStrategyRunSnapshot(
+      inferred.featureSnapshot,
+      {
+        strategyRef: strategyRefForInitialSnapshot,
+        status: "skipped",
+        signal: inferred.prediction.signal,
+        expectedMovePct: inferred.prediction.expectedMovePct,
+        confidence: inferred.prediction.confidence,
+        source: resolvePreferredSignalSourceForMode(
+          signalMode,
+          PREDICTION_PRIMARY_SIGNAL_SOURCE
+        ),
+        aiCalled: false,
+        explanation: "Initial prediction created; strategy runner will apply on refresh cycle.",
+        tags: normalizeTagList(inferred.featureSnapshot.tags),
+        keyDrivers: [],
+        ts: new Date().toISOString()
+      },
+      {
+        phase: "initial_generate",
+        strategyRef: strategyRefForInitialSnapshot
+      }
+    );
     inferred.featureSnapshot.meta = {
       ...(asRecord(inferred.featureSnapshot.meta) ?? {}),
       indicatorSettingsHash: indicatorSettingsResolution.hash
@@ -2701,7 +3020,21 @@ async function generateAutoPredictionForUser(
       aiPromptTemplateId:
         selectedPromptSettings?.activePromptId ?? requestedPromptTemplateId,
       aiPromptTemplateName:
-        selectedPromptSettings?.activePromptName ?? null
+        selectedPromptSettings?.activePromptName ?? null,
+      localStrategyId: selectedLocalStrategy?.id ?? null,
+      localStrategyName: selectedLocalStrategy?.name ?? null,
+      compositeStrategyId: selectedCompositeStrategy?.id ?? null,
+      compositeStrategyName: selectedCompositeStrategy?.name ?? null,
+      strategyRef: selectedStrategyRef
+        ? {
+            kind: selectedStrategyRef.kind,
+            id: selectedStrategyRef.id,
+            name:
+              selectedStrategyRef.kind === "ai"
+                ? (selectedPromptSettings?.activePromptName ?? selectedStrategyRef.name)
+                : selectedStrategyRef.name
+          }
+        : null
     };
   } finally {
     await adapter.close();
@@ -3924,6 +4257,7 @@ async function resolvePredictionTemplateScope(userId: string, predictionId: stri
   timeframe: PredictionTimeframe;
   exchangeAccountId: string | null;
   signalMode: PredictionSignalMode;
+  strategyRef: PredictionStrategyRef | null;
 } | null> {
   const row = await db.prediction.findFirst({
     where: {
@@ -3949,7 +4283,8 @@ async function resolvePredictionTemplateScope(userId: string, predictionId: stri
     marketType: normalizePredictionMarketType(row.marketType),
     timeframe: normalizePredictionTimeframe(row.timeframe),
     exchangeAccountId: readPrefillExchangeAccountId(snapshot),
-    signalMode: readSignalMode(snapshot)
+    signalMode: readSignalMode(snapshot),
+    strategyRef: readPredictionStrategyRef(snapshot)
   };
 }
 
@@ -3959,6 +4294,7 @@ async function findPredictionTemplateRowIds(userId: string, scope: {
   timeframe: PredictionTimeframe;
   exchangeAccountId: string | null;
   signalMode?: PredictionSignalMode | null;
+  strategyRef?: PredictionStrategyRef | null;
 }): Promise<string[]> {
   const rows = await db.prediction.findMany({
     where: {
@@ -3978,9 +4314,49 @@ async function findPredictionTemplateRowIds(userId: string, scope: {
       const snapshot = asRecord(row.featuresSnapshot);
       if (readPrefillExchangeAccountId(snapshot) !== scope.exchangeAccountId) return false;
       if (scope.signalMode && readSignalMode(snapshot) !== scope.signalMode) return false;
+      if (scope.strategyRef !== undefined) {
+        const rowStrategyRef = readPredictionStrategyRef(snapshot);
+        const expected = scope.strategyRef;
+        const mismatch = !expected
+          ? Boolean(rowStrategyRef)
+          : !rowStrategyRef
+            || rowStrategyRef.kind !== expected.kind
+            || rowStrategyRef.id !== expected.id;
+        if (mismatch) return false;
+      }
       return true;
     })
     .map((row: any) => row.id);
+}
+
+function setFeatureSnapshotStrategyRef(
+  snapshot: Record<string, unknown>,
+  strategyRef: PredictionStrategyRef | null
+): Record<string, unknown> {
+  if (!strategyRef) {
+    return {
+      ...snapshot,
+      strategyRef: null,
+      localStrategyId: null,
+      localStrategyName: null,
+      compositeStrategyId: null,
+      compositeStrategyName: null
+    };
+  }
+  return {
+    ...snapshot,
+    strategyRef: {
+      kind: strategyRef.kind,
+      id: strategyRef.id,
+      name: strategyRef.name
+    },
+    localStrategyId: strategyRef.kind === "local" ? strategyRef.id : null,
+    localStrategyName: strategyRef.kind === "local" ? strategyRef.name : null,
+    compositeStrategyId: strategyRef.kind === "composite" ? strategyRef.id : null,
+    compositeStrategyName: strategyRef.kind === "composite" ? strategyRef.name : null,
+    aiPromptTemplateId: strategyRef.kind === "ai" ? strategyRef.id : readAiPromptTemplateId(snapshot),
+    aiPromptTemplateName: strategyRef.kind === "ai" ? strategyRef.name : readAiPromptTemplateName(snapshot)
+  };
 }
 
 async function findPredictionStateIdByScope(params: {
@@ -4434,10 +4810,87 @@ type PredictionRefreshTemplate = {
   featureSnapshot: Record<string, unknown>;
   aiPromptTemplateId: string | null;
   aiPromptTemplateName: string | null;
+  localStrategyId: string | null;
+  localStrategyName: string | null;
+  compositeStrategyId: string | null;
+  compositeStrategyName: string | null;
+  strategyRef: PredictionStrategyRef | null;
   modelVersionBase: string;
 };
 
+type StrategyRunSummary = {
+  strategyRef: PredictionStrategyRef | null;
+  status: "ok" | "fallback" | "error" | "skipped";
+  signal: PredictionSignal;
+  expectedMovePct: number;
+  confidence: number;
+  source: PredictionSignalSource;
+  aiCalled: boolean;
+  explanation: string;
+  tags: string[];
+  keyDrivers: Array<{ name: string; value: unknown }>;
+  ts: string;
+};
+
 let predictionStateBootstrapped = false;
+
+function resolveRequestedStrategyRefForTemplate(
+  template: PredictionRefreshTemplate
+): PredictionStrategyRef | null {
+  if (template.strategyRef) {
+    return {
+      kind: template.strategyRef.kind,
+      id: template.strategyRef.id,
+      name: template.strategyRef.name ?? null
+    };
+  }
+  if (template.compositeStrategyId) {
+    return {
+      kind: "composite",
+      id: template.compositeStrategyId,
+      name: template.compositeStrategyName ?? null
+    };
+  }
+  if (template.localStrategyId) {
+    return {
+      kind: "local",
+      id: template.localStrategyId,
+      name: template.localStrategyName ?? null
+    };
+  }
+  if (template.aiPromptTemplateId) {
+    return {
+      kind: "ai",
+      id: template.aiPromptTemplateId,
+      name: template.aiPromptTemplateName ?? null
+    };
+  }
+  return null;
+}
+
+function withStrategyRunSnapshot(
+  snapshot: Record<string, unknown>,
+  summary: StrategyRunSummary,
+  debug: Record<string, unknown> | null
+): Record<string, unknown> {
+  return {
+    ...setFeatureSnapshotStrategyRef(snapshot, summary.strategyRef),
+    strategyRunOutput: {
+      strategyRef: summary.strategyRef,
+      status: summary.status,
+      signal: summary.signal,
+      expectedMovePct: Number(clamp(summary.expectedMovePct, 0, 25).toFixed(2)),
+      confidence: Number(clamp(summary.confidence, 0, 1).toFixed(4)),
+      source: summary.source,
+      aiCalled: summary.aiCalled,
+      explanation: typeof summary.explanation === "string" ? summary.explanation : "",
+      tags: normalizeTagList(summary.tags),
+      keyDrivers: normalizeKeyDriverList(summary.keyDrivers),
+      ts: summary.ts
+    },
+    strategyRunDebug: debug ?? null
+  };
+}
 
 async function bootstrapPredictionStateFromHistory() {
   if (predictionStateBootstrapped) return;
@@ -4654,6 +5107,11 @@ async function listPredictionRefreshTemplates(): Promise<PredictionRefreshTempla
         },
         aiPromptTemplateId: readAiPromptTemplateId(snapshot),
         aiPromptTemplateName: readAiPromptTemplateName(snapshot),
+        localStrategyId: readLocalStrategyId(snapshot),
+        localStrategyName: readLocalStrategyName(snapshot),
+        compositeStrategyId: readCompositeStrategyId(snapshot),
+        compositeStrategyName: readCompositeStrategyName(snapshot),
+        strategyRef: readPredictionStrategyRef(snapshot),
         modelVersionBase:
           typeof row.modelVersion === "string" && row.modelVersion.trim()
             ? row.modelVersion
@@ -4919,21 +5377,66 @@ async function refreshPredictionStateForTemplate(params: {
     });
     const prevState = prevStateRow ? readPredictionStateLike(prevStateRow) : null;
     const signalMode = template.signalMode;
+    const requestedStrategyRef = resolveRequestedStrategyRefForTemplate(template);
+    const requestedLocalStrategyId = requestedStrategyRef?.kind === "local"
+      ? requestedStrategyRef.id
+      : (template.localStrategyId ?? readLocalStrategyId(template.featureSnapshot));
+    const requestedCompositeStrategyId = requestedStrategyRef?.kind === "composite"
+      ? requestedStrategyRef.id
+      : (template.compositeStrategyId ?? readCompositeStrategyId(template.featureSnapshot));
+    const selectedLocalStrategy = requestedLocalStrategyId
+      ? await getEnabledLocalStrategyById(requestedLocalStrategyId)
+      : null;
+    const selectedCompositeStrategy = requestedCompositeStrategyId
+      ? await getEnabledCompositeStrategyById(requestedCompositeStrategyId)
+      : null;
+    const requestedStrategyRefEffective: PredictionStrategyRef | null =
+      requestedStrategyRef
+      ?? (requestedCompositeStrategyId
+        ? {
+            kind: "composite",
+            id: requestedCompositeStrategyId,
+            name: template.compositeStrategyName ?? null
+          }
+        : requestedLocalStrategyId
+          ? {
+              kind: "local",
+              id: requestedLocalStrategyId,
+            name: template.localStrategyName ?? null
+          }
+          : null);
+    const workspaceId = await resolveWorkspaceIdForUserId(template.userId);
+    const strategyEntitlements = await resolveStrategyEntitlementsForWorkspace({
+      workspaceId: workspaceId ?? "unknown"
+    });
+    const requestedStrategyKindForAccess: "ai" | "local" | "composite" =
+      requestedStrategyRefEffective?.kind ?? "ai";
+    const requestedStrategyIdForAccess =
+      requestedStrategyRefEffective?.id
+      ?? (
+        requestedStrategyKindForAccess === "ai"
+          ? (
+            template.aiPromptTemplateId
+            ?? readAiPromptTemplateId(template.featureSnapshot)
+            ?? "default"
+          )
+          : null
+      );
+    const strategyAccess = evaluateStrategySelectionAccess({
+      entitlements: strategyEntitlements,
+      kind: requestedStrategyKindForAccess,
+      strategyId: requestedStrategyIdForAccess,
+      aiModel: requestedStrategyKindForAccess === "ai" ? getAiModel() : null,
+      compositeNodes:
+        requestedStrategyKindForAccess === "composite"
+          ? countCompositeStrategyNodes(selectedCompositeStrategy)
+          : null
+    });
 
     const baselineTags = enforceNewsRiskTag(
       inferred.featureSnapshot.tags,
       inferred.featureSnapshot
     );
-    const significantForAiGate = evaluateSignificantChange({
-      prev: prevState,
-      next: {
-        signal: inferred.prediction.signal,
-        confidence: inferred.prediction.confidence,
-        tags: baselineTags,
-        featureSnapshot: inferred.featureSnapshot
-      }
-    });
-
     const nowMs = Date.now();
     const gateState = prevStateRow
       ? readAiQualityGateState(prevStateRow)
@@ -4973,8 +5476,14 @@ async function refreshPredictionStateForTemplate(params: {
       reason: aiGateDecision.reasonCodes.join(","),
       cooldownActive: aiGateDecision.reasonCodes.includes("cooldown_active")
     };
+    let useLegacySignalFlow =
+      requestedStrategyRefEffective?.kind !== "local"
+      && requestedStrategyRefEffective?.kind !== "composite";
+    if (!strategyAccess.allowed) {
+      useLegacySignalFlow = true;
+    }
     let aiGateStateForPersist = aiGateDecision.state;
-    if (!aiDecision.shouldCallAi) {
+    if (useLegacySignalFlow && !aiDecision.shouldCallAi) {
       console.info("[ai_quality_gate_blocked_refresh]", {
         gate_allow: false,
         gate_reasons: aiGateDecision.reasonCodes,
@@ -4986,7 +5495,24 @@ async function refreshPredictionStateForTemplate(params: {
       });
     }
 
-    if (signalMode === "ai_only" && !aiDecision.shouldCallAi) {
+    if (
+      useLegacySignalFlow
+      && signalMode === "ai_only"
+      && requestedStrategyRefEffective?.kind !== "local"
+      && requestedStrategyRefEffective?.kind !== "composite"
+      && !aiDecision.shouldCallAi
+    ) {
+      return {
+        refreshed: false,
+        significant: false,
+        aiCalled: false
+      };
+    }
+    if (
+      signalMode === "ai_only"
+      && requestedStrategyKindForAccess === "ai"
+      && !strategyAccess.allowed
+    ) {
       return {
         refreshed: false,
         significant: false,
@@ -4995,8 +5521,26 @@ async function refreshPredictionStateForTemplate(params: {
     }
 
     const tsCreated = new Date().toISOString();
-    let explainer: ExplainerOutput;
     let aiCalled = false;
+    let strategyRunStatus: StrategyRunSummary["status"] = "ok";
+    let strategyRunDebug: Record<string, unknown> | null = null;
+    if (!strategyAccess.allowed) {
+      strategyRunStatus = "fallback";
+      strategyRunDebug = {
+        strategyAccess,
+        requestedStrategyRef: requestedStrategyRefEffective
+      };
+      // eslint-disable-next-line no-console
+      console.warn("[predictions:refresh] strategy blocked by license entitlements", {
+        stateId: template.stateId,
+        userId: template.userId,
+        symbol: template.symbol,
+        timeframe: template.timeframe,
+        requestedStrategyKind: requestedStrategyKindForAccess,
+        requestedStrategyId: requestedStrategyIdForAccess,
+        reason: strategyAccess.reason
+      });
+    }
     const promptScopeContext = {
       exchange: template.exchange,
       accountId: template.exchangeAccountId,
@@ -5004,9 +5548,13 @@ async function refreshPredictionStateForTemplate(params: {
       timeframe: template.timeframe
     };
     const requestedPromptTemplateId =
-      readAiPromptTemplateId(template.featureSnapshot) ?? template.aiPromptTemplateId;
+      requestedStrategyRefEffective?.kind === "ai"
+        ? requestedStrategyRefEffective.id
+        : (readAiPromptTemplateId(template.featureSnapshot) ?? template.aiPromptTemplateId);
     const requestedPromptTemplateName =
-      readAiPromptTemplateName(template.featureSnapshot) ?? template.aiPromptTemplateName;
+      requestedStrategyRefEffective?.kind === "ai"
+        ? (requestedStrategyRefEffective.name ?? null)
+        : (readAiPromptTemplateName(template.featureSnapshot) ?? template.aiPromptTemplateName);
     const promptLicenseDecision = evaluateAiPromptAccess({
       userId: template.userId,
       selectedPromptId: requestedPromptTemplateId
@@ -5025,45 +5573,301 @@ async function refreshPredictionStateForTemplate(params: {
     let runtimePromptSettings: Awaited<
       ReturnType<typeof getAiPromptRuntimeSettingsByTemplateId>
     > | null = null;
+    let localPrediction =
+      normalizeSnapshotPrediction(asRecord(inferred.prediction)) ??
+      {
+        signal: inferred.prediction.signal,
+        expectedMovePct: Number(clamp(Math.abs(inferred.prediction.expectedMovePct), 0, 25).toFixed(2)),
+        confidence: Number(clamp(inferred.prediction.confidence, 0, 1).toFixed(4))
+      };
+    let aiPrediction: AiPredictionSnapshot | null =
+      signalMode === "local_only" ? null : localPrediction;
+    let selectedPrediction: {
+      signal: PredictionSignal;
+      expectedMovePct: number;
+      confidence: number;
+      source: PredictionSignalSource;
+    } = {
+      signal: localPrediction.signal,
+      expectedMovePct: localPrediction.expectedMovePct,
+      confidence: localPrediction.confidence,
+      source: "local"
+    };
+    let explainer: ExplainerOutput = {
+      explanation: "No major state change; awaiting clearer signal.",
+      tags: [],
+      keyDrivers: [],
+      aiPrediction: localPrediction,
+      disclaimer: "grounded_features_only"
+    };
 
-    if (signalMode !== "local_only" && aiDecision.shouldCallAi) {
+    if (requestedCompositeStrategyId && !selectedCompositeStrategy) {
+      // eslint-disable-next-line no-console
+      console.warn("[predictions:refresh] composite strategy unavailable, fallback to legacy flow", {
+        stateId: template.stateId,
+        symbol: template.symbol,
+        timeframe: template.timeframe,
+        compositeStrategyId: requestedCompositeStrategyId
+      });
+      strategyRunStatus = "fallback";
+      useLegacySignalFlow = true;
+    }
+
+    if (requestedLocalStrategyId && !selectedLocalStrategy) {
+      // eslint-disable-next-line no-console
+      console.warn("[predictions:refresh] local strategy unavailable, fallback to legacy flow", {
+        stateId: template.stateId,
+        symbol: template.symbol,
+        timeframe: template.timeframe,
+        localStrategyId: requestedLocalStrategyId
+      });
+      strategyRunStatus = "fallback";
+      useLegacySignalFlow = true;
+    }
+
+    if (
+      strategyAccess.allowed
+      && requestedStrategyRefEffective?.kind === "local"
+      && selectedLocalStrategy
+    ) {
       try {
-        runtimePromptSettings = await getAiPromptRuntimeSettingsByTemplateId({
-          templateId: runtimePromptTemplateId,
-          context: promptScopeContext
-        });
-        explainer = await generatePredictionExplanation({
-          symbol: template.symbol,
-          marketType: template.marketType,
-          timeframe: template.timeframe,
-          tsCreated,
-          prediction: inferred.prediction,
-          featureSnapshot: inferred.featureSnapshot
-        }, {
-          promptScopeContext,
-          promptSettings: runtimePromptSettings,
-          requireSuccessfulAi: signalMode === "ai_only"
-        });
-        aiCalled = true;
-        aiGateStateForPersist = applyAiQualityGateCallToState(
-          aiGateStateForPersist,
-          aiGateDecision.priority
-        );
-      } catch (error) {
-        if (signalMode === "ai_only") {
-          // eslint-disable-next-line no-console
-          console.warn("[predictions:refresh] ai_only skip due to missing AI response", {
-            stateId: template.stateId,
+        const localRun = await runLocalStrategy(
+          selectedLocalStrategy.id,
+          inferred.featureSnapshot,
+          {
+            signal: localPrediction.signal,
+            exchange: template.exchange,
+            accountId: template.exchangeAccountId,
             symbol: template.symbol,
+            marketType: template.marketType,
+            timeframe: template.timeframe
+          }
+        );
+        useLegacySignalFlow = false;
+        const localScoreConfidence = Number(clamp(localRun.score / 100, 0, 1).toFixed(4));
+        const blockedSignal: PredictionSignal = "neutral";
+        const blockedMove = Number((localPrediction.expectedMovePct * 0.35).toFixed(2));
+        selectedPrediction = {
+          signal: localRun.allow ? localPrediction.signal : blockedSignal,
+          expectedMovePct: localRun.allow
+            ? localPrediction.expectedMovePct
+            : Number(clamp(blockedMove, 0, localPrediction.expectedMovePct).toFixed(2)),
+          confidence: localRun.allow
+            ? Number(clamp(Math.max(localPrediction.confidence, localScoreConfidence), 0, 1).toFixed(4))
+            : Number(clamp(Math.min(localPrediction.confidence, localScoreConfidence), 0, 1).toFixed(4)),
+          source: "local"
+        };
+        aiPrediction = null;
+        explainer = {
+          explanation: localRun.explanation,
+          tags: normalizeTagList(localRun.tags),
+          keyDrivers: [
+            { name: "localStrategy.id", value: localRun.strategyId },
+            { name: "localStrategy.type", value: localRun.strategyType },
+            { name: "localStrategy.allow", value: localRun.allow },
+            { name: "localStrategy.score", value: localRun.score },
+            { name: "localStrategy.reasonCodes", value: localRun.reasonCodes }
+          ],
+          aiPrediction: localPrediction,
+          disclaimer: "grounded_features_only"
+        };
+        strategyRunDebug = {
+          requestedStrategyRef: requestedStrategyRefEffective,
+          localStrategy: localRun
+        };
+      } catch (error) {
+        strategyRunStatus = "error";
+        strategyRunDebug = {
+          requestedStrategyRef: requestedStrategyRefEffective,
+          error: String(error)
+        };
+        // eslint-disable-next-line no-console
+        console.warn("[predictions:refresh] local strategy execution failed, fallback to legacy flow", {
+          stateId: template.stateId,
+          symbol: template.symbol,
+          timeframe: template.timeframe,
+          localStrategyId: selectedLocalStrategy.id,
+          reason: String(error)
+        });
+        useLegacySignalFlow = true;
+      }
+    }
+
+    if (
+      strategyAccess.allowed
+      && requestedStrategyRefEffective?.kind === "composite"
+      && selectedCompositeStrategy
+    ) {
+      try {
+        const compositeRun = await runCompositeStrategy({
+          compositeId: selectedCompositeStrategy.id,
+          nodesJson: selectedCompositeStrategy.nodesJson,
+          edgesJson: selectedCompositeStrategy.edgesJson,
+          combineMode: selectedCompositeStrategy.combineMode,
+          outputPolicy: selectedCompositeStrategy.outputPolicy,
+          featureSnapshot: inferred.featureSnapshot,
+          basePrediction: {
+            signal: localPrediction.signal,
+            confidence: localPrediction.confidence * 100,
+            expectedMovePct: localPrediction.expectedMovePct,
+            symbol: template.symbol,
+            marketType: template.marketType,
             timeframe: template.timeframe,
-            reason: String(error)
-          });
-          return {
-            refreshed: false,
-            significant: false,
-            aiCalled: false
-          };
+            tsCreated
+          },
+          context: {
+            exchange: template.exchange,
+            accountId: template.exchangeAccountId,
+            symbol: template.symbol,
+            marketType: template.marketType,
+            timeframe: template.timeframe,
+            aiQualityGateConfig: readAiQualityGateConfig(indicatorSettingsResolution.config),
+            gateState
+          }
+        }, {
+          resolveLocalStrategyRef: async (id) => {
+            if (!db.localStrategyDefinition || typeof db.localStrategyDefinition.findUnique !== "function") {
+              return false;
+            }
+            const found = await db.localStrategyDefinition.findUnique({
+              where: { id },
+              select: { id: true }
+            });
+            return Boolean(found);
+          },
+          resolveAiPromptRef: async (id) => {
+            const found = await getAiPromptTemplateById(id);
+            return Boolean(found);
+          }
+        });
+        useLegacySignalFlow = false;
+        aiCalled = compositeRun.aiCallsUsed > 0;
+        if (aiCalled) {
+          aiGateStateForPersist = applyAiQualityGateCallToState(
+            aiGateStateForPersist,
+            aiGateDecision.priority
+          );
         }
+
+        const lastExecutedAiNode = [...compositeRun.nodes]
+          .reverse()
+          .find((node) => node.kind === "ai" && node.executed);
+        const aiPredictionFromComposite = normalizeSnapshotPrediction(
+          asRecord(asRecord(lastExecutedAiNode?.meta).aiPrediction)
+        );
+        const selectedSignalSource: PredictionSignalSource =
+          compositeRun.outputPolicy === "local_signal_ai_explain"
+            ? "local"
+            : aiPredictionFromComposite
+              ? "ai"
+              : "local";
+        const compositeConfidenceRaw = Number(compositeRun.confidence);
+        const compositeConfidence = Number(
+          clamp(
+            compositeConfidenceRaw > 1
+              ? compositeConfidenceRaw / 100
+              : compositeConfidenceRaw,
+            0,
+            1
+          ).toFixed(4)
+        );
+
+        aiPrediction = aiPredictionFromComposite ?? aiPrediction;
+        selectedPrediction = {
+          signal: compositeRun.signal,
+          expectedMovePct:
+            selectedSignalSource === "ai" && aiPredictionFromComposite
+              ? aiPredictionFromComposite.expectedMovePct
+              : localPrediction.expectedMovePct,
+          confidence: compositeConfidence,
+          source: selectedSignalSource
+        };
+
+        explainer = {
+          explanation:
+            typeof compositeRun.explanation === "string" && compositeRun.explanation.trim()
+              ? compositeRun.explanation.trim()
+              : "Composite strategy evaluated.",
+          tags: Array.isArray(compositeRun.tags) ? compositeRun.tags.slice(0, 10) : [],
+          keyDrivers: Array.isArray(compositeRun.keyDrivers)
+            ? compositeRun.keyDrivers.slice(0, 10)
+            : [],
+          aiPrediction: aiPrediction ?? localPrediction,
+          disclaimer: "grounded_features_only"
+        };
+        strategyRunDebug = {
+          requestedStrategyRef: requestedStrategyRefEffective,
+          compositeRun
+        };
+      } catch (error) {
+        // eslint-disable-next-line no-console
+        console.warn("[predictions:refresh] composite execution failed, fallback to legacy flow", {
+          stateId: template.stateId,
+          symbol: template.symbol,
+          timeframe: template.timeframe,
+          compositeStrategyId: selectedCompositeStrategy.id,
+          reason: String(error)
+        });
+        strategyRunStatus = "error";
+        strategyRunDebug = {
+          requestedStrategyRef: requestedStrategyRefEffective,
+          error: String(error)
+        };
+        useLegacySignalFlow = true;
+      }
+    }
+
+    if (useLegacySignalFlow) {
+      const aiAllowedByStrategyEntitlements =
+        strategyAccess.allowed || requestedStrategyKindForAccess !== "ai";
+      if (signalMode !== "local_only" && aiDecision.shouldCallAi && aiAllowedByStrategyEntitlements) {
+        try {
+          runtimePromptSettings = await getAiPromptRuntimeSettingsByTemplateId({
+            templateId: runtimePromptTemplateId,
+            context: promptScopeContext
+          });
+          explainer = await generatePredictionExplanation({
+            symbol: template.symbol,
+            marketType: template.marketType,
+            timeframe: template.timeframe,
+            tsCreated,
+            prediction: inferred.prediction,
+            featureSnapshot: inferred.featureSnapshot
+          }, {
+            promptScopeContext,
+            promptSettings: runtimePromptSettings,
+            requireSuccessfulAi: signalMode === "ai_only"
+          });
+          aiCalled = true;
+          aiGateStateForPersist = applyAiQualityGateCallToState(
+            aiGateStateForPersist,
+            aiGateDecision.priority
+          );
+        } catch (error) {
+          if (signalMode === "ai_only") {
+            // eslint-disable-next-line no-console
+            console.warn("[predictions:refresh] ai_only skip due to missing AI response", {
+              stateId: template.stateId,
+              symbol: template.symbol,
+              timeframe: template.timeframe,
+              reason: String(error)
+            });
+            return {
+              refreshed: false,
+              significant: false,
+              aiCalled: false
+            };
+          }
+          explainer = fallbackExplain({
+            symbol: template.symbol,
+            marketType: template.marketType,
+            timeframe: template.timeframe,
+            tsCreated,
+            prediction: inferred.prediction,
+            featureSnapshot: inferred.featureSnapshot
+          });
+        }
+      } else if (signalMode === "local_only") {
         explainer = fallbackExplain({
           symbol: template.symbol,
           marketType: template.marketType,
@@ -5072,51 +5876,102 @@ async function refreshPredictionStateForTemplate(params: {
           prediction: inferred.prediction,
           featureSnapshot: inferred.featureSnapshot
         });
-      }
-    } else if (signalMode === "local_only") {
-      explainer = fallbackExplain({
-        symbol: template.symbol,
-        marketType: template.marketType,
-        timeframe: template.timeframe,
-        tsCreated,
-        prediction: inferred.prediction,
-        featureSnapshot: inferred.featureSnapshot
-      });
-    } else if (signalMode === "ai_only") {
-      return {
-        refreshed: false,
-        significant: false,
-        aiCalled: false
-      };
-    } else if (
-      prevState &&
-      typeof prevState.explanation === "string" &&
-      prevState.explanation.trim()
-    ) {
-      explainer = {
-        explanation: prevState.explanation,
-        tags: prevState.tags,
-        keyDrivers: prevState.keyDrivers,
-        aiPrediction:
-          readAiPredictionSnapshot(prevState.featureSnapshot) ?? {
+      } else if (signalMode === "ai_only") {
+        return {
+          refreshed: false,
+          significant: false,
+          aiCalled: false
+        };
+      } else if (
+        prevState &&
+        typeof prevState.explanation === "string" &&
+        prevState.explanation.trim()
+      ) {
+        explainer = {
+          explanation: prevState.explanation,
+          tags: prevState.tags,
+          keyDrivers: prevState.keyDrivers,
+          aiPrediction:
+            readAiPredictionSnapshot(prevState.featureSnapshot) ?? {
+              signal: inferred.prediction.signal,
+              expectedMovePct: Number(clamp(Math.abs(inferred.prediction.expectedMovePct), 0, 25).toFixed(2)),
+              confidence: Number(clamp(inferred.prediction.confidence, 0, 1).toFixed(4))
+            },
+          disclaimer: "grounded_features_only"
+        };
+      } else {
+        explainer = {
+          explanation: "No major state change; awaiting clearer signal.",
+          tags: [],
+          keyDrivers: [],
+          aiPrediction: {
             signal: inferred.prediction.signal,
             expectedMovePct: Number(clamp(Math.abs(inferred.prediction.expectedMovePct), 0, 25).toFixed(2)),
             confidence: Number(clamp(inferred.prediction.confidence, 0, 1).toFixed(4))
           },
-        disclaimer: "grounded_features_only"
-      };
-    } else {
-      explainer = {
-        explanation: "No major state change; awaiting clearer signal.",
-        tags: [],
-        keyDrivers: [],
-        aiPrediction: {
+          disclaimer: "grounded_features_only"
+        };
+      }
+
+      localPrediction =
+        normalizeSnapshotPrediction(asRecord(inferred.prediction)) ??
+        {
           signal: inferred.prediction.signal,
           expectedMovePct: Number(clamp(Math.abs(inferred.prediction.expectedMovePct), 0, 25).toFixed(2)),
           confidence: Number(clamp(inferred.prediction.confidence, 0, 1).toFixed(4))
+        };
+      aiPrediction =
+        signalMode === "local_only"
+          ? null
+          : (normalizeSnapshotPrediction(asRecord(explainer.aiPrediction)) ?? localPrediction);
+      selectedPrediction =
+        signalMode === "local_only"
+          ? {
+              signal: localPrediction.signal,
+              expectedMovePct: localPrediction.expectedMovePct,
+              confidence: localPrediction.confidence,
+              source: "local"
+            }
+          : signalMode === "ai_only"
+            ? {
+                signal: (aiPrediction ?? localPrediction).signal,
+                expectedMovePct: (aiPrediction ?? localPrediction).expectedMovePct,
+                confidence: (aiPrediction ?? localPrediction).confidence,
+                source: "ai"
+              }
+            : selectPredictionBySource({
+                localPrediction,
+                aiPrediction: aiPrediction ?? localPrediction,
+                source: PREDICTION_PRIMARY_SIGNAL_SOURCE
+              });
+      strategyRunDebug = {
+        requestedStrategyRef: requestedStrategyRefEffective,
+        signalMode,
+        aiGateDecision: {
+          allow: aiGateDecision.allow,
+          priority: aiGateDecision.priority,
+          reasonCodes: aiGateDecision.reasonCodes
         },
-        disclaimer: "grounded_features_only"
+        aiDecision,
+        runtimePromptTemplateId,
+        runtimePromptSettings: runtimePromptSettings
+          ? {
+              source: runtimePromptSettings.source,
+              activePromptId: runtimePromptSettings.activePromptId,
+              activePromptName: runtimePromptSettings.activePromptName,
+              selectedFrom: runtimePromptSettings.selectedFrom,
+              matchedScopeType: runtimePromptSettings.matchedScopeType,
+              matchedOverrideId: runtimePromptSettings.matchedOverrideId
+            }
+          : null
       };
+      if (
+        requestedStrategyRefEffective?.kind === "ai"
+        && requestedPromptTemplateId
+        && !runtimePromptSettings
+      ) {
+        strategyRunStatus = "fallback";
+      }
     }
     inferred.featureSnapshot.aiPromptTemplateRequestedId = requestedPromptTemplateId;
     if (runtimePromptSettings) {
@@ -5130,37 +5985,6 @@ async function refreshPredictionStateForTemplate(params: {
     inferred.featureSnapshot.aiPromptLicenseMode = promptLicenseDecision.mode;
     inferred.featureSnapshot.aiPromptLicenseWouldBlock = promptLicenseDecision.wouldBlock;
     inferred.featureSnapshot.signalMode = signalMode;
-    const localPrediction =
-      normalizeSnapshotPrediction(asRecord(inferred.prediction)) ??
-      {
-        signal: inferred.prediction.signal,
-        expectedMovePct: Number(clamp(Math.abs(inferred.prediction.expectedMovePct), 0, 25).toFixed(2)),
-        confidence: Number(clamp(inferred.prediction.confidence, 0, 1).toFixed(4))
-      };
-    const aiPrediction =
-      signalMode === "local_only"
-        ? null
-        : (normalizeSnapshotPrediction(asRecord(explainer.aiPrediction)) ?? localPrediction);
-    const selectedPrediction =
-      signalMode === "local_only"
-        ? {
-            signal: localPrediction.signal,
-            expectedMovePct: localPrediction.expectedMovePct,
-            confidence: localPrediction.confidence,
-            source: "local" as const
-          }
-        : signalMode === "ai_only"
-          ? {
-              signal: (aiPrediction ?? localPrediction).signal,
-              expectedMovePct: (aiPrediction ?? localPrediction).expectedMovePct,
-              confidence: (aiPrediction ?? localPrediction).confidence,
-              source: "ai" as const
-            }
-          : selectPredictionBySource({
-              localPrediction,
-              aiPrediction: aiPrediction ?? localPrediction,
-              source: PREDICTION_PRIMARY_SIGNAL_SOURCE
-            });
     inferred.featureSnapshot = withPredictionSnapshots({
       snapshot: inferred.featureSnapshot,
       localPrediction,
@@ -5168,6 +5992,47 @@ async function refreshPredictionStateForTemplate(params: {
       selectedSignalSource: selectedPrediction.source,
       signalMode
     });
+    const effectiveStrategyRef: PredictionStrategyRef | null =
+      requestedStrategyRefEffective?.kind === "composite" && selectedCompositeStrategy
+        ? {
+            kind: "composite",
+            id: selectedCompositeStrategy.id,
+            name: selectedCompositeStrategy.name
+          }
+        : requestedStrategyRefEffective?.kind === "local" && selectedLocalStrategy
+          ? {
+              kind: "local",
+              id: selectedLocalStrategy.id,
+              name: selectedLocalStrategy.name
+            }
+          : requestedPromptTemplateId
+            ? {
+                kind: "ai",
+                id: runtimePromptTemplateId ?? requestedPromptTemplateId,
+                name:
+                  runtimePromptSettings?.activePromptName
+                  ?? requestedPromptTemplateName
+                  ?? requestedStrategyRefEffective?.name
+                  ?? null
+              }
+            : null;
+    inferred.featureSnapshot = withStrategyRunSnapshot(
+      inferred.featureSnapshot,
+      {
+        strategyRef: effectiveStrategyRef,
+        status: strategyRunStatus,
+        signal: selectedPrediction.signal,
+        expectedMovePct: selectedPrediction.expectedMovePct,
+        confidence: selectedPrediction.confidence,
+        source: selectedPrediction.source,
+        aiCalled,
+        explanation: explainer.explanation,
+        tags: explainer.tags,
+        keyDrivers: explainer.keyDrivers,
+        ts: tsCreated
+      },
+      strategyRunDebug
+    );
 
     const tags = enforceNewsRiskTag(
       explainer.tags.length > 0 ? explainer.tags : baselineTags,
@@ -5217,11 +6082,15 @@ async function refreshPredictionStateForTemplate(params: {
       }
     }
     const explainVersion =
-      signalMode === "local_only"
-        ? "local-explain-v1"
-        : aiCalled
-          ? "openai-explain-v1"
-          : "openai-explain-skip-v1";
+      selectedCompositeStrategy
+        ? "composite-strategy-v1"
+        : selectedLocalStrategy
+          ? "local-strategy-v1"
+        : signalMode === "local_only"
+          ? "local-explain-v1"
+          : aiCalled
+            ? "openai-explain-v1"
+            : "openai-explain-skip-v1";
     const modelVersion = `${template.modelVersionBase || "baseline-v1:auto-market-v1"} + ${explainVersion}`;
     const tsUpdated = new Date(tsCreated);
     const tsPredictedFor = new Date(tsUpdated.getTime() + timeframeToIntervalMs(template.timeframe));
@@ -5388,7 +6257,7 @@ async function refreshPredictionStateForTemplate(params: {
           explanation: explainer.explanation,
           source: "auto",
           signalSource: selectedPrediction.source,
-          aiPromptTemplateName: template.aiPromptTemplateName
+          aiPromptTemplateName: readAiPromptTemplateName(inferred.featureSnapshot)
         });
       }
     }
@@ -6944,6 +7813,269 @@ function readAiPromptLicensePolicyPublic() {
   } as const;
 }
 
+type StrategyEntitlementsPublic = {
+  plan: "free" | "pro" | "enterprise";
+  allowedStrategyKinds: Array<"local" | "ai" | "composite">;
+  allowedStrategyIds: string[] | null;
+  maxCompositeNodes: number;
+  aiAllowedModels: string[] | null;
+  aiMonthlyBudgetUsd: number | null;
+  source: "db" | "plan_default";
+};
+
+async function resolveStrategyEntitlementsPublicForUser(
+  user: { id: string; email: string }
+): Promise<StrategyEntitlementsPublic> {
+  const ctx = await resolveUserContext(user);
+  const entitlements = await resolveStrategyEntitlementsForWorkspace({
+    workspaceId: ctx.workspaceId
+  });
+  return {
+    plan: entitlements.plan,
+    allowedStrategyKinds: entitlements.allowedStrategyKinds,
+    allowedStrategyIds: entitlements.allowedStrategyIds,
+    maxCompositeNodes: entitlements.maxCompositeNodes,
+    aiAllowedModels: entitlements.aiAllowedModels,
+    aiMonthlyBudgetUsd: entitlements.aiMonthlyBudgetUsd,
+    source: entitlements.source
+  };
+}
+
+function canUseStrategyKindByEntitlements(
+  entitlements: StrategyEntitlementsPublic,
+  kind: "local" | "ai" | "composite"
+): boolean {
+  return isStrategyKindAllowed(entitlements, kind);
+}
+
+function canUseStrategyIdByEntitlements(
+  entitlements: StrategyEntitlementsPublic,
+  kind: "local" | "ai" | "composite",
+  id: string
+): boolean {
+  return isStrategyIdAllowed(entitlements, kind, id);
+}
+
+function evaluateStrategySelectionAccess(params: {
+  entitlements: StrategyEntitlementsPublic;
+  kind: "local" | "ai" | "composite";
+  strategyId?: string | null;
+  aiModel?: string | null;
+  compositeNodes?: number | null;
+}) {
+  return evaluateStrategyAccess({
+    entitlements: params.entitlements,
+    kind: params.kind,
+    strategyId: params.strategyId,
+    aiModel: params.aiModel,
+    compositeNodes: params.compositeNodes
+  });
+}
+
+function localStrategiesStoreReady(): boolean {
+  return Boolean(
+    db.localStrategyDefinition
+    && typeof db.localStrategyDefinition.findMany === "function"
+    && typeof db.localStrategyDefinition.findUnique === "function"
+    && typeof db.localStrategyDefinition.create === "function"
+    && typeof db.localStrategyDefinition.update === "function"
+    && typeof db.localStrategyDefinition.delete === "function"
+  );
+}
+
+function toJsonRecord(value: unknown): Record<string, unknown> {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return {};
+  return value as Record<string, unknown>;
+}
+
+function listLocalStrategyRegistryPublic() {
+  return listRegisteredLocalStrategies().map((entry) => ({
+    type: entry.type,
+    defaultConfig: entry.defaultConfig,
+    uiSchema: entry.uiSchema
+  }));
+}
+
+function mapLocalStrategyDefinitionPublic(row: any) {
+  const registration =
+    typeof row?.strategyType === "string"
+      ? getRegisteredLocalStrategy(row.strategyType)
+      : null;
+  return {
+    id: row.id,
+    strategyType: row.strategyType,
+    name: row.name,
+    description: row.description ?? null,
+    version: row.version,
+    inputSchema:
+      row.inputSchema && typeof row.inputSchema === "object" && !Array.isArray(row.inputSchema)
+        ? row.inputSchema
+        : null,
+    configJson: toJsonRecord(row.configJson),
+    isEnabled: Boolean(row.isEnabled),
+    registry: registration
+      ? {
+        registered: true,
+        defaultConfig: registration.defaultConfig,
+        uiSchema: registration.uiSchema
+      }
+      : { registered: false },
+    createdAt: row.createdAt instanceof Date ? row.createdAt.toISOString() : null,
+    updatedAt: row.updatedAt instanceof Date ? row.updatedAt.toISOString() : null
+  };
+}
+
+function compositeStrategiesStoreReady(): boolean {
+  return Boolean(
+    db.compositeStrategy
+    && typeof db.compositeStrategy.findMany === "function"
+    && typeof db.compositeStrategy.findUnique === "function"
+    && typeof db.compositeStrategy.create === "function"
+    && typeof db.compositeStrategy.update === "function"
+    && typeof db.compositeStrategy.delete === "function"
+  );
+}
+
+async function resolveCompositeNodeRef(node: { kind: "local" | "ai"; refId: string }): Promise<boolean> {
+  if (node.kind === "local") {
+    if (!db.localStrategyDefinition || typeof db.localStrategyDefinition.findUnique !== "function") return false;
+    const found = await db.localStrategyDefinition.findUnique({
+      where: { id: node.refId },
+      select: { id: true }
+    });
+    return Boolean(found);
+  }
+  const template = await getAiPromptTemplateById(node.refId);
+  return Boolean(template);
+}
+
+async function validateCompositeStrategyPayload(payload: {
+  nodesJson: unknown;
+  edgesJson: unknown;
+  combineMode?: unknown;
+  outputPolicy?: unknown;
+  maxCompositeNodes?: number | null;
+}) {
+  const graph = normalizeCompositeGraph(payload);
+  const validation = await validateCompositeGraph(graph, {
+    resolveRef: async (node) => resolveCompositeNodeRef(node)
+  });
+  const maxCompositeNodes =
+    Number.isFinite(Number(payload.maxCompositeNodes))
+      ? Math.max(0, Math.trunc(Number(payload.maxCompositeNodes)))
+      : null;
+  if (maxCompositeNodes !== null && graph.nodes.length > maxCompositeNodes) {
+    validation.valid = false;
+    validation.errors.push(
+      `composite_nodes_exceeded:max=${maxCompositeNodes}:actual=${graph.nodes.length}`
+    );
+  }
+  return {
+    graph,
+    validation
+  };
+}
+
+function mapCompositeStrategyPublic(row: any) {
+  const graph = normalizeCompositeGraph({
+    nodesJson: row.nodesJson,
+    edgesJson: row.edgesJson,
+    combineMode: row.combineMode,
+    outputPolicy: row.outputPolicy
+  });
+  return {
+    id: row.id,
+    name: row.name,
+    description: row.description ?? null,
+    version: row.version,
+    nodesJson: graph.nodes,
+    edgesJson: graph.edges,
+    combineMode: graph.combineMode,
+    outputPolicy: graph.outputPolicy,
+    isEnabled: Boolean(row.isEnabled),
+    createdAt: row.createdAt instanceof Date ? row.createdAt.toISOString() : null,
+    updatedAt: row.updatedAt instanceof Date ? row.updatedAt.toISOString() : null
+  };
+}
+
+async function getEnabledCompositeStrategyById(id: string | null): Promise<{
+  id: string;
+  name: string;
+  nodesJson: unknown;
+  edgesJson: unknown;
+  combineMode: unknown;
+  outputPolicy: unknown;
+} | null> {
+  if (!id || !compositeStrategiesStoreReady()) return null;
+  const row = await db.compositeStrategy.findUnique({
+    where: { id },
+    select: {
+      id: true,
+      name: true,
+      nodesJson: true,
+      edgesJson: true,
+      combineMode: true,
+      outputPolicy: true,
+      isEnabled: true
+    }
+  });
+  if (!row || !Boolean(row.isEnabled)) return null;
+  return {
+    id: row.id,
+    name: row.name,
+    nodesJson: row.nodesJson,
+    edgesJson: row.edgesJson,
+    combineMode: row.combineMode,
+    outputPolicy: row.outputPolicy
+  };
+}
+
+function countCompositeStrategyNodes(strategy: {
+  nodesJson: unknown;
+  edgesJson?: unknown;
+  combineMode?: unknown;
+  outputPolicy?: unknown;
+} | null | undefined): number {
+  if (!strategy) return 0;
+  try {
+    const graph = normalizeCompositeGraph({
+      nodesJson: strategy.nodesJson,
+      edgesJson: strategy.edgesJson,
+      combineMode: strategy.combineMode,
+      outputPolicy: strategy.outputPolicy
+    });
+    return graph.nodes.length;
+  } catch {
+    return 0;
+  }
+}
+
+async function getEnabledLocalStrategyById(id: string | null): Promise<{
+  id: string;
+  name: string;
+  strategyType: string;
+  version: string;
+} | null> {
+  if (!id || !localStrategiesStoreReady()) return null;
+  const row = await db.localStrategyDefinition.findUnique({
+    where: { id },
+    select: {
+      id: true,
+      name: true,
+      strategyType: true,
+      version: true,
+      isEnabled: true
+    }
+  });
+  if (!row || !Boolean(row.isEnabled)) return null;
+  return {
+    id: row.id,
+    name: row.name,
+    strategyType: row.strategyType,
+    version: row.version
+  };
+}
+
 app.get("/admin/settings/ai-prompts", requireAuth, async (_req, res) => {
   if (!(await requireSuperadmin(res))) return;
   const row = await db.globalSetting.findUnique({
@@ -7082,6 +8214,7 @@ app.post("/admin/settings/ai-prompts/preview", requireAuth, async (req, res) => 
 
 app.get("/settings/ai-prompts/public", requireAuth, async (_req, res) => {
   const user = readUserFromLocals(res);
+  const strategyEntitlements = await resolveStrategyEntitlementsPublicForUser(user);
   const row = await db.globalSetting.findUnique({
     where: { key: GLOBAL_SETTING_AI_PROMPTS_KEY },
     select: { value: true, updatedAt: true }
@@ -7089,9 +8222,15 @@ app.get("/settings/ai-prompts/public", requireAuth, async (_req, res) => {
   const settings = parseStoredAiPromptSettings(row?.value);
   const isSuperadmin = isSuperadminEmail(user.email);
   const visiblePrompts = isSuperadmin ? settings.prompts : getPublicAiPromptTemplates(settings);
+  const kindAllowed = canUseStrategyKindByEntitlements(strategyEntitlements, "ai");
+  const idFilteredPrompts = kindAllowed
+    ? visiblePrompts.filter((item) =>
+      canUseStrategyIdByEntitlements(strategyEntitlements, "ai", String(item.id))
+    )
+    : [];
 
   return res.json({
-    items: visiblePrompts.map((item) => ({
+    items: idFilteredPrompts.map((item) => ({
       id: item.id,
       name: item.name,
       promptText: item.promptText,
@@ -7104,7 +8243,605 @@ app.get("/settings/ai-prompts/public", requireAuth, async (_req, res) => {
       updatedAt: item.updatedAt
     })),
     licensePolicy: readAiPromptLicensePolicyPublic(),
+    strategyEntitlements,
     updatedAt: row?.updatedAt ?? null
+  });
+});
+
+app.get("/admin/local-strategies/registry", requireAuth, async (_req, res) => {
+  if (!(await requireSuperadmin(res))) return;
+  return res.json({
+    items: listLocalStrategyRegistryPublic(),
+    templates: getBuiltinLocalStrategyTemplates()
+  });
+});
+
+app.get("/admin/local-strategies", requireAuth, async (_req, res) => {
+  if (!(await requireSuperadmin(res))) return;
+  if (!localStrategiesStoreReady()) {
+    return res.status(503).json({ error: "local_strategies_not_ready" });
+  }
+
+  const rows = await db.localStrategyDefinition.findMany({
+    orderBy: { updatedAt: "desc" }
+  });
+
+  return res.json({
+    items: rows.map((row: any) => mapLocalStrategyDefinitionPublic(row)),
+    registry: listLocalStrategyRegistryPublic(),
+    templates: getBuiltinLocalStrategyTemplates()
+  });
+});
+
+app.get("/admin/local-strategies/:id", requireAuth, async (req, res) => {
+  if (!(await requireSuperadmin(res))) return;
+  if (!localStrategiesStoreReady()) {
+    return res.status(503).json({ error: "local_strategies_not_ready" });
+  }
+
+  const params = localStrategyIdParamSchema.safeParse(req.params ?? {});
+  if (!params.success) {
+    return res.status(400).json({ error: "invalid_params", details: params.error.flatten() });
+  }
+
+  const row = await db.localStrategyDefinition.findUnique({
+    where: { id: params.data.id }
+  });
+  if (!row) {
+    return res.status(404).json({ error: "not_found" });
+  }
+
+  return res.json({
+    item: mapLocalStrategyDefinitionPublic(row),
+    registry: listLocalStrategyRegistryPublic()
+  });
+});
+
+app.post("/admin/local-strategies", requireAuth, async (req, res) => {
+  if (!(await requireSuperadmin(res))) return;
+  if (!localStrategiesStoreReady()) {
+    return res.status(503).json({ error: "local_strategies_not_ready" });
+  }
+
+  const parsed = localStrategyDefinitionSchema.safeParse(req.body ?? {});
+  if (!parsed.success) {
+    return res.status(400).json({ error: "invalid_payload", details: parsed.error.flatten() });
+  }
+
+  const registration = getRegisteredLocalStrategy(parsed.data.strategyType);
+  if (!registration) {
+    return res.status(400).json({
+      error: "unknown_strategy_type",
+      availableTypes: listRegisteredLocalStrategies().map((entry) => entry.type)
+    });
+  }
+
+  const now = new Date();
+  const template = getBuiltinLocalStrategyTemplates().find(
+    (item) => item.strategyType === parsed.data.strategyType
+  );
+  const configJson = Object.keys(parsed.data.configJson).length > 0
+    ? parsed.data.configJson
+    : registration.defaultConfig;
+  const inputSchema = parsed.data.inputSchema ?? template?.inputSchema ?? null;
+
+  const created = await db.localStrategyDefinition.create({
+    data: {
+      strategyType: parsed.data.strategyType,
+      name: parsed.data.name.trim(),
+      description:
+        typeof parsed.data.description === "string" && parsed.data.description.trim()
+          ? parsed.data.description.trim()
+          : null,
+      version: parsed.data.version.trim() || "1.0.0",
+      inputSchema,
+      configJson,
+      isEnabled: parsed.data.isEnabled,
+      createdAt: now,
+      updatedAt: now
+    }
+  });
+
+  return res.status(201).json({
+    item: mapLocalStrategyDefinitionPublic(created)
+  });
+});
+
+app.put("/admin/local-strategies/:id", requireAuth, async (req, res) => {
+  if (!(await requireSuperadmin(res))) return;
+  if (!localStrategiesStoreReady()) {
+    return res.status(503).json({ error: "local_strategies_not_ready" });
+  }
+
+  const params = localStrategyIdParamSchema.safeParse(req.params ?? {});
+  if (!params.success) {
+    return res.status(400).json({ error: "invalid_params", details: params.error.flatten() });
+  }
+  const parsed = localStrategyDefinitionUpdateSchema.safeParse(req.body ?? {});
+  if (!parsed.success) {
+    return res.status(400).json({ error: "invalid_payload", details: parsed.error.flatten() });
+  }
+
+  if (typeof parsed.data.strategyType === "string") {
+    const registration = getRegisteredLocalStrategy(parsed.data.strategyType);
+    if (!registration) {
+      return res.status(400).json({
+        error: "unknown_strategy_type",
+        availableTypes: listRegisteredLocalStrategies().map((entry) => entry.type)
+      });
+    }
+  }
+
+  const data: Record<string, unknown> = {};
+  if (parsed.data.strategyType !== undefined) data.strategyType = parsed.data.strategyType;
+  if (parsed.data.name !== undefined) data.name = parsed.data.name.trim();
+  if (parsed.data.description !== undefined) {
+    data.description =
+      typeof parsed.data.description === "string" && parsed.data.description.trim()
+        ? parsed.data.description.trim()
+        : null;
+  }
+  if (parsed.data.version !== undefined) data.version = parsed.data.version.trim();
+  if (parsed.data.inputSchema !== undefined) data.inputSchema = parsed.data.inputSchema;
+  if (parsed.data.configJson !== undefined) data.configJson = parsed.data.configJson;
+  if (parsed.data.isEnabled !== undefined) data.isEnabled = parsed.data.isEnabled;
+
+  try {
+    const updated = await db.localStrategyDefinition.update({
+      where: { id: params.data.id },
+      data
+    });
+    return res.json({ item: mapLocalStrategyDefinitionPublic(updated) });
+  } catch (error) {
+    const code = (error as any)?.code;
+    if (code === "P2025") {
+      return res.status(404).json({ error: "not_found" });
+    }
+    throw error;
+  }
+});
+
+app.delete("/admin/local-strategies/:id", requireAuth, async (req, res) => {
+  if (!(await requireSuperadmin(res))) return;
+  if (!localStrategiesStoreReady()) {
+    return res.status(503).json({ error: "local_strategies_not_ready" });
+  }
+
+  const params = localStrategyIdParamSchema.safeParse(req.params ?? {});
+  if (!params.success) {
+    return res.status(400).json({ error: "invalid_params", details: params.error.flatten() });
+  }
+
+  try {
+    await db.localStrategyDefinition.delete({
+      where: { id: params.data.id }
+    });
+    return res.json({ ok: true });
+  } catch (error) {
+    const code = (error as any)?.code;
+    if (code === "P2025") {
+      return res.status(404).json({ error: "not_found" });
+    }
+    throw error;
+  }
+});
+
+app.post("/admin/local-strategies/:id/run", requireAuth, async (req, res) => {
+  if (!(await requireSuperadmin(res))) return;
+  const user = readUserFromLocals(res);
+  const strategyEntitlements = await resolveStrategyEntitlementsPublicForUser(user);
+  if (!localStrategiesStoreReady()) {
+    return res.status(503).json({ error: "local_strategies_not_ready" });
+  }
+
+  const params = localStrategyIdParamSchema.safeParse(req.params ?? {});
+  if (!params.success) {
+    return res.status(400).json({ error: "invalid_params", details: params.error.flatten() });
+  }
+  const accessCheck = evaluateStrategySelectionAccess({
+    entitlements: strategyEntitlements,
+    kind: "local",
+    strategyId: params.data.id
+  });
+  if (!accessCheck.allowed) {
+    return res.status(403).json({
+      error: "strategy_license_blocked",
+      reason: accessCheck.reason,
+      maxCompositeNodes: accessCheck.maxCompositeNodes
+    });
+  }
+  const parsed = localStrategyRunSchema.safeParse(req.body ?? {});
+  if (!parsed.success) {
+    return res.status(400).json({ error: "invalid_payload", details: parsed.error.flatten() });
+  }
+
+  try {
+    const result = await runLocalStrategy(
+      params.data.id,
+      parsed.data.featureSnapshot,
+      parsed.data.ctx
+    );
+    return res.json({
+      result
+    });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    if (message === "strategy_not_found") {
+      return res.status(404).json({ error: message });
+    }
+    if (message === "local_strategies_not_ready") {
+      return res.status(503).json({ error: message });
+    }
+    if (message.startsWith("strategy_type_not_registered:")) {
+      return res.status(409).json({ error: message });
+    }
+    if (message === "strategy_id_required") {
+      return res.status(400).json({ error: message });
+    }
+    console.warn("[local-strategies] run failed", { id: params.data.id, reason: message });
+    return res.status(500).json({ error: "strategy_run_failed", message });
+  }
+});
+
+app.get("/settings/composite-strategies", requireAuth, async (_req, res) => {
+  const user = readUserFromLocals(res);
+  const entitlements = await resolveStrategyEntitlementsPublicForUser(user);
+  if (!compositeStrategiesStoreReady()) {
+    return res.status(503).json({ error: "composite_strategies_not_ready" });
+  }
+  if (!canUseStrategyKindByEntitlements(entitlements, "composite")) {
+    return res.json({
+      items: [],
+      strategyEntitlements: entitlements
+    });
+  }
+  const rows = await db.compositeStrategy.findMany({
+    where: { isEnabled: true },
+    orderBy: { updatedAt: "desc" }
+  });
+  return res.json({
+    items: rows
+      .filter((row: any) => canUseStrategyIdByEntitlements(entitlements, "composite", String(row.id)))
+      .map((row: any) => mapCompositeStrategyPublic(row)),
+    strategyEntitlements: entitlements
+  });
+});
+
+app.get("/settings/local-strategies", requireAuth, async (_req, res) => {
+  const user = readUserFromLocals(res);
+  const entitlements = await resolveStrategyEntitlementsPublicForUser(user);
+  if (!localStrategiesStoreReady()) {
+    return res.status(503).json({ error: "local_strategies_not_ready" });
+  }
+  if (!canUseStrategyKindByEntitlements(entitlements, "local")) {
+    return res.json({
+      items: [],
+      strategyEntitlements: entitlements
+    });
+  }
+  const rows = await db.localStrategyDefinition.findMany({
+    where: { isEnabled: true },
+    orderBy: { updatedAt: "desc" },
+    select: {
+      id: true,
+      strategyType: true,
+      name: true,
+      description: true,
+      version: true,
+      updatedAt: true
+    }
+  });
+  return res.json({
+    items: rows
+      .filter((row: any) => canUseStrategyIdByEntitlements(entitlements, "local", String(row.id)))
+      .map((row: any) => ({
+        id: row.id,
+        strategyType: row.strategyType,
+        name: row.name,
+        description: row.description ?? null,
+        version: row.version,
+        updatedAt: row.updatedAt instanceof Date ? row.updatedAt.toISOString() : null
+      })),
+    strategyEntitlements: entitlements
+  });
+});
+
+app.get("/settings/strategy-entitlements", requireAuth, async (_req, res) => {
+  const user = readUserFromLocals(res);
+  const entitlements = await resolveStrategyEntitlementsPublicForUser(user);
+  return res.json({ entitlements });
+});
+
+app.get("/admin/composite-strategies", requireAuth, async (_req, res) => {
+  if (!(await requireSuperadmin(res))) return;
+  if (!compositeStrategiesStoreReady()) {
+    return res.status(503).json({ error: "composite_strategies_not_ready" });
+  }
+  const rows = await db.compositeStrategy.findMany({
+    orderBy: { updatedAt: "desc" }
+  });
+  return res.json({
+    items: rows.map((row: any) => mapCompositeStrategyPublic(row))
+  });
+});
+
+app.get("/admin/composite-strategies/:id", requireAuth, async (req, res) => {
+  if (!(await requireSuperadmin(res))) return;
+  if (!compositeStrategiesStoreReady()) {
+    return res.status(503).json({ error: "composite_strategies_not_ready" });
+  }
+  const params = compositeStrategyIdParamSchema.safeParse(req.params ?? {});
+  if (!params.success) {
+    return res.status(400).json({ error: "invalid_params", details: params.error.flatten() });
+  }
+  const row = await db.compositeStrategy.findUnique({
+    where: { id: params.data.id }
+  });
+  if (!row) {
+    return res.status(404).json({ error: "not_found" });
+  }
+  return res.json({
+    item: mapCompositeStrategyPublic(row)
+  });
+});
+
+app.post("/admin/composite-strategies", requireAuth, async (req, res) => {
+  if (!(await requireSuperadmin(res))) return;
+  const user = readUserFromLocals(res);
+  const strategyEntitlements = await resolveStrategyEntitlementsPublicForUser(user);
+  const accessCheck = evaluateStrategySelectionAccess({
+    entitlements: strategyEntitlements,
+    kind: "composite",
+    strategyId: null
+  });
+  if (!accessCheck.allowed) {
+    return res.status(403).json({
+      error: "strategy_license_blocked",
+      reason: accessCheck.reason,
+      maxCompositeNodes: accessCheck.maxCompositeNodes
+    });
+  }
+  if (!compositeStrategiesStoreReady()) {
+    return res.status(503).json({ error: "composite_strategies_not_ready" });
+  }
+  const parsed = compositeStrategyCreateSchema.safeParse(req.body ?? {});
+  if (!parsed.success) {
+    return res.status(400).json({ error: "invalid_payload", details: parsed.error.flatten() });
+  }
+
+  const validation = await validateCompositeStrategyPayload({
+    ...parsed.data,
+    maxCompositeNodes: strategyEntitlements.maxCompositeNodes
+  });
+  if (!validation.validation.valid) {
+    return res.status(400).json({
+      error: "invalid_graph",
+      details: validation.validation
+    });
+  }
+
+  const created = await db.compositeStrategy.create({
+    data: {
+      name: parsed.data.name.trim(),
+      description:
+        typeof parsed.data.description === "string" && parsed.data.description.trim()
+          ? parsed.data.description.trim()
+          : null,
+      version: parsed.data.version.trim(),
+      nodesJson: validation.graph.nodes,
+      edgesJson: validation.graph.edges,
+      combineMode: validation.graph.combineMode,
+      outputPolicy: validation.graph.outputPolicy,
+      isEnabled: parsed.data.isEnabled
+    }
+  });
+
+  return res.status(201).json({
+    item: mapCompositeStrategyPublic(created),
+    validation: validation.validation
+  });
+});
+
+app.put("/admin/composite-strategies/:id", requireAuth, async (req, res) => {
+  if (!(await requireSuperadmin(res))) return;
+  const user = readUserFromLocals(res);
+  const strategyEntitlements = await resolveStrategyEntitlementsPublicForUser(user);
+  if (!compositeStrategiesStoreReady()) {
+    return res.status(503).json({ error: "composite_strategies_not_ready" });
+  }
+  const params = compositeStrategyIdParamSchema.safeParse(req.params ?? {});
+  if (!params.success) {
+    return res.status(400).json({ error: "invalid_params", details: params.error.flatten() });
+  }
+  const accessCheck = evaluateStrategySelectionAccess({
+    entitlements: strategyEntitlements,
+    kind: "composite",
+    strategyId: params.data.id
+  });
+  if (!accessCheck.allowed) {
+    return res.status(403).json({
+      error: "strategy_license_blocked",
+      reason: accessCheck.reason,
+      maxCompositeNodes: accessCheck.maxCompositeNodes
+    });
+  }
+  const parsed = compositeStrategyUpdateSchema.safeParse(req.body ?? {});
+  if (!parsed.success) {
+    return res.status(400).json({ error: "invalid_payload", details: parsed.error.flatten() });
+  }
+
+  const current = await db.compositeStrategy.findUnique({
+    where: { id: params.data.id }
+  });
+  if (!current) {
+    return res.status(404).json({ error: "not_found" });
+  }
+
+  const mergedGraphInput = {
+    nodesJson: parsed.data.nodesJson ?? current.nodesJson,
+    edgesJson: parsed.data.edgesJson ?? current.edgesJson,
+    combineMode: parsed.data.combineMode ?? current.combineMode,
+    outputPolicy: parsed.data.outputPolicy ?? current.outputPolicy,
+    maxCompositeNodes: strategyEntitlements.maxCompositeNodes
+  };
+  const validation = await validateCompositeStrategyPayload(mergedGraphInput);
+  if (!validation.validation.valid) {
+    return res.status(400).json({
+      error: "invalid_graph",
+      details: validation.validation
+    });
+  }
+
+  const updateData: Record<string, unknown> = {
+    nodesJson: validation.graph.nodes,
+    edgesJson: validation.graph.edges,
+    combineMode: validation.graph.combineMode,
+    outputPolicy: validation.graph.outputPolicy
+  };
+  if (parsed.data.name !== undefined) updateData.name = parsed.data.name.trim();
+  if (parsed.data.description !== undefined) {
+    updateData.description =
+      typeof parsed.data.description === "string" && parsed.data.description.trim()
+        ? parsed.data.description.trim()
+        : null;
+  }
+  if (parsed.data.version !== undefined) updateData.version = parsed.data.version.trim();
+  if (parsed.data.isEnabled !== undefined) updateData.isEnabled = parsed.data.isEnabled;
+
+  const updated = await db.compositeStrategy.update({
+    where: { id: params.data.id },
+    data: updateData
+  });
+
+  return res.json({
+    item: mapCompositeStrategyPublic(updated),
+    validation: validation.validation
+  });
+});
+
+app.delete("/admin/composite-strategies/:id", requireAuth, async (req, res) => {
+  if (!(await requireSuperadmin(res))) return;
+  if (!compositeStrategiesStoreReady()) {
+    return res.status(503).json({ error: "composite_strategies_not_ready" });
+  }
+  const params = compositeStrategyIdParamSchema.safeParse(req.params ?? {});
+  if (!params.success) {
+    return res.status(400).json({ error: "invalid_params", details: params.error.flatten() });
+  }
+  try {
+    await db.compositeStrategy.delete({
+      where: { id: params.data.id }
+    });
+    return res.json({ ok: true });
+  } catch (error) {
+    const code = (error as any)?.code;
+    if (code === "P2025") {
+      return res.status(404).json({ error: "not_found" });
+    }
+    throw error;
+  }
+});
+
+app.post("/admin/composite-strategies/:id/dry-run", requireAuth, async (req, res) => {
+  if (!(await requireSuperadmin(res))) return;
+  const user = readUserFromLocals(res);
+  const strategyEntitlements = await resolveStrategyEntitlementsPublicForUser(user);
+  if (!compositeStrategiesStoreReady()) {
+    return res.status(503).json({ error: "composite_strategies_not_ready" });
+  }
+  const params = compositeStrategyIdParamSchema.safeParse(req.params ?? {});
+  if (!params.success) {
+    return res.status(400).json({ error: "invalid_params", details: params.error.flatten() });
+  }
+  const parsed = compositeStrategyDryRunSchema.safeParse(req.body ?? {});
+  if (!parsed.success) {
+    return res.status(400).json({ error: "invalid_payload", details: parsed.error.flatten() });
+  }
+
+  const [strategy, prediction] = await Promise.all([
+    db.compositeStrategy.findUnique({ where: { id: params.data.id } }),
+    db.prediction.findUnique({ where: { id: parsed.data.predictionId } })
+  ]);
+  if (!strategy) {
+    return res.status(404).json({ error: "composite_not_found" });
+  }
+  const accessCheck = evaluateStrategySelectionAccess({
+    entitlements: strategyEntitlements,
+    kind: "composite",
+    strategyId: strategy.id,
+    compositeNodes: countCompositeStrategyNodes(strategy)
+  });
+  if (!accessCheck.allowed) {
+    return res.status(403).json({
+      error: "strategy_license_blocked",
+      reason: accessCheck.reason,
+      maxCompositeNodes: accessCheck.maxCompositeNodes
+    });
+  }
+  if (!prediction) {
+    return res.status(404).json({ error: "prediction_not_found" });
+  }
+
+  const featureSnapshot = toJsonRecord(prediction.featuresSnapshot);
+  const signal = prediction.signal === "up" || prediction.signal === "down" || prediction.signal === "neutral"
+    ? prediction.signal
+    : "neutral";
+  const timeframe = PREDICTION_TIMEFRAMES.has(prediction.timeframe as PredictionTimeframe)
+    ? (prediction.timeframe as PredictionTimeframe)
+    : "15m";
+  const marketType = PREDICTION_MARKET_TYPES.has(prediction.marketType as PredictionMarketType)
+    ? (prediction.marketType as PredictionMarketType)
+    : "perp";
+
+  const run = await runCompositeStrategy({
+    compositeId: strategy.id,
+    nodesJson: strategy.nodesJson,
+    edgesJson: strategy.edgesJson,
+    combineMode: strategy.combineMode,
+    outputPolicy: strategy.outputPolicy,
+    featureSnapshot,
+    basePrediction: {
+      symbol: prediction.symbol,
+      marketType,
+      timeframe,
+      tsCreated: prediction.tsCreated.toISOString(),
+      signal,
+      expectedMovePct: Number(prediction.expectedMovePct),
+      confidence: Number(prediction.confidence)
+    },
+    context: {
+      exchange: typeof featureSnapshot.prefillExchange === "string" ? featureSnapshot.prefillExchange : undefined,
+      accountId: typeof featureSnapshot.prefillExchangeAccountId === "string"
+        ? featureSnapshot.prefillExchangeAccountId
+        : undefined,
+      symbol: prediction.symbol,
+      marketType,
+      timeframe
+    }
+  }, {
+    resolveLocalStrategyRef: async (id) => {
+      if (!db.localStrategyDefinition || typeof db.localStrategyDefinition.findUnique !== "function") return false;
+      const found = await db.localStrategyDefinition.findUnique({
+        where: { id },
+        select: { id: true }
+      });
+      return Boolean(found);
+    },
+    resolveAiPromptRef: async (id) => {
+      const found = await getAiPromptTemplateById(id);
+      return Boolean(found);
+    }
+  });
+
+  return res.json({
+    composite: mapCompositeStrategyPublic(strategy),
+    prediction: {
+      id: prediction.id,
+      symbol: prediction.symbol,
+      timeframe,
+      marketType
+    },
+    run
   });
 });
 
@@ -7460,10 +9197,73 @@ app.post("/api/predictions/generate", requireAuth, async (req, res) => {
   const signalMode = normalizePredictionSignalMode(payload.signalMode);
   const tsCreated = payload.tsCreated ?? new Date().toISOString();
   const inputFeatureSnapshot = asRecord(payload.featureSnapshot);
-  const requestedPromptTemplateId =
-    typeof payload.aiPromptTemplateId === "string" && payload.aiPromptTemplateId.trim()
-      ? payload.aiPromptTemplateId.trim()
+  const payloadStrategyKind = normalizePredictionStrategyKind(payload.strategyRef?.kind);
+  const payloadStrategyId =
+    typeof payload.strategyRef?.id === "string" && payload.strategyRef.id.trim()
+      ? payload.strategyRef.id.trim()
       : null;
+  const requestedPromptTemplateId =
+    payloadStrategyKind === "ai"
+      ? payloadStrategyId
+      : (typeof payload.aiPromptTemplateId === "string" && payload.aiPromptTemplateId.trim()
+          ? payload.aiPromptTemplateId.trim()
+          : null);
+  const requestedLocalStrategyId =
+    payloadStrategyKind === "local"
+      ? payloadStrategyId
+      : null;
+  const requestedCompositeStrategyId =
+    payloadStrategyKind === "composite"
+      ? payloadStrategyId
+      : (typeof payload.compositeStrategyId === "string" && payload.compositeStrategyId.trim()
+          ? payload.compositeStrategyId.trim()
+          : null);
+  const selectedLocalStrategy = requestedLocalStrategyId
+    ? await getEnabledLocalStrategyById(requestedLocalStrategyId)
+    : null;
+  const selectedCompositeStrategy = requestedCompositeStrategyId
+    ? await getEnabledCompositeStrategyById(requestedCompositeStrategyId)
+    : null;
+  const selectedStrategyRef: PredictionStrategyRef | null =
+    selectedCompositeStrategy
+      ? { kind: "composite", id: selectedCompositeStrategy.id, name: selectedCompositeStrategy.name }
+      : selectedLocalStrategy
+        ? { kind: "local", id: selectedLocalStrategy.id, name: selectedLocalStrategy.name }
+        : requestedPromptTemplateId
+          ? { kind: "ai", id: requestedPromptTemplateId, name: null }
+          : null;
+  if (requestedLocalStrategyId && !selectedLocalStrategy) {
+    return res.status(400).json({ error: "invalid_local_strategy" });
+  }
+  if (requestedCompositeStrategyId && !selectedCompositeStrategy) {
+    return res.status(400).json({ error: "invalid_composite_strategy" });
+  }
+  const userCtx = await resolveUserContext(user);
+  const strategyEntitlements = await resolveStrategyEntitlementsForWorkspace({
+    workspaceId: userCtx.workspaceId
+  });
+  const selectedKind: "ai" | "local" | "composite" =
+    selectedStrategyRef?.kind ?? "ai";
+  const selectedId =
+    selectedStrategyRef?.id
+    ?? (selectedKind === "ai" ? (requestedPromptTemplateId ?? "default") : null);
+  const strategyAccess = evaluateStrategySelectionAccess({
+    entitlements: strategyEntitlements,
+    kind: selectedKind,
+    strategyId: selectedId,
+    aiModel: selectedKind === "ai" ? getAiModel() : null,
+    compositeNodes:
+      selectedKind === "composite"
+        ? countCompositeStrategyNodes(selectedCompositeStrategy)
+        : null
+  });
+  if (!strategyAccess.allowed) {
+    return res.status(403).json({
+      error: "strategy_license_blocked",
+      reason: strategyAccess.reason,
+      maxCompositeNodes: strategyAccess.maxCompositeNodes
+    });
+  }
   const promptLicenseDecision = evaluateAiPromptAccess({
     userId: user.id,
     selectedPromptId: requestedPromptTemplateId
@@ -7514,11 +9314,57 @@ app.post("/api/predictions/generate", requireAuth, async (req, res) => {
     aiPromptTemplateRequestedId: requestedPromptTemplateId,
     aiPromptTemplateId: selectedPromptSettings?.activePromptId ?? requestedPromptTemplateId,
     aiPromptTemplateName: selectedPromptSettings?.activePromptName ?? null,
+    localStrategyId: selectedLocalStrategy?.id ?? null,
+    localStrategyName: selectedLocalStrategy?.name ?? null,
+    compositeStrategyId: selectedCompositeStrategy?.id ?? null,
+    compositeStrategyName: selectedCompositeStrategy?.name ?? null,
+    strategyRef: selectedStrategyRef
+      ? {
+          kind: selectedStrategyRef.kind,
+          id: selectedStrategyRef.id,
+          name:
+            selectedStrategyRef.kind === "ai"
+              ? (selectedPromptSettings?.activePromptName ?? selectedStrategyRef.name)
+              : selectedStrategyRef.name
+        }
+      : null,
     aiPromptLicenseMode: promptLicenseDecision.mode,
     aiPromptLicenseWouldBlock: promptLicenseDecision.wouldBlock
   };
-  const tracking = derivePredictionTrackingFromSnapshot(
+  const featureSnapshotWithStrategy = withStrategyRunSnapshot(
     featureSnapshotWithPrompt,
+    {
+      strategyRef: selectedStrategyRef
+        ? {
+            kind: selectedStrategyRef.kind,
+            id: selectedStrategyRef.id,
+            name:
+              selectedStrategyRef.kind === "ai"
+                ? (selectedPromptSettings?.activePromptName ?? selectedStrategyRef.name)
+                : selectedStrategyRef.name
+          }
+        : null,
+      status: "skipped",
+      signal: payload.prediction.signal,
+      expectedMovePct: payload.prediction.expectedMovePct,
+      confidence: payload.prediction.confidence,
+      source: resolvePreferredSignalSourceForMode(
+        signalMode,
+        PREDICTION_PRIMARY_SIGNAL_SOURCE
+      ),
+      aiCalled: false,
+      explanation: "Manual prediction created; strategy runner applies on refresh cycle.",
+      tags: normalizeTagList(inputFeatureSnapshot.tags),
+      keyDrivers: [],
+      ts: tsCreated
+    },
+    {
+      phase: "manual_generate",
+      strategyRef: selectedStrategyRef
+    }
+  );
+  const tracking = derivePredictionTrackingFromSnapshot(
+    featureSnapshotWithStrategy,
     payload.timeframe
   );
 
@@ -7527,8 +9373,8 @@ app.post("/api/predictions/generate", requireAuth, async (req, res) => {
     marketType: payload.marketType,
     timeframe: payload.timeframe,
     tsCreated,
-    prediction: payload.prediction,
-    featureSnapshot: featureSnapshotWithPrompt,
+      prediction: payload.prediction,
+      featureSnapshot: featureSnapshotWithStrategy,
     signalMode,
     preferredSignalSource: resolvePreferredSignalSourceForMode(
       signalMode,
@@ -7676,7 +9522,12 @@ app.post("/api/predictions/generate", requireAuth, async (req, res) => {
     modelVersion: created.modelVersion,
     predictionId: created.rowId,
     aiPromptTemplateId: readAiPromptTemplateId(snapshot),
-    aiPromptTemplateName: readAiPromptTemplateName(snapshot)
+    aiPromptTemplateName: readAiPromptTemplateName(snapshot),
+    localStrategyId: readLocalStrategyId(snapshot),
+    localStrategyName: readLocalStrategyName(snapshot),
+    compositeStrategyId: readCompositeStrategyId(snapshot),
+    compositeStrategyName: readCompositeStrategyName(snapshot),
+    strategyRef: readPredictionStrategyRef(snapshot)
   });
 });
 
@@ -7711,7 +9562,12 @@ app.post("/api/predictions/generate-auto", requireAuth, async (req, res) => {
       modelVersion: created.modelVersion,
       predictionId: created.predictionId,
       aiPromptTemplateId: created.aiPromptTemplateId,
-      aiPromptTemplateName: created.aiPromptTemplateName
+      aiPromptTemplateName: created.aiPromptTemplateName,
+      localStrategyId: created.localStrategyId,
+      localStrategyName: created.localStrategyName,
+      compositeStrategyId: created.compositeStrategyId,
+      compositeStrategyName: created.compositeStrategyName,
+      strategyRef: created.strategyRef
     });
   } catch (error) {
     return sendManualTradingError(res, error);
@@ -7783,6 +9639,11 @@ app.get("/api/predictions", requireAuth, async (req, res) => {
         aiPrediction: readAiPredictionSnapshot(snapshot),
         aiPromptTemplateId: readAiPromptTemplateId(snapshot),
         aiPromptTemplateName: readAiPromptTemplateName(snapshot),
+        localStrategyId: readLocalStrategyId(snapshot),
+        localStrategyName: readLocalStrategyName(snapshot),
+        compositeStrategyId: readCompositeStrategyId(snapshot),
+        compositeStrategyName: readCompositeStrategyName(snapshot),
+        strategyRef: readPredictionStrategyRef(snapshot),
         signalMode,
         autoScheduleEnabled: Boolean(row.autoScheduleEnabled) && !Boolean(row.autoSchedulePaused),
         confidenceTargetPct:
@@ -7934,6 +9795,11 @@ app.get("/api/predictions", requireAuth, async (req, res) => {
       aiPrediction: readAiPredictionSnapshot(snapshot),
       aiPromptTemplateId: readAiPromptTemplateId(snapshot),
       aiPromptTemplateName: readAiPromptTemplateName(snapshot),
+      localStrategyId: readLocalStrategyId(snapshot),
+      localStrategyName: readLocalStrategyName(snapshot),
+      compositeStrategyId: readCompositeStrategyId(snapshot),
+      compositeStrategyName: readCompositeStrategyName(snapshot),
+      strategyRef: readPredictionStrategyRef(snapshot),
       signalMode: readSignalMode(snapshot),
       autoScheduleEnabled: isAutoScheduleEnabled(snapshot.autoScheduleEnabled),
       confidenceTargetPct: readConfiguredConfidenceTarget(snapshot),
@@ -8245,6 +10111,11 @@ app.get("/api/predictions/running", requireAuth, async (req, res) => {
     signalMode: PredictionSignalMode;
     aiPromptTemplateId: string | null;
     aiPromptTemplateName: string | null;
+    localStrategyId: string | null;
+    localStrategyName: string | null;
+    compositeStrategyId: string | null;
+    compositeStrategyName: string | null;
+    strategyRef: PredictionStrategyRef | null;
     paused: boolean;
     tsCreated: string;
     nextRunAt: string;
@@ -8304,6 +10175,11 @@ app.get("/api/predictions/running", requireAuth, async (req, res) => {
       signalMode,
       aiPromptTemplateId: readAiPromptTemplateId(snapshot),
       aiPromptTemplateName: readAiPromptTemplateName(snapshot),
+      localStrategyId: readLocalStrategyId(snapshot),
+      localStrategyName: readLocalStrategyName(snapshot),
+      compositeStrategyId: readCompositeStrategyId(snapshot),
+      compositeStrategyName: readCompositeStrategyName(snapshot),
+      strategyRef: readPredictionStrategyRef(snapshot),
       paused,
       tsCreated:
         row.tsUpdated instanceof Date ? row.tsUpdated.toISOString() : new Date().toISOString(),
@@ -8366,7 +10242,8 @@ app.post("/api/predictions/:id/pause", requireAuth, async (req, res) => {
       marketType: normalizePredictionMarketType(stateRow.marketType),
       timeframe: normalizePredictionTimeframe(stateRow.timeframe),
       exchangeAccountId: typeof stateRow.accountId === "string" ? stateRow.accountId : null,
-      signalMode
+      signalMode,
+      strategyRef: readPredictionStrategyRef(snapshot)
     });
 
     if (templateRowIds.length > 0) {
@@ -8415,7 +10292,8 @@ app.post("/api/predictions/:id/pause", requireAuth, async (req, res) => {
     marketType: scope.marketType,
     timeframe: scope.timeframe,
     exchangeAccountId: scope.exchangeAccountId,
-    signalMode: scope.signalMode
+    signalMode: scope.signalMode,
+    strategyRef: scope.strategyRef
   });
   const ids = templateRowIds.length > 0 ? templateRowIds : [scope.rowId];
 
@@ -8498,7 +10376,8 @@ app.post("/api/predictions/:id/stop", requireAuth, async (req, res) => {
       marketType: normalizePredictionMarketType(stateRow.marketType),
       timeframe: normalizePredictionTimeframe(stateRow.timeframe),
       exchangeAccountId: typeof stateRow.accountId === "string" ? stateRow.accountId : null,
-      signalMode
+      signalMode,
+      strategyRef: readPredictionStrategyRef(snapshot)
     });
 
     if (templateRowIds.length > 0) {
@@ -8541,7 +10420,8 @@ app.post("/api/predictions/:id/stop", requireAuth, async (req, res) => {
     marketType: scope.marketType,
     timeframe: scope.timeframe,
     exchangeAccountId: scope.exchangeAccountId,
-    signalMode: scope.signalMode
+    signalMode: scope.signalMode,
+    strategyRef: scope.strategyRef
   });
   const ids = templateRowIds.length > 0 ? templateRowIds : [scope.rowId];
 
@@ -8610,7 +10490,8 @@ app.post("/api/predictions/:id/delete-schedule", requireAuth, async (req, res) =
       marketType: normalizePredictionMarketType(stateRow.marketType),
       timeframe: normalizePredictionTimeframe(stateRow.timeframe),
       exchangeAccountId: typeof stateRow.accountId === "string" ? stateRow.accountId : null,
-      signalMode: stateSignalMode
+      signalMode: stateSignalMode,
+      strategyRef: readPredictionStrategyRef(stateSnapshot)
     });
 
     const deletedTemplates =
@@ -8639,7 +10520,8 @@ app.post("/api/predictions/:id/delete-schedule", requireAuth, async (req, res) =
     marketType: scope.marketType,
     timeframe: scope.timeframe,
     exchangeAccountId: scope.exchangeAccountId,
-    signalMode: scope.signalMode
+    signalMode: scope.signalMode,
+    strategyRef: scope.strategyRef
   });
   const ids = templateRowIds.length > 0 ? templateRowIds : [scope.rowId];
 
@@ -8708,6 +10590,11 @@ app.get("/api/predictions/state", requireAuth, async (req, res) => {
     featureSnapshot: asRecord(row.featuresSnapshot),
     aiPromptTemplateId: readAiPromptTemplateId(asRecord(row.featuresSnapshot)),
     aiPromptTemplateName: readAiPromptTemplateName(asRecord(row.featuresSnapshot)),
+    localStrategyId: readLocalStrategyId(asRecord(row.featuresSnapshot)),
+    localStrategyName: readLocalStrategyName(asRecord(row.featuresSnapshot)),
+    compositeStrategyId: readCompositeStrategyId(asRecord(row.featuresSnapshot)),
+    compositeStrategyName: readCompositeStrategyName(asRecord(row.featuresSnapshot)),
+    strategyRef: readPredictionStrategyRef(asRecord(row.featuresSnapshot)),
     modelVersion: row.modelVersion,
     autoScheduleEnabled: Boolean(row.autoScheduleEnabled),
     autoSchedulePaused: Boolean(row.autoSchedulePaused),

@@ -49,6 +49,39 @@ type PublicAiPromptLicensePolicy = {
   enforcementActive: boolean;
 };
 
+type PublicCompositeStrategyItem = {
+  id: string;
+  name: string;
+  description: string | null;
+  version: string;
+};
+
+type PublicLocalStrategyItem = {
+  id: string;
+  strategyType: string;
+  name: string;
+  description: string | null;
+  version: string;
+  updatedAt: string | null;
+};
+
+type StrategyKind = "ai" | "local" | "composite";
+type StrategyRef = {
+  kind: StrategyKind;
+  id: string;
+  name: string | null;
+};
+
+type StrategyEntitlements = {
+  plan: "free" | "pro" | "enterprise";
+  allowedStrategyKinds: StrategyKind[];
+  allowedStrategyIds: string[] | null;
+  maxCompositeNodes: number;
+  aiAllowedModels: string[] | null;
+  aiMonthlyBudgetUsd: number | null;
+  source: "db" | "plan_default";
+};
+
 type PredictionDefaultsResponse = {
   signalMode: CreateSignalMode;
 };
@@ -86,6 +119,11 @@ type PredictionListItem = {
   aiPrediction?: AiPredictionSummary | null;
   aiPromptTemplateId?: string | null;
   aiPromptTemplateName?: string | null;
+  localStrategyId?: string | null;
+  localStrategyName?: string | null;
+  compositeStrategyId?: string | null;
+  compositeStrategyName?: string | null;
+  strategyRef?: StrategyRef | null;
 };
 
 type PredictionEventItem = {
@@ -205,6 +243,11 @@ type RunningPredictionItem = {
   signalMode: CreateSignalMode;
   aiPromptTemplateId?: string | null;
   aiPromptTemplateName?: string | null;
+  localStrategyId?: string | null;
+  localStrategyName?: string | null;
+  compositeStrategyId?: string | null;
+  compositeStrategyName?: string | null;
+  strategyRef?: StrategyRef | null;
   paused: boolean;
   tsCreated: string;
   nextRunAt: string;
@@ -347,6 +390,90 @@ function signalModeLabel(mode?: CreateSignalMode): string {
   if (mode === "local_only") return "local only";
   if (mode === "ai_only") return "ai only";
   return "both";
+}
+
+function normalizeStrategyRef(value: unknown): StrategyRef | null {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  const raw = value as Record<string, unknown>;
+  const kind =
+    raw.kind === "ai" || raw.kind === "local" || raw.kind === "composite"
+      ? raw.kind
+      : null;
+  const id = typeof raw.id === "string" ? raw.id.trim() : "";
+  const name =
+    typeof raw.name === "string" && raw.name.trim()
+      ? raw.name.trim()
+      : null;
+  if (!kind || !id) return null;
+  return { kind, id, name };
+}
+
+function strategyKindLabel(kind: StrategyKind): string {
+  if (kind === "ai") return "AI";
+  if (kind === "local") return "Local";
+  return "Composite";
+}
+
+function strategyRefLabel(
+  strategyRef: StrategyRef | null | undefined,
+  fallback: {
+    aiPromptTemplateName?: string | null;
+    localStrategyName?: string | null;
+    compositeStrategyName?: string | null;
+  } = {}
+): string {
+  if (!strategyRef) {
+    if (fallback.compositeStrategyName) return `Composite · ${fallback.compositeStrategyName}`;
+    if (fallback.localStrategyName) return `Local · ${fallback.localStrategyName}`;
+    if (fallback.aiPromptTemplateName) return `AI · ${fallback.aiPromptTemplateName}`;
+    return "AI · System default prompt";
+  }
+  const name = strategyRef.name ?? strategyRef.id;
+  return `${strategyKindLabel(strategyRef.kind)} · ${name}`;
+}
+
+function encodeStrategySelectValue(strategy: StrategyRef | null): string {
+  if (!strategy) return "ai:default";
+  return `${strategy.kind}:${strategy.id}`;
+}
+
+function decodeStrategySelectValue(value: string): StrategyRef | null {
+  const trimmed = value.trim();
+  if (!trimmed || trimmed === "ai:default") return null;
+  const idx = trimmed.indexOf(":");
+  if (idx <= 0) return null;
+  const kind = trimmed.slice(0, idx);
+  const id = trimmed.slice(idx + 1).trim();
+  if (!id) return null;
+  if (kind !== "ai" && kind !== "local" && kind !== "composite") return null;
+  return { kind, id, name: null };
+}
+
+function isStrategyAllowedByEntitlements(
+  entitlements: StrategyEntitlements | null,
+  kind: StrategyKind,
+  id: string | null
+): boolean {
+  if (!entitlements) return true;
+  if (!entitlements.allowedStrategyKinds.includes(kind)) return false;
+  const allowlist = entitlements.allowedStrategyIds;
+  if (!allowlist) return true;
+  if (!id) {
+    return allowlist.some((entry) => {
+      const normalized = entry.trim().toLowerCase();
+      return normalized === "*" || normalized === `${kind}:*` || normalized === `${kind}:default`;
+    });
+  }
+  const normalizedId = id.trim().toLowerCase();
+  return allowlist.some((entry) => {
+    const normalized = entry.trim().toLowerCase();
+    return (
+      normalized === "*" ||
+      normalized === normalizedId ||
+      normalized === `${kind}:*` ||
+      normalized === `${kind}:${normalizedId}`
+    );
+  });
 }
 
 function canSendToDesk(row: PredictionListItem, source: SignalSource): boolean {
@@ -537,8 +664,13 @@ export default function PredictionsPage() {
   const [publicAiPrompts, setPublicAiPrompts] = useState<PublicAiPromptItem[]>([]);
   const [publicAiPromptsLoading, setPublicAiPromptsLoading] = useState(false);
   const [publicAiPromptLicensePolicy, setPublicAiPromptLicensePolicy] = useState<PublicAiPromptLicensePolicy | null>(null);
+  const [strategyEntitlements, setStrategyEntitlements] = useState<StrategyEntitlements | null>(null);
+  const [localStrategies, setLocalStrategies] = useState<PublicLocalStrategyItem[]>([]);
+  const [localStrategiesLoading, setLocalStrategiesLoading] = useState(false);
+  const [compositeStrategies, setCompositeStrategies] = useState<PublicCompositeStrategyItem[]>([]);
+  const [compositeStrategiesLoading, setCompositeStrategiesLoading] = useState(false);
   const [predictionDefaults, setPredictionDefaults] = useState<PredictionDefaultsResponse | null>(null);
-  const [newAiPromptTemplateId, setNewAiPromptTemplateId] = useState("");
+  const [newStrategySelectValue, setNewStrategySelectValue] = useState("ai:default");
   const [newLeverage, setNewLeverage] = useState("10");
   const [nowMs, setNowMs] = useState(() => Date.now());
   const [expandedDetailId, setExpandedDetailId] = useState<string | null>(null);
@@ -560,7 +692,8 @@ export default function PredictionsPage() {
           ? payload.items.map((row) => ({
               ...row,
               localPrediction: readAiPrediction((row as Record<string, unknown>).localPrediction),
-              aiPrediction: readAiPrediction((row as Record<string, unknown>).aiPrediction)
+              aiPrediction: readAiPrediction((row as Record<string, unknown>).aiPrediction),
+              strategyRef: normalizeStrategyRef((row as Record<string, unknown>).strategyRef)
             }))
           : []
       );
@@ -575,7 +708,14 @@ export default function PredictionsPage() {
     setRunningLoading(true);
     try {
       const payload = await apiGet<{ items: RunningPredictionItem[] }>("/api/predictions/running");
-      setRunningRows(Array.isArray(payload.items) ? payload.items : []);
+      setRunningRows(
+        Array.isArray(payload.items)
+          ? payload.items.map((row) => ({
+              ...row,
+              strategyRef: normalizeStrategyRef((row as Record<string, unknown>).strategyRef)
+            }))
+          : []
+      );
     } catch {
       setRunningRows([]);
     } finally {
@@ -628,18 +768,27 @@ export default function PredictionsPage() {
       const payload = await apiGet<{
         items: PublicAiPromptItem[];
         licensePolicy?: PublicAiPromptLicensePolicy;
+        strategyEntitlements?: StrategyEntitlements;
       }>("/settings/ai-prompts/public");
       const items = Array.isArray(payload.items) ? payload.items : [];
       setPublicAiPrompts(items);
       setPublicAiPromptLicensePolicy(payload.licensePolicy ?? null);
-      setNewAiPromptTemplateId((prev) => {
-        if (!prev) return "";
-        return items.some((item) => item.id === prev) ? prev : "";
+      if (payload.strategyEntitlements) {
+        setStrategyEntitlements(payload.strategyEntitlements);
+      }
+      setNewStrategySelectValue((prev) => {
+        const selected = decodeStrategySelectValue(prev);
+        if (!selected) return prev;
+        if (selected.kind !== "ai") return prev;
+        return items.some((item) => item.id === selected.id) ? prev : "ai:default";
       });
     } catch {
       setPublicAiPrompts([]);
       setPublicAiPromptLicensePolicy(null);
-      setNewAiPromptTemplateId("");
+      setNewStrategySelectValue((prev) => {
+        const selected = decodeStrategySelectValue(prev);
+        return selected?.kind === "ai" ? "ai:default" : prev;
+      });
     } finally {
       setPublicAiPromptsLoading(false);
     }
@@ -651,6 +800,73 @@ export default function PredictionsPage() {
       setPredictionDefaults(payload);
     } catch {
       setPredictionDefaults(null);
+    }
+  }
+
+  async function loadStrategyEntitlements() {
+    try {
+      const payload = await apiGet<{ entitlements: StrategyEntitlements }>("/settings/strategy-entitlements");
+      setStrategyEntitlements(payload.entitlements ?? null);
+    } catch {
+      setStrategyEntitlements(null);
+    }
+  }
+
+  async function loadLocalStrategies() {
+    setLocalStrategiesLoading(true);
+    try {
+      const payload = await apiGet<{
+        items: PublicLocalStrategyItem[];
+        strategyEntitlements?: StrategyEntitlements;
+      }>("/settings/local-strategies");
+      const items = Array.isArray(payload.items) ? payload.items : [];
+      setLocalStrategies(items);
+      if (payload.strategyEntitlements) {
+        setStrategyEntitlements(payload.strategyEntitlements);
+      }
+      setNewStrategySelectValue((prev) => {
+        const selected = decodeStrategySelectValue(prev);
+        if (!selected) return prev;
+        if (selected.kind !== "local") return prev;
+        return items.some((item) => item.id === selected.id) ? prev : "ai:default";
+      });
+    } catch {
+      setLocalStrategies([]);
+      setNewStrategySelectValue((prev) => {
+        const selected = decodeStrategySelectValue(prev);
+        return selected?.kind === "local" ? "ai:default" : prev;
+      });
+    } finally {
+      setLocalStrategiesLoading(false);
+    }
+  }
+
+  async function loadCompositeStrategies() {
+    setCompositeStrategiesLoading(true);
+    try {
+      const payload = await apiGet<{
+        items: PublicCompositeStrategyItem[];
+        strategyEntitlements?: StrategyEntitlements;
+      }>("/settings/composite-strategies");
+      const items = Array.isArray(payload.items) ? payload.items : [];
+      setCompositeStrategies(items);
+      if (payload.strategyEntitlements) {
+        setStrategyEntitlements(payload.strategyEntitlements);
+      }
+      setNewStrategySelectValue((prev) => {
+        const selected = decodeStrategySelectValue(prev);
+        if (!selected) return prev;
+        if (selected.kind !== "composite") return prev;
+        return items.some((item) => item.id === selected.id) ? prev : "ai:default";
+      });
+    } catch {
+      setCompositeStrategies([]);
+      setNewStrategySelectValue((prev) => {
+        const selected = decodeStrategySelectValue(prev);
+        return selected?.kind === "composite" ? "ai:default" : prev;
+      });
+    } finally {
+      setCompositeStrategiesLoading(false);
     }
   }
 
@@ -686,6 +902,9 @@ export default function PredictionsPage() {
     void loadPredictionMetrics();
     void loadAccounts();
     void loadPublicAiPrompts();
+    void loadStrategyEntitlements();
+    void loadLocalStrategies();
+    void loadCompositeStrategies();
     void loadPredictionDefaults();
   }, []);
 
@@ -703,12 +922,117 @@ export default function PredictionsPage() {
     return () => clearInterval(timer);
   }, []);
 
+  const selectedStrategyRef = useMemo(
+    () => decodeStrategySelectValue(newStrategySelectValue),
+    [newStrategySelectValue]
+  );
   const selectedPrompt = useMemo(
-    () => publicAiPrompts.find((item) => item.id === newAiPromptTemplateId) ?? null,
-    [newAiPromptTemplateId, publicAiPrompts]
+    () =>
+      selectedStrategyRef?.kind === "ai"
+        ? publicAiPrompts.find((item) => item.id === selectedStrategyRef.id) ?? null
+        : null,
+    [selectedStrategyRef, publicAiPrompts]
+  );
+  const selectedLocalStrategy = useMemo(
+    () =>
+      selectedStrategyRef?.kind === "local"
+        ? localStrategies.find((item) => item.id === selectedStrategyRef.id) ?? null
+        : null,
+    [selectedStrategyRef, localStrategies]
+  );
+  const selectedCompositeStrategy = useMemo(
+    () =>
+      selectedStrategyRef?.kind === "composite"
+        ? compositeStrategies.find((item) => item.id === selectedStrategyRef.id) ?? null
+        : null,
+    [selectedStrategyRef, compositeStrategies]
+  );
+  const allowedAiPrompts = useMemo(
+    () =>
+      publicAiPrompts.filter((item) =>
+        isStrategyAllowedByEntitlements(strategyEntitlements, "ai", item.id)
+      ),
+    [publicAiPrompts, strategyEntitlements]
+  );
+  const allowedLocalStrategies = useMemo(
+    () =>
+      localStrategies.filter((item) =>
+        isStrategyAllowedByEntitlements(strategyEntitlements, "local", item.id)
+      ),
+    [localStrategies, strategyEntitlements]
+  );
+  const allowedCompositeStrategies = useMemo(
+    () =>
+      compositeStrategies.filter((item) =>
+        isStrategyAllowedByEntitlements(strategyEntitlements, "composite", item.id)
+      ),
+    [compositeStrategies, strategyEntitlements]
+  );
+  const aiDefaultAllowed = useMemo(
+    () => isStrategyAllowedByEntitlements(strategyEntitlements, "ai", "default"),
+    [strategyEntitlements]
+  );
+  const aiKindAllowed = useMemo(
+    () => isStrategyAllowedByEntitlements(strategyEntitlements, "ai", null),
+    [strategyEntitlements]
+  );
+  const localKindAllowed = useMemo(
+    () => isStrategyAllowedByEntitlements(strategyEntitlements, "local", null),
+    [strategyEntitlements]
+  );
+  const compositeKindAllowed = useMemo(
+    () => isStrategyAllowedByEntitlements(strategyEntitlements, "composite", null),
+    [strategyEntitlements]
   );
   const selectedPromptLockedTimeframe = selectedPrompt?.timeframe ?? null;
   const effectiveCreateTimeframe = selectedPromptLockedTimeframe ?? newTimeframe;
+
+  useEffect(() => {
+    const selected = decodeStrategySelectValue(newStrategySelectValue);
+    const selectedAllowed = selected
+      ? isStrategyAllowedByEntitlements(strategyEntitlements, selected.kind, selected.id)
+      : aiDefaultAllowed;
+    if (selectedAllowed) return;
+
+    if (allowedLocalStrategies.length > 0) {
+      setNewStrategySelectValue(
+        encodeStrategySelectValue({
+          kind: "local",
+          id: allowedLocalStrategies[0].id,
+          name: allowedLocalStrategies[0].name
+        })
+      );
+      return;
+    }
+    if (allowedCompositeStrategies.length > 0) {
+      setNewStrategySelectValue(
+        encodeStrategySelectValue({
+          kind: "composite",
+          id: allowedCompositeStrategies[0].id,
+          name: allowedCompositeStrategies[0].name
+        })
+      );
+      return;
+    }
+    if (allowedAiPrompts.length > 0) {
+      setNewStrategySelectValue(
+        encodeStrategySelectValue({
+          kind: "ai",
+          id: allowedAiPrompts[0].id,
+          name: allowedAiPrompts[0].name
+        })
+      );
+      return;
+    }
+    setNewStrategySelectValue("ai:default");
+  }, [
+    aiDefaultAllowed,
+    allowedAiPrompts,
+    allowedCompositeStrategies,
+    allowedLocalStrategies,
+    newStrategySelectValue,
+    strategyEntitlements
+  ]);
 
   useEffect(() => {
     if (selectedPromptLockedTimeframe && newTimeframe !== selectedPromptLockedTimeframe) {
@@ -912,12 +1236,19 @@ export default function PredictionsPage() {
         signalMode: CreateSignalMode;
         aiPromptTemplateId?: string | null;
         aiPromptTemplateName?: string | null;
+        localStrategyId?: string | null;
+        localStrategyName?: string | null;
+        compositeStrategyId?: string | null;
+        compositeStrategyName?: string | null;
+        strategyRef?: StrategyRef | null;
       }>("/api/predictions/generate-auto", {
         exchangeAccountId: createAccountId,
         symbol,
         marketType: newMarketType,
         timeframe: effectiveCreateTimeframe,
-        aiPromptTemplateId: newAiPromptTemplateId || undefined,
+        strategyRef: selectedStrategyRef ?? undefined,
+        aiPromptTemplateId: selectedStrategyRef?.kind === "ai" ? selectedStrategyRef.id : undefined,
+        compositeStrategyId: selectedStrategyRef?.kind === "composite" ? selectedStrategyRef.id : undefined,
         leverage: newMarketType === "perp" ? Math.trunc(leverage) : undefined
       });
       const modeLabel =
@@ -931,7 +1262,11 @@ export default function PredictionsPage() {
         `Prediction created for ${symbol} (${response.prediction.timeframe}) with signal ${response.prediction.signal} ` +
         `and confidence ${fmtConfidence(response.prediction.confidence)}. ` +
         `Mode: ${modeLabel}, active source: ${response.signalSource.toUpperCase()}.` +
-        ` AI prompt: ${response.aiPromptTemplateName ?? "System default"}.` +
+        ` Strategy: ${strategyRefLabel(response.strategyRef, {
+          aiPromptTemplateName: response.aiPromptTemplateName,
+          localStrategyName: response.localStrategyName,
+          compositeStrategyName: response.compositeStrategyName
+        })}.` +
         ` Dir: ${response.directionPreference}, conf target: ${response.confidenceTargetPct.toFixed(0)}%.`
       );
       await Promise.all([
@@ -1015,6 +1350,9 @@ export default function PredictionsPage() {
     const detailSnapshot = asRecord(detail?.featureSnapshot);
     const localPrediction = row.localPrediction ?? readAiPrediction(detailSnapshot.localPrediction);
     const aiPrediction = row.aiPrediction ?? readAiPrediction(detailSnapshot.aiPrediction);
+    const strategyRef = row.strategyRef ?? normalizeStrategyRef(detailSnapshot.strategyRef);
+    const strategyRunOutput = asRecord(detailSnapshot.strategyRunOutput);
+    const strategyRunDebug = asRecord(detailSnapshot.strategyRunDebug);
     const activeSignal = signalSource === "ai" && aiPrediction
       ? aiPrediction.signal
       : signalSource === "local" && localPrediction
@@ -1111,7 +1449,11 @@ export default function PredictionsPage() {
             Signal mode: {signalModeLabel(row.signalMode)}
           </div>
           <div className="predictionContextReason">
-            AI Prompt: {row.aiPromptTemplateName ?? "System default"}
+            Strategy: {strategyRefLabel(strategyRef, {
+              aiPromptTemplateName: row.aiPromptTemplateName,
+              localStrategyName: row.localStrategyName,
+              compositeStrategyName: row.compositeStrategyName
+            })}
           </div>
 
           {dataGap ? (
@@ -1135,6 +1477,18 @@ export default function PredictionsPage() {
               </div>
               <div className="predictionIndicatorMeta">
                 local {fmtConfidence(localPrediction?.confidence ?? row.confidence)} · ai {aiPrediction ? fmtConfidence(aiPrediction.confidence) : "n/a"}
+              </div>
+            </div>
+            <div className="card predictionIndicatorCard">
+              <div className="predictionIndicatorTitle">Strategy run</div>
+              <div className="predictionIndicatorValue">
+                {typeof strategyRunOutput.status === "string" ? strategyRunOutput.status : "n/a"}
+              </div>
+              <div className="predictionIndicatorMeta">
+                {typeof strategyRunOutput.source === "string" ? `source ${strategyRunOutput.source}` : "source n/a"}
+                {typeof strategyRunOutput.aiCalled === "boolean"
+                  ? ` · ai called ${strategyRunOutput.aiCalled ? "yes" : "no"}`
+                  : ""}
               </div>
             </div>
             <div className="card predictionIndicatorCard">
@@ -1234,6 +1588,32 @@ export default function PredictionsPage() {
               </div>
             )}
           </div>
+          {Object.keys(strategyRunOutput).length > 0 || Object.keys(strategyRunDebug).length > 0 ? (
+            <details className="predictionDebugDetails">
+              <summary>Strategy debug</summary>
+              <pre
+                className="predictionDebugPre"
+                style={{
+                  marginTop: 8,
+                  maxHeight: 240,
+                  overflow: "auto",
+                  fontSize: 12,
+                  background: "rgba(0,0,0,0.18)",
+                  padding: 10,
+                  borderRadius: 8
+                }}
+              >
+                {JSON.stringify(
+                  {
+                    strategyRunOutput: Object.keys(strategyRunOutput).length > 0 ? strategyRunOutput : null,
+                    strategyRunDebug: Object.keys(strategyRunDebug).length > 0 ? strategyRunDebug : null
+                  },
+                  null,
+                  2
+                )}
+              </pre>
+            </details>
+          ) : null}
         </div>
 
         <div className="card predictionDetailPanel">
@@ -1359,30 +1739,70 @@ export default function PredictionsPage() {
         </div>
         <div className="predictionCreateGrid">
           <label className="predictionCreateField predictionCreateFieldPrompt">
-            <div className="predictionCreateLabel">AI Prompt</div>
+            <div className="predictionCreateLabel">Strategy</div>
             <div className="predictionCreateHint">
-              Optional: öffentlicher Prompt für dieses Prediction-Template.
+              Unified selector für AI Prompt, Local Strategy oder Composite Strategy.
             </div>
             <select
               className="input"
-              value={newAiPromptTemplateId}
-              onChange={(e) => setNewAiPromptTemplateId(e.target.value)}
-              disabled={publicAiPromptsLoading}
+              value={newStrategySelectValue}
+              onChange={(e) => setNewStrategySelectValue(e.target.value)}
+              disabled={publicAiPromptsLoading || localStrategiesLoading || compositeStrategiesLoading}
             >
-              <option value="">System default prompt</option>
-              {publicAiPrompts.map((prompt) => (
-                <option key={prompt.id} value={prompt.id}>
-                  {prompt.name}
-                  {prompt.isPublic === false ? " (private)" : ""}
-                </option>
-              ))}
+              {!aiDefaultAllowed && allowedAiPrompts.length === 0 && allowedLocalStrategies.length === 0 && allowedCompositeStrategies.length === 0 ? (
+                <option value="ai:default">No licensed strategy available</option>
+              ) : null}
+              {aiDefaultAllowed ? (
+                <option value="ai:default">AI · System default prompt</option>
+              ) : null}
+              {aiKindAllowed ? (
+                <optgroup label="AI Prompt Strategies">
+                  {allowedAiPrompts.map((prompt) => (
+                    <option key={prompt.id} value={encodeStrategySelectValue({ kind: "ai", id: prompt.id, name: prompt.name })}>
+                      {prompt.name}
+                      {prompt.isPublic === false ? " (private)" : ""}
+                    </option>
+                  ))}
+                </optgroup>
+              ) : null}
+              {localKindAllowed ? (
+                <optgroup label="Local Strategies">
+                  {allowedLocalStrategies.map((strategy) => (
+                    <option key={strategy.id} value={encodeStrategySelectValue({ kind: "local", id: strategy.id, name: strategy.name })}>
+                      {strategy.name}
+                    </option>
+                  ))}
+                </optgroup>
+              ) : null}
+              {compositeKindAllowed ? (
+                <optgroup label="Composite Strategies">
+                  {allowedCompositeStrategies.map((strategy) => (
+                    <option key={strategy.id} value={encodeStrategySelectValue({ kind: "composite", id: strategy.id, name: strategy.name })}>
+                      {strategy.name}
+                    </option>
+                  ))}
+                </optgroup>
+              ) : null}
             </select>
             <div className="predictionCreateHint">
-              License mode: {publicAiPromptLicensePolicy?.mode ?? "off"}
+              Selected: {strategyRefLabel(selectedStrategyRef, {
+                aiPromptTemplateName: selectedPrompt?.name ?? null,
+                localStrategyName: selectedLocalStrategy?.name ?? null,
+                compositeStrategyName: selectedCompositeStrategy?.name ?? null
+              })}
+            </div>
+            <div className="predictionCreateHint">
+              AI license mode: {publicAiPromptLicensePolicy?.mode ?? "off"}
               {publicAiPromptLicensePolicy?.enforcementActive ? " (enforced)" : " (preview/off)"}.
             </div>
             <div className="predictionCreateHint predictionCreateHintCompact">
-              Prompt lock timeframe: {selectedPromptLockedTimeframe ?? "none"}
+              {selectedStrategyRef?.kind === "ai"
+                ? `Prompt lock timeframe: ${selectedPromptLockedTimeframe ?? "none"}`
+                : selectedStrategyRef?.kind === "local"
+                  ? `Local type: ${selectedLocalStrategy?.strategyType ?? "n/a"}`
+                  : selectedStrategyRef?.kind === "composite"
+                    ? `Composite version: ${selectedCompositeStrategy?.version ?? "n/a"}`
+                    : "No explicit strategy selected (AI system default)."}
             </div>
           </label>
 
@@ -1481,12 +1901,22 @@ export default function PredictionsPage() {
             Pairs konnten nicht geladen werden: {symbolsError}
           </div>
           ) : null}
-          {!publicAiPromptsLoading && publicAiPrompts.length === 0 ? (
+          {aiKindAllowed && !publicAiPromptsLoading && allowedAiPrompts.length === 0 ? (
           <div className="predictionCreateAlert predictionCreateAlertInfo">
             Keine öffentlichen AI-Prompts vorhanden. Es wird der System-Standard verwendet.
           </div>
           ) : null}
-          {publicAiPromptLicensePolicy ? (
+          {localKindAllowed && !localStrategiesLoading && allowedLocalStrategies.length === 0 ? (
+          <div className="predictionCreateAlert predictionCreateAlertInfo">
+            Keine aktiven Local-Strategien verfügbar.
+          </div>
+          ) : null}
+          {compositeKindAllowed && !compositeStrategiesLoading && allowedCompositeStrategies.length === 0 ? (
+          <div className="predictionCreateAlert predictionCreateAlertInfo">
+            Keine aktiven Composite-Strategien verfügbar.
+          </div>
+          ) : null}
+          {aiKindAllowed && publicAiPromptLicensePolicy ? (
           <div className="predictionCreateAlert predictionCreateAlertInfo">
             Allowed prompt IDs:{" "}
             {publicAiPromptLicensePolicy.allowedPublicPromptIds.length > 0
@@ -1576,7 +2006,11 @@ export default function PredictionsPage() {
                         Dir: {row.directionPreference}, conf: {row.confidenceTargetPct}%
                         {row.marketType === "perp" && row.leverage ? `, lev: ${row.leverage}x` : ""}
                         {`, mode: ${signalModeLabel(row.signalMode)}`}
-                        {`, prompt: ${row.aiPromptTemplateName ?? "default"}`}
+                        {`, strategy: ${strategyRefLabel(row.strategyRef, {
+                          aiPromptTemplateName: row.aiPromptTemplateName,
+                          localStrategyName: row.localStrategyName,
+                          compositeStrategyName: row.compositeStrategyName
+                        })}`}
                       </td>
                       <td style={{ padding: "8px 6px" }}>
                         {row.paused ? "paused" : "running"}
@@ -1637,8 +2071,12 @@ export default function PredictionsPage() {
                     <strong>{signalModeLabel(row.signalMode)}</strong>
                   </div>
                   <div className="predictionRunningCardLine">
-                    <span>AI Prompt</span>
-                    <strong>{row.aiPromptTemplateName ?? "System default"}</strong>
+                    <span>Strategy</span>
+                    <strong>{strategyRefLabel(row.strategyRef, {
+                      aiPromptTemplateName: row.aiPromptTemplateName,
+                      localStrategyName: row.localStrategyName,
+                      compositeStrategyName: row.compositeStrategyName
+                    })}</strong>
                   </div>
                   <div className="predictionRunningCardLine">
                     <span>Next run</span>
@@ -1834,6 +2272,13 @@ export default function PredictionsPage() {
                           <div style={{ color: "var(--muted)", fontSize: 11, marginTop: 4 }}>
                             mode {signalModeLabel(row.signalMode)}
                           </div>
+                          <div style={{ color: "var(--muted)", fontSize: 11, marginTop: 2 }}>
+                            {strategyRefLabel(row.strategyRef, {
+                              aiPromptTemplateName: row.aiPromptTemplateName,
+                              localStrategyName: row.localStrategyName,
+                              compositeStrategyName: row.compositeStrategyName
+                            })}
+                          </div>
                         </td>
                         <td style={{ padding: "8px 6px" }}>{fmtConfidence(activeConfidence)}</td>
                         <td style={{ padding: "8px 6px" }}>{activeMove.toFixed(2)}%</td>
@@ -1964,6 +2409,11 @@ export default function PredictionsPage() {
                     <span>{row.marketType}</span>
                     <span>{row.timeframe}</span>
                     <span>{signalModeLabel(row.signalMode)}</span>
+                    <span>{strategyRefLabel(row.strategyRef, {
+                      aiPromptTemplateName: row.aiPromptTemplateName,
+                      localStrategyName: row.localStrategyName,
+                      compositeStrategyName: row.compositeStrategyName
+                    })}</span>
                     <span>{new Date(row.tsCreated).toLocaleString()}</span>
                     <span title={updatedAtIso ? new Date(updatedAtIso).toLocaleString() : "n/a"}>
                       Updated {formatRelativeTime(updatedAtIso, nowMs)}

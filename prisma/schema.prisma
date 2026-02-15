@@ -431,6 +431,7 @@ model Workspace {
   roles         Role[]
   configPresets BotConfigPreset[]
   auditEvents   AuditEvent[]
+  licenseEntitlement LicenseEntitlement?
 }
 
 model BotPriceSupportConfig {
@@ -522,6 +523,24 @@ model GlobalSetting {
   key       String   @id
   value     Json?
   updatedAt DateTime @updatedAt
+}
+
+model LicenseEntitlement {
+  id                String   @id @default(cuid())
+  workspaceId       String   @unique @map("workspace_id")
+  plan              String   @default("pro")
+  allowedStrategyKinds String[] @default(["local", "ai", "composite"]) @map("allowed_strategy_kinds")
+  allowedStrategyIds String[]  @default([]) @map("allowed_strategy_ids")
+  maxCompositeNodes Int      @default(12) @map("max_composite_nodes")
+  aiAllowedModels   String[]  @default([]) @map("ai_allowed_models")
+  aiMonthlyBudgetUsd Float?  @map("ai_monthly_budget_usd")
+  createdAt         DateTime @default(now()) @map("created_at")
+  updatedAt         DateTime @updatedAt @map("updated_at")
+
+  workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+
+  @@index([plan], map: "license_entitlements_plan_idx")
+  @@map("license_entitlements")
 }
 
 model RunnerStatus {
@@ -722,6 +741,41 @@ model IndicatorSetting {
   @@index([scopeType])
   @@index([exchange, accountId, symbol, timeframe])
   @@map("indicator_settings")
+}
+
+model LocalStrategyDefinition {
+  id           String   @id @default(cuid())
+  strategyType String   @map("strategy_type")
+  name         String
+  description  String?
+  version      String
+  inputSchema  Json?    @map("input_schema")
+  configJson   Json     @map("config_json")
+  isEnabled    Boolean  @default(true) @map("is_enabled")
+  createdAt    DateTime @default(now()) @map("created_at")
+  updatedAt    DateTime @updatedAt @map("updated_at")
+
+  @@index([strategyType, isEnabled, updatedAt(sort: Desc)], map: "local_strategy_type_enabled_updated_idx")
+  @@index([isEnabled, updatedAt(sort: Desc)], map: "local_strategy_enabled_updated_idx")
+  @@map("local_strategy_definitions")
+}
+
+model CompositeStrategy {
+  id           String   @id @default(cuid())
+  name         String
+  description  String?
+  version      String
+  nodesJson    Json     @map("nodes_json")
+  edgesJson    Json     @map("edges_json")
+  combineMode  String   @default("pipeline") @map("combine_mode")
+  outputPolicy String   @default("local_signal_ai_explain") @map("output_policy")
+  isEnabled    Boolean  @default(true) @map("is_enabled")
+  createdAt    DateTime @default(now()) @map("created_at")
+  updatedAt    DateTime @updatedAt @map("updated_at")
+
+  @@index([isEnabled, updatedAt(sort: Desc)], map: "composite_strategy_enabled_updated_idx")
+  @@index([name, updatedAt(sort: Desc)], map: "composite_strategy_name_updated_idx")
+  @@map("composite_strategies")
 }
 
 model AiTraceLog {
