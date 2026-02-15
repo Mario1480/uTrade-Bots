@@ -801,7 +801,6 @@ function buildPromptPayload(
       aiPrediction: "{signal: up|down|neutral, expectedMovePct: number, confidence: number 0..1}",
       disclaimer: "grounded_features_only"
     },
-    operatorPrompt: settings.promptText,
     selectedIndicatorKeys: settings.indicatorKeys,
     ohlcvBars: settings.ohlcvBars,
     groundingRules: [

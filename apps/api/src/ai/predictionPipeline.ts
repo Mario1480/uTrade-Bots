@@ -108,9 +108,13 @@ export async function generateAndPersistPrediction(
           });
   } catch (error) {
     if (signalMode === "ai_only") {
+      const reason =
+        error instanceof Error && typeof error.message === "string" && error.message.trim()
+          ? error.message.trim()
+          : String(error);
       const wrapped = Object.assign(
-        new Error("AI signal required (ai_only), but AI response was unavailable."),
-        { status: 503, code: "ai_only_requires_ai_success" }
+        new Error(`AI signal required (ai_only), but AI response was unavailable (${reason}).`),
+        { status: 503, code: "ai_only_requires_ai_success", reason }
       );
       throw wrapped;
     }
