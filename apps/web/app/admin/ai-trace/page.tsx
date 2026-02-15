@@ -17,6 +17,37 @@ type AiTraceSettingsResponse = {
     maxUserPayloadChars: number;
     maxRawResponseChars: number;
   };
+  payloadBudget?: {
+    totalBudgetCalls: number;
+    totalCacheChecks: number;
+    cacheHits: number;
+    cacheHitRatePct: number;
+    trimCountLastHour: number;
+    trimAlertThresholdPerHour: number;
+    trimAlert: boolean;
+    highWaterConsecutive: number;
+    highWaterConsecutiveThreshold: number;
+    highWaterAlert: boolean;
+    lastHighWaterAt: string | null;
+    lastUpdatedAt: string | null;
+    lastMetrics: {
+      bytes: number;
+      estimatedTokens: number;
+      trimFlags: string[];
+      maxPayloadBytes: number;
+      maxHistoryBytes: number;
+      toolCallsUsed: number;
+      historyContextHash: string | null;
+      overBudget: boolean;
+    } | null;
+  };
+  qualityGate?: {
+    gateAllowCount: number;
+    gateBlockCount: number;
+    aiCallsSaved: number;
+    priorities: { low: number; normal: number; high: number };
+    reasons: Array<{ code: string; count: number }>;
+  };
 };
 
 type AiTraceLogItem = {
@@ -56,6 +87,14 @@ function errMsg(e: unknown): string {
   if (e instanceof ApiError) return `${e.message} (HTTP ${e.status})`;
   if (e && typeof e === "object" && "message" in e) return String((e as any).message);
   return String(e);
+}
+
+function fmtBytes(value: number | null | undefined): string {
+  if (!Number.isFinite(Number(value))) return "-";
+  const bytes = Number(value);
+  if (bytes >= 1024 * 1024) return `${(bytes / (1024 * 1024)).toFixed(2)} MB`;
+  if (bytes >= 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+  return `${Math.trunc(bytes)} B`;
 }
 
 export default function AdminAiTracePage() {
@@ -214,6 +253,84 @@ export default function AdminAiTracePage() {
 
       {isSuperadmin ? (
         <>
+          <section className="card settingsSection" style={{ marginBottom: 12 }}>
+            <div className="settingsSectionHeader">
+              <h3 style={{ margin: 0 }}>AI Payload Budget Status</h3>
+            </div>
+            <div className="settingsMutedText" style={{ marginBottom: 10 }}>
+              Last updated:{" "}
+              {settings?.payloadBudget?.lastUpdatedAt
+                ? new Date(settings.payloadBudget.lastUpdatedAt).toLocaleString()
+                : "n/a"}
+            </div>
+            <div className="dashboardStatsGrid" style={{ marginBottom: 10 }}>
+              <div className="dashboardStatCard">
+                <div className="dashboardStatLabel">Last Payload</div>
+                <div className="dashboardStatValue">
+                  {fmtBytes(settings?.payloadBudget?.lastMetrics?.bytes)}
+                </div>
+              </div>
+              <div className="dashboardStatCard">
+                <div className="dashboardStatLabel">Last Est Tokens</div>
+                <div className="dashboardStatValue">
+                  {settings?.payloadBudget?.lastMetrics?.estimatedTokens ?? "-"}
+                </div>
+              </div>
+              <div className="dashboardStatCard">
+                <div className="dashboardStatLabel">Cache Hit Rate</div>
+                <div className="dashboardStatValue">
+                  {Number.isFinite(Number(settings?.payloadBudget?.cacheHitRatePct))
+                    ? `${Number(settings?.payloadBudget?.cacheHitRatePct).toFixed(2)}%`
+                    : "-"}
+                </div>
+              </div>
+              <div className="dashboardStatCard">
+                <div className="dashboardStatLabel">Trim Last Hour</div>
+                <div className="dashboardStatValue">
+                  {settings?.payloadBudget?.trimCountLastHour ?? "-"} /{" "}
+                  {settings?.payloadBudget?.trimAlertThresholdPerHour ?? "-"}
+                </div>
+              </div>
+            </div>
+            <div className="settingsMutedText" style={{ marginBottom: 8 }}>
+              High-water (&gt;90% budget): {settings?.payloadBudget?.highWaterConsecutive ?? 0} /{" "}
+              {settings?.payloadBudget?.highWaterConsecutiveThreshold ?? 0}
+              {settings?.payloadBudget?.highWaterAlert ? " · ALERT" : ""}
+              {settings?.payloadBudget?.trimAlert ? " · TRIM ALERT" : ""}
+              {settings?.payloadBudget?.lastMetrics?.overBudget ? " · OVER BUDGET" : ""}
+            </div>
+            <div className="settingsMutedText" style={{ marginBottom: 10 }}>
+              Max payload: {fmtBytes(settings?.payloadBudget?.lastMetrics?.maxPayloadBytes)} · Max history:{" "}
+              {fmtBytes(settings?.payloadBudget?.lastMetrics?.maxHistoryBytes)} · Last tool calls used:{" "}
+              {settings?.payloadBudget?.lastMetrics?.toolCallsUsed ?? "-"}
+            </div>
+            <div className="settingsMutedText" style={{ marginBottom: 10 }}>
+              Quality gate: allow {settings?.qualityGate?.gateAllowCount ?? 0} · block{" "}
+              {settings?.qualityGate?.gateBlockCount ?? 0} · saved{" "}
+              {settings?.qualityGate?.aiCallsSaved ?? 0}
+            </div>
+            <div className="settingsMutedText" style={{ marginBottom: 10 }}>
+              Priorities: low {settings?.qualityGate?.priorities?.low ?? 0}, normal{" "}
+              {settings?.qualityGate?.priorities?.normal ?? 0}, high{" "}
+              {settings?.qualityGate?.priorities?.high ?? 0}
+            </div>
+            {Array.isArray(settings?.qualityGate?.reasons) && settings.qualityGate.reasons.length > 0 ? (
+              <div className="settingsMutedText" style={{ marginBottom: 10 }}>
+                Top gate reasons:{" "}
+                {settings.qualityGate.reasons
+                  .slice(0, 6)
+                  .map((row) => `${row.code} (${row.count})`)
+                  .join(", ")}
+              </div>
+            ) : null}
+            {Array.isArray(settings?.payloadBudget?.lastMetrics?.trimFlags) &&
+            settings?.payloadBudget?.lastMetrics?.trimFlags.length > 0 ? (
+              <div className="settingsMutedText" style={{ marginBottom: 10 }}>
+                Last trim flags: {settings?.payloadBudget?.lastMetrics?.trimFlags.join(", ")}
+              </div>
+            ) : null}
+          </section>
+
           <section className="card settingsSection" style={{ marginBottom: 12 }}>
             <div className="settingsSectionHeader">
               <h3 style={{ margin: 0 }}>Trace Settings</h3>

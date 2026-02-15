@@ -102,6 +102,72 @@ const baseInput: ExplainerInput = {
   }
 };
 
+function makeHistoryContextForCache(ts = "2026-02-14T12:00:00.000Z") {
+  return {
+    v: 1,
+    tf: "15m",
+    ts_to: ts,
+    lastBars: {
+      n: 12,
+      ohlc: Array.from({ length: 12 }, (_, idx) => ({
+        t: 1_771_000_000 + idx,
+        o: 70000,
+        h: 70010,
+        l: 69990,
+        c: 70005,
+        v: 123 + idx
+      }))
+    },
+    win: {
+      w20: { ret: 1, vr: 0.8, atr: 0.4, tr: 60, mx: 1.2, dd: -0.7 },
+      w50: { ret: 2, vr: 0.7, atr: 0.5, tr: 62, mx: 2.1, dd: -1.2 },
+      w200: { ret: 4, vr: 0.6, atr: 0.6, tr: 58, mx: 3.8, dd: -2.3 },
+      w800: { ret: 7, vr: 0.5, atr: 0.7, tr: 52, mx: 7.1, dd: -3.4 }
+    },
+    reg: {
+      state: "transition",
+      conf: 56,
+      since: "2026-02-14T11:30:00.000Z",
+      why: ["trend_strong"]
+    },
+    lvl: {
+      pivD: { pp: null, r1: null, s1: null, r2: null, s2: null },
+      hiLo: { yH: null, yL: null, wH: null, wL: null },
+      do: { p: null }
+    },
+    ema: {
+      e5: 1,
+      e13: 1,
+      e50: 1,
+      e200: 1,
+      e800: 1,
+      stk: "bull",
+      d50: 0.2,
+      d200: 0.5,
+      d800: 1.1,
+      sl50: 0.01,
+      sl200: 0.005
+    },
+    vol: { z: 0.8, rv: 1.1, tr: 0.3 },
+    fvg: {
+      ob: 2,
+      os: 1,
+      nb: { m: 70000, d: 0.12, a: 4 },
+      ns: { m: 69800, d: -0.18, a: 6 }
+    },
+    ls: { le: null, nb: null, ns: null },
+    ev: Array.from({ length: 8 }, (_, idx) => ({
+      t: new Date(1_771_100_000_000 + idx * 60_000).toISOString(),
+      ty: `event_${idx}`,
+      i: 3
+    })),
+    bud: {
+      bytes: 2048,
+      trim: []
+    }
+  };
+}
+
 test("schema validation success", () => {
   const value = validateExplainerOutput(
     {
@@ -435,6 +501,109 @@ test("prompt preview trims ohlcvSeries and historyContext independently", async 
   assert.ok(snapshot.historyContext.lastBars.ohlc.length <= 30);
   assert.ok(snapshot.historyContext.ev.length <= 30);
   assert.equal(snapshot.historyContext.lastBars.ohlc.length > snapshot.ohlcvSeries.bars.length, true);
+});
+
+test("cache reuses response when market state is unchanged", async () => {
+  resetAiAnalyzerState();
+  let aiCalls = 0;
+  const rawResponse = JSON.stringify({
+    explanation: "Signal up with aligned momentum.",
+    tags: ["trend_up"],
+    keyDrivers: [{ name: "rsi", value: 57.2 }],
+    aiPrediction: { signal: "up", expectedMovePct: 1.1, confidence: 0.64 },
+    disclaimer: "grounded_features_only"
+  });
+
+  const inputA: ExplainerInput = {
+    ...baseInput,
+    tsCreated: "2026-02-09T10:10:00.000Z"
+  };
+  const inputB: ExplainerInput = {
+    ...baseInput,
+    tsCreated: "2026-02-09T10:12:00.000Z"
+  };
+
+  const first = await generatePredictionExplanation(inputA, {
+    callAiFn: async () => {
+      aiCalls += 1;
+      return rawResponse;
+    }
+  });
+  const second = await generatePredictionExplanation(inputB, {
+    callAiFn: async () => {
+      aiCalls += 1;
+      return rawResponse;
+    }
+  });
+
+  assert.equal(aiCalls, 1);
+  assert.deepEqual(first, second);
+});
+
+test("cache key ignores historyContext.bud.bytes but changes with history content", async () => {
+  const promptSettings = {
+    promptText: "",
+    indicatorKeys: ["smc", "history_context"] as const,
+    ohlcvBars: 100,
+    timeframe: null,
+    directionPreference: "either" as const,
+    confidenceTargetPct: 60,
+    source: "db" as const,
+    activePromptId: "prompt_smc",
+    activePromptName: "SMC",
+    selectedFrom: "active_prompt" as const,
+    matchedScopeType: null,
+    matchedOverrideId: null
+  };
+  const historyA = makeHistoryContextForCache();
+  const historyB = {
+    ...makeHistoryContextForCache(),
+    bud: {
+      bytes: 9999,
+      trim: []
+    }
+  };
+  const historyC = {
+    ...makeHistoryContextForCache(),
+    reg: {
+      ...makeHistoryContextForCache().reg,
+      state: "range"
+    }
+  };
+
+  const previewA = await buildPredictionExplainerPromptPreview({
+    ...baseInput,
+    featureSnapshot: { ...baseInput.featureSnapshot, historyContext: historyA }
+  }, { promptSettings });
+  const previewB = await buildPredictionExplainerPromptPreview({
+    ...baseInput,
+    featureSnapshot: { ...baseInput.featureSnapshot, historyContext: historyB }
+  }, { promptSettings });
+  const previewC = await buildPredictionExplainerPromptPreview({
+    ...baseInput,
+    featureSnapshot: { ...baseInput.featureSnapshot, historyContext: historyC }
+  }, { promptSettings });
+
+  assert.equal(previewA.cacheKey, previewB.cacheKey);
+  assert.notEqual(previewA.cacheKey, previewC.cacheKey);
+});
+
+test("grounding rejects dropped historyContext driver paths after budget trim", () => {
+  const trimmedFeatureSnapshot = {
+    ...baseInput.featureSnapshot
+  };
+
+  assert.throws(() =>
+    validateExplainerOutput(
+      {
+        explanation: "Invalid use of dropped field",
+        tags: ["range_bound"],
+        keyDrivers: [{ name: "historyContext.reg.state", value: "range" }],
+        disclaimer: "grounded_features_only"
+      },
+      trimmedFeatureSnapshot
+    )
+  );
 });
 
 test.afterEach(() => {

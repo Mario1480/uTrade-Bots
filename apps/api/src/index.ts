@@ -70,6 +70,10 @@ import {
   parseStoredAiTraceSettings
 } from "./ai/traceLog.js";
 import {
+  getAiPayloadBudgetAlertSnapshot,
+  getAiPayloadBudgetTelemetrySnapshot
+} from "./ai/payloadBudget.js";
+import {
   clearPaperMarketDataAccountId,
   clearPaperState,
   closePaperPosition,
@@ -153,10 +157,15 @@ import {
   evaluateSignificantChange,
   refreshIntervalMsForTimeframe,
   shouldMarkUnstableFlips,
-  shouldCallAiForRefresh,
   shouldThrottleRepeatedEvent,
   type PredictionStateLike
 } from "./predictions/refreshService.js";
+import {
+  applyAiQualityGateCallToState,
+  getAiQualityGateTelemetrySnapshot,
+  shouldInvokeAiExplain,
+  type AiQualityGateRollingState
+} from "./ai/qualityGate.js";
 import { shouldRefreshTF, type TriggerDebounceState } from "./predictions/refreshTriggers.js";
 import {
   applyNewsRiskToFeatureSnapshot,
@@ -652,7 +661,13 @@ type DashboardOverviewResponse = {
 };
 
 type DashboardAlertSeverity = "critical" | "warning" | "info";
-type DashboardAlertType = "API_DOWN" | "SYNC_FAIL" | "BOT_ERROR" | "MARGIN_WARN" | "CIRCUIT_BREAKER";
+type DashboardAlertType =
+  | "API_DOWN"
+  | "SYNC_FAIL"
+  | "BOT_ERROR"
+  | "MARGIN_WARN"
+  | "CIRCUIT_BREAKER"
+  | "AI_PAYLOAD_BUDGET";
 type DashboardAlert = {
   id: string;
   severity: DashboardAlertSeverity;
@@ -3826,6 +3841,72 @@ function readPredictionStateLike(row: any): PredictionStateLike {
   };
 }
 
+function readAiQualityGateState(row: any): AiQualityGateRollingState {
+  const aiCallsLastHourRaw = Number(row?.aiGateCallsLastHour);
+  const highPriorityCallsRaw = Number(row?.aiGateHighPriorityCallsLastHour);
+  return {
+    lastAiCallTs:
+      row?.lastAiExplainedAt instanceof Date ? row.lastAiExplainedAt : null,
+    lastExplainedPredictionHash:
+      typeof row?.aiGateLastExplainedPredictionHash === "string"
+      && row.aiGateLastExplainedPredictionHash.trim()
+        ? row.aiGateLastExplainedPredictionHash
+        : null,
+    lastExplainedHistoryHash:
+      typeof row?.aiGateLastExplainedHistoryHash === "string"
+      && row.aiGateLastExplainedHistoryHash.trim()
+        ? row.aiGateLastExplainedHistoryHash
+        : null,
+    lastAiDecisionHash:
+      typeof row?.aiGateLastDecisionHash === "string"
+      && row.aiGateLastDecisionHash.trim()
+        ? row.aiGateLastDecisionHash
+        : null,
+    windowStartedAt:
+      row?.aiGateWindowStartedAt instanceof Date ? row.aiGateWindowStartedAt : null,
+    aiCallsLastHour: Number.isFinite(aiCallsLastHourRaw) ? Math.max(0, Math.trunc(aiCallsLastHourRaw)) : 0,
+    highPriorityCallsLastHour:
+      Number.isFinite(highPriorityCallsRaw) ? Math.max(0, Math.trunc(highPriorityCallsRaw)) : 0
+  };
+}
+
+function readAiQualityGateConfig(config: IndicatorSettingsConfig): {
+  enabled: boolean;
+  minConfidenceForExplain: number;
+  minConfidenceForNeutralExplain: number;
+  confidenceJumpThreshold: number;
+  keyLevelNearPct: number;
+  recentEventBars: Record<PredictionTimeframe, number>;
+  highImportanceMin: number;
+  aiCooldownSec: Record<PredictionTimeframe, number>;
+  maxHighPriorityPerHour: number;
+} {
+  const gate = config.aiGating;
+  return {
+    enabled: Boolean(gate.enabled),
+    minConfidenceForExplain: Number(gate.minConfidenceForExplain),
+    minConfidenceForNeutralExplain: Number(gate.minConfidenceForNeutralExplain),
+    confidenceJumpThreshold: Number(gate.confidenceJumpThreshold),
+    keyLevelNearPct: Number(gate.keyLevelNearPct),
+    recentEventBars: {
+      "5m": Number(gate.recentEventBars["5m"]),
+      "15m": Number(gate.recentEventBars["15m"]),
+      "1h": Number(gate.recentEventBars["1h"]),
+      "4h": Number(gate.recentEventBars["4h"]),
+      "1d": Number(gate.recentEventBars["1d"])
+    },
+    highImportanceMin: Number(gate.highImportanceMin),
+    aiCooldownSec: {
+      "5m": Number(gate.aiCooldownSec["5m"]),
+      "15m": Number(gate.aiCooldownSec["15m"]),
+      "1h": Number(gate.aiCooldownSec["1h"]),
+      "4h": Number(gate.aiCooldownSec["4h"]),
+      "1d": Number(gate.aiCooldownSec["1d"])
+    },
+    maxHighPriorityPerHour: Number(gate.maxHighPriorityPerHour)
+  };
+}
+
 function predictionStateTemplateKey(parts: {
   userId: string;
   exchangeAccountId: string;
@@ -4853,17 +4934,57 @@ async function refreshPredictionStateForTemplate(params: {
       }
     });
 
-    const aiDecision = shouldCallAiForRefresh({
-      prev: prevState,
-      next: {
+    const nowMs = Date.now();
+    const gateState = prevStateRow
+      ? readAiQualityGateState(prevStateRow)
+      : {
+        lastAiCallTs: null,
+        lastExplainedPredictionHash: null,
+        lastExplainedHistoryHash: null,
+        lastAiDecisionHash: null,
+        windowStartedAt: null,
+        aiCallsLastHour: 0,
+        highPriorityCallsLastHour: 0
+      };
+    const budgetSnapshot = getAiPayloadBudgetAlertSnapshot();
+    const aiGateDecision = shouldInvokeAiExplain({
+      timeframe: template.timeframe,
+      nowMs,
+      prediction: {
         signal: inferred.prediction.signal,
         confidence: inferred.prediction.confidence,
-        tags: baselineTags
+        expectedMovePct: inferred.prediction.expectedMovePct,
+        tsUpdated: new Date(nowMs)
       },
-      significant: significantForAiGate,
-      nowMs: Date.now(),
-      cooldownMs: predictionRefreshRuntimeSettings.aiCooldownSec * 1000
+      featureSnapshot: inferred.featureSnapshot,
+      prevState: prevState
+        ? {
+          signal: prevState.signal,
+          confidence: prevState.confidence,
+          featureSnapshot: prevState.featureSnapshot
+        }
+        : null,
+      gateState,
+      config: readAiQualityGateConfig(indicatorSettingsResolution.config),
+      budgetPressureConsecutive: budgetSnapshot.highWaterConsecutive
     });
+    const aiDecision = {
+      shouldCallAi: aiGateDecision.allow,
+      reason: aiGateDecision.reasonCodes.join(","),
+      cooldownActive: aiGateDecision.reasonCodes.includes("cooldown_active")
+    };
+    let aiGateStateForPersist = aiGateDecision.state;
+    if (!aiDecision.shouldCallAi) {
+      console.info("[ai_quality_gate_blocked_refresh]", {
+        gate_allow: false,
+        gate_reasons: aiGateDecision.reasonCodes,
+        gate_priority: aiGateDecision.priority,
+        stateId: template.stateId,
+        symbol: template.symbol,
+        timeframe: template.timeframe,
+        ai_calls_saved: 1
+      });
+    }
 
     if (signalMode === "ai_only" && !aiDecision.shouldCallAi) {
       return {
@@ -4924,6 +5045,10 @@ async function refreshPredictionStateForTemplate(params: {
           requireSuccessfulAi: signalMode === "ai_only"
         });
         aiCalled = true;
+        aiGateStateForPersist = applyAiQualityGateCallToState(
+          aiGateStateForPersist,
+          aiGateDecision.priority
+        );
       } catch (error) {
         if (signalMode === "ai_only") {
           // eslint-disable-next-line no-console
@@ -4965,7 +5090,6 @@ async function refreshPredictionStateForTemplate(params: {
       };
     } else if (
       prevState &&
-      !significantForAiGate.significant &&
       typeof prevState.explanation === "string" &&
       prevState.explanation.trim()
     ) {
@@ -4982,14 +5106,17 @@ async function refreshPredictionStateForTemplate(params: {
         disclaimer: "grounded_features_only"
       };
     } else {
-      explainer = fallbackExplain({
-        symbol: template.symbol,
-        marketType: template.marketType,
-        timeframe: template.timeframe,
-        tsCreated,
-        prediction: inferred.prediction,
-        featureSnapshot: inferred.featureSnapshot
-      });
+      explainer = {
+        explanation: "No major state change; awaiting clearer signal.",
+        tags: [],
+        keyDrivers: [],
+        aiPrediction: {
+          signal: inferred.prediction.signal,
+          expectedMovePct: Number(clamp(Math.abs(inferred.prediction.expectedMovePct), 0, 25).toFixed(2)),
+          confidence: Number(clamp(inferred.prediction.confidence, 0, 1).toFixed(4))
+        },
+        disclaimer: "grounded_features_only"
+      };
     }
     inferred.featureSnapshot.aiPromptTemplateRequestedId = requestedPromptTemplateId;
     if (runtimePromptSettings) {
@@ -5089,9 +5216,13 @@ async function refreshPredictionStateForTemplate(params: {
         }
       }
     }
-    const modelVersion = `${template.modelVersionBase || "baseline-v1:auto-market-v1"} + ${
-      signalMode === "local_only" ? "local-explain-v1" : "openai-explain-v1"
-    }`;
+    const explainVersion =
+      signalMode === "local_only"
+        ? "local-explain-v1"
+        : aiCalled
+          ? "openai-explain-v1"
+          : "openai-explain-skip-v1";
+    const modelVersion = `${template.modelVersionBase || "baseline-v1:auto-market-v1"} + ${explainVersion}`;
     const tsUpdated = new Date(tsCreated);
     const tsPredictedFor = new Date(tsUpdated.getTime() + timeframeToIntervalMs(template.timeframe));
     const changeHash = buildPredictionChangeHash({
@@ -5125,6 +5256,18 @@ async function refreshPredictionStateForTemplate(params: {
       featuresSnapshot: inferred.featureSnapshot,
       modelVersion,
       lastAiExplainedAt: aiCalled ? tsUpdated : prevState?.lastAiExplainedAt ?? null,
+      aiGateLastDecisionHash: aiGateDecision.decisionHash,
+      aiGateLastReasonCodes: aiGateDecision.reasonCodes,
+      aiGateLastPriority: aiGateDecision.priority,
+      aiGateWindowStartedAt: aiGateStateForPersist.windowStartedAt,
+      aiGateCallsLastHour: aiGateStateForPersist.aiCallsLastHour,
+      aiGateHighPriorityCallsLastHour: aiGateStateForPersist.highPriorityCallsLastHour,
+      aiGateLastExplainedPredictionHash: aiCalled
+        ? aiGateDecision.predictionHash
+        : gateState.lastExplainedPredictionHash,
+      aiGateLastExplainedHistoryHash: aiCalled
+        ? aiGateDecision.historyHash
+        : gateState.lastExplainedHistoryHash,
       lastChangeHash: changeHash,
       lastChangeReason:
         significant.significant && changeReasons.length > 0
@@ -6977,7 +7120,9 @@ app.get("/admin/settings/ai-trace", requireAuth, async (_req, res) => {
     ...settings,
     updatedAt: row?.updatedAt ?? null,
     source: row ? "db" : "default",
-    defaults: DEFAULT_AI_TRACE_SETTINGS
+    defaults: DEFAULT_AI_TRACE_SETTINGS,
+    payloadBudget: getAiPayloadBudgetTelemetrySnapshot(),
+    qualityGate: getAiQualityGateTelemetrySnapshot()
   });
 });
 
@@ -9548,6 +9693,44 @@ app.get("/dashboard/alerts", requireAuth, async (req, res) => {
 
   for (const alert of circuitAlertByBot.values()) {
     alerts.push(alert);
+  }
+
+  const aiPayloadAlert = getAiPayloadBudgetAlertSnapshot();
+  if (aiPayloadAlert.highWaterAlert) {
+    alerts.push({
+      id: createDashboardAlertId([
+        "AI_PAYLOAD_BUDGET",
+        "high_water",
+        String(aiPayloadAlert.highWaterConsecutive),
+        String(aiPayloadAlert.lastHighWaterAt ?? "")
+      ]),
+      severity: "warning",
+      type: "AI_PAYLOAD_BUDGET",
+      title: "AI payload near budget limit",
+      message:
+        `AI prompt payload exceeded 90% budget for ${aiPayloadAlert.highWaterConsecutive}` +
+        ` consecutive calls (threshold ${aiPayloadAlert.highWaterConsecutiveThreshold}).`,
+      ts: aiPayloadAlert.lastHighWaterAt ?? new Date(now).toISOString(),
+      link: "/settings/ai-trace"
+    });
+  }
+  if (aiPayloadAlert.trimAlert) {
+    alerts.push({
+      id: createDashboardAlertId([
+        "AI_PAYLOAD_BUDGET",
+        "trim_rate",
+        String(aiPayloadAlert.trimCountLastHour),
+        String(aiPayloadAlert.trimAlertThresholdPerHour)
+      ]),
+      severity: "critical",
+      type: "AI_PAYLOAD_BUDGET",
+      title: "AI payload trimming rate high",
+      message:
+        `Payload trimming happened ${aiPayloadAlert.trimCountLastHour} times in the last hour` +
+        ` (threshold ${aiPayloadAlert.trimAlertThresholdPerHour}/h).`,
+      ts: new Date(now).toISOString(),
+      link: "/settings/ai-trace"
+    });
   }
 
   alerts.sort((a, b) => {

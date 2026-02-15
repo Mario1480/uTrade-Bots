@@ -1,5 +1,8 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { readFileSync } from "node:fs";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 import type { Candle } from "../market/timeframe.js";
 import {
   HISTORY_CONTEXT_HARD_CAP_BYTES,
@@ -9,6 +12,15 @@ import {
   trimHistoryContextForAi,
   type HistoryContextPack
 } from "./historyContext.js";
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = dirname(__filename);
+
+function readFixture(name: "trend_up" | "range" | "trend_down"): Candle[] {
+  const path = join(__dirname, "fixtures", "history-context", `${name}.json`);
+  const raw = readFileSync(path, "utf8");
+  return JSON.parse(raw) as Candle[];
+}
 
 function makeCandles(params: {
   count: number;
@@ -121,6 +133,14 @@ function assertNoNaN(value: unknown): void {
   for (const nested of Object.values(value as Record<string, unknown>)) {
     assertNoNaN(nested);
   }
+}
+
+function assertApprox(actual: number | null, expected: number | null, tolerance = 0.0002): void {
+  if (actual === null || expected === null) {
+    assert.equal(actual, expected);
+    return;
+  }
+  assert.equal(Math.abs(actual - expected) <= tolerance, true);
 }
 
 test("buildHistoryContext creates v1 compact schema deterministically", () => {
@@ -244,6 +264,102 @@ test("trimHistoryContextForAi enforces hard limits and budget trim flags", () =>
   assert.ok(trimmed.lastBars.n <= 30);
   assert.ok(trimmed.bud.trim.length > 0);
   assertNoNaN(trimmed);
+});
+
+test("golden fixtures produce stable history context snapshots within tolerance", () => {
+  const expected = {
+    trend_up: {
+      state: "range",
+      stk: "bull",
+      conf: 15.23,
+      d50: 0.2786,
+      d200: 1.1934,
+      sl50: 0.0114,
+      sl200: 0.012,
+      w20ret: 0.2022,
+      w50ret: 0.6051,
+      w200ret: 2.4235,
+      w800ret: 10.6748
+    },
+    range: {
+      state: "range",
+      stk: "none",
+      conf: 5.51,
+      d50: -0.0266,
+      d200: -0.0282,
+      sl50: -0.0011,
+      sl200: -0.0003,
+      w20ret: -0.0612,
+      w50ret: -0.0005,
+      w200ret: -0.0629,
+      w800ret: 0.0265
+    },
+    trend_down: {
+      state: "range",
+      stk: "bear",
+      conf: 15.3,
+      d50: -0.3121,
+      d200: -1.2043,
+      sl50: -0.0127,
+      sl200: -0.0121,
+      w20ret: -0.2806,
+      w50ret: -0.5999,
+      w200ret: -2.3965,
+      w800ret: -8.7876
+    }
+  } as const;
+
+  for (const fixtureName of ["trend_up", "range", "trend_down"] as const) {
+    const candles = readFixture(fixtureName);
+    const ctx = buildHistoryContext({
+      candles,
+      timeframe: "5m",
+      indicators: { adx: { adx_14: fixtureName === "range" ? 13 : 28 } } as any,
+      advancedIndicators: null
+    });
+    const exp = expected[fixtureName];
+
+    assert.equal(ctx.reg.state, exp.state);
+    assert.equal(ctx.ema.stk, exp.stk);
+    assertApprox(ctx.reg.conf, exp.conf, 0.01);
+    assertApprox(ctx.ema.d50, exp.d50, 0.0003);
+    assertApprox(ctx.ema.d200, exp.d200, 0.0003);
+    assertApprox(ctx.ema.sl50, exp.sl50, 0.0003);
+    assertApprox(ctx.ema.sl200, exp.sl200, 0.0003);
+    assertApprox(ctx.win.w20.ret, exp.w20ret, 0.0003);
+    assertApprox(ctx.win.w50.ret, exp.w50ret, 0.0003);
+    assertApprox(ctx.win.w200.ret, exp.w200ret, 0.0003);
+    assertApprox(ctx.win.w800.ret, exp.w800ret, 0.0003);
+
+    assert.equal(ctx.lastBars.n <= 30, true);
+    assert.equal(ctx.ev.length <= 30, true);
+    assert.equal(ctx.bud.bytes <= HISTORY_CONTEXT_HARD_CAP_BYTES, true);
+  }
+});
+
+test("fixture contexts remain deterministic and under budget caps", () => {
+  for (const fixtureName of ["trend_up", "range", "trend_down"] as const) {
+    const candles = readFixture(fixtureName);
+    const one = buildHistoryContext({
+      candles,
+      timeframe: "5m",
+      indicators: null,
+      advancedIndicators: null,
+      options: { maxEvents: 30, lastBars: 30, maxBytes: 8192 }
+    });
+    const two = buildHistoryContext({
+      candles,
+      timeframe: "5m",
+      indicators: null,
+      advancedIndicators: null,
+      options: { maxEvents: 30, lastBars: 30, maxBytes: 8192 }
+    });
+
+    assert.deepEqual(one, two);
+    assert.equal(one.ev.length <= 30, true);
+    assert.equal(one.lastBars.n <= 30, true);
+    assert.equal(one.bud.bytes <= 8192, true);
+  }
 });
 
 test("buildAndAttachHistoryContext attaches + upserts and skips write on unchanged hash", async () => {

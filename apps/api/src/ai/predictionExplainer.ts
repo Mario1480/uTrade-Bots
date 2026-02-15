@@ -14,6 +14,12 @@ import {
   trimHistoryContextForAi,
   type HistoryContextPack
 } from "./historyContext.js";
+import {
+  applyAiPayloadBudget,
+  recordAiExplainerCacheTelemetry,
+  recordAiPayloadBudgetTelemetry,
+  type AiPayloadBudgetMetrics
+} from "./payloadBudget.js";
 
 export type ExplainerInput = {
   symbol: string;
@@ -89,6 +95,7 @@ export type ExplainerPromptPreview = {
   runtimeSettings: AiPromptRuntimeSettings;
   systemMessage: string;
   userPayload: Record<string, unknown>;
+  payloadBudgetMetrics: AiPayloadBudgetMetrics;
   promptInput: ExplainerInput;
   cacheKey: string;
 };
@@ -135,6 +142,36 @@ const EXPLAINER_HISTORY_CONTEXT_LAST_BARS = normalizeHistoryContextLastBars(
 );
 const EXPLAINER_HISTORY_CONTEXT_MAX_BYTES = normalizeHistoryContextMaxBytes(
   process.env.AI_EXPLAINER_HISTORY_CONTEXT_MAX_BYTES
+);
+const EXPLAINER_CACHE_TTL_DEFAULT_SEC = readEnvNumber(
+  process.env.AI_CACHE_TTL_SEC,
+  300,
+  60
+);
+const EXPLAINER_CACHE_TTL_5M_SEC = readEnvNumber(
+  process.env.AI_EXPLAINER_CACHE_TTL_5M_SEC,
+  600,
+  60
+);
+const EXPLAINER_CACHE_TTL_15M_SEC = readEnvNumber(
+  process.env.AI_EXPLAINER_CACHE_TTL_15M_SEC,
+  EXPLAINER_CACHE_TTL_DEFAULT_SEC,
+  60
+);
+const EXPLAINER_CACHE_TTL_1H_SEC = readEnvNumber(
+  process.env.AI_EXPLAINER_CACHE_TTL_1H_SEC,
+  7200,
+  60
+);
+const EXPLAINER_CACHE_TTL_4H_SEC = readEnvNumber(
+  process.env.AI_EXPLAINER_CACHE_TTL_4H_SEC,
+  EXPLAINER_CACHE_TTL_DEFAULT_SEC,
+  60
+);
+const EXPLAINER_CACHE_TTL_1D_SEC = readEnvNumber(
+  process.env.AI_EXPLAINER_CACHE_TTL_1D_SEC,
+  EXPLAINER_CACHE_TTL_DEFAULT_SEC,
+  60
 );
 
 function withTraceMetaPayload(
@@ -672,9 +709,77 @@ export function fallbackExplain(input: ExplainerInput): ExplainerOutput {
   };
 }
 
-export function buildPredictionExplainerCacheKey(input: ExplainerInput): string {
-  const featureHash = hashStableObject(input.featureSnapshot ?? {});
-  return `predExplain:${input.symbol}:${input.marketType}:${input.timeframe}:${input.tsCreated}:${featureHash}`;
+function normalizeConfidenceBucket(value: number): number {
+  const normalized = boundedConfidence(value) * 100;
+  return Math.max(0, Math.min(100, Math.floor(normalized / 10) * 10));
+}
+
+function resolveExplainerCacheTtlSec(timeframe: ExplainerInput["timeframe"]): number {
+  if (timeframe === "5m") return EXPLAINER_CACHE_TTL_5M_SEC;
+  if (timeframe === "15m") return EXPLAINER_CACHE_TTL_15M_SEC;
+  if (timeframe === "1h") return EXPLAINER_CACHE_TTL_1H_SEC;
+  if (timeframe === "4h") return EXPLAINER_CACHE_TTL_4H_SEC;
+  if (timeframe === "1d") return EXPLAINER_CACHE_TTL_1D_SEC;
+  return EXPLAINER_CACHE_TTL_DEFAULT_SEC;
+}
+
+function buildPromptVersion(settings: AiPromptRuntimeSettings): string {
+  const revision = hashStableObject({
+    promptText: settings.promptText,
+    indicatorKeys: settings.indicatorKeys,
+    ohlcvBars: settings.ohlcvBars,
+    timeframe: settings.timeframe,
+    directionPreference: settings.directionPreference,
+    confidenceTargetPct: settings.confidenceTargetPct,
+    activePromptId: settings.activePromptId,
+    activePromptName: settings.activePromptName,
+    selectedFrom: settings.selectedFrom,
+    matchedScopeType: settings.matchedScopeType,
+    matchedOverrideId: settings.matchedOverrideId
+  }).slice(0, 16);
+  const promptId = settings.activePromptId ?? "default";
+  return `${promptId}:${revision}`;
+}
+
+function buildHistoryContextHash(snapshot: Record<string, unknown>): string {
+  const historyRaw = asObject(snapshot.historyContext);
+  if (!historyRaw) return "none";
+  const copy = JSON.parse(JSON.stringify(historyRaw)) as Record<string, unknown>;
+  const bud = asObject(copy.bud);
+  if (bud) {
+    bud.bytes = 0;
+  }
+  return hashStableObject(copy);
+}
+
+function buildFeatureSnapshotHash(snapshot: Record<string, unknown>): string {
+  const copy = { ...snapshot };
+  delete (copy as Record<string, unknown>).historyContext;
+  return hashStableObject(copy);
+}
+
+export function buildPredictionExplainerCacheKey(params: {
+  model: string;
+  promptVersion: string;
+  symbol: string;
+  timeframe: string;
+  signal: "up" | "down" | "neutral";
+  confidence: number;
+  featureSnapshotHash: string;
+  historyContextHash: string;
+}): string {
+  const confidenceBucket = normalizeConfidenceBucket(params.confidence);
+  return [
+    "explain",
+    params.model,
+    params.promptVersion,
+    params.symbol,
+    params.timeframe,
+    params.signal,
+    String(confidenceBucket),
+    params.featureSnapshotHash,
+    params.historyContextHash
+  ].join(":");
 }
 
 function buildPromptPayload(
@@ -759,32 +864,28 @@ export async function buildPredictionExplainerPromptPreview(
     ...input,
     featureSnapshot: runtimeFeatureSnapshotWithHistory
   };
-  const userPayload = buildPromptPayload(promptInput, runtimeSettings);
+  const rawPayload = buildPromptPayload(promptInput, runtimeSettings);
+  const payloadBudget = applyAiPayloadBudget(rawPayload);
+  const userPayload = payloadBudget.payload;
   const systemMessage = buildSystemMessage(runtimeSettings.promptText);
-  const historyContextHash = hashStableObject(
-    asObject(promptInput.featureSnapshot)?.historyContext ?? null
-  );
-  const historyContextBytes = toNumber(
-    getByPath(promptInput.featureSnapshot ?? {}, "historyContext.bud.bytes")
-  );
-  const cacheKey =
-    `${buildPredictionExplainerCacheKey(promptInput)}:${hashStableObject({
-      promptText: runtimeSettings.promptText,
-      indicatorKeys: runtimeSettings.indicatorKeys,
-      ohlcvBars: runtimeSettings.ohlcvBars,
-      historyContextHash,
-      historyContextBytes,
-      activePromptId: runtimeSettings.activePromptId,
-      activePromptName: runtimeSettings.activePromptName,
-      selectedFrom: runtimeSettings.selectedFrom,
-      matchedOverrideId: runtimeSettings.matchedOverrideId
-    })}`;
+  const featureSnapshot = asObject(userPayload.featureSnapshot) ?? {};
+  const cacheKey = buildPredictionExplainerCacheKey({
+    model: getAiModel(),
+    promptVersion: buildPromptVersion(runtimeSettings),
+    symbol: promptInput.symbol,
+    timeframe: promptInput.timeframe,
+    signal: promptInput.prediction.signal,
+    confidence: promptInput.prediction.confidence,
+    featureSnapshotHash: buildFeatureSnapshotHash(featureSnapshot),
+    historyContextHash: buildHistoryContextHash(featureSnapshot)
+  });
 
   return {
     scopeContext,
     runtimeSettings,
     systemMessage,
     userPayload,
+    payloadBudgetMetrics: payloadBudget.metrics,
     promptInput,
     cacheKey
   };
@@ -795,7 +896,14 @@ export async function generatePredictionExplanation(
   deps: GenerateDeps = {}
 ): Promise<ExplainerOutput> {
   const preview = await buildPredictionExplainerPromptPreview(input, deps);
-  const { promptInput, runtimeSettings, systemMessage, userPayload, cacheKey } = preview;
+  const {
+    promptInput,
+    runtimeSettings,
+    systemMessage,
+    userPayload,
+    payloadBudgetMetrics,
+    cacheKey
+  } = preview;
   const fallback = () => fallbackExplain(promptInput);
   const aiModel = getAiModel();
   const callAiFn = deps.callAiFn ?? callAi;
@@ -811,10 +919,42 @@ export async function generatePredictionExplanation(
     systemMessage,
     userPayload
   } as const;
+  if (payloadBudgetMetrics.overBudget) {
+    const metrics: AiPayloadBudgetMetrics = {
+      ...payloadBudgetMetrics,
+      toolCallsUsed: 0
+    };
+    recordAiPayloadBudgetTelemetry(metrics);
+    await recordAiTraceLog({
+      ...traceBase,
+      userPayload: withTraceMetaPayload(userPayload, false, 0),
+      rawResponse: null,
+      parsedResponse: null,
+      success: false,
+      error: "payload_budget_exceeded",
+      fallbackUsed: true,
+      cacheHit: false,
+      rateLimited: false,
+      latencyMs: 0
+    });
+    if (deps.requireSuccessfulAi) {
+      throw new Error("ai_payload_budget_exceeded");
+    }
+    logger.warn("ai_payload_budget_exceeded_fallback", {
+      ai_payload_budget_exceeded: true,
+      ai_model: aiModel,
+      ai_prompt_bytes: payloadBudgetMetrics.bytes,
+      max_payload_bytes: payloadBudgetMetrics.maxPayloadBytes,
+      trim_flags: payloadBudgetMetrics.trimFlags
+    });
+    return fallback();
+  }
 
+  let aiAttemptsUsed = 0;
   const result = await analyzeWithAiGuards({
     cacheKey,
     aiModel,
+    ttlSec: resolveExplainerCacheTtlSec(promptInput.timeframe),
     compute: async () => {
       const startedAt = Date.now();
       let raw: string | null = null;
@@ -824,6 +964,7 @@ export async function generatePredictionExplanation(
         let validated: ExplainerOutput | null = null;
         for (let attempt = 1; attempt <= 2; attempt += 1) {
           attemptsUsed = attempt;
+          aiAttemptsUsed = attempt;
           raw = await callAiFn(JSON.stringify(userPayload), {
             systemMessage,
             model: aiModel,
@@ -895,6 +1036,12 @@ export async function generatePredictionExplanation(
     },
     fallback
   });
+  const toolCallsUsed = result.cacheHit || aiAttemptsUsed === 0 ? 0 : aiAttemptsUsed;
+  recordAiPayloadBudgetTelemetry({
+    ...payloadBudgetMetrics,
+    toolCallsUsed
+  });
+  recordAiExplainerCacheTelemetry(result.cacheHit);
 
   if (result.fallbackUsed) {
     if (deps.requireSuccessfulAi) {

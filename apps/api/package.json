@@ -6,7 +6,7 @@
     "dev": "tsx watch src/index.ts",
     "build": "tsc -p tsconfig.json",
     "typecheck": "tsc -p tsconfig.json --noEmit",
-    "test:ai": "tsx --test src/ai/predictionExplainer.test.ts",
+    "test:ai": "tsx --test src/ai/qualityGate.test.ts src/ai/payloadBudget.test.ts src/ai/historyContext.test.ts src/ai/promptSettings.test.ts src/ai/predictionExplainer.test.ts",
     "test:predictions-detail": "tsx --test src/dto/predictions.dto.test.ts src/controllers/predictionsController.test.ts",
     "test:predictions-refresh": "tsx --test src/predictions/refreshTriggers.test.ts src/predictions/refreshService.test.ts",
     "test:predictions-evaluator": "tsx --test src/jobs/predictionEvaluatorJob.test.ts",

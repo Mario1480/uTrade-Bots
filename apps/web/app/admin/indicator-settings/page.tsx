@@ -43,8 +43,15 @@ type IndicatorSettingsConfig = {
     maxActiveZones: number;
   };
   aiGating: {
+    enabled: boolean;
     minConfidenceForExplain: number;
-    minChangeScore: number;
+    minConfidenceForNeutralExplain: number;
+    confidenceJumpThreshold: number;
+    keyLevelNearPct: number;
+    recentEventBars: { "5m": number; "15m": number; "1h": number; "4h": number; "1d": number };
+    highImportanceMin: number;
+    aiCooldownSec: { "5m": number; "15m": number; "1h": number; "4h": number; "1d": number };
+    maxHighPriorityPerHour: number;
   };
 };
 
@@ -100,7 +107,13 @@ type AdvancedIndicatorsKey = Exclude<
   keyof IndicatorSettingsConfig["advancedIndicators"],
   "sessionsUseDST" | "smcFvgAutoThreshold"
 >;
-type AiGatingKey = keyof IndicatorSettingsConfig["aiGating"];
+type AiGatingNumberKey =
+  | "minConfidenceForExplain"
+  | "minConfidenceForNeutralExplain"
+  | "confidenceJumpThreshold"
+  | "keyLevelNearPct"
+  | "highImportanceMin"
+  | "maxHighPriorityPerHour";
 type LiquiditySweepsNumberKey = Exclude<
   keyof IndicatorSettingsConfig["liquiditySweeps"],
   "mode" | "extend"
@@ -153,8 +166,15 @@ const FALLBACK_DEFAULTS: IndicatorSettingsConfig = {
     maxActiveZones: 20
   },
   aiGating: {
-    minConfidenceForExplain: 55,
-    minChangeScore: 0.2
+    enabled: true,
+    minConfidenceForExplain: 70,
+    minConfidenceForNeutralExplain: 60,
+    confidenceJumpThreshold: 10,
+    keyLevelNearPct: 0.5,
+    recentEventBars: { "5m": 6, "15m": 4, "1h": 2, "4h": 2, "1d": 2 },
+    highImportanceMin: 4,
+    aiCooldownSec: { "5m": 120, "15m": 240, "1h": 900, "4h": 1800, "1d": 3600 },
+    maxHighPriorityPerHour: 12
   }
 };
 
@@ -390,8 +410,15 @@ const INDICATOR_CATALOG_GROUPS: IndicatorCatalogGroup[] = [
         live: true,
         outputs: ["gating only (no featureSnapshot field)"],
         params: [
+          "config.aiGating.enabled",
           "config.aiGating.minConfidenceForExplain",
-          "config.aiGating.minChangeScore"
+          "config.aiGating.minConfidenceForNeutralExplain",
+          "config.aiGating.confidenceJumpThreshold",
+          "config.aiGating.keyLevelNearPct",
+          "config.aiGating.recentEventBars.*",
+          "config.aiGating.highImportanceMin",
+          "config.aiGating.aiCooldownSec.*",
+          "config.aiGating.maxHighPriorityPerHour"
         ]
       },
       {
@@ -573,10 +600,46 @@ export default function AdminIndicatorSettingsPage() {
     }));
   }
 
-  function setAiGating(field: AiGatingKey, value: number) {
+  function setAiGatingNumber(field: AiGatingNumberKey, value: number) {
     setConfig((prev) => ({
       ...prev,
       aiGating: { ...prev.aiGating, [field]: value }
+    }));
+  }
+
+  function setAiGatingEnabled(enabled: boolean) {
+    setConfig((prev) => ({
+      ...prev,
+      aiGating: {
+        ...prev.aiGating,
+        enabled
+      }
+    }));
+  }
+
+  function setAiGatingRecentEventBars(tf: Timeframe, value: number) {
+    setConfig((prev) => ({
+      ...prev,
+      aiGating: {
+        ...prev.aiGating,
+        recentEventBars: {
+          ...prev.aiGating.recentEventBars,
+          [tf]: value
+        }
+      }
+    }));
+  }
+
+  function setAiGatingCooldownSec(tf: Timeframe, value: number) {
+    setConfig((prev) => ({
+      ...prev,
+      aiGating: {
+        ...prev.aiGating,
+        aiCooldownSec: {
+          ...prev.aiGating.aiCooldownSec,
+          [tf]: value
+        }
+      }
     }));
   }
 
@@ -1003,11 +1066,21 @@ export default function AdminIndicatorSettingsPage() {
 
               <div className={`settingsAccordionItem ${openIndicatorSections.aiGating ? "settingsAccordionItemOpen" : ""}`}>
                 <button type="button" className="settingsAccordionTrigger" onClick={() => toggleIndicatorSection("aiGating")} aria-expanded={openIndicatorSections.aiGating}>
-                  <span>AI Gating</span>
+                  <span>AI Quality Gate</span>
                   <span className={`settingsAccordionChevron ${openIndicatorSections.aiGating ? "settingsAccordionChevronOpen" : ""}`}>▾</span>
                 </button>
                 {openIndicatorSections.aiGating ? (
                   <div className="settingsAccordionBody">
+                    <div className="indicatorInlineChecks">
+                      <label className="inlineCheck">
+                        <input
+                          type="checkbox"
+                          checked={config.aiGating.enabled}
+                          onChange={(e) => setAiGatingEnabled(e.target.checked)}
+                        />
+                        Enable AI Quality Gate
+                      </label>
+                    </div>
                     <div className="indicatorConfigGrid">
                       <label className="settingsField">
                         <span className="mutedTiny">Min confidence for explain (%)</span>
@@ -1019,22 +1092,102 @@ export default function AdminIndicatorSettingsPage() {
                           step={0.1}
                           value={config.aiGating.minConfidenceForExplain}
                           onChange={(e) =>
-                            setAiGating("minConfidenceForExplain", parseNumber(e.target.value))
+                            setAiGatingNumber("minConfidenceForExplain", parseNumber(e.target.value))
                           }
                         />
                       </label>
                       <label className="settingsField">
-                        <span className="mutedTiny">Min change score (0..1)</span>
+                        <span className="mutedTiny">Min confidence for neutral explain (%)</span>
                         <input
                           className="input"
                           type="number"
                           min={0}
-                          max={1}
-                          step={0.01}
-                          value={config.aiGating.minChangeScore}
-                          onChange={(e) => setAiGating("minChangeScore", parseNumber(e.target.value))}
+                          max={100}
+                          step={0.1}
+                          value={config.aiGating.minConfidenceForNeutralExplain}
+                          onChange={(e) =>
+                            setAiGatingNumber("minConfidenceForNeutralExplain", parseNumber(e.target.value))
+                          }
                         />
                       </label>
+                      <label className="settingsField">
+                        <span className="mutedTiny">Confidence jump threshold (%)</span>
+                        <input
+                          className="input"
+                          type="number"
+                          min={0}
+                          max={100}
+                          step={0.1}
+                          value={config.aiGating.confidenceJumpThreshold}
+                          onChange={(e) =>
+                            setAiGatingNumber("confidenceJumpThreshold", parseNumber(e.target.value))
+                          }
+                        />
+                      </label>
+                      <label className="settingsField">
+                        <span className="mutedTiny">Near key level (%)</span>
+                        <input
+                          className="input"
+                          type="number"
+                          min={0.05}
+                          max={5}
+                          step={0.01}
+                          value={config.aiGating.keyLevelNearPct}
+                          onChange={(e) =>
+                            setAiGatingNumber("keyLevelNearPct", parseNumber(e.target.value))
+                          }
+                        />
+                      </label>
+                      <label className="settingsField">
+                        <span className="mutedTiny">High importance min (1..5)</span>
+                        <input
+                          className="input"
+                          type="number"
+                          min={1}
+                          max={5}
+                          step={1}
+                          value={config.aiGating.highImportanceMin}
+                          onChange={(e) =>
+                            setAiGatingNumber("highImportanceMin", parseNumber(e.target.value))
+                          }
+                        />
+                      </label>
+                      <label className="settingsField">
+                        <span className="mutedTiny">Max high-priority calls / hour</span>
+                        <input
+                          className="input"
+                          type="number"
+                          min={1}
+                          max={200}
+                          step={1}
+                          value={config.aiGating.maxHighPriorityPerHour}
+                          onChange={(e) =>
+                            setAiGatingNumber("maxHighPriorityPerHour", parseNumber(e.target.value))
+                          }
+                        />
+                      </label>
+                    </div>
+
+                    <div className="settingsMutedText indicatorConfigHint" style={{ marginTop: 8 }}>
+                      Recent event bars per timeframe
+                    </div>
+                    <div className="indicatorConfigGrid">
+                      <label className="settingsField"><span className="mutedTiny">5m</span><input className="input" type="number" min={1} max={100} step={1} value={config.aiGating.recentEventBars["5m"]} onChange={(e) => setAiGatingRecentEventBars("5m", parseNumber(e.target.value))} /></label>
+                      <label className="settingsField"><span className="mutedTiny">15m</span><input className="input" type="number" min={1} max={100} step={1} value={config.aiGating.recentEventBars["15m"]} onChange={(e) => setAiGatingRecentEventBars("15m", parseNumber(e.target.value))} /></label>
+                      <label className="settingsField"><span className="mutedTiny">1h</span><input className="input" type="number" min={1} max={100} step={1} value={config.aiGating.recentEventBars["1h"]} onChange={(e) => setAiGatingRecentEventBars("1h", parseNumber(e.target.value))} /></label>
+                      <label className="settingsField"><span className="mutedTiny">4h</span><input className="input" type="number" min={1} max={100} step={1} value={config.aiGating.recentEventBars["4h"]} onChange={(e) => setAiGatingRecentEventBars("4h", parseNumber(e.target.value))} /></label>
+                      <label className="settingsField"><span className="mutedTiny">1d</span><input className="input" type="number" min={1} max={100} step={1} value={config.aiGating.recentEventBars["1d"]} onChange={(e) => setAiGatingRecentEventBars("1d", parseNumber(e.target.value))} /></label>
+                    </div>
+
+                    <div className="settingsMutedText indicatorConfigHint" style={{ marginTop: 8 }}>
+                      AI cooldown seconds per timeframe
+                    </div>
+                    <div className="indicatorConfigGrid">
+                      <label className="settingsField"><span className="mutedTiny">5m</span><input className="input" type="number" min={0} max={86400} step={1} value={config.aiGating.aiCooldownSec["5m"]} onChange={(e) => setAiGatingCooldownSec("5m", parseNumber(e.target.value))} /></label>
+                      <label className="settingsField"><span className="mutedTiny">15m</span><input className="input" type="number" min={0} max={86400} step={1} value={config.aiGating.aiCooldownSec["15m"]} onChange={(e) => setAiGatingCooldownSec("15m", parseNumber(e.target.value))} /></label>
+                      <label className="settingsField"><span className="mutedTiny">1h</span><input className="input" type="number" min={0} max={86400} step={1} value={config.aiGating.aiCooldownSec["1h"]} onChange={(e) => setAiGatingCooldownSec("1h", parseNumber(e.target.value))} /></label>
+                      <label className="settingsField"><span className="mutedTiny">4h</span><input className="input" type="number" min={0} max={86400} step={1} value={config.aiGating.aiCooldownSec["4h"]} onChange={(e) => setAiGatingCooldownSec("4h", parseNumber(e.target.value))} /></label>
+                      <label className="settingsField"><span className="mutedTiny">1d</span><input className="input" type="number" min={0} max={86400} step={1} value={config.aiGating.aiCooldownSec["1d"]} onChange={(e) => setAiGatingCooldownSec("1d", parseNumber(e.target.value))} /></label>
                     </div>
                   </div>
                 ) : null}

@@ -5,7 +5,13 @@ import Link from "next/link";
 export type DashboardAlert = {
   id: string;
   severity: "critical" | "warning" | "info";
-  type: "API_DOWN" | "SYNC_FAIL" | "BOT_ERROR" | "MARGIN_WARN" | "CIRCUIT_BREAKER";
+  type:
+    | "API_DOWN"
+    | "SYNC_FAIL"
+    | "BOT_ERROR"
+    | "MARGIN_WARN"
+    | "CIRCUIT_BREAKER"
+    | "AI_PAYLOAD_BUDGET";
   title: string;
   message?: string;
   exchange?: string;

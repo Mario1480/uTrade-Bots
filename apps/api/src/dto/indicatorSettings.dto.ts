@@ -51,8 +51,27 @@ const liquiditySweepsSchema = z.object({
 });
 
 const aiGatingSchema = z.object({
-  minConfidenceForExplain: z.number().min(0).max(100).default(55),
-  minChangeScore: z.number().min(0).max(1).default(0.2)
+  enabled: z.boolean().default(true),
+  minConfidenceForExplain: z.number().min(0).max(100).default(70),
+  minConfidenceForNeutralExplain: z.number().min(0).max(100).default(60),
+  confidenceJumpThreshold: z.number().min(0).max(100).default(10),
+  keyLevelNearPct: z.number().min(0.05).max(5).default(0.5),
+  recentEventBars: z.object({
+    "5m": positiveInt(1, 100).default(6),
+    "15m": positiveInt(1, 100).default(4),
+    "1h": positiveInt(1, 100).default(2),
+    "4h": positiveInt(1, 100).default(2),
+    "1d": positiveInt(1, 100).default(2)
+  }),
+  highImportanceMin: positiveInt(1, 5).default(4),
+  aiCooldownSec: z.object({
+    "5m": positiveInt(0, 86_400).default(120),
+    "15m": positiveInt(0, 86_400).default(240),
+    "1h": positiveInt(0, 86_400).default(900),
+    "4h": positiveInt(0, 86_400).default(1800),
+    "1d": positiveInt(0, 86_400).default(3600)
+  }),
+  maxHighPriorityPerHour: positiveInt(1, 200).default(12)
 });
 
 export const indicatorSettingsConfigSchema = z.object({
@@ -186,8 +205,27 @@ export const DEFAULT_INDICATOR_SETTINGS: IndicatorSettingsConfig = {
     maxActiveZones: 20
   },
   aiGating: {
-    minConfidenceForExplain: 55,
-    minChangeScore: 0.2
+    enabled: true,
+    minConfidenceForExplain: 70,
+    minConfidenceForNeutralExplain: 60,
+    confidenceJumpThreshold: 10,
+    keyLevelNearPct: 0.5,
+    recentEventBars: {
+      "5m": 6,
+      "15m": 4,
+      "1h": 2,
+      "4h": 2,
+      "1d": 2
+    },
+    highImportanceMin: 4,
+    aiCooldownSec: {
+      "5m": 120,
+      "15m": 240,
+      "1h": 900,
+      "4h": 1800,
+      "1d": 3600
+    },
+    maxHighPriorityPerHour: 12
   }
 };
 
@@ -209,6 +247,45 @@ function normalizeLegacyAdvancedIndicatorsKey(value: unknown): unknown {
       enabledPacks.advancedIndicators = enabledPacks.tradersReality;
     }
     record.enabledPacks = enabledPacks;
+  }
+
+  if (record.aiGating && typeof record.aiGating === "object" && !Array.isArray(record.aiGating)) {
+    const aiGating = { ...(record.aiGating as Record<string, unknown>) };
+    if (aiGating.enabled === undefined) aiGating.enabled = true;
+    if (aiGating.minConfidenceForNeutralExplain === undefined) {
+      aiGating.minConfidenceForNeutralExplain = 60;
+    }
+    if (aiGating.confidenceJumpThreshold === undefined) {
+      aiGating.confidenceJumpThreshold = 10;
+    }
+    if (aiGating.keyLevelNearPct === undefined) {
+      aiGating.keyLevelNearPct = 0.5;
+    }
+    if (!aiGating.recentEventBars || typeof aiGating.recentEventBars !== "object") {
+      aiGating.recentEventBars = {
+        "5m": 6,
+        "15m": 4,
+        "1h": 2,
+        "4h": 2,
+        "1d": 2
+      };
+    }
+    if (aiGating.highImportanceMin === undefined) {
+      aiGating.highImportanceMin = 4;
+    }
+    if (!aiGating.aiCooldownSec || typeof aiGating.aiCooldownSec !== "object") {
+      aiGating.aiCooldownSec = {
+        "5m": 120,
+        "15m": 240,
+        "1h": 900,
+        "4h": 1800,
+        "1d": 3600
+      };
+    }
+    if (aiGating.maxHighPriorityPerHour === undefined) {
+      aiGating.maxHighPriorityPerHour = 12;
+    }
+    record.aiGating = aiGating;
   }
 
   return record;
@@ -282,9 +359,43 @@ export function mergeIndicatorSettings(
         patch.liquiditySweeps?.maxActiveZones ?? base.liquiditySweeps.maxActiveZones
     },
     aiGating: {
+      enabled: patch.aiGating?.enabled ?? base.aiGating.enabled,
       minConfidenceForExplain:
         patch.aiGating?.minConfidenceForExplain ?? base.aiGating.minConfidenceForExplain,
-      minChangeScore: patch.aiGating?.minChangeScore ?? base.aiGating.minChangeScore
+      minConfidenceForNeutralExplain:
+        patch.aiGating?.minConfidenceForNeutralExplain ?? base.aiGating.minConfidenceForNeutralExplain,
+      confidenceJumpThreshold:
+        patch.aiGating?.confidenceJumpThreshold ?? base.aiGating.confidenceJumpThreshold,
+      keyLevelNearPct:
+        patch.aiGating?.keyLevelNearPct ?? base.aiGating.keyLevelNearPct,
+      recentEventBars: {
+        "5m":
+          patch.aiGating?.recentEventBars?.["5m"] ?? base.aiGating.recentEventBars["5m"],
+        "15m":
+          patch.aiGating?.recentEventBars?.["15m"] ?? base.aiGating.recentEventBars["15m"],
+        "1h":
+          patch.aiGating?.recentEventBars?.["1h"] ?? base.aiGating.recentEventBars["1h"],
+        "4h":
+          patch.aiGating?.recentEventBars?.["4h"] ?? base.aiGating.recentEventBars["4h"],
+        "1d":
+          patch.aiGating?.recentEventBars?.["1d"] ?? base.aiGating.recentEventBars["1d"]
+      },
+      highImportanceMin:
+        patch.aiGating?.highImportanceMin ?? base.aiGating.highImportanceMin,
+      aiCooldownSec: {
+        "5m":
+          patch.aiGating?.aiCooldownSec?.["5m"] ?? base.aiGating.aiCooldownSec["5m"],
+        "15m":
+          patch.aiGating?.aiCooldownSec?.["15m"] ?? base.aiGating.aiCooldownSec["15m"],
+        "1h":
+          patch.aiGating?.aiCooldownSec?.["1h"] ?? base.aiGating.aiCooldownSec["1h"],
+        "4h":
+          patch.aiGating?.aiCooldownSec?.["4h"] ?? base.aiGating.aiCooldownSec["4h"],
+        "1d":
+          patch.aiGating?.aiCooldownSec?.["1d"] ?? base.aiGating.aiCooldownSec["1d"]
+      },
+      maxHighPriorityPerHour:
+        patch.aiGating?.maxHighPriorityPerHour ?? base.aiGating.maxHighPriorityPerHour
     }
   };
 
