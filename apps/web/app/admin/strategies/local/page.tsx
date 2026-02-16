@@ -2,7 +2,9 @@
 
 import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
+import { useLocale, useTranslations } from "next-intl";
 import { ApiError, apiDelete, apiGet, apiPost, apiPut } from "../../../../lib/api";
+import { withLocalePath, type AppLocale } from "../../../../i18n/config";
 
 type RegistryItem = {
   type: string;
@@ -106,6 +108,9 @@ function copyItems<T>(items: T[]): T[] {
 }
 
 export default function AdminLocalStrategiesPage() {
+  const t = useTranslations("admin.localStrategies");
+  const tCommon = useTranslations("admin.common");
+  const locale = useLocale() as AppLocale;
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [running, setRunning] = useState(false);
@@ -172,7 +177,7 @@ export default function AdminLocalStrategiesPage() {
       const hasAccess = Boolean(me?.isSuperadmin || me?.hasAdminBackendAccess);
       setIsAdmin(hasAccess);
       if (!hasAccess) {
-        setError("Admin backend access required.");
+        setError(t("messages.accessRequired"));
         return;
       }
 
@@ -276,10 +281,10 @@ export default function AdminLocalStrategiesPage() {
 
       if (editingId) {
         await apiPut<{ item: LocalStrategyItem }>(`/admin/local-strategies/${encodeURIComponent(editingId)}`, payload);
-        setNotice("Local strategy updated.");
+        setNotice(t("messages.updated"));
       } else {
         await apiPost<{ item: LocalStrategyItem }>("/admin/local-strategies", payload);
-        setNotice("Local strategy created.");
+        setNotice(t("messages.created"));
       }
 
       await loadAll();
@@ -292,13 +297,13 @@ export default function AdminLocalStrategiesPage() {
   }
 
   async function removeItem(id: string) {
-    if (!confirm("Delete this local strategy?")) return;
+    if (!confirm(t("messages.confirmDelete"))) return;
     setError(null);
     setNotice(null);
     try {
       await apiDelete<{ ok: boolean }>(`/admin/local-strategies/${encodeURIComponent(id)}`);
       if (editingId === id) resetForm();
-      setNotice("Local strategy deleted.");
+      setNotice(t("messages.deleted"));
       await loadAll();
     } catch (e) {
       setError(errMsg(e));
@@ -311,7 +316,7 @@ export default function AdminLocalStrategiesPage() {
     setNotice(null);
     try {
       const id = editingId;
-      if (!id) throw new Error("Please save the strategy first before running preview.");
+      if (!id) throw new Error(t("messages.saveBeforePreview"));
       const parsedFeature = parseJsonObject("Feature snapshot", runFeatureSnapshotText);
       if (!parsedFeature.ok) {
         throw new Error("message" in parsedFeature ? parsedFeature.message : "Feature snapshot invalid.");
@@ -327,7 +332,7 @@ export default function AdminLocalStrategiesPage() {
       });
 
       setRunOutput(pretty(res.result));
-      setNotice("Preview run completed.");
+      setNotice(t("messages.previewDone"));
     } catch (e) {
       setError(errMsg(e));
     } finally {
@@ -353,19 +358,19 @@ export default function AdminLocalStrategiesPage() {
   return (
     <div className="settingsWrap">
       <div className="adminTopActions">
-        <Link href="/admin" className="btn">← Back to admin</Link>
-        <Link href="/admin/strategies/builder" className="btn">Composite Builder</Link>
-        <Link href="/admin/strategies/ai" className="btn">AI Strategies</Link>
+        <Link href={withLocalePath("/admin", locale)} className="btn">← {tCommon("backToAdmin")}</Link>
+        <Link href={withLocalePath("/admin/strategies/builder", locale)} className="btn">{t("compositeBuilder")}</Link>
+        <Link href={withLocalePath("/admin/strategies/ai", locale)} className="btn">{t("aiStrategies")}</Link>
       </div>
 
       <div className="adminPageIntro">
-        <h2 style={{ marginTop: 0 }}>Local Strategies</h2>
+        <h2 style={{ marginTop: 0 }}>{t("title")}</h2>
         <p className="settingsMutedText">
-          Create and manage deterministic local strategies used by composite pipelines.
+          {t("subtitle")}
         </p>
       </div>
 
-      {loading ? <div className="settingsMutedText">Loading...</div> : null}
+      {loading ? <div className="settingsMutedText">{t("loading")}</div> : null}
       {error ? <div className="card settingsSection settingsAlert settingsAlertError">{error}</div> : null}
       {notice ? <div className="card settingsSection settingsAlert settingsAlertSuccess">{notice}</div> : null}
 
@@ -373,7 +378,7 @@ export default function AdminLocalStrategiesPage() {
         <>
           <section className="card settingsSection" style={{ marginBottom: 12 }}>
             <div className="settingsSectionHeader">
-              <h3 style={{ margin: 0 }}>{editingId ? "Edit Local Strategy" : "Create Local Strategy"}</h3>
+              <h3 style={{ margin: 0 }}>{editingId ? t("editTitle") : t("createTitle")}</h3>
             </div>
 
             <div className="settingsTwoColGrid" style={{ marginBottom: 10 }}>
@@ -500,9 +505,9 @@ export default function AdminLocalStrategiesPage() {
 
             <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
               <button className="btn btnPrimary" type="button" onClick={() => void save()} disabled={saving}>
-                {saving ? "Saving..." : editingId ? "Update strategy" : "Create strategy"}
+                {saving ? t("saving") : editingId ? t("updateStrategy") : t("createStrategy")}
               </button>
-              <button className="btn" type="button" onClick={resetForm}>Reset form</button>
+              <button className="btn" type="button" onClick={resetForm}>{t("resetForm")}</button>
               {selectedRegistry ? (
                 <button
                   className="btn"
@@ -529,9 +534,9 @@ export default function AdminLocalStrategiesPage() {
 
           <section className="card settingsSection" style={{ marginBottom: 12 }}>
             <div className="settingsSectionHeader">
-              <h3 style={{ margin: 0 }}>Strategy List</h3>
+              <h3 style={{ margin: 0 }}>{t("listTitle")}</h3>
             </div>
-            {items.length === 0 ? <div className="settingsMutedText">No local strategies yet.</div> : (
+            {items.length === 0 ? <div className="settingsMutedText">{t("noItems")}</div> : (
               <div style={{ overflowX: "auto" }}>
                 <table style={{ width: "100%", borderCollapse: "collapse" }}>
                   <thead>

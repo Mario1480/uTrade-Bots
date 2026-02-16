@@ -2,7 +2,9 @@
 
 import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
+import { useLocale, useTranslations } from "next-intl";
 import { ApiError, apiGet, apiPost, apiPut } from "../../../lib/api";
+import { withLocalePath, type AppLocale } from "../../../i18n/config";
 
 type IndicatorOption = {
   key: string;
@@ -108,6 +110,9 @@ function makePromptId(): string {
 }
 
 export default function AdminAiPromptsPage() {
+  const t = useTranslations("admin.aiPrompts");
+  const tCommon = useTranslations("admin.common");
+  const locale = useLocale() as AppLocale;
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [previewLoading, setPreviewLoading] = useState(false);
@@ -182,7 +187,7 @@ export default function AdminAiPromptsPage() {
       const me = await apiGet<any>("/auth/me");
       if (!(me?.isSuperadmin || me?.hasAdminBackendAccess)) {
         setIsSuperadmin(false);
-        setError("Admin backend access required.");
+        setError(t("messages.accessRequired"));
         return;
       }
       setIsSuperadmin(true);
@@ -249,15 +254,15 @@ export default function AdminAiPromptsPage() {
     const confidenceTargetPct = Number(promptConfidenceTargetPct);
     const ohlcvBars = Number(promptOhlcvBars);
     if (!name) {
-      setError("Please enter a prompt name.");
+      setError(t("messages.promptNameRequired"));
       return;
     }
     if (!Number.isFinite(confidenceTargetPct) || confidenceTargetPct < 0 || confidenceTargetPct > 100) {
-      setError("Confidence target must be between 0 and 100.");
+      setError(t("messages.confidenceRange"));
       return;
     }
     if (!Number.isFinite(ohlcvBars) || ohlcvBars < 20 || ohlcvBars > 500) {
-      setError("OHLCV bars must be between 20 and 500.");
+      setError(t("messages.ohlcvRange"));
       return;
     }
 
@@ -300,7 +305,7 @@ export default function AdminAiPromptsPage() {
       setUpdatedAt(res.updatedAt ?? null);
       setSource(res.source ?? "db");
       setDefaults(res.defaults ?? null);
-      setNotice(editingPromptId ? "Prompt updated and saved." : "Prompt created and saved.");
+      setNotice(editingPromptId ? t("messages.promptUpdated") : t("messages.promptCreated"));
       resetPromptForm();
     } catch (e) {
       setError(errMsg(e));
@@ -328,7 +333,7 @@ export default function AdminAiPromptsPage() {
     setActivePromptId(defaults.activePromptId ?? null);
     setPrompts(clonePrompts(defaults.prompts ?? []));
     resetPromptForm();
-    setNotice("Default prompt settings loaded into form (not saved yet).");
+    setNotice(t("messages.defaultsLoaded"));
   }
 
   async function saveAll() {
@@ -348,7 +353,7 @@ export default function AdminAiPromptsPage() {
       setUpdatedAt(res.updatedAt ?? null);
       setSource(res.source ?? "db");
       setDefaults(res.defaults ?? null);
-      setNotice("AI prompt settings saved.");
+      setNotice(t("messages.saved"));
       resetPromptForm();
     } catch (e) {
       setError(errMsg(e));
@@ -365,11 +370,11 @@ export default function AdminAiPromptsPage() {
       try {
         const parsed = JSON.parse(previewFeatureSnapshot);
         if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
-          throw new Error("featureSnapshot must be a JSON object.");
+          throw new Error(t("messages.featureSnapshotObject"));
         }
         snapshot = parsed as Record<string, unknown>;
       } catch (e) {
-        throw new Error(`Invalid featureSnapshot JSON: ${String(e)}`);
+        throw new Error(t("messages.invalidFeatureSnapshotJson", { err: String(e) }));
       }
 
       const body = {
@@ -392,7 +397,7 @@ export default function AdminAiPromptsPage() {
 
       const res = await apiPost<PreviewResponse>("/admin/settings/ai-prompts/preview", body);
       setPreviewOutput(JSON.stringify(res, null, 2));
-      setNotice("Preview generated.");
+      setNotice(t("messages.previewGenerated"));
     } catch (e) {
       setError(errMsg(e));
     } finally {
@@ -403,19 +408,19 @@ export default function AdminAiPromptsPage() {
   return (
     <div className="settingsWrap">
       <div className="adminTopActions">
-        <Link href="/admin" className="btn">
-          ← Back to admin
+        <Link href={withLocalePath("/admin", locale)} className="btn">
+          ← {tCommon("backToAdmin")}
         </Link>
-        <Link href="/settings" className="btn">
-          ← Back to settings
+        <Link href={withLocalePath("/settings", locale)} className="btn">
+          ← {tCommon("backToSettings")}
         </Link>
       </div>
-      <h2 style={{ marginTop: 0 }}>Admin · AI Prompts</h2>
+      <h2 style={{ marginTop: 0 }}>{t("title")}</h2>
       <div className="adminPageIntro">
-        Create, store, edit and delete named prompts. Mark prompts as public for users.
+        {t("subtitle")}
       </div>
 
-      {loading ? <div className="settingsMutedText">Loading...</div> : null}
+      {loading ? <div className="settingsMutedText">{t("loading")}</div> : null}
       {error ? (
         <div className="card settingsSection settingsAlert settingsAlertError">{error}</div>
       ) : null}
@@ -427,10 +432,10 @@ export default function AdminAiPromptsPage() {
         <>
           <section className="card settingsSection" style={{ marginBottom: 12 }}>
             <div className="settingsSectionHeader">
-              <h3 style={{ margin: 0 }}>License Policy (Preview)</h3>
+              <h3 style={{ margin: 0 }}>{t("licensePolicyTitle")}</h3>
             </div>
             <div className="settingsMutedText" style={{ marginBottom: 10 }}>
-              Read-only status for future AI prompt licensing. Currently informational only.
+              {t("licensePolicyHint")}
             </div>
             <div className="indicatorScopeGrid">
               <div className="settingsField">
@@ -442,7 +447,7 @@ export default function AdminAiPromptsPage() {
               <div className="settingsField">
                 <span className="settingsFieldLabel">Enforcement active</span>
                 <div className="settingsMutedText">
-                  {licensePolicy?.enforcementActive ? "yes" : "no"}
+                  {licensePolicy?.enforcementActive ? t("yes") : t("no")}
                 </div>
               </div>
               <div className="settingsField">
@@ -458,7 +463,7 @@ export default function AdminAiPromptsPage() {
 
           <section className="card settingsSection" style={{ marginBottom: 12 }}>
             <div className="settingsSectionHeader">
-              <h3 style={{ margin: 0 }}>Prompt Library</h3>
+              <h3 style={{ margin: 0 }}>{t("promptLibraryTitle")}</h3>
             </div>
             <div className="settingsMutedText" style={{ marginBottom: 10 }}>
               Source: {source} · Last updated: {updatedAt ? new Date(updatedAt).toLocaleString() : "never"}
@@ -474,7 +479,7 @@ export default function AdminAiPromptsPage() {
                 </label>
                 <label className="inlineCheck" style={{ marginTop: 26 }}>
                   <input type="checkbox" checked={promptIsPublic} onChange={(e) => setPromptIsPublic(e.target.checked)} />
-                  Public prompt (für User sichtbar)
+                  {t("publicPrompt")}
                 </label>
               </div>
 
@@ -538,8 +543,8 @@ export default function AdminAiPromptsPage() {
               </label>
 
               <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 8 }}>
-                <button className="btn" type="button" onClick={() => setAllPromptIndicators(true)}>Select all indicators</button>
-                <button className="btn" type="button" onClick={() => setAllPromptIndicators(false)}>Clear indicators</button>
+                  <button className="btn" type="button" onClick={() => setAllPromptIndicators(true)}>Select all indicators</button>
+                <button className="btn" type="button" onClick={() => setAllPromptIndicators(false)}>{t("clearIndicators")}</button>
               </div>
 
               <div style={{ display: "grid", gap: 8, gridTemplateColumns: "repeat(auto-fit,minmax(220px,1fr))" }}>
@@ -556,15 +561,15 @@ export default function AdminAiPromptsPage() {
 
               <div className="indicatorFormActions" style={{ marginTop: 10 }}>
                 <button className="btn btnPrimary" type="button" onClick={() => void savePromptDraft()} disabled={saving}>
-                  {saving ? "Saving..." : editingPromptId ? "Update prompt" : "Create prompt"}
+                  {saving ? t("saving") : editingPromptId ? t("updatePrompt") : t("createPrompt")}
                 </button>
-                <button className="btn" type="button" onClick={resetPromptForm}>Reset form</button>
-                <button className="btn" type="button" onClick={loadDefaultsToForm}>Load defaults</button>
+                <button className="btn" type="button" onClick={resetPromptForm}>{t("resetForm")}</button>
+                <button className="btn" type="button" onClick={loadDefaultsToForm}>{t("loadDefaults")}</button>
               </div>
             </div>
 
             {prompts.length === 0 ? (
-              <div className="settingsMutedText">No prompts in draft.</div>
+              <div className="settingsMutedText">{t("noPrompts")}</div>
             ) : (
               <div style={{ overflowX: "auto" }}>
                 <table className="table" style={{ width: "100%" }}>
@@ -595,9 +600,9 @@ export default function AdminAiPromptsPage() {
                         <td>{prompt.updatedAt ? new Date(prompt.updatedAt).toLocaleString() : "-"}</td>
                         <td>{activePromptId === prompt.id ? "active" : "-"}</td>
                         <td style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
-                          <button className="btn" type="button" onClick={() => setActivePromptId(prompt.id)}>Set active</button>
-                          <button className="btn" type="button" onClick={() => loadPromptIntoForm(prompt)}>Edit</button>
-                          <button className="btn" type="button" onClick={() => deletePrompt(prompt.id)}>Delete</button>
+                          <button className="btn" type="button" onClick={() => setActivePromptId(prompt.id)}>{t("setActive")}</button>
+                          <button className="btn" type="button" onClick={() => loadPromptIntoForm(prompt)}>{t("edit")}</button>
+                          <button className="btn" type="button" onClick={() => deletePrompt(prompt.id)}>{t("delete")}</button>
                         </td>
                       </tr>
                     ))}
@@ -609,10 +614,10 @@ export default function AdminAiPromptsPage() {
 
           <section className="card settingsSection" style={{ marginBottom: 12 }}>
             <div className="settingsSectionHeader">
-              <h3 style={{ margin: 0 }}>Prompt Preview / Test</h3>
+              <h3 style={{ margin: 0 }}>{t("previewTitle")}</h3>
             </div>
             <div className="settingsMutedText" style={{ marginBottom: 10 }}>
-              Builds the exact `systemMessage` and `userPayload` that would be sent to AI.
+              {t("previewHint")}
             </div>
 
             <div className="indicatorScopeGrid" style={{ marginBottom: 8 }}>
@@ -669,7 +674,7 @@ export default function AdminAiPromptsPage() {
 
             <div className="indicatorFormActions" style={{ marginBottom: 10 }}>
               <button className="btn btnPrimary" type="button" disabled={previewLoading} onClick={() => void runPreview()}>
-                {previewLoading ? "Generating preview..." : "Generate exact payload"}
+                {previewLoading ? t("generatingPreview") : t("generatePayload")}
               </button>
             </div>
 
@@ -683,9 +688,9 @@ export default function AdminAiPromptsPage() {
           <section className="card settingsSection">
             <div className="indicatorFormActions">
               <button className="btn btnPrimary" type="button" disabled={saving} onClick={() => void saveAll()}>
-                {saving ? "Saving..." : "Save all AI prompt settings"}
+                {saving ? t("saving") : t("saveAll")}
               </button>
-              <button className="btn" type="button" onClick={() => void loadAll()}>Reload from DB</button>
+              <button className="btn" type="button" onClick={() => void loadAll()}>{t("reloadFromDb")}</button>
             </div>
           </section>
         </>

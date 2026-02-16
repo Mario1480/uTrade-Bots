@@ -2,7 +2,9 @@
 
 import Link from "next/link";
 import { useCallback, useEffect, useMemo, useState } from "react";
+import { useLocale, useTranslations } from "next-intl";
 import { ApiError, apiDelete, apiGet, apiPost, apiPut } from "../../../lib/api";
+import { withLocalePath, type AppLocale } from "../../../i18n/config";
 
 type ScopeType = "global" | "account" | "symbol" | "symbol_tf";
 type Timeframe = "5m" | "15m" | "1h" | "4h" | "1d";
@@ -470,11 +472,6 @@ function catalogStatus(item: IndicatorCatalogItem) {
   return "settings_only";
 }
 
-function catalogStatusLabel(status: ReturnType<typeof catalogStatus>): string {
-  if (status === "live") return "live";
-  return "settings only";
-}
-
 function catalogStatusColor(status: ReturnType<typeof catalogStatus>): string {
   if (status === "live") return "#54d17a";
   return "var(--muted)";
@@ -502,6 +499,9 @@ function buildScopeLabel(row: {
 }
 
 export default function AdminIndicatorSettingsPage() {
+  const t = useTranslations("admin.indicatorSettings");
+  const tCommon = useTranslations("admin.common");
+  const locale = useLocale() as AppLocale;
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [isSuperadmin, setIsSuperadmin] = useState(false);
@@ -547,7 +547,7 @@ export default function AdminIndicatorSettingsPage() {
       live: liveCount,
       settingsOnly: allItems.length - liveCount
     };
-  }, []);
+  }, [t]);
 
   function setIndicatorsV2StochRsi(field: StochRsiKey, value: number) {
     setConfig((prev) => ({
@@ -685,7 +685,7 @@ export default function AdminIndicatorSettingsPage() {
       const me = await apiGet<any>("/auth/me");
       if (!(me?.isSuperadmin || me?.hasAdminBackendAccess)) {
         setIsSuperadmin(false);
-        setError("Admin backend access required.");
+        setError(t("messages.accessRequired"));
         return;
       }
       setIsSuperadmin(true);
@@ -760,10 +760,10 @@ export default function AdminIndicatorSettingsPage() {
 
       if (editingId) {
         await apiPut(`/api/admin/indicator-settings/${editingId}`, payload);
-        setNotice("Indicator setting updated.");
+        setNotice(t("messages.updated"));
       } else {
         await apiPost("/api/admin/indicator-settings", payload);
-        setNotice("Indicator setting created.");
+        setNotice(t("messages.created"));
       }
 
       await loadAll();
@@ -776,13 +776,13 @@ export default function AdminIndicatorSettingsPage() {
   }
 
   async function removeRow(id: string) {
-    if (!confirm("Delete this indicator setting?")) return;
+    if (!confirm(t("messages.confirmDelete"))) return;
     setError(null);
     setNotice(null);
     try {
       await apiDelete(`/api/admin/indicator-settings/${id}`);
       if (editingId === id) resetForm();
-      setNotice("Indicator setting deleted.");
+      setNotice(t("messages.deleted"));
       await loadAll();
       await refreshResolvedPreview();
     } catch (e) {
@@ -793,15 +793,15 @@ export default function AdminIndicatorSettingsPage() {
   return (
     <div className="settingsWrap">
       <div className="adminTopActions">
-        <Link href="/admin" className="btn">← Back to admin</Link>
-        <Link href="/settings" className="btn">← Back to settings</Link>
+        <Link href={withLocalePath("/admin", locale)} className="btn">← {tCommon("backToAdmin")}</Link>
+        <Link href={withLocalePath("/settings", locale)} className="btn">← {tCommon("backToSettings")}</Link>
       </div>
-      <h2 className="indicatorAdminTitle">Admin · Indicator Settings</h2>
+      <h2 className="indicatorAdminTitle">{t("title")}</h2>
       <div className="adminPageIntro indicatorAdminIntro">
-        Configure global defaults and scoped overrides for integrated indicator modules.
+        {t("subtitle")}
       </div>
 
-      {loading ? <div className="settingsMutedText">Loading...</div> : null}
+      {loading ? <div className="settingsMutedText">{t("loading")}</div> : null}
       {error ? (
         <div className="card settingsSection settingsAlert settingsAlertError">{error}</div>
       ) : null}
@@ -813,26 +813,26 @@ export default function AdminIndicatorSettingsPage() {
         <>
           <section className="card settingsSection indicatorCatalogSection">
             <div className="settingsSectionHeader">
-              <h3 style={{ margin: 0 }}>Integrated Indicators</h3>
+              <h3 style={{ margin: 0 }}>{t("catalog.title")}</h3>
               <span className="indicatorCatalogScopeChip">
-                Scope layers: {resolved?.breakdown?.length ?? 0}
+                {t("catalog.scopeLayers")}: {resolved?.breakdown?.length ?? 0}
               </span>
             </div>
             <div className="indicatorCatalogStatsGrid">
               <div className="indicatorCatalogStatCard">
-                <div className="indicatorCatalogStatLabel">Indicator groups</div>
+                <div className="indicatorCatalogStatLabel">{t("catalog.indicatorGroups")}</div>
                 <div className="indicatorCatalogStatValue">{catalogSummary.groups}</div>
               </div>
               <div className="indicatorCatalogStatCard">
-                <div className="indicatorCatalogStatLabel">Integrated indicators</div>
+                <div className="indicatorCatalogStatLabel">{t("catalog.integratedIndicators")}</div>
                 <div className="indicatorCatalogStatValue">{catalogSummary.indicators}</div>
               </div>
               <div className="indicatorCatalogStatCard">
-                <div className="indicatorCatalogStatLabel">Live</div>
+                <div className="indicatorCatalogStatLabel">{t("catalog.live")}</div>
                 <div className="indicatorCatalogStatValue">{catalogSummary.live}</div>
               </div>
               <div className="indicatorCatalogStatCard">
-                <div className="indicatorCatalogStatLabel">Settings only</div>
+                <div className="indicatorCatalogStatLabel">{t("catalog.settingsOnly")}</div>
                 <div className="indicatorCatalogStatValue">{catalogSummary.settingsOnly}</div>
               </div>
             </div>
@@ -852,7 +852,7 @@ export default function AdminIndicatorSettingsPage() {
                     >
                       <span>{group.title}</span>
                       <span className="indicatorCatalogAccordionMeta">
-                        <span className="indicatorCatalogGroupCount">{group.items.length} indicators</span>
+                        <span className="indicatorCatalogGroupCount">{group.items.length} {t("catalog.indicators")}</span>
                         <span
                           className={`settingsAccordionChevron ${isOpen ? "settingsAccordionChevronOpen" : ""}`}
                         >
@@ -874,13 +874,13 @@ export default function AdminIndicatorSettingsPage() {
                                     className="indicatorCatalogItemStatus"
                                     style={{ color: catalogStatusColor(status) }}
                                   >
-                                    {catalogStatusLabel(status)}
+                                    {status === "live" ? t("catalog.liveStatus") : t("catalog.settingsOnlyStatus")}
                                   </span>
                                 </div>
                                 {item.note ? (
                                   <div className="settingsMutedText">{item.note}</div>
                                 ) : null}
-                                <div className="mutedTiny">Outputs</div>
+                                <div className="mutedTiny">{t("catalog.outputs")}</div>
                                 <div className="indicatorCatalogTokenList">
                                   {item.outputs.map((output) => (
                                     <code
@@ -891,7 +891,7 @@ export default function AdminIndicatorSettingsPage() {
                                     </code>
                                   ))}
                                 </div>
-                                <div className="mutedTiny">Config params</div>
+                                <div className="mutedTiny">{t("catalog.configParams")}</div>
                                 <div className="indicatorCatalogTokenList">
                                   {item.params.map((param) => (
                                     <code
@@ -916,24 +916,23 @@ export default function AdminIndicatorSettingsPage() {
 
           <section className="card settingsSection indicatorOverrideSection" style={{ marginBottom: 12 }}>
             <div className="settingsSectionHeader">
-              <h3 style={{ margin: 0 }}>{editingId ? "Edit override" : "Create override"}</h3>
+              <h3 style={{ margin: 0 }}>{editingId ? t("override.editTitle") : t("override.createTitle")}</h3>
               <span className="indicatorOverrideModeChip">
-                {editingId ? "update mode" : "new override"}
+                {editingId ? t("override.updateMode") : t("override.newOverride")}
               </span>
             </div>
             <div className="settingsMutedText indicatorOverrideIntro">
-              Scope zuerst festlegen, dann nur die Werte anpassen, die in dieser Ebene überschrieben
-              werden sollen.
+              {t("override.intro")}
             </div>
 
             <div className="indicatorConfigBlock">
-              <div className="indicatorConfigTitle">Scope Target</div>
+              <div className="indicatorConfigTitle">{t("override.scopeTarget")}</div>
               <div className="settingsMutedText indicatorConfigHint">
-                Reihenfolge der Priorität: global → account → symbol → symbol_tf.
+                {t("override.scopePriority")}
               </div>
             <div className="indicatorScopeGrid">
               <label className="settingsField">
-                <span className="settingsFieldLabel">Scope</span>
+                <span className="settingsFieldLabel">{t("override.scope")}</span>
                 <select className="input" value={scopeType} onChange={(e) => setScopeType(e.target.value as ScopeType)}>
                   {SCOPE_OPTIONS.map((value) => (
                     <option key={value} value={value}>
@@ -943,19 +942,19 @@ export default function AdminIndicatorSettingsPage() {
                 </select>
               </label>
               <label className="settingsField">
-                <span className="settingsFieldLabel">Exchange</span>
+                <span className="settingsFieldLabel">{t("override.exchange")}</span>
                 <input className="input" value={exchange} onChange={(e) => setExchange(e.target.value)} placeholder="bitget" />
               </label>
               <label className="settingsField">
-                <span className="settingsFieldLabel">Account ID</span>
-                <input className="input" value={accountId} onChange={(e) => setAccountId(e.target.value)} disabled={scopeType !== "account"} placeholder={scopeType === "account" ? "acc_..." : "Nur bei account"} />
+                <span className="settingsFieldLabel">{t("override.accountId")}</span>
+                <input className="input" value={accountId} onChange={(e) => setAccountId(e.target.value)} disabled={scopeType !== "account"} placeholder={scopeType === "account" ? "acc_..." : t("override.accountOnly")} />
               </label>
               <label className="settingsField">
-                <span className="settingsFieldLabel">Symbol</span>
-                <input className="input" value={symbol} onChange={(e) => setSymbol(e.target.value.toUpperCase())} disabled={scopeType !== "symbol" && scopeType !== "symbol_tf"} placeholder={scopeType === "symbol" || scopeType === "symbol_tf" ? "BTCUSDT" : "Nur bei symbol/symbol_tf"} />
+                <span className="settingsFieldLabel">{t("override.symbol")}</span>
+                <input className="input" value={symbol} onChange={(e) => setSymbol(e.target.value.toUpperCase())} disabled={scopeType !== "symbol" && scopeType !== "symbol_tf"} placeholder={scopeType === "symbol" || scopeType === "symbol_tf" ? "BTCUSDT" : t("override.symbolOnly")} />
               </label>
               <label className="settingsField">
-                <span className="settingsFieldLabel">Timeframe</span>
+                <span className="settingsFieldLabel">{t("override.timeframe")}</span>
                 <select
                   className="input"
                   value={timeframe}
@@ -975,16 +974,16 @@ export default function AdminIndicatorSettingsPage() {
             <div className="settingsAccordion indicatorOverrideAccordion">
               <div className={`settingsAccordionItem ${openIndicatorSections.stochRsi ? "settingsAccordionItemOpen" : ""}`}>
                 <button type="button" className="settingsAccordionTrigger" onClick={() => toggleIndicatorSection("stochRsi")} aria-expanded={openIndicatorSections.stochRsi}>
-                  <span>Stoch RSI</span>
+                  <span>{t("sections.stochRsi")}</span>
                   <span className={`settingsAccordionChevron ${openIndicatorSections.stochRsi ? "settingsAccordionChevronOpen" : ""}`}>▾</span>
                 </button>
                 {openIndicatorSections.stochRsi ? (
                   <div className="settingsAccordionBody">
                     <div className="indicatorConfigGrid">
-                      <label className="settingsField"><span className="mutedTiny">RSI len</span><input className="input" type="number" value={config.indicatorsV2.stochrsi.rsiLen} onChange={(e) => setIndicatorsV2StochRsi("rsiLen", parseNumber(e.target.value))} /></label>
-                      <label className="settingsField"><span className="mutedTiny">Stoch len</span><input className="input" type="number" value={config.indicatorsV2.stochrsi.stochLen} onChange={(e) => setIndicatorsV2StochRsi("stochLen", parseNumber(e.target.value))} /></label>
-                      <label className="settingsField"><span className="mutedTiny">Smooth K</span><input className="input" type="number" value={config.indicatorsV2.stochrsi.smoothK} onChange={(e) => setIndicatorsV2StochRsi("smoothK", parseNumber(e.target.value))} /></label>
-                      <label className="settingsField"><span className="mutedTiny">Smooth D</span><input className="input" type="number" value={config.indicatorsV2.stochrsi.smoothD} onChange={(e) => setIndicatorsV2StochRsi("smoothD", parseNumber(e.target.value))} /></label>
+                      <label className="settingsField"><span className="mutedTiny">{t("fields.rsiLen")}</span><input className="input" type="number" value={config.indicatorsV2.stochrsi.rsiLen} onChange={(e) => setIndicatorsV2StochRsi("rsiLen", parseNumber(e.target.value))} /></label>
+                      <label className="settingsField"><span className="mutedTiny">{t("fields.stochLen")}</span><input className="input" type="number" value={config.indicatorsV2.stochrsi.stochLen} onChange={(e) => setIndicatorsV2StochRsi("stochLen", parseNumber(e.target.value))} /></label>
+                      <label className="settingsField"><span className="mutedTiny">{t("fields.smoothK")}</span><input className="input" type="number" value={config.indicatorsV2.stochrsi.smoothK} onChange={(e) => setIndicatorsV2StochRsi("smoothK", parseNumber(e.target.value))} /></label>
+                      <label className="settingsField"><span className="mutedTiny">{t("fields.smoothD")}</span><input className="input" type="number" value={config.indicatorsV2.stochrsi.smoothD} onChange={(e) => setIndicatorsV2StochRsi("smoothD", parseNumber(e.target.value))} /></label>
                     </div>
                   </div>
                 ) : null}
@@ -992,15 +991,15 @@ export default function AdminIndicatorSettingsPage() {
 
               <div className={`settingsAccordionItem ${openIndicatorSections.volume ? "settingsAccordionItemOpen" : ""}`}>
                 <button type="button" className="settingsAccordionTrigger" onClick={() => toggleIndicatorSection("volume")} aria-expanded={openIndicatorSections.volume}>
-                  <span>Volume</span>
+                  <span>{t("sections.volume")}</span>
                   <span className={`settingsAccordionChevron ${openIndicatorSections.volume ? "settingsAccordionChevronOpen" : ""}`}>▾</span>
                 </button>
                 {openIndicatorSections.volume ? (
                   <div className="settingsAccordionBody">
                     <div className="indicatorConfigGrid">
-                      <label className="settingsField"><span className="mutedTiny">Lookback</span><input className="input" type="number" value={config.indicatorsV2.volume.lookback} onChange={(e) => setIndicatorsV2Volume("lookback", parseNumber(e.target.value))} /></label>
-                      <label className="settingsField"><span className="mutedTiny">EMA fast</span><input className="input" type="number" value={config.indicatorsV2.volume.emaFast} onChange={(e) => setIndicatorsV2Volume("emaFast", parseNumber(e.target.value))} /></label>
-                      <label className="settingsField"><span className="mutedTiny">EMA slow</span><input className="input" type="number" value={config.indicatorsV2.volume.emaSlow} onChange={(e) => setIndicatorsV2Volume("emaSlow", parseNumber(e.target.value))} /></label>
+                      <label className="settingsField"><span className="mutedTiny">{t("fields.lookback")}</span><input className="input" type="number" value={config.indicatorsV2.volume.lookback} onChange={(e) => setIndicatorsV2Volume("lookback", parseNumber(e.target.value))} /></label>
+                      <label className="settingsField"><span className="mutedTiny">{t("fields.emaFast")}</span><input className="input" type="number" value={config.indicatorsV2.volume.emaFast} onChange={(e) => setIndicatorsV2Volume("emaFast", parseNumber(e.target.value))} /></label>
+                      <label className="settingsField"><span className="mutedTiny">{t("fields.emaSlow")}</span><input className="input" type="number" value={config.indicatorsV2.volume.emaSlow} onChange={(e) => setIndicatorsV2Volume("emaSlow", parseNumber(e.target.value))} /></label>
                     </div>
                   </div>
                 ) : null}
@@ -1008,14 +1007,14 @@ export default function AdminIndicatorSettingsPage() {
 
               <div className={`settingsAccordionItem ${openIndicatorSections.fvg ? "settingsAccordionItemOpen" : ""}`}>
                 <button type="button" className="settingsAccordionTrigger" onClick={() => toggleIndicatorSection("fvg")} aria-expanded={openIndicatorSections.fvg}>
-                  <span>Fair Value Gap (FVG)</span>
+                  <span>{t("sections.fvg")}</span>
                   <span className={`settingsAccordionChevron ${openIndicatorSections.fvg ? "settingsAccordionChevronOpen" : ""}`}>▾</span>
                 </button>
                 {openIndicatorSections.fvg ? (
                   <div className="settingsAccordionBody">
                     <div className="indicatorConfigGrid">
-                      <label className="settingsField"><span className="mutedTiny">Lookback</span><input className="input" type="number" value={config.indicatorsV2.fvg.lookback} onChange={(e) => setIndicatorsV2Fvg("lookback", parseNumber(e.target.value))} /></label>
-                      <label className="settingsField"><span className="mutedTiny">Fill rule</span><select className="input" value={config.indicatorsV2.fvg.fillRule} onChange={(e) => setIndicatorsV2Fvg("fillRule", parseFvgFillRule(e.target.value))}><option value="overlap">overlap</option><option value="mid_touch">mid_touch</option></select></label>
+                      <label className="settingsField"><span className="mutedTiny">{t("fields.lookback")}</span><input className="input" type="number" value={config.indicatorsV2.fvg.lookback} onChange={(e) => setIndicatorsV2Fvg("lookback", parseNumber(e.target.value))} /></label>
+                      <label className="settingsField"><span className="mutedTiny">{t("fields.fillRule")}</span><select className="input" value={config.indicatorsV2.fvg.fillRule} onChange={(e) => setIndicatorsV2Fvg("fillRule", parseFvgFillRule(e.target.value))}><option value="overlap">overlap</option><option value="mid_touch">mid_touch</option></select></label>
                     </div>
                   </div>
                 ) : null}
@@ -1023,21 +1022,21 @@ export default function AdminIndicatorSettingsPage() {
 
               <div className={`settingsAccordionItem ${openIndicatorSections.rangesSessions ? "settingsAccordionItemOpen" : ""}`}>
                 <button type="button" className="settingsAccordionTrigger" onClick={() => toggleIndicatorSection("rangesSessions")} aria-expanded={openIndicatorSections.rangesSessions}>
-                  <span>Ranges & Sessions</span>
+                  <span>{t("sections.rangesSessions")}</span>
                   <span className={`settingsAccordionChevron ${openIndicatorSections.rangesSessions ? "settingsAccordionChevronOpen" : ""}`}>▾</span>
                 </button>
                 {openIndicatorSections.rangesSessions ? (
                   <div className="settingsAccordionBody">
                     <div className="indicatorConfigGrid">
-                      <label className="settingsField"><span className="mutedTiny">Opening range (min)</span><input className="input" type="number" min={1} max={180} value={config.advancedIndicators.openingRangeMin} onChange={(e) => setAdvancedIndicatorsNumber("openingRangeMin", parseNumber(e.target.value))} /></label>
-                      <label className="settingsField"><span className="mutedTiny">ADR len</span><input className="input" type="number" min={1} max={365} value={config.advancedIndicators.adrLen} onChange={(e) => setAdvancedIndicatorsNumber("adrLen", parseNumber(e.target.value))} /></label>
-                      <label className="settingsField"><span className="mutedTiny">AWR len</span><input className="input" type="number" min={1} max={52} value={config.advancedIndicators.awrLen} onChange={(e) => setAdvancedIndicatorsNumber("awrLen", parseNumber(e.target.value))} /></label>
-                      <label className="settingsField"><span className="mutedTiny">AMR len</span><input className="input" type="number" min={1} max={24} value={config.advancedIndicators.amrLen} onChange={(e) => setAdvancedIndicatorsNumber("amrLen", parseNumber(e.target.value))} /></label>
-                      <label className="settingsField"><span className="mutedTiny">RD len</span><input className="input" type="number" min={1} max={365} value={config.advancedIndicators.rdLen} onChange={(e) => setAdvancedIndicatorsNumber("rdLen", parseNumber(e.target.value))} /></label>
-                      <label className="settingsField"><span className="mutedTiny">RW len</span><input className="input" type="number" min={1} max={104} value={config.advancedIndicators.rwLen} onChange={(e) => setAdvancedIndicatorsNumber("rwLen", parseNumber(e.target.value))} /></label>
+                      <label className="settingsField"><span className="mutedTiny">{t("fields.openingRangeMin")}</span><input className="input" type="number" min={1} max={180} value={config.advancedIndicators.openingRangeMin} onChange={(e) => setAdvancedIndicatorsNumber("openingRangeMin", parseNumber(e.target.value))} /></label>
+                      <label className="settingsField"><span className="mutedTiny">{t("fields.adrLen")}</span><input className="input" type="number" min={1} max={365} value={config.advancedIndicators.adrLen} onChange={(e) => setAdvancedIndicatorsNumber("adrLen", parseNumber(e.target.value))} /></label>
+                      <label className="settingsField"><span className="mutedTiny">{t("fields.awrLen")}</span><input className="input" type="number" min={1} max={52} value={config.advancedIndicators.awrLen} onChange={(e) => setAdvancedIndicatorsNumber("awrLen", parseNumber(e.target.value))} /></label>
+                      <label className="settingsField"><span className="mutedTiny">{t("fields.amrLen")}</span><input className="input" type="number" min={1} max={24} value={config.advancedIndicators.amrLen} onChange={(e) => setAdvancedIndicatorsNumber("amrLen", parseNumber(e.target.value))} /></label>
+                      <label className="settingsField"><span className="mutedTiny">{t("fields.rdLen")}</span><input className="input" type="number" min={1} max={365} value={config.advancedIndicators.rdLen} onChange={(e) => setAdvancedIndicatorsNumber("rdLen", parseNumber(e.target.value))} /></label>
+                      <label className="settingsField"><span className="mutedTiny">{t("fields.rwLen")}</span><input className="input" type="number" min={1} max={104} value={config.advancedIndicators.rwLen} onChange={(e) => setAdvancedIndicatorsNumber("rwLen", parseNumber(e.target.value))} /></label>
                     </div>
                     <div className="indicatorInlineChecks">
-                      <label className="inlineCheck"><input type="checkbox" checked={config.advancedIndicators.sessionsUseDST} onChange={(e) => setAdvancedIndicatorsSessionsUseDst(e.target.checked)} /> Sessions use DST</label>
+                      <label className="inlineCheck"><input type="checkbox" checked={config.advancedIndicators.sessionsUseDST} onChange={(e) => setAdvancedIndicatorsSessionsUseDst(e.target.checked)} /> {t("fields.sessionsUseDst")}</label>
                     </div>
                   </div>
                 ) : null}
@@ -1045,20 +1044,20 @@ export default function AdminIndicatorSettingsPage() {
 
               <div className={`settingsAccordionItem ${openIndicatorSections.smc ? "settingsAccordionItemOpen" : ""}`}>
                 <button type="button" className="settingsAccordionTrigger" onClick={() => toggleIndicatorSection("smc")} aria-expanded={openIndicatorSections.smc}>
-                  <span>Smart Money Concepts (SMC)</span>
+                  <span>{t("sections.smc")}</span>
                   <span className={`settingsAccordionChevron ${openIndicatorSections.smc ? "settingsAccordionChevronOpen" : ""}`}>▾</span>
                 </button>
                 {openIndicatorSections.smc ? (
                   <div className="settingsAccordionBody">
                     <div className="indicatorConfigGrid">
-                      <label className="settingsField"><span className="mutedTiny">Internal len</span><input className="input" type="number" min={2} max={50} value={config.advancedIndicators.smcInternalLength} onChange={(e) => setAdvancedIndicatorsNumber("smcInternalLength", parseNumber(e.target.value))} /></label>
-                      <label className="settingsField"><span className="mutedTiny">Swing len</span><input className="input" type="number" min={10} max={250} value={config.advancedIndicators.smcSwingLength} onChange={(e) => setAdvancedIndicatorsNumber("smcSwingLength", parseNumber(e.target.value))} /></label>
-                      <label className="settingsField"><span className="mutedTiny">Equal len</span><input className="input" type="number" min={1} max={50} value={config.advancedIndicators.smcEqualLength} onChange={(e) => setAdvancedIndicatorsNumber("smcEqualLength", parseNumber(e.target.value))} /></label>
-                      <label className="settingsField"><span className="mutedTiny">Equal threshold</span><input className="input" type="number" min={0} max={0.5} step={0.01} value={config.advancedIndicators.smcEqualThreshold} onChange={(e) => setAdvancedIndicatorsNumber("smcEqualThreshold", parseNumber(e.target.value))} /></label>
-                      <label className="settingsField"><span className="mutedTiny">Max order blocks</span><input className="input" type="number" min={1} max={50} value={config.advancedIndicators.smcMaxOrderBlocks} onChange={(e) => setAdvancedIndicatorsNumber("smcMaxOrderBlocks", parseNumber(e.target.value))} /></label>
+                      <label className="settingsField"><span className="mutedTiny">{t("fields.internalLen")}</span><input className="input" type="number" min={2} max={50} value={config.advancedIndicators.smcInternalLength} onChange={(e) => setAdvancedIndicatorsNumber("smcInternalLength", parseNumber(e.target.value))} /></label>
+                      <label className="settingsField"><span className="mutedTiny">{t("fields.swingLen")}</span><input className="input" type="number" min={10} max={250} value={config.advancedIndicators.smcSwingLength} onChange={(e) => setAdvancedIndicatorsNumber("smcSwingLength", parseNumber(e.target.value))} /></label>
+                      <label className="settingsField"><span className="mutedTiny">{t("fields.equalLen")}</span><input className="input" type="number" min={1} max={50} value={config.advancedIndicators.smcEqualLength} onChange={(e) => setAdvancedIndicatorsNumber("smcEqualLength", parseNumber(e.target.value))} /></label>
+                      <label className="settingsField"><span className="mutedTiny">{t("fields.equalThreshold")}</span><input className="input" type="number" min={0} max={0.5} step={0.01} value={config.advancedIndicators.smcEqualThreshold} onChange={(e) => setAdvancedIndicatorsNumber("smcEqualThreshold", parseNumber(e.target.value))} /></label>
+                      <label className="settingsField"><span className="mutedTiny">{t("fields.maxOrderBlocks")}</span><input className="input" type="number" min={1} max={50} value={config.advancedIndicators.smcMaxOrderBlocks} onChange={(e) => setAdvancedIndicatorsNumber("smcMaxOrderBlocks", parseNumber(e.target.value))} /></label>
                     </div>
                     <div className="indicatorInlineChecks">
-                      <label className="inlineCheck"><input type="checkbox" checked={config.advancedIndicators.smcFvgAutoThreshold} onChange={(e) => setAdvancedIndicatorsSmcFvgAutoThreshold(e.target.checked)} /> FVG auto threshold</label>
+                      <label className="inlineCheck"><input type="checkbox" checked={config.advancedIndicators.smcFvgAutoThreshold} onChange={(e) => setAdvancedIndicatorsSmcFvgAutoThreshold(e.target.checked)} /> {t("fields.fvgAutoThreshold")}</label>
                     </div>
                   </div>
                 ) : null}
@@ -1066,7 +1065,7 @@ export default function AdminIndicatorSettingsPage() {
 
               <div className={`settingsAccordionItem ${openIndicatorSections.aiGating ? "settingsAccordionItemOpen" : ""}`}>
                 <button type="button" className="settingsAccordionTrigger" onClick={() => toggleIndicatorSection("aiGating")} aria-expanded={openIndicatorSections.aiGating}>
-                  <span>AI Quality Gate</span>
+                  <span>{t("sections.aiGating")}</span>
                   <span className={`settingsAccordionChevron ${openIndicatorSections.aiGating ? "settingsAccordionChevronOpen" : ""}`}>▾</span>
                 </button>
                 {openIndicatorSections.aiGating ? (
@@ -1078,12 +1077,12 @@ export default function AdminIndicatorSettingsPage() {
                           checked={config.aiGating.enabled}
                           onChange={(e) => setAiGatingEnabled(e.target.checked)}
                         />
-                        Enable AI Quality Gate
+                        {t("fields.enableAiQualityGate")}
                       </label>
                     </div>
                     <div className="indicatorConfigGrid">
                       <label className="settingsField">
-                        <span className="mutedTiny">Min confidence for explain (%)</span>
+                        <span className="mutedTiny">{t("fields.minConfidenceForExplain")}</span>
                         <input
                           className="input"
                           type="number"
@@ -1097,7 +1096,7 @@ export default function AdminIndicatorSettingsPage() {
                         />
                       </label>
                       <label className="settingsField">
-                        <span className="mutedTiny">Min confidence for neutral explain (%)</span>
+                        <span className="mutedTiny">{t("fields.minConfidenceForNeutralExplain")}</span>
                         <input
                           className="input"
                           type="number"
@@ -1111,7 +1110,7 @@ export default function AdminIndicatorSettingsPage() {
                         />
                       </label>
                       <label className="settingsField">
-                        <span className="mutedTiny">Confidence jump threshold (%)</span>
+                        <span className="mutedTiny">{t("fields.confidenceJumpThreshold")}</span>
                         <input
                           className="input"
                           type="number"
@@ -1125,7 +1124,7 @@ export default function AdminIndicatorSettingsPage() {
                         />
                       </label>
                       <label className="settingsField">
-                        <span className="mutedTiny">Near key level (%)</span>
+                        <span className="mutedTiny">{t("fields.nearKeyLevel")}</span>
                         <input
                           className="input"
                           type="number"
@@ -1139,7 +1138,7 @@ export default function AdminIndicatorSettingsPage() {
                         />
                       </label>
                       <label className="settingsField">
-                        <span className="mutedTiny">High importance min (1..5)</span>
+                        <span className="mutedTiny">{t("fields.highImportanceMin")}</span>
                         <input
                           className="input"
                           type="number"
@@ -1153,7 +1152,7 @@ export default function AdminIndicatorSettingsPage() {
                         />
                       </label>
                       <label className="settingsField">
-                        <span className="mutedTiny">Max high-priority calls / hour</span>
+                        <span className="mutedTiny">{t("fields.maxHighPriorityPerHour")}</span>
                         <input
                           className="input"
                           type="number"
@@ -1169,7 +1168,7 @@ export default function AdminIndicatorSettingsPage() {
                     </div>
 
                     <div className="settingsMutedText indicatorConfigHint" style={{ marginTop: 8 }}>
-                      Recent event bars per timeframe
+                      {t("fields.recentEventBars")}
                     </div>
                     <div className="indicatorConfigGrid">
                       <label className="settingsField"><span className="mutedTiny">5m</span><input className="input" type="number" min={1} max={100} step={1} value={config.aiGating.recentEventBars["5m"]} onChange={(e) => setAiGatingRecentEventBars("5m", parseNumber(e.target.value))} /></label>
@@ -1180,7 +1179,7 @@ export default function AdminIndicatorSettingsPage() {
                     </div>
 
                     <div className="settingsMutedText indicatorConfigHint" style={{ marginTop: 8 }}>
-                      AI cooldown seconds per timeframe
+                      {t("fields.aiCooldownPerTf")}
                     </div>
                     <div className="indicatorConfigGrid">
                       <label className="settingsField"><span className="mutedTiny">5m</span><input className="input" type="number" min={0} max={86400} step={1} value={config.aiGating.aiCooldownSec["5m"]} onChange={(e) => setAiGatingCooldownSec("5m", parseNumber(e.target.value))} /></label>
@@ -1195,21 +1194,21 @@ export default function AdminIndicatorSettingsPage() {
 
               <div className={`settingsAccordionItem ${openIndicatorSections.liquiditySweeps ? "settingsAccordionItemOpen" : ""}`}>
                 <button type="button" className="settingsAccordionTrigger" onClick={() => toggleIndicatorSection("liquiditySweeps")} aria-expanded={openIndicatorSections.liquiditySweeps}>
-                  <span>Liquidity Sweeps (Prepared)</span>
+                  <span>{t("sections.liquiditySweeps")}</span>
                   <span className={`settingsAccordionChevron ${openIndicatorSections.liquiditySweeps ? "settingsAccordionChevronOpen" : ""}`}>▾</span>
                 </button>
                 {openIndicatorSections.liquiditySweeps ? (
                   <div className="settingsAccordionBody">
                     <div className="settingsMutedText indicatorConfigHint">
-                      Diese Parameter sind vorbereitet, aber aktuell noch nicht in den Prediction-Features verdrahtet.
+                      {t("fields.liquidityPreparedHint")}
                     </div>
                     <div className="indicatorConfigGrid">
                       <label className="settingsField">
-                        <span className="mutedTiny">Sweep len</span>
+                        <span className="mutedTiny">{t("fields.sweepLen")}</span>
                         <input className="input" type="number" value={config.liquiditySweeps.len} onChange={(e) => setLiquiditySweepsNumber("len", parseNumber(e.target.value))} />
                       </label>
                       <label className="settingsField">
-                        <span className="mutedTiny">Mode</span>
+                        <span className="mutedTiny">{t("fields.mode")}</span>
                         <select className="input" value={config.liquiditySweeps.mode} onChange={(e) => setLiquiditySweepsMode(parseLiquiditySweepsMode(e.target.value))}>
                           <option value="wicks">wicks</option>
                           <option value="outbreak_retest">outbreak_retest</option>
@@ -1217,22 +1216,22 @@ export default function AdminIndicatorSettingsPage() {
                         </select>
                       </label>
                       <label className="settingsField">
-                        <span className="mutedTiny">Max bars</span>
+                        <span className="mutedTiny">{t("fields.maxBars")}</span>
                         <input className="input" type="number" value={config.liquiditySweeps.maxBars} onChange={(e) => setLiquiditySweepsNumber("maxBars", parseNumber(e.target.value))} />
                       </label>
                       <label className="settingsField">
-                        <span className="mutedTiny">Max recent events</span>
+                        <span className="mutedTiny">{t("fields.maxRecentEvents")}</span>
                         <input className="input" type="number" value={config.liquiditySweeps.maxRecentEvents} onChange={(e) => setLiquiditySweepsNumber("maxRecentEvents", parseNumber(e.target.value))} />
                       </label>
                       <label className="settingsField">
-                        <span className="mutedTiny">Max active zones</span>
+                        <span className="mutedTiny">{t("fields.maxActiveZones")}</span>
                         <input className="input" type="number" value={config.liquiditySweeps.maxActiveZones} onChange={(e) => setLiquiditySweepsNumber("maxActiveZones", parseNumber(e.target.value))} />
                       </label>
                     </div>
                     <div className="indicatorInlineChecks">
                       <label className="inlineCheck">
                         <input type="checkbox" checked={config.liquiditySweeps.extend} onChange={(e) => setLiquiditySweepsExtend(e.target.checked)} />
-                        Extend zones
+                        {t("fields.extendZones")}
                       </label>
                     </div>
                   </div>
@@ -1241,22 +1240,22 @@ export default function AdminIndicatorSettingsPage() {
             </div>
 
             <div className="indicatorFormActions">
-              <button className="btn btnPrimary" type="button" disabled={saving || !canSave} onClick={save}>{saving ? "Saving..." : editingId ? "Update override" : "Create override"}</button>
-              <button className="btn" type="button" onClick={() => void refreshResolvedPreview()}>Preview resolved</button>
-              <button className="btn" type="button" onClick={resetForm}>Reset form</button>
+              <button className="btn btnPrimary" type="button" disabled={saving || !canSave} onClick={save}>{saving ? t("saving") : editingId ? t("override.update") : t("override.create")}</button>
+              <button className="btn" type="button" onClick={() => void refreshResolvedPreview()}>{t("override.previewResolved")}</button>
+              <button className="btn" type="button" onClick={resetForm}>{t("override.resetForm")}</button>
             </div>
           </section>
 
           <section className="card settingsSection" style={{ marginBottom: 12 }}>
-            <div className="settingsSectionHeader"><h3 style={{ margin: 0 }}>Overrides</h3></div>
-            {items.length === 0 ? <div className="settingsMutedText">No overrides yet.</div> : (
+            <div className="settingsSectionHeader"><h3 style={{ margin: 0 }}>{t("overrides.title")}</h3></div>
+            {items.length === 0 ? <div className="settingsMutedText">{t("overrides.empty")}</div> : (
               <div style={{ overflowX: "auto" }}>
                 <table className="table" style={{ width: "100%" }}>
                   <thead>
                     <tr>
-                      <th>Scope</th>
-                      <th>Updated</th>
-                      <th>Actions</th>
+                      <th>{t("overrides.scope")}</th>
+                      <th>{t("overrides.updated")}</th>
+                      <th>{t("overrides.actions")}</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -1265,9 +1264,9 @@ export default function AdminIndicatorSettingsPage() {
                         <td>{buildScopeLabel(row)}</td>
                         <td>{new Date(row.updatedAt).toLocaleString()}</td>
                         <td style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
-                          <button className="btn" type="button" onClick={() => applyRow(row)}>Edit</button>
-                          <button className="btn" type="button" onClick={() => applyRow(row, true)}>Clone</button>
-                          <button className="btn" type="button" onClick={() => void removeRow(row.id)}>Delete</button>
+                          <button className="btn" type="button" onClick={() => applyRow(row)}>{t("actions.edit")}</button>
+                          <button className="btn" type="button" onClick={() => applyRow(row, true)}>{t("actions.clone")}</button>
+                          <button className="btn" type="button" onClick={() => void removeRow(row.id)}>{t("actions.delete")}</button>
                         </td>
                       </tr>
                     ))}
@@ -1278,9 +1277,9 @@ export default function AdminIndicatorSettingsPage() {
           </section>
 
           <section className="card settingsSection">
-            <div className="settingsSectionHeader"><h3 style={{ margin: 0 }}>Effective config preview</h3></div>
+            <div className="settingsSectionHeader"><h3 style={{ margin: 0 }}>{t("preview.title")}</h3></div>
             <div style={{ fontSize: 12, color: "var(--muted)", marginBottom: 8 }}>
-              Hash: {resolved?.hash ?? "-"}
+              {t("preview.hash")}: {resolved?.hash ?? "-"}
             </div>
             <pre style={{ margin: 0, whiteSpace: "pre-wrap", fontSize: 12 }}>
               {JSON.stringify(resolved?.config ?? FALLBACK_DEFAULTS, null, 2)}

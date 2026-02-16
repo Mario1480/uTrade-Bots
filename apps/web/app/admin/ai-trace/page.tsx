@@ -2,7 +2,9 @@
 
 import Link from "next/link";
 import { useEffect, useState } from "react";
+import { useLocale, useTranslations } from "next-intl";
 import { ApiError, apiGet, apiPost, apiPut } from "../../../lib/api";
+import { withLocalePath, type AppLocale } from "../../../i18n/config";
 
 type AiTraceSettingsResponse = {
   enabled: boolean;
@@ -98,6 +100,9 @@ function fmtBytes(value: number | null | undefined): string {
 }
 
 export default function AdminAiTracePage() {
+  const t = useTranslations("admin.aiTrace");
+  const tCommon = useTranslations("admin.common");
+  const locale = useLocale() as AppLocale;
   const [loading, setLoading] = useState(true);
   const [loadingLogs, setLoadingLogs] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -141,7 +146,7 @@ export default function AdminAiTracePage() {
       const me = await apiGet<any>("/auth/me");
       if (!(me?.isSuperadmin || me?.hasAdminBackendAccess)) {
         setIsSuperadmin(false);
-        setError("Admin backend access required.");
+        setError(t("messages.accessRequired"));
         return;
       }
       setIsSuperadmin(true);
@@ -182,7 +187,7 @@ export default function AdminAiTracePage() {
       setMaxSystemMessageChars(String(saved.maxSystemMessageChars));
       setMaxUserPayloadChars(String(saved.maxUserPayloadChars));
       setMaxRawResponseChars(String(saved.maxRawResponseChars));
-      setNotice("AI trace settings saved.");
+      setNotice(t("messages.settingsSaved"));
     } catch (e) {
       setError(errMsg(e));
     } finally {
@@ -200,7 +205,7 @@ export default function AdminAiTracePage() {
         deleteAll: false,
         olderThanDays: days
       });
-      setNotice(`Deleted ${res.deletedCount} old AI trace logs.`);
+      setNotice(t("messages.deletedOld", { count: res.deletedCount }));
       await loadLogs(Number(logLimit));
     } catch (e) {
       setError(errMsg(e));
@@ -210,7 +215,7 @@ export default function AdminAiTracePage() {
   }
 
   async function cleanupAllLogs() {
-    if (!confirm("Delete all AI trace logs?")) return;
+    if (!confirm(t("messages.confirmDeleteAll"))) return;
     setCleanupLoading(true);
     setError(null);
     setNotice(null);
@@ -218,7 +223,7 @@ export default function AdminAiTracePage() {
       const res = await apiPost<{ deletedCount: number }>("/admin/ai-trace/logs/cleanup", {
         deleteAll: true
       });
-      setNotice(`Deleted ${res.deletedCount} AI trace logs.`);
+      setNotice(t("messages.deletedAll", { count: res.deletedCount }));
       await loadLogs(Number(logLimit));
     } catch (e) {
       setError(errMsg(e));
@@ -230,20 +235,20 @@ export default function AdminAiTracePage() {
   return (
     <div className="settingsWrap">
       <div className="adminTopActions">
-        <Link href="/admin" className="btn">
-          ← Back to admin
+        <Link href={withLocalePath("/admin", locale)} className="btn">
+          ← {tCommon("backToAdmin")}
         </Link>
-        <Link href="/settings" className="btn">
-          ← Back to settings
+        <Link href={withLocalePath("/settings", locale)} className="btn">
+          ← {tCommon("backToSettings")}
         </Link>
       </div>
 
-      <h2 style={{ marginTop: 0 }}>Admin · AI Trace Logs</h2>
+      <h2 style={{ marginTop: 0 }}>{t("title")}</h2>
       <div className="adminPageIntro">
-        Track OpenAI request payloads and responses for debugging. Disable when not needed.
+        {t("subtitle")}
       </div>
 
-      {loading ? <div className="settingsMutedText">Loading...</div> : null}
+      {loading ? <div className="settingsMutedText">{t("loading")}</div> : null}
       {error ? (
         <div className="card settingsSection settingsAlert settingsAlertError">{error}</div>
       ) : null}
@@ -255,13 +260,13 @@ export default function AdminAiTracePage() {
         <>
           <section className="card settingsSection" style={{ marginBottom: 12 }}>
             <div className="settingsSectionHeader">
-              <h3 style={{ margin: 0 }}>AI Payload Budget Status</h3>
+              <h3 style={{ margin: 0 }}>{t("budgetTitle")}</h3>
             </div>
             <div className="settingsMutedText" style={{ marginBottom: 10 }}>
-              Last updated:{" "}
+              {t("lastUpdated")}:{" "}
               {settings?.payloadBudget?.lastUpdatedAt
                 ? new Date(settings.payloadBudget.lastUpdatedAt).toLocaleString()
-                : "n/a"}
+                : t("na")}
             </div>
             <div className="dashboardStatsGrid" style={{ marginBottom: 10 }}>
               <div className="dashboardStatCard">
@@ -293,11 +298,11 @@ export default function AdminAiTracePage() {
               </div>
             </div>
             <div className="settingsMutedText" style={{ marginBottom: 8 }}>
-              High-water (&gt;90% budget): {settings?.payloadBudget?.highWaterConsecutive ?? 0} /{" "}
+              {t("highWater")}: {settings?.payloadBudget?.highWaterConsecutive ?? 0} /{" "}
               {settings?.payloadBudget?.highWaterConsecutiveThreshold ?? 0}
-              {settings?.payloadBudget?.highWaterAlert ? " · ALERT" : ""}
-              {settings?.payloadBudget?.trimAlert ? " · TRIM ALERT" : ""}
-              {settings?.payloadBudget?.lastMetrics?.overBudget ? " · OVER BUDGET" : ""}
+              {settings?.payloadBudget?.highWaterAlert ? ` · ${t("alert")}` : ""}
+              {settings?.payloadBudget?.trimAlert ? ` · ${t("trimAlert")}` : ""}
+              {settings?.payloadBudget?.lastMetrics?.overBudget ? ` · ${t("overBudget")}` : ""}
             </div>
             <div className="settingsMutedText" style={{ marginBottom: 10 }}>
               Max payload: {fmtBytes(settings?.payloadBudget?.lastMetrics?.maxPayloadBytes)} · Max history:{" "}
@@ -333,11 +338,11 @@ export default function AdminAiTracePage() {
 
           <section className="card settingsSection" style={{ marginBottom: 12 }}>
             <div className="settingsSectionHeader">
-              <h3 style={{ margin: 0 }}>Trace Settings</h3>
+              <h3 style={{ margin: 0 }}>{t("traceSettingsTitle")}</h3>
             </div>
             <div className="settingsMutedText" style={{ marginBottom: 10 }}>
-              Source: {settings?.source ?? "default"} · Last updated:{" "}
-              {settings?.updatedAt ? new Date(settings.updatedAt).toLocaleString() : "never"}
+              {t("source")}: {settings?.source ?? "default"} · {t("lastUpdated")}:{" "}
+              {settings?.updatedAt ? new Date(settings.updatedAt).toLocaleString() : t("never")}
             </div>
 
             <div className="indicatorScopeGrid">
@@ -347,7 +352,7 @@ export default function AdminAiTracePage() {
                   checked={enabled}
                   onChange={(e) => setEnabled(e.target.checked)}
                 />
-                Enable AI trace logging
+                {t("enableTrace")}
               </label>
             </div>
 
@@ -391,17 +396,17 @@ export default function AdminAiTracePage() {
 
             <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginTop: 12 }}>
               <button className="btn btnPrimary" type="button" disabled={saving} onClick={() => void saveSettings()}>
-                {saving ? "Saving..." : "Save settings"}
+                {saving ? t("saving") : t("saveSettings")}
               </button>
               <button className="btn" type="button" onClick={() => void loadAll()}>
-                Reload
+                {t("reload")}
               </button>
             </div>
           </section>
 
           <section className="card settingsSection">
             <div className="settingsSectionHeader">
-              <h3 style={{ margin: 0 }}>Trace Logs ({totalLogs})</h3>
+              <h3 style={{ margin: 0 }}>{t("traceLogs")} ({totalLogs})</h3>
             </div>
 
             <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 10 }}>
@@ -430,18 +435,18 @@ export default function AdminAiTracePage() {
 
             <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 12 }}>
               <button className="btn" type="button" disabled={loadingLogs} onClick={() => void loadLogs(Number(logLimit))}>
-                {loadingLogs ? "Loading..." : "Refresh logs"}
+                {loadingLogs ? t("loading") : t("refreshLogs")}
               </button>
               <button className="btn" type="button" disabled={cleanupLoading} onClick={() => void cleanupOldLogs()}>
-                Delete old logs
+                {t("deleteOldLogs")}
               </button>
               <button className="btn" type="button" disabled={cleanupLoading} onClick={() => void cleanupAllLogs()}>
-                Delete all logs
+                {t("deleteAllLogs")}
               </button>
             </div>
 
             {logs.length === 0 ? (
-              <div className="settingsMutedText">No trace logs available.</div>
+              <div className="settingsMutedText">{t("noLogs")}</div>
             ) : (
               <div style={{ display: "grid", gap: 10 }}>
                 {logs.map((row) => (
@@ -460,7 +465,7 @@ export default function AdminAiTracePage() {
                     </summary>
                     <div style={{ marginTop: 8, display: "grid", gap: 8 }}>
                       <div className="settingsMutedText">
-                        Prompt: <strong>{row.promptTemplateName ?? "System default"}</strong>
+                        {t("prompt")}: <strong>{row.promptTemplateName ?? t("systemDefault")}</strong>
                         {row.promptTemplateId ? ` (${row.promptTemplateId})` : ""}
                         {row.model ? ` · model: ${row.model}` : ""}
                       </div>

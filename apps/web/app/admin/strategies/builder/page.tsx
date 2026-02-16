@@ -2,7 +2,9 @@
 
 import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
+import { useLocale, useTranslations } from "next-intl";
 import { ApiError, apiDelete, apiGet, apiPost, apiPut } from "../../../../lib/api";
+import { withLocalePath, type AppLocale } from "../../../../i18n/config";
 
 type LocalRegistryItem = {
   type: string;
@@ -194,6 +196,9 @@ function stepsFromComposite(item: CompositeItem): BuilderStep[] {
 }
 
 export default function AdminStrategiesBuilderPage() {
+  const t = useTranslations("admin.compositeBuilder");
+  const tCommon = useTranslations("admin.common");
+  const locale = useLocale() as AppLocale;
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [runningPreview, setRunningPreview] = useState(false);
@@ -249,7 +254,7 @@ export default function AdminStrategiesBuilderPage() {
       const hasAccess = Boolean(me?.isSuperadmin || me?.hasAdminBackendAccess);
       setIsAdmin(hasAccess);
       if (!hasAccess) {
-        setError("Admin backend access required.");
+        setError(t("messages.accessRequired"));
         return;
       }
 
@@ -400,7 +405,7 @@ export default function AdminStrategiesBuilderPage() {
           `/admin/composite-strategies/${encodeURIComponent(editingId)}`,
           payload
         );
-        setNotice("Composite strategy updated.");
+        setNotice(t("messages.updated"));
         setPreviewOutput(pretty(response.validation));
       } else {
         const response = await apiPost<{ item: CompositeItem; validation: unknown }>(
@@ -408,7 +413,7 @@ export default function AdminStrategiesBuilderPage() {
           payload
         );
         setEditingId(response.item.id);
-        setNotice("Composite strategy created.");
+        setNotice(t("messages.created"));
         setPreviewOutput(pretty(response.validation));
       }
 
@@ -434,18 +439,18 @@ export default function AdminStrategiesBuilderPage() {
     setSelectedStepId(loaded[0]?.id ?? null);
     setPreviewOutput("");
     setSelectedPredictionId("");
-    setNotice(`Loaded composite: ${item.name}`);
+    setNotice(t("messages.loaded", { name: item.name }));
     setError(null);
   }
 
   async function removeComposite(id: string) {
-    if (!confirm("Delete this composite strategy?")) return;
+    if (!confirm(t("messages.confirmDelete"))) return;
     setError(null);
     setNotice(null);
     try {
       await apiDelete<{ ok: boolean }>(`/admin/composite-strategies/${encodeURIComponent(id)}`);
       if (editingId === id) resetBuilder();
-      setNotice("Composite strategy deleted.");
+      setNotice(t("messages.deleted"));
       await loadAll();
     } catch (e) {
       setError(errMsg(e));
@@ -477,7 +482,7 @@ export default function AdminStrategiesBuilderPage() {
 
     const latest = filtered[0];
     if (!latest) {
-      throw new Error("No matching prediction found for selected scope.");
+      throw new Error(t("messages.noMatchingPrediction"));
     }
     return latest.id;
   }
@@ -488,7 +493,7 @@ export default function AdminStrategiesBuilderPage() {
     setNotice(null);
     try {
       if (!editingId) {
-        throw new Error("Save composite strategy first before preview.");
+        throw new Error(t("messages.saveBeforePreview"));
       }
       const predictionId = selectedPredictionId.trim() || (await findLatestPredictionId());
       setSelectedPredictionId(predictionId);
@@ -499,7 +504,7 @@ export default function AdminStrategiesBuilderPage() {
       );
 
       setPreviewOutput(pretty(response));
-      setNotice(`Dry-run completed using prediction ${response.prediction.id}.`);
+      setNotice(t("messages.dryRunDone", { id: response.prediction.id }));
     } catch (e) {
       setError(errMsg(e));
     } finally {
@@ -510,19 +515,19 @@ export default function AdminStrategiesBuilderPage() {
   return (
     <div className="settingsWrap">
       <div className="adminTopActions">
-        <Link href="/admin" className="btn">← Back to admin</Link>
-        <Link href="/admin/strategies/local" className="btn">Local Strategies</Link>
-        <Link href="/admin/strategies/ai" className="btn">AI Strategies</Link>
+        <Link href={withLocalePath("/admin", locale)} className="btn">← {tCommon("backToAdmin")}</Link>
+        <Link href={withLocalePath("/admin/strategies/local", locale)} className="btn">{t("localStrategies")}</Link>
+        <Link href={withLocalePath("/admin/strategies/ai", locale)} className="btn">{t("aiStrategies")}</Link>
       </div>
 
       <div className="adminPageIntro">
-        <h2 style={{ marginTop: 0 }}>Composite Strategy Builder</h2>
+        <h2 style={{ marginTop: 0 }}>{t("title")}</h2>
         <p className="settingsMutedText">
-          Build linear pipelines using Local + AI strategy nodes and validate by dry-run on latest predictions.
+          {t("subtitle")}
         </p>
       </div>
 
-      {loading ? <div className="settingsMutedText">Loading...</div> : null}
+      {loading ? <div className="settingsMutedText">{t("loading")}</div> : null}
       {error ? <div className="card settingsSection settingsAlert settingsAlertError">{error}</div> : null}
       {notice ? <div className="card settingsSection settingsAlert settingsAlertSuccess">{notice}</div> : null}
 
@@ -530,7 +535,7 @@ export default function AdminStrategiesBuilderPage() {
         <>
           <section className="card settingsSection" style={{ marginBottom: 12 }}>
             <div className="settingsSectionHeader">
-              <h3 style={{ margin: 0 }}>{editingId ? "Edit Composite Strategy" : "Create Composite Strategy"}</h3>
+              <h3 style={{ margin: 0 }}>{editingId ? t("editTitle") : t("createTitle")}</h3>
             </div>
 
             <div className="settingsTwoColGrid" style={{ marginBottom: 10 }}>
@@ -574,16 +579,16 @@ export default function AdminStrategiesBuilderPage() {
 
             <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
               <button className="btn btnPrimary" type="button" onClick={() => void saveComposite()} disabled={saving}>
-                {saving ? "Saving..." : editingId ? "Update composite" : "Create composite"}
+                {saving ? t("saving") : editingId ? t("updateComposite") : t("createComposite")}
               </button>
-              <button className="btn" type="button" onClick={resetBuilder}>Reset builder</button>
+              <button className="btn" type="button" onClick={resetBuilder}>{t("resetBuilder")}</button>
             </div>
           </section>
 
           <div className="settingsTwoColGrid" style={{ alignItems: "start", marginBottom: 12 }}>
             <section className="card settingsSection" style={{ marginBottom: 0 }}>
               <div className="settingsSectionHeader">
-                <h3 style={{ margin: 0 }}>Available Strategies</h3>
+                <h3 style={{ margin: 0 }}>{t("availableStrategies")}</h3>
               </div>
 
               <div style={{ marginBottom: 10 }}>
@@ -601,7 +606,7 @@ export default function AdminStrategiesBuilderPage() {
                       + {item.name} ({item.strategyType})
                     </button>
                   ))}
-                  {localStrategies.length === 0 ? <div className="settingsMutedText">No local strategies.</div> : null}
+                  {localStrategies.length === 0 ? <div className="settingsMutedText">{t("noLocalStrategies")}</div> : null}
                 </div>
               </div>
 
@@ -618,14 +623,14 @@ export default function AdminStrategiesBuilderPage() {
                       + {item.name}
                     </button>
                   ))}
-                  {aiPrompts.length === 0 ? <div className="settingsMutedText">No AI prompts.</div> : null}
+                  {aiPrompts.length === 0 ? <div className="settingsMutedText">{t("noAiPrompts")}</div> : null}
                 </div>
               </div>
             </section>
 
             <section className="card settingsSection" style={{ marginBottom: 0 }}>
               <div className="settingsSectionHeader">
-                <h3 style={{ margin: 0 }}>Pipeline Steps (linear)</h3>
+                <h3 style={{ margin: 0 }}>{t("pipelineSteps")}</h3>
               </div>
 
               {steps.length === 0 ? <div className="settingsMutedText">Add strategies from the left panel.</div> : (
@@ -688,10 +693,10 @@ export default function AdminStrategiesBuilderPage() {
 
           <section className="card settingsSection" style={{ marginBottom: 12 }}>
             <div className="settingsSectionHeader">
-              <h3 style={{ margin: 0 }}>Node Config Editor</h3>
+              <h3 style={{ margin: 0 }}>{t("nodeConfigEditor")}</h3>
             </div>
             {!selectedStep ? (
-              <div className="settingsMutedText">Select a pipeline step to edit config overrides.</div>
+              <div className="settingsMutedText">{t("selectPipelineStep")}</div>
             ) : (
               <>
                 <div className="settingsMutedText" style={{ marginBottom: 8 }}>
