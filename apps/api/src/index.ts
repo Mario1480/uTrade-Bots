@@ -12047,6 +12047,11 @@ app.get("/dashboard/overview", requireAuth, async (_req, res) => {
       }
     })
   ]);
+  const paperIds = accounts
+    .filter((row: any) => normalizeExchangeValue(String(row.exchange ?? "")) === "paper")
+    .map((row: any) => String(row.id));
+  const paperBindings = await listPaperMarketDataAccountIds(paperIds);
+  const accountById = new Map<string, any>(accounts.map((row: any) => [String(row.id), row]));
 
   const aggregate = new Map<string, {
     running: number;
@@ -12113,7 +12118,20 @@ app.get("/dashboard/overview", requireAuth, async (_req, res) => {
 
   const overview: ExchangeAccountOverview[] = accounts.map((account) => {
     const row = aggregate.get(account.id);
-    const lastSyncAt = row?.latestSyncAt ?? account.lastUsedAt ?? null;
+    const isPaper = normalizeExchangeValue(String(account.exchange ?? "")) === "paper";
+    const linkedMarketDataId = isPaper ? (paperBindings[account.id] ?? null) : null;
+    const linkedMarketDataAccount = linkedMarketDataId
+      ? accountById.get(linkedMarketDataId) ?? null
+      : null;
+    const linkedMarketDataAggregate = linkedMarketDataId
+      ? aggregate.get(linkedMarketDataId) ?? null
+      : null;
+    const lastSyncAt =
+      row?.latestSyncAt
+      ?? linkedMarketDataAggregate?.latestSyncAt
+      ?? linkedMarketDataAccount?.lastUsedAt
+      ?? account.lastUsedAt
+      ?? null;
     const hasBotActivity =
       ((row?.running ?? 0) + (row?.stopped ?? 0) + (row?.error ?? 0)) > 0;
     const status = computeConnectionStatus(lastSyncAt, hasBotActivity);
@@ -12297,7 +12315,13 @@ app.get("/dashboard/alerts", requireAuth, async (req, res) => {
     })
   ]);
 
-  const accountById = new Map(accounts.map((row: any) => [row.id, row]));
+  const accountById = new Map<string, any>(
+    accounts.map((row: any) => [String(row.id), row] as const)
+  );
+  const paperIds = accounts
+    .filter((row: any) => normalizeExchangeValue(String(row.exchange ?? "")) === "paper")
+    .map((row: any) => String(row.id));
+  const paperBindings = await listPaperMarketDataAccountIds(paperIds);
   const aggregate = new Map<string, {
     running: number;
     stopped: number;
@@ -12346,7 +12370,20 @@ app.get("/dashboard/alerts", requireAuth, async (req, res) => {
 
   for (const account of accounts) {
     const row = aggregate.get(account.id);
-    const lastSyncAt = row?.latestSyncAt ?? account.lastUsedAt ?? null;
+    const isPaper = normalizeExchangeValue(String(account.exchange ?? "")) === "paper";
+    const linkedMarketDataId = isPaper ? (paperBindings[account.id] ?? null) : null;
+    const linkedMarketDataAccount = linkedMarketDataId
+      ? accountById.get(linkedMarketDataId) ?? null
+      : null;
+    const linkedMarketDataAggregate = linkedMarketDataId
+      ? aggregate.get(linkedMarketDataId) ?? null
+      : null;
+    const lastSyncAt =
+      row?.latestSyncAt
+      ?? linkedMarketDataAggregate?.latestSyncAt
+      ?? linkedMarketDataAccount?.lastUsedAt
+      ?? account.lastUsedAt
+      ?? null;
     const hasBotActivity = ((row?.running ?? 0) + (row?.stopped ?? 0) + (row?.error ?? 0)) > 0;
     const status = computeConnectionStatus(lastSyncAt, hasBotActivity);
 
