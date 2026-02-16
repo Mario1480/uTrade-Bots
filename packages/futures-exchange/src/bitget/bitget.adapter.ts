@@ -73,6 +73,7 @@ export class BitgetFuturesAdapter implements FuturesExchange {
   private readonly privateWs: BitgetPrivateWsApi | null;
 
   private readonly orderSymbolIndex = new Map<string, string>();
+  private positionModeHint: { mode: "one-way" | "hedge"; ts: number } | null = null;
 
   constructor(private readonly config: BitgetAdapterConfig = {}) {
     this.productType = config.productType ?? BITGET_DEFAULT_PRODUCT_TYPE;
@@ -177,30 +178,41 @@ export class BitgetFuturesAdapter implements FuturesExchange {
       type: req.type,
       roundingMode: "down"
     });
+    const initialMode = await this.resolvePositionMode();
+    const place = (mode: "one-way" | "hedge") =>
+      this.tradeApi.placeOrder({
+        symbol: contract.mexcSymbol,
+        productType: this.productType,
+        marginCoin: this.marginCoin,
+        marginMode: "crossed",
+        side: req.side,
+        tradeSide:
+          mode === "hedge"
+            ? req.reduceOnly
+              ? "close"
+              : "open"
+            : undefined,
+        orderType: req.type,
+        size: String(normalized.qty),
+        price: normalized.price !== undefined ? String(normalized.price) : undefined,
+        presetStopSurplusPrice:
+          req.takeProfitPrice !== undefined ? String(req.takeProfitPrice) : undefined,
+        presetStopLossPrice:
+          req.stopLossPrice !== undefined ? String(req.stopLossPrice) : undefined,
+        force: req.type === "limit" ? "gtc" : "ioc",
+        // Send reduceOnly only when true; open orders should omit it for max compatibility.
+        reduceOnly: req.reduceOnly ? "YES" : undefined
+      });
 
-    const tradeSide = this.defaultPositionMode === "hedge"
-      ? req.reduceOnly
-        ? "close"
-        : "open"
-      : undefined;
-
-    const placed = await this.tradeApi.placeOrder({
-      symbol: contract.mexcSymbol,
-      productType: this.productType,
-      marginCoin: this.marginCoin,
-      marginMode: "crossed",
-      side: req.side,
-      tradeSide,
-      orderType: req.type,
-      size: String(normalized.qty),
-      price: normalized.price !== undefined ? String(normalized.price) : undefined,
-      presetStopSurplusPrice:
-        req.takeProfitPrice !== undefined ? String(req.takeProfitPrice) : undefined,
-      presetStopLossPrice:
-        req.stopLossPrice !== undefined ? String(req.stopLossPrice) : undefined,
-      force: req.type === "limit" ? "gtc" : "ioc",
-      reduceOnly: req.reduceOnly ? "YES" : "NO"
-    });
+    let placed: { orderId?: string; clientOid?: string };
+    try {
+      placed = await place(initialMode);
+    } catch (error) {
+      if (!this.isPositionModeOrderTypeMismatch(error)) throw error;
+      const fallbackMode: "one-way" | "hedge" = initialMode === "hedge" ? "one-way" : "hedge";
+      this.positionModeHint = { mode: fallbackMode, ts: Date.now() };
+      placed = await place(fallbackMode);
+    }
 
     const orderId = placed.orderId?.trim();
     if (!orderId) {
@@ -212,6 +224,40 @@ export class BitgetFuturesAdapter implements FuturesExchange {
 
     this.orderSymbolIndex.set(orderId, contract.mexcSymbol);
     return { orderId };
+  }
+
+  private async resolvePositionMode(): Promise<"one-way" | "hedge"> {
+    const cacheMs = Number(process.env.BITGET_POSITION_MODE_CACHE_MS ?? "60000");
+    if (
+      this.positionModeHint &&
+      Number.isFinite(cacheMs) &&
+      cacheMs > 0 &&
+      Date.now() - this.positionModeHint.ts < cacheMs
+    ) {
+      return this.positionModeHint.mode;
+    }
+    try {
+      const modeRaw = await this.accountApi.getPositionMode(this.productType);
+      const text = String(modeRaw?.posMode ?? "").toLowerCase();
+      const mode: "one-way" | "hedge" = text.includes("hedge") ? "hedge" : "one-way";
+      this.positionModeHint = { mode, ts: Date.now() };
+      return mode;
+    } catch {
+      const mode = this.defaultPositionMode;
+      this.positionModeHint = { mode, ts: Date.now() };
+      return mode;
+    }
+  }
+
+  private isPositionModeOrderTypeMismatch(error: unknown): boolean {
+    const msg = String(error ?? "").toLowerCase();
+    if (!msg.includes("order type")) return false;
+    return (
+      msg.includes("unilateral") ||
+      msg.includes("one-way") ||
+      msg.includes("hedge") ||
+      msg.includes("position mode")
+    );
   }
 
   async cancelOrder(orderId: string): Promise<void> {
