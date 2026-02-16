@@ -204,6 +204,26 @@ test("nested keyDrivers paths are accepted", () => {
   assert.equal(value.keyDrivers.length, 2);
 });
 
+test("featureSnapshot-prefixed keyDrivers paths are normalized and accepted", () => {
+  const value = validateExplainerOutput(
+    {
+      explanation: "Signal up with MACD and RSI confirmation.",
+      tags: ["trend_up"],
+      keyDrivers: [
+        { name: "featureSnapshot.indicators.rsi_14", value: 57.2 },
+        { name: "$.featureSnapshot.indicators.macd.hist", value: 0.02 }
+      ],
+      disclaimer: "grounded_features_only"
+    },
+    baseInput.featureSnapshot
+  );
+
+  assert.deepEqual(
+    value.keyDrivers.map((driver) => driver.name),
+    ["indicators.rsi_14", "indicators.macd.hist"]
+  );
+});
+
 test("v2 indicator keyDrivers paths are accepted", () => {
   const value = validateExplainerOutput(
     {

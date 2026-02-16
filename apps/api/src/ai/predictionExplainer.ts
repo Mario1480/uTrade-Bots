@@ -451,6 +451,18 @@ function collectFeaturePaths(
   return out;
 }
 
+function normalizeKeyDriverPath(path: string): string {
+  const trimmed = path.trim();
+  if (!trimmed) return trimmed;
+  if (trimmed.startsWith("featureSnapshot.")) {
+    return trimmed.slice("featureSnapshot.".length);
+  }
+  if (trimmed.startsWith("$.featureSnapshot.")) {
+    return trimmed.slice("$.featureSnapshot.".length);
+  }
+  return trimmed;
+}
+
 export function validateExplainerOutput(
   rawValue: unknown,
   featureSnapshot: Record<string, unknown>,
@@ -461,8 +473,12 @@ export function validateExplainerOutput(
     throw new Error(`schema_validation_failed:${parsed.error.issues.map((i) => i.path.join(".")).join(",")}`);
   }
 
+  const normalizedDrivers = parsed.data.keyDrivers.map((driver) => ({
+    ...driver,
+    name: normalizeKeyDriverPath(driver.name)
+  }));
   const keySet = collectFeaturePaths(featureSnapshot);
-  const invalidDriver = parsed.data.keyDrivers.find((driver) => !keySet.has(driver.name));
+  const invalidDriver = normalizedDrivers.find((driver) => !keySet.has(driver.name));
   if (invalidDriver) {
     throw new Error(`key_driver_outside_snapshot:${invalidDriver.name}`);
   }
@@ -479,7 +495,7 @@ export function validateExplainerOutput(
   return {
     explanation,
     tags,
-    keyDrivers: parsed.data.keyDrivers.slice(0, 5).map((driver) => ({
+    keyDrivers: normalizedDrivers.slice(0, 5).map((driver) => ({
       name: driver.name,
       value: driver.value
     })),
@@ -1044,7 +1060,10 @@ export async function generatePredictionExplanation(
 
   if (result.fallbackUsed) {
     if (deps.requireSuccessfulAi) {
-      throw new Error("ai_required_but_unavailable");
+      const reason = result.rateLimited
+        ? "rate_limited"
+        : "provider_unavailable_or_invalid_response";
+      throw new Error(`ai_required_but_unavailable:${reason}`);
     }
     logger.info("ai_fallback_used", {
       ai_fallback_used: true,

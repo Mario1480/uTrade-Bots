@@ -57,8 +57,8 @@ async function request<T>(
     }
 
     const msg =
-      payload?.error ||
       payload?.message ||
+      payload?.error ||
       `${method} ${path} failed (${res.status})`;
 
     throw new ApiError(msg, res.status, payload);
