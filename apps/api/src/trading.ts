@@ -1612,24 +1612,97 @@ export async function editOpenOrder(
     throw new ManualTradingError("invalid_qty", 400, "invalid_qty");
   }
 
+  const exchangeSymbol = await adapter.toExchangeSymbol(normalizedSymbol);
+  const almostEqual = (a: number, b: number) => {
+    const tolerance = Math.max(1e-8, Math.abs(a) * 1e-8, Math.abs(b) * 1e-8);
+    return Math.abs(a - b) <= tolerance;
+  };
+
+  let nextPrice = input.price;
+  let nextQty = input.qty;
+  let nextTakeProfit = input.takeProfitPrice;
+  let nextStopLoss = input.stopLossPrice;
+
+  try {
+    const detailRaw = await adapter.tradeApi.getOrderDetail({
+      symbol: exchangeSymbol,
+      orderId: input.orderId
+    });
+    const detail = toRecord(detailRaw);
+    const currentPrice = getNumber(detail, ["price", "orderPrice", "limitPrice"]);
+    const currentQty = getNumber(detail, ["size", "baseVolume", "qty"]);
+    const currentTakeProfit = getNumber(detail, [
+      "presetStopSurplusPrice",
+      "takeProfitPrice",
+      "stopSurplusTriggerPrice",
+      "stopSurplusExecutePrice"
+    ]);
+    const currentStopLoss = getNumber(detail, [
+      "presetStopLossPrice",
+      "stopLossPrice",
+      "stopLossTriggerPrice",
+      "stopLossExecutePrice"
+    ]);
+
+    if (nextPrice !== undefined && currentPrice !== null && almostEqual(nextPrice, currentPrice)) {
+      nextPrice = undefined;
+    }
+    if (nextQty !== undefined && currentQty !== null && almostEqual(nextQty, currentQty)) {
+      nextQty = undefined;
+    }
+    if (nextTakeProfit !== undefined) {
+      if (nextTakeProfit === null && currentTakeProfit === null) {
+        nextTakeProfit = undefined;
+      } else if (
+        nextTakeProfit !== null &&
+        currentTakeProfit !== null &&
+        almostEqual(nextTakeProfit, currentTakeProfit)
+      ) {
+        nextTakeProfit = undefined;
+      }
+    }
+    if (nextStopLoss !== undefined) {
+      if (nextStopLoss === null && currentStopLoss === null) {
+        nextStopLoss = undefined;
+      } else if (
+        nextStopLoss !== null &&
+        currentStopLoss !== null &&
+        almostEqual(nextStopLoss, currentStopLoss)
+      ) {
+        nextStopLoss = undefined;
+      }
+    }
+  } catch {
+    // If detail lookup fails, keep original payload and let exchange validate.
+  }
+
+  if (
+    nextPrice === undefined &&
+    nextQty === undefined &&
+    nextTakeProfit === undefined &&
+    nextStopLoss === undefined
+  ) {
+    throw new ManualTradingError("no_edit_fields", 400, "no_edit_fields");
+  }
+
   await adapter.tradeApi.modifyOrder({
-    symbol: await adapter.toExchangeSymbol(normalizedSymbol),
+    symbol: exchangeSymbol,
     productType: adapter.productType,
     orderId: input.orderId,
-    newSize: input.qty !== undefined ? String(input.qty) : undefined,
-    newPrice: input.price !== undefined ? String(input.price) : undefined,
+    newSize: nextQty !== undefined ? String(nextQty) : undefined,
+    newPrice: nextPrice !== undefined ? String(nextPrice) : undefined,
     newPresetStopSurplusPrice:
-      input.takeProfitPrice === undefined
+      nextTakeProfit === undefined
         ? undefined
-        : input.takeProfitPrice === null
+        : nextTakeProfit === null
           ? ""
-          : String(input.takeProfitPrice),
+          : String(nextTakeProfit),
     newPresetStopLossPrice:
-      input.stopLossPrice === undefined
+      nextStopLoss === undefined
         ? undefined
-        : input.stopLossPrice === null
+        : nextStopLoss === null
           ? ""
-          : String(input.stopLossPrice)
+          : String(nextStopLoss)
   });
   return { orderId: input.orderId };
 }
