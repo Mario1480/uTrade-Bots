@@ -41,6 +41,14 @@ function mapMarginMode(mode: MarginMode): "isolated" | "crossed" {
   return mode === "isolated" ? "isolated" : "crossed";
 }
 
+function isMarginModeLockedError(error: unknown): boolean {
+  const text = String(error ?? "").toLowerCase();
+  return (
+    text.includes("margin mode cannot be adjusted") ||
+    text.includes("currently holding positions or orders")
+  );
+}
+
 function toPositionSide(raw: unknown): "long" | "short" {
   return String(raw ?? "").toLowerCase().includes("long") ? "long" : "short";
 }
@@ -153,12 +161,18 @@ export class BitgetFuturesAdapter implements FuturesExchange {
     const contract = await this.requireTradeableContract(symbol);
     enforceLeverageBounds(leverage, contract);
 
-    await this.accountApi.setMarginMode({
-      symbol: contract.mexcSymbol,
-      marginMode: mapMarginMode(marginMode),
-      marginCoin: this.marginCoin,
-      productType: this.productType
-    });
+    try {
+      await this.accountApi.setMarginMode({
+        symbol: contract.mexcSymbol,
+        marginMode: mapMarginMode(marginMode),
+        marginCoin: this.marginCoin,
+        productType: this.productType
+      });
+    } catch (error) {
+      // Bitget rejects margin-mode changes while orders/positions are open.
+      // Continue and still apply leverage + order placement.
+      if (!isMarginModeLockedError(error)) throw error;
+    }
 
     await this.accountApi.setLeverage({
       symbol: contract.mexcSymbol,
@@ -184,7 +198,7 @@ export class BitgetFuturesAdapter implements FuturesExchange {
         symbol: contract.mexcSymbol,
         productType: this.productType,
         marginCoin: this.marginCoin,
-        marginMode: "crossed",
+        marginMode: mapMarginMode(req.marginMode ?? "cross"),
         side: req.side,
         tradeSide:
           mode === "hedge"

@@ -11721,7 +11721,8 @@ app.post("/api/orders", requireAuth, async (req, res) => {
         price: parsed.data.price,
         takeProfitPrice: parsed.data.takeProfitPrice,
         stopLossPrice: parsed.data.stopLossPrice,
-        reduceOnly: parsed.data.reduceOnly
+        reduceOnly: parsed.data.reduceOnly,
+        marginMode: parsed.data.marginMode
       });
 
       return res.status(201).json({

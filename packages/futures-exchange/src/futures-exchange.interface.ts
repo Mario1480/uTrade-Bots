@@ -17,6 +17,7 @@ export type PlaceOrderRequest = {
   takeProfitPrice?: number;
   stopLossPrice?: number;
   reduceOnly?: boolean;
+  marginMode?: MarginMode;
 };
 
 export interface FuturesExchange {
