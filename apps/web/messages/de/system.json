@@ -61,6 +61,11 @@
         "blockTags": "Block-Tags (kommagetrennt)"
       },
       "blockTagsPlaceholder": "news_risk,data_gap,low_liquidity"
+    },
+    "limit": {
+      "status": "Create-Limit Nutzung: {usage}/{limit} (verbleibend: {remaining})",
+      "blocked": "Bot-Create-Limit erreicht ({usage}/{limit}).",
+      "unlimited": "unbegrenzt"
     }
   },
   "botsDetails": {

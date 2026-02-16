@@ -28,6 +28,11 @@ function adminCategoryClassName(category: AdminLinkItem["category"]): string {
 
 const ADMIN_LINKS: AdminLinkItem[] = [
   {
+    href: "/admin/access-section",
+    i18nKey: "accessSection",
+    category: "Access"
+  },
+  {
     href: "/admin/users",
     i18nKey: "users",
     category: "Access"

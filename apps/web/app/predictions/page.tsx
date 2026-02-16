@@ -17,6 +17,11 @@ import {
   parsePredictionChangeReason,
   type PredictionSignalFlip
 } from "../../src/predictions/refreshUi";
+import {
+  strategyBucketFromKind,
+  type AccessSectionSettingsResponse,
+  type StrategyLimitBucket
+} from "../../src/access/accessSection";
 
 type PredictionSignal = "up" | "down" | "neutral";
 type PredictionTimeframe = "5m" | "15m" | "1h" | "4h" | "1d";
@@ -789,6 +794,7 @@ export default function PredictionsPage() {
   const [compositeStrategies, setCompositeStrategies] = useState<PublicCompositeStrategyItem[]>([]);
   const [compositeStrategiesLoading, setCompositeStrategiesLoading] = useState(false);
   const [predictionDefaults, setPredictionDefaults] = useState<PredictionDefaultsResponse | null>(null);
+  const [accessSection, setAccessSection] = useState<AccessSectionSettingsResponse | null>(null);
   const [newStrategySelectValue, setNewStrategySelectValue] = useState("ai:default");
   const [newLeverage, setNewLeverage] = useState("10");
   const [nowMs, setNowMs] = useState(() => Date.now());
@@ -948,6 +954,15 @@ export default function PredictionsPage() {
     }
   }
 
+  async function loadAccessSectionSettings() {
+    try {
+      const payload = await apiGet<AccessSectionSettingsResponse>("/settings/access-section");
+      setAccessSection(payload);
+    } catch {
+      setAccessSection(null);
+    }
+  }
+
   async function loadStrategyEntitlements() {
     try {
       const payload = await apiGet<{ entitlements: StrategyEntitlements }>("/settings/strategy-entitlements");
@@ -1049,6 +1064,7 @@ export default function PredictionsPage() {
     void loadLocalStrategies();
     void loadCompositeStrategies();
     void loadPredictionDefaults();
+    void loadAccessSectionSettings();
   }, []);
 
   useEffect(() => {
@@ -1146,6 +1162,19 @@ export default function PredictionsPage() {
   const effectiveCreateSignalMode = forcedCreateSignalMode ?? predictionDefaults?.signalMode ?? "both";
   const selectedPromptLockedTimeframe = selectedPrompt?.timeframe ?? null;
   const effectiveCreateTimeframe = selectedPromptLockedTimeframe ?? newTimeframe;
+  const selectedCreateLimitBucket = useMemo<StrategyLimitBucket>(
+    () => strategyBucketFromKind(selectedStrategyKind),
+    [selectedStrategyKind]
+  );
+  const selectedCreateLimit = accessSection?.limits[selectedCreateLimitBucket] ?? null;
+  const selectedCreateUsage = accessSection?.usage[selectedCreateLimitBucket] ?? 0;
+  const selectedCreateRemaining = accessSection?.remaining[selectedCreateLimitBucket] ?? null;
+  const createBlockedByLimit = Boolean(
+    accessSection
+    && !accessSection.bypass
+    && typeof selectedCreateRemaining === "number"
+    && selectedCreateRemaining <= 0
+  );
 
   useEffect(() => {
     const selected = decodeStrategySelectValue(newStrategySelectValue);
@@ -1383,6 +1412,15 @@ export default function PredictionsPage() {
       setActionError(tPred("create.validationLeverageRange"));
       return;
     }
+    if (createBlockedByLimit) {
+      setActionError(
+        tPred("create.limitBlocked", {
+          usage: selectedCreateUsage,
+          limit: selectedCreateLimit ?? 0
+        })
+      );
+      return;
+    }
 
     setCreating(true);
     try {
@@ -1442,7 +1480,8 @@ export default function PredictionsPage() {
         loadPredictions(),
         loadRunningPredictions(),
         loadPredictionQuality(),
-        loadPredictionMetrics()
+        loadPredictionMetrics(),
+        loadAccessSectionSettings()
       ]);
     } catch (e) {
       setActionError(errMsg(e));
@@ -1470,7 +1509,8 @@ export default function PredictionsPage() {
         loadPredictions(),
         loadRunningPredictions(),
         loadPredictionQuality(),
-        loadPredictionMetrics()
+        loadPredictionMetrics(),
+        loadAccessSectionSettings()
       ]);
     } catch (e) {
       setActionError(errMsg(e));
@@ -1495,7 +1535,8 @@ export default function PredictionsPage() {
         loadPredictions(),
         loadRunningPredictions(),
         loadPredictionQuality(),
-        loadPredictionMetrics()
+        loadPredictionMetrics(),
+        loadAccessSectionSettings()
       ]);
     } catch (e) {
       setActionError(errMsg(e));
@@ -2109,6 +2150,27 @@ export default function PredictionsPage() {
             {tPred("create.noCompositeStrategies")}
           </div>
           ) : null}
+          {accessSection && !accessSection.bypass ? (
+          <div className={createBlockedByLimit ? "predictionCreateAlert predictionCreateAlertWarn" : "predictionCreateAlert predictionCreateAlertInfo"}>
+            {tPred("create.limitStatus", {
+              bucket:
+                selectedCreateLimitBucket === "predictionsLocal"
+                  ? tPred("create.limitBucketLocal")
+                  : selectedCreateLimitBucket === "predictionsComposite"
+                    ? tPred("create.limitBucketComposite")
+                    : tPred("create.limitBucketAi"),
+              usage: selectedCreateUsage,
+              limit:
+                selectedCreateLimit === null
+                  ? tPred("create.unlimited")
+                  : String(selectedCreateLimit),
+              remaining:
+                selectedCreateRemaining === null
+                  ? tPred("create.unlimited")
+                  : String(selectedCreateRemaining)
+            })}
+          </div>
+          ) : null}
           {aiKindAllowed && publicAiPromptLicensePolicy ? (
           <div className="predictionCreateAlert predictionCreateAlertInfo">
             {tPred("create.allowedPromptIds")}:{" "}
@@ -2119,7 +2181,12 @@ export default function PredictionsPage() {
           ) : null}
 
           <div className="predictionCreateActions">
-            <button className="btn btnPrimary" type="button" disabled={creating} onClick={() => void createPrediction()}>
+            <button
+              className="btn btnPrimary"
+              type="button"
+              disabled={creating || createBlockedByLimit}
+              onClick={() => void createPrediction()}
+            >
               {creating ? tPred("create.creating") : tPred("create.createPrediction")}
             </button>
           </div>

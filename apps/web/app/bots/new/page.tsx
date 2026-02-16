@@ -3,8 +3,10 @@
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect, useMemo, useState } from "react";
-import { useTranslations } from "next-intl";
+import { useLocale, useTranslations } from "next-intl";
 import { ApiError, apiGet, apiPost } from "../../../lib/api";
+import { withLocalePath, type AppLocale } from "../../../i18n/config";
+import { type AccessSectionSettingsResponse } from "../../../src/access/accessSection";
 
 type ExchangeAccount = {
   id: string;
@@ -26,6 +28,7 @@ function errMsg(e: unknown): string {
 
 export default function NewBotPage() {
   const t = useTranslations("system.botsNew");
+  const locale = useLocale() as AppLocale;
   const router = useRouter();
   const [accounts, setAccounts] = useState<ExchangeAccount[]>([]);
   const [name, setName] = useState("");
@@ -44,15 +47,20 @@ export default function NewBotPage() {
   const [copierBlockTags, setCopierBlockTags] = useState("news_risk,data_gap,low_liquidity");
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [accessSettings, setAccessSettings] = useState<AccessSectionSettingsResponse | null>(null);
 
   useEffect(() => {
     let mounted = true;
     async function loadAccounts() {
       try {
-        const response = await apiGet<{ items: ExchangeAccount[] }>("/exchange-accounts");
+        const [accountsResponse, accessResponse] = await Promise.all([
+          apiGet<{ items: ExchangeAccount[] }>("/exchange-accounts"),
+          apiGet<AccessSectionSettingsResponse>("/settings/access-section")
+        ]);
         if (!mounted) return;
-        const items = response.items ?? [];
+        const items = accountsResponse.items ?? [];
         setAccounts(items);
+        setAccessSettings(accessResponse);
         if (!exchangeAccountId && items.length > 0) {
           setExchangeAccountId(items[0].id);
         }
@@ -68,12 +76,32 @@ export default function NewBotPage() {
   }, []);
 
   const canCreate = useMemo(() => {
-    return Boolean(name.trim() && symbol.trim() && exchangeAccountId && !saving);
-  }, [name, symbol, exchangeAccountId, saving]);
+    const blockedByLimit = Boolean(
+      accessSettings
+      && !accessSettings.bypass
+      && typeof accessSettings.remaining.bots === "number"
+      && accessSettings.remaining.bots <= 0
+    );
+    return Boolean(name.trim() && symbol.trim() && exchangeAccountId && !saving && !blockedByLimit);
+  }, [name, symbol, exchangeAccountId, saving, accessSettings]);
 
   async function onSubmit(e: React.FormEvent) {
     e.preventDefault();
     if (!canCreate) return;
+    if (
+      accessSettings
+      && !accessSettings.bypass
+      && typeof accessSettings.remaining.bots === "number"
+      && accessSettings.remaining.bots <= 0
+    ) {
+      setError(
+        t("limit.blocked", {
+          usage: accessSettings.usage.bots,
+          limit: accessSettings.limits.bots ?? 0
+        })
+      );
+      return;
+    }
     setSaving(true);
     setError(null);
     try {
@@ -116,7 +144,7 @@ export default function NewBotPage() {
               }
             : {}
       });
-      router.push(`/bots/${created.id}`);
+      router.push(withLocalePath(`/bots/${created.id}`, locale));
     } catch (e) {
       setError(errMsg(e));
     } finally {
@@ -127,7 +155,7 @@ export default function NewBotPage() {
   return (
     <div className="container" style={{ maxWidth: 760 }}>
       <div style={{ marginBottom: 12 }}>
-        <Link href="/" className="btn">{t("actions.back")}</Link>
+        <Link href={withLocalePath("/", locale)} className="btn">{t("actions.back")}</Link>
       </div>
 
       <div className="card" style={{ padding: 18 }}>
@@ -141,10 +169,27 @@ export default function NewBotPage() {
         {accounts.length === 0 ? (
           <div className="card" style={{ padding: 10 }}>
             <div style={{ marginBottom: 8 }}>{t("noExchangeAccount")}</div>
-            <Link href="/settings" className="btn btnPrimary">{t("actions.addExchangeAccount")}</Link>
+            <Link href={withLocalePath("/settings", locale)} className="btn btnPrimary">
+              {t("actions.addExchangeAccount")}
+            </Link>
           </div>
         ) : (
           <form onSubmit={onSubmit} style={{ display: "grid", gap: 10 }}>
+            {accessSettings && !accessSettings.bypass ? (
+              <div className="card" style={{ padding: 10, fontSize: 12, color: "var(--muted)" }}>
+                {t("limit.status", {
+                  usage: accessSettings.usage.bots,
+                  limit:
+                    accessSettings.limits.bots === null
+                      ? t("limit.unlimited")
+                      : String(accessSettings.limits.bots),
+                  remaining:
+                    accessSettings.remaining.bots === null
+                      ? t("limit.unlimited")
+                      : String(accessSettings.remaining.bots)
+                })}
+              </div>
+            ) : null}
             <label style={{ display: "grid", gap: 6 }}>
               <span style={{ fontSize: 12, color: "var(--muted)" }}>{t("fields.name")}</span>
               <input className="input" value={name} onChange={(e) => setName(e.target.value)} required />

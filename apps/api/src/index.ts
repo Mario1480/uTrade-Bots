@@ -474,6 +474,25 @@ const adminPredictionDefaultsSchema = z.object({
   signalMode: z.enum(["local_only", "ai_only", "both"]).default("both")
 });
 
+const accessSectionVisibilitySchema = z.object({
+  tradingDesk: z.boolean().default(true),
+  bots: z.boolean().default(true),
+  predictionsDashboard: z.boolean().default(true),
+  economicCalendar: z.boolean().default(true)
+});
+
+const accessSectionLimitsSchema = z.object({
+  bots: z.number().int().min(0).nullable().default(null),
+  predictionsLocal: z.number().int().min(0).nullable().default(null),
+  predictionsAi: z.number().int().min(0).nullable().default(null),
+  predictionsComposite: z.number().int().min(0).nullable().default(null)
+});
+
+const adminAccessSectionSettingsSchema = z.object({
+  visibility: accessSectionVisibilitySchema.default({}),
+  limits: accessSectionLimitsSchema.default({})
+});
+
 const adminAiTraceSettingsSchema = z.object({
   enabled: z.boolean().default(false),
   maxSystemMessageChars: z.number().int().min(500).max(50_000).default(12_000),
@@ -819,6 +838,33 @@ type PredictionTimeframe = "5m" | "15m" | "1h" | "4h" | "1d";
 type PredictionMarketType = "spot" | "perp";
 type PredictionSignal = "up" | "down" | "neutral";
 type DirectionPreference = "long" | "short" | "either";
+type AccessSectionPredictionLimitKey =
+  | "predictionsLocal"
+  | "predictionsAi"
+  | "predictionsComposite";
+type AccessSectionLimitKey = "bots" | AccessSectionPredictionLimitKey;
+type AccessSectionVisibility = {
+  tradingDesk: boolean;
+  bots: boolean;
+  predictionsDashboard: boolean;
+  economicCalendar: boolean;
+};
+type AccessSectionLimits = {
+  bots: number | null;
+  predictionsLocal: number | null;
+  predictionsAi: number | null;
+  predictionsComposite: number | null;
+};
+type StoredAccessSectionSettings = {
+  visibility: AccessSectionVisibility;
+  limits: AccessSectionLimits;
+};
+type AccessSectionUsage = {
+  bots: number;
+  predictionsLocal: number;
+  predictionsAi: number;
+  predictionsComposite: number;
+};
 
 const PREDICTION_TIMEFRAMES = new Set<PredictionTimeframe>(["5m", "15m", "1h", "4h", "1d"]);
 const PREDICTION_MARKET_TYPES = new Set<PredictionMarketType>(["spot", "perp"]);
@@ -1002,12 +1048,27 @@ const GLOBAL_SETTING_API_KEYS_KEY = "admin.apiKeys";
 const GLOBAL_SETTING_PREDICTION_REFRESH_KEY = "admin.predictionRefresh";
 const GLOBAL_SETTING_PREDICTION_DEFAULTS_KEY = "admin.predictionDefaults";
 const GLOBAL_SETTING_ADMIN_BACKEND_ACCESS_KEY = "admin.backendAccess";
+const GLOBAL_SETTING_ACCESS_SECTION_KEY = "admin.accessSection.v1";
 const GLOBAL_SETTING_AI_PROMPTS_KEY = AI_PROMPT_SETTINGS_GLOBAL_SETTING_KEY;
 const GLOBAL_SETTING_AI_TRACE_KEY = AI_TRACE_SETTINGS_GLOBAL_SETTING_KEY;
 const GLOBAL_SETTING_PREDICTION_PERFORMANCE_RESET_KEY = "predictions.performanceResetByUser.v1";
 const DEFAULT_PREDICTION_SIGNAL_MODE = normalizePredictionSignalMode(
   process.env.PREDICTION_DEFAULT_SIGNAL_MODE
 );
+const DEFAULT_ACCESS_SECTION_SETTINGS: StoredAccessSectionSettings = {
+  visibility: {
+    tradingDesk: true,
+    bots: true,
+    predictionsDashboard: true,
+    economicCalendar: true
+  },
+  limits: {
+    bots: null,
+    predictionsLocal: null,
+    predictionsAi: null,
+    predictionsComposite: null
+  }
+};
 const SUPERADMIN_EMAIL = (process.env.ADMIN_EMAIL ?? "admin@utrade.vip").trim().toLowerCase();
 const DEFAULT_ADMIN_PASSWORD = process.env.ADMIN_PASSWORD?.trim() || "TempAdmin1234!";
 const PASSWORD_RESET_PURPOSE = "password_reset";
@@ -1414,6 +1475,198 @@ function parsePredictionPerformanceResetMap(value: unknown): { byUserId: Record<
     byUserId[userId] = parsed.toISOString();
   }
   return { byUserId };
+}
+
+function normalizeAccessSectionLimit(value: unknown): number | null {
+  if (value === null || value === undefined || value === "") return null;
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed)) return null;
+  const normalized = Math.trunc(parsed);
+  if (normalized < 0) return null;
+  return normalized;
+}
+
+function parseStoredAccessSectionSettings(value: unknown): StoredAccessSectionSettings {
+  const record = parseJsonObject(value);
+  const visibilityRaw = parseJsonObject(record.visibility);
+  const limitsRaw = parseJsonObject(record.limits);
+
+  return {
+    visibility: {
+      tradingDesk: asBoolean(
+        visibilityRaw.tradingDesk,
+        DEFAULT_ACCESS_SECTION_SETTINGS.visibility.tradingDesk
+      ),
+      bots: asBoolean(visibilityRaw.bots, DEFAULT_ACCESS_SECTION_SETTINGS.visibility.bots),
+      predictionsDashboard: asBoolean(
+        visibilityRaw.predictionsDashboard,
+        DEFAULT_ACCESS_SECTION_SETTINGS.visibility.predictionsDashboard
+      ),
+      economicCalendar: asBoolean(
+        visibilityRaw.economicCalendar,
+        DEFAULT_ACCESS_SECTION_SETTINGS.visibility.economicCalendar
+      )
+    },
+    limits: {
+      bots: normalizeAccessSectionLimit(limitsRaw.bots),
+      predictionsLocal: normalizeAccessSectionLimit(limitsRaw.predictionsLocal),
+      predictionsAi: normalizeAccessSectionLimit(limitsRaw.predictionsAi),
+      predictionsComposite: normalizeAccessSectionLimit(limitsRaw.predictionsComposite)
+    }
+  };
+}
+
+function toEffectiveAccessSectionSettings(
+  stored: StoredAccessSectionSettings | null | undefined
+): StoredAccessSectionSettings {
+  if (!stored) return DEFAULT_ACCESS_SECTION_SETTINGS;
+  return {
+    visibility: {
+      tradingDesk: Boolean(stored.visibility?.tradingDesk),
+      bots: Boolean(stored.visibility?.bots),
+      predictionsDashboard: Boolean(stored.visibility?.predictionsDashboard),
+      economicCalendar: Boolean(stored.visibility?.economicCalendar)
+    },
+    limits: {
+      bots: normalizeAccessSectionLimit(stored.limits?.bots),
+      predictionsLocal: normalizeAccessSectionLimit(stored.limits?.predictionsLocal),
+      predictionsAi: normalizeAccessSectionLimit(stored.limits?.predictionsAi),
+      predictionsComposite: normalizeAccessSectionLimit(stored.limits?.predictionsComposite)
+    }
+  };
+}
+
+function createEmptyAccessSectionUsage(): AccessSectionUsage {
+  return {
+    bots: 0,
+    predictionsLocal: 0,
+    predictionsAi: 0,
+    predictionsComposite: 0
+  };
+}
+
+function computeRemaining(limit: number | null, usage: number): number | null {
+  if (limit === null) return null;
+  return Math.max(0, limit - Math.max(0, Math.trunc(usage)));
+}
+
+function resolvePredictionLimitBucketFromStrategy(params: {
+  strategyRef?: PredictionStrategyRef | null;
+  signalMode?: PredictionSignalMode;
+}): AccessSectionPredictionLimitKey {
+  const kind = params.strategyRef?.kind ?? null;
+  if (kind === "local") return "predictionsLocal";
+  if (kind === "composite") return "predictionsComposite";
+  if (kind === "ai") return "predictionsAi";
+  const mode = normalizePredictionSignalMode(params.signalMode);
+  if (mode === "local_only") return "predictionsLocal";
+  return "predictionsAi";
+}
+
+function resolvePredictionLimitBucketFromStateRow(row: {
+  featuresSnapshot: unknown;
+  signalMode: unknown;
+}): AccessSectionPredictionLimitKey {
+  const snapshot = asRecord(row.featuresSnapshot);
+  const strategyRef = readPredictionStrategyRef(snapshot);
+  const signalMode =
+    row.signalMode === "local_only" || row.signalMode === "ai_only" || row.signalMode === "both"
+      ? row.signalMode
+      : readSignalMode(snapshot);
+  return resolvePredictionLimitBucketFromStrategy({
+    strategyRef,
+    signalMode
+  });
+}
+
+function predictionLimitExceededCode(bucket: AccessSectionPredictionLimitKey): string {
+  if (bucket === "predictionsLocal") return "prediction_create_limit_exceeded_local";
+  if (bucket === "predictionsComposite") return "prediction_create_limit_exceeded_composite";
+  return "prediction_create_limit_exceeded_ai";
+}
+
+async function getAccessSectionSettings(): Promise<StoredAccessSectionSettings> {
+  const row = await db.globalSetting.findUnique({
+    where: { key: GLOBAL_SETTING_ACCESS_SECTION_KEY },
+    select: { value: true }
+  });
+  return toEffectiveAccessSectionSettings(parseStoredAccessSectionSettings(row?.value));
+}
+
+async function getAccessSectionUsageForUser(userId: string): Promise<AccessSectionUsage> {
+  const [botsCount, predictionStates] = await Promise.all([
+    db.bot.count({ where: { userId } }),
+    db.predictionState.findMany({
+      where: {
+        userId,
+        autoScheduleEnabled: true
+      },
+      select: {
+        featuresSnapshot: true,
+        signalMode: true
+      }
+    })
+  ]);
+
+  const usage = createEmptyAccessSectionUsage();
+  usage.bots = botsCount;
+  for (const row of predictionStates) {
+    const bucket = resolvePredictionLimitBucketFromStateRow(row);
+    usage[bucket] += 1;
+  }
+  return usage;
+}
+
+async function evaluateAccessSectionBypassForUser(
+  user: { id: string; email: string }
+): Promise<boolean> {
+  const ctx = await resolveUserContext(user);
+  return Boolean(ctx.hasAdminBackendAccess);
+}
+
+async function canCreateBotForUser(params: {
+  userId: string;
+  bypass: boolean;
+}): Promise<{ allowed: boolean; limit: number | null; usage: number; remaining: number | null }> {
+  if (params.bypass) {
+    return { allowed: true, limit: null, usage: 0, remaining: null };
+  }
+  const settings = await getAccessSectionSettings();
+  const limit = settings.limits.bots;
+  if (limit === null) {
+    return { allowed: true, limit: null, usage: 0, remaining: null };
+  }
+  const usage = await db.bot.count({ where: { userId: params.userId } });
+  return {
+    allowed: usage < limit,
+    limit,
+    usage,
+    remaining: computeRemaining(limit, usage)
+  };
+}
+
+async function canCreatePredictionForUser(params: {
+  userId: string;
+  bypass: boolean;
+  bucket: AccessSectionPredictionLimitKey;
+  existingStateId: string | null;
+  consumesSlot: boolean;
+}): Promise<{ allowed: boolean; limit: number | null; usage: number; remaining: number | null }> {
+  if (params.bypass || !params.consumesSlot || params.existingStateId) {
+    return { allowed: true, limit: null, usage: 0, remaining: null };
+  }
+  const settings = await getAccessSectionSettings();
+  const limit = settings.limits[params.bucket];
+  if (limit === null) {
+    return { allowed: true, limit: null, usage: 0, remaining: null };
+  }
+  const usage = (await getAccessSectionUsageForUser(params.userId))[params.bucket];
+  return {
+    allowed: usage < limit,
+    limit,
+    usage,
+    remaining: computeRemaining(limit, usage)
+  };
 }
 
 async function getPredictionPerformanceResetAt(userId: string): Promise<Date | null> {
@@ -2658,6 +2911,7 @@ async function generateAutoPredictionForUser(
   payload: PredictionGenerateAutoInput,
   options?: {
     isSuperadmin?: boolean;
+    hasAdminBackendAccess?: boolean;
   }
 ): Promise<{
   persisted: boolean;
@@ -2758,6 +3012,10 @@ async function generateAutoPredictionForUser(
     });
     const selectedKind: "ai" | "local" | "composite" =
       selectedStrategyRef?.kind ?? "ai";
+    const predictionLimitBucket = resolvePredictionLimitBucketFromStrategy({
+      strategyRef: selectedStrategyRef,
+      signalMode
+    });
     const selectedId =
       selectedStrategyRef?.id
       ?? (selectedKind === "ai" ? (requestedPromptTemplateId ?? "default") : null);
@@ -2835,6 +3093,30 @@ async function generateAutoPredictionForUser(
       ...promptScopeContextDraft,
       timeframe: effectiveTimeframe
     };
+    const existingStateId = await findPredictionStateIdByScope({
+      userId,
+      exchange: account.exchange,
+      accountId: payload.exchangeAccountId,
+      symbol: canonicalSymbol,
+      marketType: payload.marketType,
+      timeframe: effectiveTimeframe,
+      signalMode
+    });
+    const predictionCreateAccess = await canCreatePredictionForUser({
+      userId,
+      bypass: Boolean(options?.hasAdminBackendAccess || options?.isSuperadmin),
+      bucket: predictionLimitBucket,
+      existingStateId,
+      consumesSlot: true
+    });
+    if (!predictionCreateAccess.allowed) {
+      const code = predictionLimitExceededCode(predictionLimitBucket);
+      throw new ManualTradingError(
+        code,
+        403,
+        code
+      );
+    }
     const indicatorSettingsResolution = await resolveIndicatorSettings({
       db,
       exchange: account.exchange,
@@ -3061,16 +3343,6 @@ async function generateAutoPredictionForUser(
       tags: stateTags,
       keyDrivers: stateKeyDrivers,
       featureSnapshot: featureSnapshotForState
-    });
-
-    const existingStateId = await findPredictionStateIdByScope({
-      userId,
-      exchange: account.exchange,
-      accountId: payload.exchangeAccountId,
-      symbol: canonicalSymbol,
-      marketType: payload.marketType,
-      timeframe: effectiveTimeframe,
-      signalMode
     });
 
     const stateData = {
@@ -7969,6 +8241,71 @@ app.get("/settings/prediction-defaults", requireAuth, async (_req, res) => {
   return res.json(effective);
 });
 
+app.get("/admin/settings/access-section", requireAuth, async (_req, res) => {
+  if (!(await requireSuperadmin(res))) return;
+  const row = await db.globalSetting.findUnique({
+    where: { key: GLOBAL_SETTING_ACCESS_SECTION_KEY },
+    select: { value: true, updatedAt: true }
+  });
+  const settings = toEffectiveAccessSectionSettings(
+    parseStoredAccessSectionSettings(row?.value)
+  );
+  return res.json({
+    ...settings,
+    updatedAt: row?.updatedAt ?? null,
+    source: row ? "db" : "default",
+    defaults: DEFAULT_ACCESS_SECTION_SETTINGS
+  });
+});
+
+app.put("/admin/settings/access-section", requireAuth, async (req, res) => {
+  if (!(await requireSuperadmin(res))) return;
+  const parsed = adminAccessSectionSettingsSchema.safeParse(req.body ?? {});
+  if (!parsed.success) {
+    return res.status(400).json({ error: "invalid_payload", details: parsed.error.flatten() });
+  }
+  const value = toEffectiveAccessSectionSettings(parseStoredAccessSectionSettings(parsed.data));
+  const updated = await setGlobalSettingValue(GLOBAL_SETTING_ACCESS_SECTION_KEY, value);
+  const settings = toEffectiveAccessSectionSettings(
+    parseStoredAccessSectionSettings(updated.value)
+  );
+  return res.json({
+    ...settings,
+    updatedAt: updated.updatedAt,
+    source: "db",
+    defaults: DEFAULT_ACCESS_SECTION_SETTINGS
+  });
+});
+
+app.get("/settings/access-section", requireAuth, async (_req, res) => {
+  const user = readUserFromLocals(res);
+  const bypass = await evaluateAccessSectionBypassForUser(user);
+  const [settings, usage] = await Promise.all([
+    getAccessSectionSettings(),
+    getAccessSectionUsageForUser(user.id)
+  ]);
+
+  const visibility = bypass
+    ? DEFAULT_ACCESS_SECTION_SETTINGS.visibility
+    : settings.visibility;
+  const limits = bypass
+    ? DEFAULT_ACCESS_SECTION_SETTINGS.limits
+    : settings.limits;
+
+  return res.json({
+    bypass,
+    visibility,
+    limits,
+    usage,
+    remaining: {
+      bots: computeRemaining(limits.bots, usage.bots),
+      predictionsLocal: computeRemaining(limits.predictionsLocal, usage.predictionsLocal),
+      predictionsAi: computeRemaining(limits.predictionsAi, usage.predictionsAi),
+      predictionsComposite: computeRemaining(limits.predictionsComposite, usage.predictionsComposite)
+    }
+  });
+});
+
 function normalizeAiPromptSettingsPayload(
   payload: AdminAiPromptsPayload,
   nowIso: string
@@ -9588,6 +9925,49 @@ app.post("/api/predictions/generate", requireAuth, async (req, res) => {
   });
   const selectedKind: "ai" | "local" | "composite" =
     selectedStrategyRef?.kind ?? "ai";
+  const predictionLimitBucket = resolvePredictionLimitBucketFromStrategy({
+    strategyRef: selectedStrategyRef,
+    signalMode
+  });
+  const normalizedSymbol = normalizeSymbolInput(payload.symbol) ?? payload.symbol;
+  const exchangeAccountIdForLimit = readPrefillExchangeAccountId(inputFeatureSnapshot);
+  const exchangeForLimit =
+    typeof inputFeatureSnapshot.prefillExchange === "string"
+      ? normalizeExchangeValue(inputFeatureSnapshot.prefillExchange)
+      : null;
+  const existingStateIdForLimit =
+    exchangeAccountIdForLimit && exchangeForLimit
+      ? await findPredictionStateIdByScope({
+          userId: user.id,
+          exchange: exchangeForLimit,
+          accountId: exchangeAccountIdForLimit,
+          symbol: normalizedSymbol,
+          marketType: payload.marketType,
+          timeframe: payload.timeframe,
+          signalMode
+        })
+      : null;
+  const consumesPredictionSlot = isAutoScheduleEnabled(inputFeatureSnapshot.autoScheduleEnabled);
+  const predictionCreateAccess = await canCreatePredictionForUser({
+    userId: user.id,
+    bypass: Boolean(userCtx.hasAdminBackendAccess),
+    bucket: predictionLimitBucket,
+    existingStateId: existingStateIdForLimit,
+    consumesSlot: consumesPredictionSlot
+  });
+  if (!predictionCreateAccess.allowed) {
+    const code = predictionLimitExceededCode(predictionLimitBucket);
+    return res.status(403).json({
+      error: code,
+      code,
+      message: code,
+      details: {
+        limit: predictionCreateAccess.limit,
+        usage: predictionCreateAccess.usage,
+        remaining: predictionCreateAccess.remaining
+      }
+    });
+  }
   const selectedId =
     selectedStrategyRef?.id
     ?? (selectedKind === "ai" ? (requestedPromptTemplateId ?? "default") : null);
@@ -9758,7 +10138,6 @@ app.post("/api/predictions/generate", requireAuth, async (req, res) => {
       keyDrivers,
       featureSnapshot: created.featureSnapshot
     });
-    const normalizedSymbol = normalizeSymbolInput(payload.symbol) ?? payload.symbol;
     const existingStateId = await findPredictionStateIdByScope({
       userId: user.id,
       exchange,
@@ -9913,10 +10292,12 @@ app.post("/api/predictions/generate-auto", requireAuth, async (req, res) => {
   }
 
   const payload = parsed.data;
+  const userCtx = await resolveUserContext(user);
 
   try {
     const created = await generateAutoPredictionForUser(user.id, payload, {
-      isSuperadmin: isSuperadminEmail(user.email)
+      isSuperadmin: isSuperadminEmail(user.email),
+      hasAdminBackendAccess: userCtx.hasAdminBackendAccess
     });
     return res.status(created.persisted ? 201 : 202).json({
       persisted: created.persisted,
@@ -12477,6 +12858,24 @@ app.post("/bots", requireAuth, async (req, res) => {
     }
   });
   if (!account) return res.status(400).json({ error: "exchange_account_not_found" });
+
+  const bypass = await evaluateAccessSectionBypassForUser(user);
+  const botCreateAccess = await canCreateBotForUser({
+    userId: user.id,
+    bypass
+  });
+  if (!botCreateAccess.allowed) {
+    return res.status(403).json({
+      error: "bot_create_limit_exceeded",
+      code: "bot_create_limit_exceeded",
+      message: "bot_create_limit_exceeded",
+      details: {
+        limit: botCreateAccess.limit,
+        usage: botCreateAccess.usage,
+        remaining: botCreateAccess.remaining
+      }
+    });
+  }
 
   const created = await db.bot.create({
     data: {

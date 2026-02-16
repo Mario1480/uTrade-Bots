@@ -51,6 +51,39 @@
       "saved": "Prediction-Default-Einstellungen gespeichert."
     }
   },
+  "accessSection": {
+    "title": "Admin · Zugriff & Limits",
+    "subtitle": "Sichtbarkeit der Hauptbereiche und temporaere Create-Limits fuer normale User steuern.",
+    "loading": "Laedt...",
+    "sectionTitle": "Zugriff- und Limit-Einstellungen",
+    "sourceLabel": "Quelle",
+    "lastUpdatedLabel": "Zuletzt aktualisiert",
+    "never": "nie",
+    "visibilityTitle": "Sichtbarkeit (nur UI)",
+    "limitsTitle": "Create-Limits",
+    "limitsHint": "Leer bedeutet unbegrenzt, 0 sperrt, und Werte >= 1 sind harte Limits.",
+    "unlimited": "unbegrenzt",
+    "visibility": {
+      "tradingDesk": "Trading Desk",
+      "bots": "Bots",
+      "predictionsDashboard": "Predictions Dashboard",
+      "economicCalendar": "Wirtschaftskalender"
+    },
+    "limits": {
+      "bots": "Bots",
+      "predictionsLocal": "Predictions Lokal",
+      "predictionsAi": "Predictions AI",
+      "predictionsComposite": "Predictions Composite"
+    },
+    "loadDefaults": "Defaults laden",
+    "saveSettings": "Einstellungen speichern",
+    "saving": "Speichern...",
+    "messages": {
+      "accessRequired": "Admin-Backend-Zugriff erforderlich.",
+      "defaultsLoaded": "Default-Werte ins Formular geladen (noch nicht gespeichert).",
+      "saved": "Access-Section-Einstellungen gespeichert."
+    }
+  },
   "predictionRefresh": {
     "title": "Admin · Prediction Refresh",
     "subtitle": "Scheduler-Stabilität und AI-Refresh-Verhalten für Auto-Predictions abstimmen.",
@@ -478,6 +511,10 @@
     }
   },
   "links": {
+    "accessSection": {
+      "title": "Zugriff & Limits",
+      "description": "Haupt-UI-Bereiche ein-/ausblenden und temporaere Create-Limits setzen."
+    },
     "users": {
       "title": "Benutzer",
       "description": "Benutzer suchen, erstellen, Passwörter ändern und löschen."

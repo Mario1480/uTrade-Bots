@@ -3,6 +3,10 @@
 import Link from "next/link";
 import { useLocale, useTranslations } from "next-intl";
 import { withLocalePath, type AppLocale } from "../../i18n/config";
+import {
+  DEFAULT_ACCESS_SECTION_VISIBILITY,
+  type AccessSectionVisibility
+} from "../../src/access/accessSection";
 
 export type ExchangeAccountOverview = {
   exchangeAccountId: string;
@@ -64,7 +68,13 @@ function statusLabel(
   return t("status.disconnected");
 }
 
-export default function ExchangeAccountOverviewCard({ overview }: { overview: ExchangeAccountOverview }) {
+export default function ExchangeAccountOverviewCard({
+  overview,
+  visibility = DEFAULT_ACCESS_SECTION_VISIBILITY
+}: {
+  overview: ExchangeAccountOverview;
+  visibility?: AccessSectionVisibility;
+}) {
   const t = useTranslations("dashboard.accountCard");
   const locale = useLocale() as AppLocale;
   const syncText = formatLastSync(overview.lastSyncAt, t);
@@ -137,18 +147,22 @@ export default function ExchangeAccountOverviewCard({ overview }: { overview: Ex
       ) : null}
 
       <footer className="exchangeOverviewActions">
-        <Link
-          href={`${withLocalePath("/trade", locale)}?exchangeAccountId=${encodeURIComponent(overview.exchangeAccountId)}`}
-          className="btn btnPrimary"
-        >
-          {t("manualTrading")}
-        </Link>
-        <Link
-          href={`${withLocalePath("/bots", locale)}?exchangeAccountId=${encodeURIComponent(overview.exchangeAccountId)}`}
-          className="btn"
-        >
-          {t("bots")}
-        </Link>
+        {visibility.tradingDesk ? (
+          <Link
+            href={`${withLocalePath("/trade", locale)}?exchangeAccountId=${encodeURIComponent(overview.exchangeAccountId)}`}
+            className="btn btnPrimary"
+          >
+            {t("manualTrading")}
+          </Link>
+        ) : null}
+        {visibility.bots ? (
+          <Link
+            href={`${withLocalePath("/bots", locale)}?exchangeAccountId=${encodeURIComponent(overview.exchangeAccountId)}`}
+            className="btn"
+          >
+            {t("bots")}
+          </Link>
+        ) : null}
         <Link href={withLocalePath("/settings", locale)} className="btn">
           {t("settings")}
         </Link>

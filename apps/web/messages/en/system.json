@@ -61,6 +61,11 @@
         "blockTags": "Block tags (comma separated)"
       },
       "blockTagsPlaceholder": "news_risk,data_gap,low_liquidity"
+    },
+    "limit": {
+      "status": "Create limit usage: {usage}/{limit} (remaining: {remaining})",
+      "blocked": "Bot create limit reached ({usage}/{limit}).",
+      "unlimited": "unlimited"
     }
   },
   "botsDetails": {

@@ -51,6 +51,39 @@
       "saved": "Prediction default settings saved."
     }
   },
+  "accessSection": {
+    "title": "Admin · Access & Limits",
+    "subtitle": "Control visible main sections and temporary create limits for normal users.",
+    "loading": "Loading...",
+    "sectionTitle": "Access & Limits Settings",
+    "sourceLabel": "Source",
+    "lastUpdatedLabel": "Last updated",
+    "never": "never",
+    "visibilityTitle": "Visibility (UI only)",
+    "limitsTitle": "Create limits",
+    "limitsHint": "Use empty for unlimited, 0 to block, and values >= 1 as hard caps.",
+    "unlimited": "unlimited",
+    "visibility": {
+      "tradingDesk": "Trading Desk",
+      "bots": "Bots",
+      "predictionsDashboard": "Predictions Dashboard",
+      "economicCalendar": "Economic Calendar"
+    },
+    "limits": {
+      "bots": "Bots",
+      "predictionsLocal": "Predictions Local",
+      "predictionsAi": "Predictions AI",
+      "predictionsComposite": "Predictions Composite"
+    },
+    "loadDefaults": "Load defaults",
+    "saveSettings": "Save settings",
+    "saving": "Saving...",
+    "messages": {
+      "accessRequired": "Admin backend access required.",
+      "defaultsLoaded": "Default values loaded into form (not saved yet).",
+      "saved": "Access section settings saved."
+    }
+  },
   "predictionRefresh": {
     "title": "Admin · Prediction Refresh",
     "subtitle": "Tune scheduler stability and AI refresh behavior for auto predictions.",
@@ -478,6 +511,10 @@
     }
   },
   "links": {
+    "accessSection": {
+      "title": "Access & Limits",
+      "description": "Toggle main UI sections and temporary create limits for users."
+    },
     "users": {
       "title": "Users",
       "description": "Search, create, update password and delete users."

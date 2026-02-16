@@ -10,6 +10,10 @@ import AlertsFeed, { type DashboardAlert } from "../components/dashboard/AlertsF
 import TotalsBar, { type DashboardTotals } from "../components/dashboard/TotalsBar";
 import { ApiError, apiGet } from "../lib/api";
 import { withLocalePath, type AppLocale } from "../i18n/config";
+import {
+  DEFAULT_ACCESS_SECTION_VISIBILITY,
+  type AccessSectionVisibility
+} from "../src/access/accessSection";
 
 type EconomicCalendarSummary = {
   currency: string;
@@ -89,6 +93,9 @@ export default function Page() {
   const [overviewTotals, setOverviewTotals] = useState<DashboardTotals | null>(null);
   const [alerts, setAlerts] = useState<DashboardAlert[]>([]);
   const [calendarSummary, setCalendarSummary] = useState<EconomicCalendarSummary | null>(null);
+  const [accessVisibility, setAccessVisibility] = useState<AccessSectionVisibility>(
+    DEFAULT_ACCESS_SECTION_VISIBILITY
+  );
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
 
@@ -99,10 +106,11 @@ export default function Page() {
       setLoading(true);
       setError(null);
       try {
-        const [overviewResult, alertsResult, calendarResult] = await Promise.allSettled([
+        const [overviewResult, alertsResult, calendarResult, accessResult] = await Promise.allSettled([
           apiGet<DashboardOverviewResponse | ExchangeAccountOverview[]>("/dashboard/overview"),
           apiGet<DashboardAlertsResponse>("/dashboard/alerts?limit=10"),
-          apiGet<EconomicCalendarSummary>("/economic-calendar/next?currency=USD&impact=high")
+          apiGet<EconomicCalendarSummary>("/economic-calendar/next?currency=USD&impact=high"),
+          apiGet<{ visibility?: AccessSectionVisibility }>("/settings/access-section")
         ]);
         if (!mounted) return;
         if (overviewResult.status === "fulfilled") {
@@ -126,6 +134,16 @@ export default function Page() {
           setCalendarSummary(calendarResult.value ?? null);
         } else {
           setCalendarSummary(null);
+        }
+        if (accessResult.status === "fulfilled" && accessResult.value?.visibility) {
+          setAccessVisibility({
+            tradingDesk: accessResult.value.visibility.tradingDesk !== false,
+            bots: accessResult.value.visibility.bots !== false,
+            predictionsDashboard: accessResult.value.visibility.predictionsDashboard !== false,
+            economicCalendar: accessResult.value.visibility.economicCalendar !== false
+          });
+        } else {
+          setAccessVisibility(DEFAULT_ACCESS_SECTION_VISIBILITY);
         }
       } catch (e) {
         if (!mounted) return;
@@ -168,10 +186,18 @@ export default function Page() {
           </div>
         </div>
         <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-          <Link href={withLocalePath("/predictions", locale)} className="btn">{t("actions.predictions")}</Link>
-          <Link href={withLocalePath("/calendar", locale)} className="btn">{t("actions.calendar")}</Link>
-          <Link href={withLocalePath("/trade", locale)} className="btn">{t("actions.manualTrading")}</Link>
-          <Link href={withLocalePath("/bots/new", locale)} className="btn btnPrimary">{t("actions.newFuturesBot")}</Link>
+          {accessVisibility.predictionsDashboard ? (
+            <Link href={withLocalePath("/predictions", locale)} className="btn">{t("actions.predictions")}</Link>
+          ) : null}
+          {accessVisibility.economicCalendar ? (
+            <Link href={withLocalePath("/calendar", locale)} className="btn">{t("actions.calendar")}</Link>
+          ) : null}
+          {accessVisibility.tradingDesk ? (
+            <Link href={withLocalePath("/trade", locale)} className="btn">{t("actions.manualTrading")}</Link>
+          ) : null}
+          {accessVisibility.bots ? (
+            <Link href={withLocalePath("/bots/new", locale)} className="btn btnPrimary">{t("actions.newFuturesBot")}</Link>
+          ) : null}
         </div>
       </div>
 
@@ -242,7 +268,11 @@ export default function Page() {
       ) : (
         <div className="exchangeOverviewGrid">
           {overview.map((item) => (
-            <ExchangeAccountOverviewCard key={item.exchangeAccountId} overview={item} />
+            <ExchangeAccountOverviewCard
+              key={item.exchangeAccountId}
+              overview={item}
+              visibility={accessVisibility}
+            />
           ))}
         </div>
       )}
