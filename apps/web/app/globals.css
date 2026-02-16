@@ -1066,7 +1066,6 @@ a { color: inherit; }
 
 .settingsAccordionItemIntegrations.settingsAccordionItemOpen {
   border-color: rgba(52, 211, 153, 0.56);
-  background: rgba(52, 211, 153, 0.08);
 }
 
 .settingsAccordionItemStrategy {
