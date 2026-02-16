@@ -278,12 +278,35 @@ export class BitgetFuturesAdapter implements FuturesExchange {
     let symbol = this.orderSymbolIndex.get(orderId) ?? null;
 
     if (!symbol) {
-      const pending = await this.tradeApi.getPendingOrders({
+      const pendingRaw = await this.tradeApi.getPendingOrders({
         productType: this.productType,
         pageSize: 100
       });
-      const matched = pending.find((item) => String(item.orderId ?? "") === orderId);
-      symbol = matched?.symbol ?? null;
+      const pending = Array.isArray(pendingRaw)
+        ? pendingRaw
+        : (() => {
+            const record =
+              pendingRaw && typeof pendingRaw === "object"
+                ? (pendingRaw as Record<string, unknown>)
+                : null;
+            if (!record) return [] as Array<Record<string, unknown>>;
+            const candidates = [
+              record.entrustedList,
+              record.orderList,
+              record.list,
+              record.rows,
+              record.data
+            ];
+            for (const candidate of candidates) {
+              if (!Array.isArray(candidate)) continue;
+              return candidate.filter(
+                (row) => row && typeof row === "object"
+              ) as Array<Record<string, unknown>>;
+            }
+            return [] as Array<Record<string, unknown>>;
+          })();
+      const matched = pending.find((item) => String((item as any)?.orderId ?? "") === orderId);
+      symbol = String((matched as any)?.symbol ?? "").trim() || null;
     }
 
     if (!symbol) {
