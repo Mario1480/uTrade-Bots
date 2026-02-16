@@ -6,3 +6,9 @@ coverage
 .DS_Store
 .vscode/settings.json
 docs/Parameter_loop.md
+__pycache__/
+*.pyc
+apps/quant-research/.venv
+apps/quant-research/data/*.parquet
+apps/quant-research/data/*.csv
+apps/quant-research/artifacts/
