@@ -29,6 +29,51 @@ export type TradingSettings = {
   symbol: string | null;
   timeframe: string | null;
   marginMode: "isolated" | "cross" | null;
+  chartPreferences: TradingChartPreferences;
+};
+
+export type TradingSettingsPatch = Omit<Partial<TradingSettings>, "chartPreferences"> & {
+  chartPreferences?: unknown;
+};
+
+export type TradingChartIndicatorToggles = {
+  ema5: boolean;
+  ema13: boolean;
+  ema50: boolean;
+  ema200: boolean;
+  ema800: boolean;
+  emaCloud50: boolean;
+  vwapSession: boolean;
+  dailyOpen: boolean;
+  smcStructure: boolean;
+  volumeOverlay: boolean;
+  pvsraVector: boolean;
+};
+
+export type TradingChartPreferences = {
+  indicatorToggles: TradingChartIndicatorToggles;
+  showUpMarkers: boolean;
+  showDownMarkers: boolean;
+};
+
+export const DEFAULT_TRADING_CHART_INDICATOR_TOGGLES: TradingChartIndicatorToggles = {
+  ema5: false,
+  ema13: false,
+  ema50: true,
+  ema200: true,
+  ema800: false,
+  emaCloud50: false,
+  vwapSession: false,
+  dailyOpen: false,
+  smcStructure: false,
+  volumeOverlay: false,
+  pvsraVector: false
+};
+
+export const DEFAULT_TRADING_CHART_PREFERENCES: TradingChartPreferences = {
+  indicatorToggles: DEFAULT_TRADING_CHART_INDICATOR_TOGGLES,
+  showUpMarkers: false,
+  showDownMarkers: false
 };
 
 export type NormalizedOrder = {
@@ -39,6 +84,10 @@ export type NormalizedOrder = {
   status: string | null;
   price: number | null;
   qty: number | null;
+  triggerPrice: number | null;
+  takeProfitPrice: number | null;
+  stopLossPrice: number | null;
+  reduceOnly: boolean | null;
   createdAt: string | null;
   raw: unknown;
 };
@@ -50,6 +99,8 @@ export type NormalizedPosition = {
   entryPrice: number | null;
   markPrice: number | null;
   unrealizedPnl: number | null;
+  takeProfitPrice: number | null;
+  stopLossPrice: number | null;
 };
 
 export type NormalizedBookLevel = {
@@ -85,6 +136,8 @@ type PaperPositionState = {
   side: "long" | "short";
   qty: number;
   entryPrice: number;
+  takeProfitPrice: number | null;
+  stopLossPrice: number | null;
   openedAt: string;
   updatedAt: string;
 };
@@ -97,8 +150,12 @@ type PaperOrderState = {
   qty: number;
   price: number;
   reduceOnly: boolean;
-  status: "filled";
+  triggerPrice: number | null;
+  takeProfitPrice: number | null;
+  stopLossPrice: number | null;
+  status: "open" | "filled" | "cancelled";
   createdAt: string;
+  updatedAt: string;
 };
 
 type PaperState = {
@@ -155,6 +212,8 @@ function coercePaperState(value: unknown): PaperState {
       side,
       qty,
       entryPrice,
+      takeProfitPrice: toNumber(pos?.takeProfitPrice),
+      stopLossPrice: toNumber(pos?.stopLossPrice),
       openedAt: typeof pos?.openedAt === "string" ? pos.openedAt : new Date().toISOString(),
       updatedAt: typeof pos?.updatedAt === "string" ? pos.updatedAt : new Date().toISOString()
     });
@@ -181,8 +240,15 @@ function coercePaperState(value: unknown): PaperState {
       qty,
       price,
       reduceOnly: Boolean(order?.reduceOnly),
-      status: "filled",
-      createdAt: typeof order?.createdAt === "string" ? order.createdAt : new Date().toISOString()
+      triggerPrice: toNumber(order?.triggerPrice),
+      takeProfitPrice: toNumber(order?.takeProfitPrice),
+      stopLossPrice: toNumber(order?.stopLossPrice),
+      status:
+        getString(order, ["status"]) === "open" || getString(order, ["status"]) === "cancelled"
+          ? (getString(order, ["status"]) as "open" | "cancelled")
+          : "filled",
+      createdAt: typeof order?.createdAt === "string" ? order.createdAt : new Date().toISOString(),
+      updatedAt: typeof order?.updatedAt === "string" ? order.updatedAt : new Date().toISOString()
     });
   }
 
@@ -496,6 +562,56 @@ function getGlobalSettingsKey(userId: string): string {
   return `trade_settings:${userId}`;
 }
 
+function normalizeIndicatorToggles(value: unknown): TradingChartIndicatorToggles {
+  const record = toRecord(value) ?? {};
+  return {
+    ema5: typeof record.ema5 === "boolean" ? record.ema5 : DEFAULT_TRADING_CHART_INDICATOR_TOGGLES.ema5,
+    ema13: typeof record.ema13 === "boolean" ? record.ema13 : DEFAULT_TRADING_CHART_INDICATOR_TOGGLES.ema13,
+    ema50: typeof record.ema50 === "boolean" ? record.ema50 : DEFAULT_TRADING_CHART_INDICATOR_TOGGLES.ema50,
+    ema200: typeof record.ema200 === "boolean" ? record.ema200 : DEFAULT_TRADING_CHART_INDICATOR_TOGGLES.ema200,
+    ema800: typeof record.ema800 === "boolean" ? record.ema800 : DEFAULT_TRADING_CHART_INDICATOR_TOGGLES.ema800,
+    emaCloud50:
+      typeof record.emaCloud50 === "boolean"
+        ? record.emaCloud50
+        : DEFAULT_TRADING_CHART_INDICATOR_TOGGLES.emaCloud50,
+    vwapSession:
+      typeof record.vwapSession === "boolean"
+        ? record.vwapSession
+        : DEFAULT_TRADING_CHART_INDICATOR_TOGGLES.vwapSession,
+    dailyOpen:
+      typeof record.dailyOpen === "boolean"
+        ? record.dailyOpen
+        : DEFAULT_TRADING_CHART_INDICATOR_TOGGLES.dailyOpen,
+    smcStructure:
+      typeof record.smcStructure === "boolean"
+        ? record.smcStructure
+        : DEFAULT_TRADING_CHART_INDICATOR_TOGGLES.smcStructure,
+    volumeOverlay:
+      typeof record.volumeOverlay === "boolean"
+        ? record.volumeOverlay
+        : DEFAULT_TRADING_CHART_INDICATOR_TOGGLES.volumeOverlay,
+    pvsraVector:
+      typeof record.pvsraVector === "boolean"
+        ? record.pvsraVector
+        : DEFAULT_TRADING_CHART_INDICATOR_TOGGLES.pvsraVector
+  };
+}
+
+function normalizeChartPreferences(value: unknown): TradingChartPreferences {
+  const record = toRecord(value) ?? {};
+  return {
+    indicatorToggles: normalizeIndicatorToggles(record.indicatorToggles),
+    showUpMarkers:
+      typeof record.showUpMarkers === "boolean"
+        ? record.showUpMarkers
+        : DEFAULT_TRADING_CHART_PREFERENCES.showUpMarkers,
+    showDownMarkers:
+      typeof record.showDownMarkers === "boolean"
+        ? record.showDownMarkers
+        : DEFAULT_TRADING_CHART_PREFERENCES.showDownMarkers
+  };
+}
+
 export async function getTradingSettings(userId: string): Promise<TradingSettings> {
   const setting = await db.globalSetting.findUnique({
     where: {
@@ -518,20 +634,34 @@ export async function getTradingSettings(userId: string): Promise<TradingSetting
     payload.marginMode === "isolated" || payload.marginMode === "cross"
       ? payload.marginMode
       : null;
+  const chartPreferences = normalizeChartPreferences(payload.chartPreferences);
 
   return {
     exchangeAccountId,
     symbol,
     timeframe,
-    marginMode
+    marginMode,
+    chartPreferences
   };
 }
 
 export async function saveTradingSettings(
   userId: string,
-  input: Partial<TradingSettings>
+  input: TradingSettingsPatch
 ): Promise<TradingSettings> {
   const current = await getTradingSettings(userId);
+  const incomingChartRecord = toRecord(input.chartPreferences);
+  const incomingIndicatorRecord = toRecord(incomingChartRecord?.indicatorToggles);
+  const mergedChart = input.chartPreferences === undefined
+    ? current.chartPreferences
+    : normalizeChartPreferences({
+        ...current.chartPreferences,
+        ...incomingChartRecord,
+        indicatorToggles: {
+          ...current.chartPreferences.indicatorToggles,
+          ...incomingIndicatorRecord
+        }
+      });
 
   const next: TradingSettings = {
     exchangeAccountId:
@@ -557,7 +687,8 @@ export async function saveTradingSettings(
         ? current.marginMode
         : input.marginMode === "isolated" || input.marginMode === "cross"
           ? input.marginMode
-          : null
+          : null,
+    chartPreferences: mergedChart
   };
 
   await db.globalSetting.upsert({
@@ -745,9 +876,19 @@ export async function listOpenOrders(
     symbol: exchangeSymbol,
     pageSize: 100
   });
+  let planRowsRaw: unknown = [];
+  try {
+    planRowsRaw = await adapter.tradeApi.getPendingPlanOrders({
+      productType: adapter.productType,
+      symbol: exchangeSymbol,
+      pageSize: 100
+    });
+  } catch {
+    planRowsRaw = [];
+  }
   const rows = toOrderRows(rowsRaw);
-
-  return rows.map((row) => {
+  const planRows = toOrderRows(planRowsRaw);
+  const mapped = rows.map((row) => {
     const rawSymbol = String(row.symbol ?? row.instId ?? "");
     const canonicalSymbol =
       (rawSymbol && adapter.toCanonicalSymbol(rawSymbol)) ??
@@ -761,29 +902,88 @@ export async function listOpenOrders(
       status: row.status ? String(row.status) : row.state ? String(row.state) : null,
       price: toNumber(row.price ?? row.px),
       qty: toNumber(row.size ?? row.qty ?? row.baseVolume),
+      triggerPrice: toNumber(row.triggerPrice ?? row.triggerPx),
+      takeProfitPrice: toNumber(row.presetStopSurplusPrice ?? row.takeProfitPrice ?? row.tp),
+      stopLossPrice: toNumber(row.presetStopLossPrice ?? row.stopLossPrice ?? row.sl),
+      reduceOnly:
+        typeof row.reduceOnly === "boolean"
+          ? row.reduceOnly
+          : getString(row, ["reduceOnly"])?.toLowerCase() === "yes"
+            ? true
+            : getString(row, ["reduceOnly"])?.toLowerCase() === "no"
+              ? false
+              : null,
       createdAt: toIsoFromMs(row.cTime ?? row.createTime ?? row.uTime),
       raw: row
     };
   }).filter((item) => item.orderId.length > 0);
+  const mappedPlans = planRows.map((row) => {
+    const rawSymbol = String(row.symbol ?? row.instId ?? "");
+    const canonicalSymbol =
+      (rawSymbol && adapter.toCanonicalSymbol(rawSymbol)) ??
+      normalizeCanonicalSymbol(rawSymbol);
+    return {
+      orderId: String(row.orderId ?? row.planOrderId ?? row.clientOid ?? ""),
+      symbol: canonicalSymbol,
+      side: row.side ? String(row.side) : null,
+      type: row.planType ? String(row.planType) : "plan",
+      status: row.planStatus ? String(row.planStatus) : row.status ? String(row.status) : null,
+      price: toNumber(row.price ?? row.executePrice),
+      qty: toNumber(row.size ?? row.qty),
+      triggerPrice: toNumber(row.triggerPrice ?? row.triggerPx),
+      takeProfitPrice: toNumber(row.stopSurplusExecutePrice ?? row.presetStopSurplusPrice),
+      stopLossPrice: toNumber(row.stopLossExecutePrice ?? row.presetStopLossPrice),
+      reduceOnly:
+        typeof row.reduceOnly === "boolean"
+          ? row.reduceOnly
+          : getString(row, ["reduceOnly"])?.toLowerCase() === "yes"
+            ? true
+            : getString(row, ["reduceOnly"])?.toLowerCase() === "no"
+              ? false
+              : null,
+      createdAt: toIsoFromMs(row.cTime ?? row.createTime ?? row.uTime),
+      raw: row
+    } satisfies NormalizedOrder;
+  }).filter((item) => item.orderId.length > 0);
+
+  const seen = new Set<string>();
+  const out: NormalizedOrder[] = [];
+  for (const item of [...mapped, ...mappedPlans]) {
+    if (seen.has(item.orderId)) continue;
+    seen.add(item.orderId);
+    out.push(item);
+  }
+  return out;
 }
 
 export async function listPositions(
   adapter: BitgetFuturesAdapter,
   symbol?: string
 ): Promise<NormalizedPosition[]> {
-  const rows = await adapter.getPositions();
-  const filtered = symbol
-    ? rows.filter((row) => row.symbol === normalizeCanonicalSymbol(symbol))
-    : rows;
+  const rows = await adapter.positionApi.getAllPositions({
+    productType: adapter.productType,
+    marginCoin: adapter.marginCoin
+  });
+  const normalizedSymbol = symbol ? normalizeCanonicalSymbol(symbol) : null;
 
-  return filtered.map((row) => ({
-    symbol: normalizeCanonicalSymbol(row.symbol),
-    side: row.side,
-    size: Number(row.size ?? 0),
-    entryPrice: toNumber(row.entryPrice),
-    markPrice: toNumber(row.markPrice),
-    unrealizedPnl: toNumber(row.unrealizedPnl)
-  }));
+  return rows
+    .map((row) => {
+      const parsedSymbol = normalizeCanonicalSymbol(String(row.symbol ?? ""));
+      const side = String(row.holdSide ?? "").toLowerCase().includes("long") ? "long" : "short";
+      const size = Math.abs(toNumber(row.total) ?? 0);
+      return {
+        symbol: parsedSymbol,
+        side,
+        size,
+        entryPrice: toNumber(row.avgOpenPrice),
+        markPrice: toNumber(row.markPrice),
+        unrealizedPnl: toNumber(row.unrealizedPL),
+        takeProfitPrice: toNumber((row as unknown as Record<string, unknown>)?.presetStopSurplusPrice),
+        stopLossPrice: toNumber((row as unknown as Record<string, unknown>)?.presetStopLossPrice)
+      } satisfies NormalizedPosition;
+    })
+    .filter((row) => row.symbol.length > 0 && row.size > 0)
+    .filter((row) => (normalizedSymbol ? row.symbol === normalizedSymbol : true));
 }
 
 function signedQty(position: PaperPositionState): number {
@@ -826,8 +1026,144 @@ async function fetchMarkPriceMap(
   return out;
 }
 
-export async function listPaperOpenOrders(_account: TradingAccount): Promise<NormalizedOrder[]> {
-  return [];
+function isLimitOrderMarketable(
+  side: "buy" | "sell",
+  limitPrice: number,
+  marketPrice: number
+): boolean {
+  if (!Number.isFinite(limitPrice) || limitPrice <= 0) return false;
+  if (!Number.isFinite(marketPrice) || marketPrice <= 0) return false;
+  if (side === "buy") return marketPrice <= limitPrice;
+  return marketPrice >= limitPrice;
+}
+
+async function reconcilePaperState(
+  exchangeAccountId: string,
+  adapter: BitgetFuturesAdapter,
+  seedState?: PaperState
+): Promise<PaperState> {
+  const state = seedState ?? (await getPaperState(exchangeAccountId));
+  const symbols = new Set<string>();
+  for (const row of state.orders) {
+    if (row.status === "open") symbols.add(row.symbol);
+  }
+  for (const row of state.positions) {
+    symbols.add(row.symbol);
+  }
+
+  if (symbols.size === 0) return state;
+
+  const markPrices = await fetchMarkPriceMap(adapter, Array.from(symbols));
+  if (markPrices.size === 0) return state;
+
+  let changed = false;
+  const nowIso = new Date().toISOString();
+
+  for (const order of state.orders) {
+    if (order.status !== "open") continue;
+    const markPrice = markPrices.get(order.symbol);
+    if (!markPrice) continue;
+    if (!isLimitOrderMarketable(order.side, order.price, markPrice)) continue;
+
+    const fill = applyPaperFill({
+      state,
+      symbol: order.symbol,
+      qty: order.qty,
+      side: order.side,
+      reduceOnly: order.reduceOnly,
+      fillPrice: order.price
+    });
+    if (fill.filledQty <= 0) continue;
+
+    changed = true;
+    state.realizedPnlUsd = Number((state.realizedPnlUsd + fill.realizedPnlUsd).toFixed(8));
+    state.balanceUsd = Number((state.balanceUsd + fill.realizedPnlUsd).toFixed(8));
+    replacePosition(state, order.symbol, fill.nextPosition);
+    order.qty = fill.filledQty;
+    order.status = "filled";
+    order.updatedAt = nowIso;
+  }
+
+  for (const position of state.positions.slice()) {
+    const markPrice = markPrices.get(position.symbol);
+    if (!markPrice || !Number.isFinite(markPrice)) continue;
+
+    const tp = position.takeProfitPrice;
+    const sl = position.stopLossPrice;
+    let triggerPrice: number | null = null;
+    if (position.side === "long") {
+      if (tp !== null && markPrice >= tp) triggerPrice = tp;
+      if (triggerPrice === null && sl !== null && markPrice <= sl) triggerPrice = sl;
+    } else {
+      if (tp !== null && markPrice <= tp) triggerPrice = tp;
+      if (triggerPrice === null && sl !== null && markPrice >= sl) triggerPrice = sl;
+    }
+    if (triggerPrice === null) continue;
+
+    const fill = applyPaperFill({
+      state,
+      symbol: position.symbol,
+      qty: position.qty,
+      side: position.side === "long" ? "sell" : "buy",
+      reduceOnly: true,
+      fillPrice: markPrice
+    });
+    if (fill.filledQty <= 0) continue;
+
+    changed = true;
+    state.realizedPnlUsd = Number((state.realizedPnlUsd + fill.realizedPnlUsd).toFixed(8));
+    state.balanceUsd = Number((state.balanceUsd + fill.realizedPnlUsd).toFixed(8));
+    replacePosition(state, position.symbol, fill.nextPosition);
+    const orderId = toPaperOrderId(exchangeAccountId, state.nextOrderSeq);
+    state.nextOrderSeq += 1;
+    pushPaperOrder(state, {
+      orderId,
+      symbol: position.symbol,
+      side: position.side === "long" ? "sell" : "buy",
+      type: "market",
+      qty: fill.filledQty,
+      price: Number(markPrice.toFixed(8)),
+      reduceOnly: true,
+      triggerPrice,
+      takeProfitPrice: tp,
+      stopLossPrice: sl,
+      status: "filled",
+      createdAt: nowIso,
+      updatedAt: nowIso
+    });
+  }
+
+  if (changed) {
+    return savePaperState(exchangeAccountId, state);
+  }
+  return state;
+}
+
+export async function listPaperOpenOrders(
+  account: TradingAccount,
+  adapter: BitgetFuturesAdapter,
+  symbol?: string
+): Promise<NormalizedOrder[]> {
+  const normalizedSymbol = symbol ? normalizeCanonicalSymbol(symbol) : null;
+  const state = await reconcilePaperState(account.id, adapter);
+  return state.orders
+    .filter((row) => row.status === "open")
+    .filter((row) => (normalizedSymbol ? row.symbol === normalizedSymbol : true))
+    .map((row) => ({
+      orderId: row.orderId,
+      symbol: row.symbol,
+      side: row.side,
+      type: row.type,
+      status: row.status,
+      price: row.price,
+      qty: row.qty,
+      triggerPrice: row.triggerPrice,
+      takeProfitPrice: row.takeProfitPrice,
+      stopLossPrice: row.stopLossPrice,
+      reduceOnly: row.reduceOnly,
+      createdAt: row.createdAt,
+      raw: row
+    }));
 }
 
 export async function listPaperPositions(
@@ -835,7 +1171,7 @@ export async function listPaperPositions(
   adapter: BitgetFuturesAdapter,
   symbol?: string
 ): Promise<NormalizedPosition[]> {
-  const state = await getPaperState(account.id);
+  const state = await reconcilePaperState(account.id, adapter);
   const normalizedSymbol = symbol ? normalizeCanonicalSymbol(symbol) : null;
   const positions = normalizedSymbol
     ? state.positions.filter((row) => row.symbol === normalizedSymbol)
@@ -856,7 +1192,9 @@ export async function listPaperPositions(
       size: row.qty,
       entryPrice: row.entryPrice,
       markPrice,
-      unrealizedPnl
+      unrealizedPnl,
+      takeProfitPrice: row.takeProfitPrice,
+      stopLossPrice: row.stopLossPrice
     };
   });
 }
@@ -865,9 +1203,19 @@ export async function getPaperAccountState(
   account: TradingAccount,
   adapter: BitgetFuturesAdapter
 ): Promise<{ equity: number; availableMargin: number; marginMode: "cross" }> {
-  const state = await getPaperState(account.id);
-  const positions = await listPaperPositions(account, adapter);
-  const unrealized = positions.reduce((acc, row) => acc + (Number(row.unrealizedPnl) || 0), 0);
+  const state = await reconcilePaperState(account.id, adapter);
+  const markPrices = await fetchMarkPriceMap(adapter, state.positions.map((row) => row.symbol));
+  const positions = state.positions.map((row) => {
+    const markPrice = markPrices.get(row.symbol) ?? null;
+    const unrealizedPnl =
+      markPrice === null
+        ? 0
+        : row.side === "long"
+          ? (markPrice - row.entryPrice) * row.qty
+          : (row.entryPrice - markPrice) * row.qty;
+    return unrealizedPnl;
+  });
+  const unrealized = positions.reduce((acc, value) => acc + (Number(value) || 0), 0);
   const equity = Number((state.balanceUsd + unrealized).toFixed(6));
   return {
     equity,
@@ -950,6 +1298,8 @@ function applyPaperFill(params: {
       side: nextSide,
       qty: nextQty,
       entryPrice: Number(nextEntryPrice.toFixed(8)),
+      takeProfitPrice: current?.takeProfitPrice ?? null,
+      stopLossPrice: current?.stopLossPrice ?? null,
       openedAt: current?.openedAt ?? nowIso,
       updatedAt: nowIso
     }
@@ -965,6 +1315,9 @@ export async function placePaperOrder(
     type: "market" | "limit";
     qty: number;
     price?: number;
+    triggerPrice?: number;
+    takeProfitPrice?: number;
+    stopLossPrice?: number;
     reduceOnly?: boolean;
   }
 ): Promise<{ orderId: string }> {
@@ -975,11 +1328,36 @@ export async function placePaperOrder(
     throw new ManualTradingError("invalid_qty", 400, "invalid_qty");
   }
 
-  const state = await getPaperState(account.id);
+  const state = await reconcilePaperState(account.id, adapter, await getPaperState(account.id));
   const marketPrice = await fetchTickerPrice(adapter, symbol);
-  const fillPrice = input.type === "limit" && Number.isFinite(Number(input.price)) && Number(input.price) > 0
+  const limitPrice = input.type === "limit" && Number.isFinite(Number(input.price)) && Number(input.price) > 0
     ? Number(input.price)
-    : marketPrice;
+    : null;
+  const fillPrice = limitPrice ?? marketPrice;
+
+  const orderId = toPaperOrderId(account.id, state.nextOrderSeq);
+  state.nextOrderSeq += 1;
+  const nowIso = new Date().toISOString();
+
+  if (input.type === "limit" && limitPrice !== null && !isLimitOrderMarketable(input.side, limitPrice, marketPrice)) {
+    pushPaperOrder(state, {
+      orderId,
+      symbol,
+      side: input.side,
+      type: input.type,
+      qty,
+      price: Number(limitPrice.toFixed(8)),
+      reduceOnly: Boolean(input.reduceOnly),
+      triggerPrice: Number.isFinite(Number(input.triggerPrice)) ? Number(input.triggerPrice) : null,
+      takeProfitPrice: Number.isFinite(Number(input.takeProfitPrice)) ? Number(input.takeProfitPrice) : null,
+      stopLossPrice: Number.isFinite(Number(input.stopLossPrice)) ? Number(input.stopLossPrice) : null,
+      status: "open",
+      createdAt: nowIso,
+      updatedAt: nowIso
+    });
+    await savePaperState(account.id, state);
+    return { orderId };
+  }
 
   const fill = applyPaperFill({
     state,
@@ -996,10 +1374,13 @@ export async function placePaperOrder(
 
   state.realizedPnlUsd = Number((state.realizedPnlUsd + fill.realizedPnlUsd).toFixed(8));
   state.balanceUsd = Number((state.balanceUsd + fill.realizedPnlUsd).toFixed(8));
+  if (fill.nextPosition && !input.reduceOnly) {
+    fill.nextPosition.takeProfitPrice =
+      Number.isFinite(Number(input.takeProfitPrice)) ? Number(input.takeProfitPrice) : fill.nextPosition.takeProfitPrice;
+    fill.nextPosition.stopLossPrice =
+      Number.isFinite(Number(input.stopLossPrice)) ? Number(input.stopLossPrice) : fill.nextPosition.stopLossPrice;
+  }
   replacePosition(state, symbol, fill.nextPosition);
-
-  const orderId = toPaperOrderId(account.id, state.nextOrderSeq);
-  state.nextOrderSeq += 1;
   pushPaperOrder(state, {
     orderId,
     symbol,
@@ -1008,8 +1389,12 @@ export async function placePaperOrder(
     qty: fill.filledQty,
     price: Number(fillPrice.toFixed(8)),
     reduceOnly: Boolean(input.reduceOnly),
+    triggerPrice: Number.isFinite(Number(input.triggerPrice)) ? Number(input.triggerPrice) : null,
+    takeProfitPrice: Number.isFinite(Number(input.takeProfitPrice)) ? Number(input.takeProfitPrice) : null,
+    stopLossPrice: Number.isFinite(Number(input.stopLossPrice)) ? Number(input.stopLossPrice) : null,
     status: "filled",
-    createdAt: new Date().toISOString()
+    createdAt: nowIso,
+    updatedAt: nowIso
   });
 
   await savePaperState(account.id, state);
@@ -1037,6 +1422,131 @@ export async function closePaperPosition(
     reduceOnly: true
   });
   return [placed.orderId];
+}
+
+export async function setPaperPositionTpSl(
+  account: TradingAccount,
+  adapter: BitgetFuturesAdapter,
+  input: {
+    symbol: string;
+    side?: "long" | "short";
+    takeProfitPrice?: number | null;
+    stopLossPrice?: number | null;
+  }
+): Promise<{ updated: boolean }> {
+  const symbol = normalizeCanonicalSymbol(input.symbol);
+  if (!symbol) throw new ManualTradingError("symbol_required", 400, "symbol_required");
+  const state = await reconcilePaperState(account.id, adapter, await getPaperState(account.id));
+  const position = state.positions.find(
+    (row) => row.symbol === symbol && (!input.side || row.side === input.side)
+  );
+  if (!position) {
+    throw new ManualTradingError("position_not_found", 404, "position_not_found");
+  }
+  if (input.takeProfitPrice !== undefined) {
+    position.takeProfitPrice = input.takeProfitPrice === null ? null : Number(input.takeProfitPrice);
+  }
+  if (input.stopLossPrice !== undefined) {
+    position.stopLossPrice = input.stopLossPrice === null ? null : Number(input.stopLossPrice);
+  }
+  position.updatedAt = new Date().toISOString();
+  await savePaperState(account.id, state);
+  return { updated: true };
+}
+
+export async function editPaperOrder(
+  account: TradingAccount,
+  adapter: BitgetFuturesAdapter,
+  input: {
+    orderId: string;
+    symbol?: string;
+    price?: number;
+    qty?: number;
+    triggerPrice?: number | null;
+    takeProfitPrice?: number | null;
+    stopLossPrice?: number | null;
+  }
+): Promise<{ orderId: string }> {
+  const state = await reconcilePaperState(account.id, adapter, await getPaperState(account.id));
+  const normalizedSymbol = input.symbol ? normalizeCanonicalSymbol(input.symbol) : null;
+  const row = state.orders.find(
+    (order) =>
+      order.orderId === input.orderId &&
+      order.status === "open" &&
+      (!normalizedSymbol || order.symbol === normalizedSymbol)
+  );
+  if (!row) {
+    throw new ManualTradingError("order_not_found", 404, "order_not_found");
+  }
+  if (input.price !== undefined) {
+    if (!Number.isFinite(input.price) || input.price <= 0) {
+      throw new ManualTradingError("invalid_price", 400, "invalid_price");
+    }
+    row.price = Number(input.price);
+  }
+  if (input.qty !== undefined) {
+    if (!Number.isFinite(input.qty) || input.qty <= 0) {
+      throw new ManualTradingError("invalid_qty", 400, "invalid_qty");
+    }
+    row.qty = Number(input.qty);
+  }
+  if (input.triggerPrice !== undefined) {
+    row.triggerPrice = input.triggerPrice === null ? null : Number(input.triggerPrice);
+  }
+  if (input.takeProfitPrice !== undefined) {
+    row.takeProfitPrice = input.takeProfitPrice === null ? null : Number(input.takeProfitPrice);
+  }
+  if (input.stopLossPrice !== undefined) {
+    row.stopLossPrice = input.stopLossPrice === null ? null : Number(input.stopLossPrice);
+  }
+  row.updatedAt = new Date().toISOString();
+  await savePaperState(account.id, state);
+  return { orderId: row.orderId };
+}
+
+export async function cancelPaperOrder(
+  account: TradingAccount,
+  adapter: BitgetFuturesAdapter,
+  orderId: string,
+  symbol?: string
+): Promise<{ ok: boolean }> {
+  const state = await reconcilePaperState(account.id, adapter, await getPaperState(account.id));
+  const normalizedSymbol = symbol ? normalizeCanonicalSymbol(symbol) : null;
+  const row = state.orders.find(
+    (order) =>
+      order.orderId === orderId &&
+      order.status === "open" &&
+      (!normalizedSymbol || order.symbol === normalizedSymbol)
+  );
+  if (!row) return { ok: true };
+  row.status = "cancelled";
+  row.updatedAt = new Date().toISOString();
+  await savePaperState(account.id, state);
+  return { ok: true };
+}
+
+export async function cancelAllPaperOrders(
+  account: TradingAccount,
+  adapter: BitgetFuturesAdapter,
+  symbol?: string
+): Promise<{ requested: number; cancelled: number; failed: number }> {
+  const state = await reconcilePaperState(account.id, adapter, await getPaperState(account.id));
+  const normalizedSymbol = symbol ? normalizeCanonicalSymbol(symbol) : null;
+  const targets = state.orders.filter(
+    (order) => order.status === "open" && (!normalizedSymbol || order.symbol === normalizedSymbol)
+  );
+  for (const row of targets) {
+    row.status = "cancelled";
+    row.updatedAt = new Date().toISOString();
+  }
+  if (targets.length > 0) {
+    await savePaperState(account.id, state);
+  }
+  return {
+    requested: targets.length,
+    cancelled: targets.length,
+    failed: 0
+  };
 }
 
 export async function closePositionsMarket(
@@ -1069,6 +1579,147 @@ export async function closePositionsMarket(
   return orderIds;
 }
 
+export async function editOpenOrder(
+  adapter: BitgetFuturesAdapter,
+  input: {
+    symbol: string;
+    orderId: string;
+    price?: number;
+    qty?: number;
+    takeProfitPrice?: number | null;
+    stopLossPrice?: number | null;
+  }
+): Promise<{ orderId: string }> {
+  const normalizedSymbol = normalizeCanonicalSymbol(input.symbol);
+  if (!normalizedSymbol) {
+    throw new ManualTradingError("symbol_required", 400, "symbol_required");
+  }
+  if (!input.orderId?.trim()) {
+    throw new ManualTradingError("order_id_required", 400, "order_id_required");
+  }
+  if (
+    input.price === undefined &&
+    input.qty === undefined &&
+    input.takeProfitPrice === undefined &&
+    input.stopLossPrice === undefined
+  ) {
+    throw new ManualTradingError("no_edit_fields", 400, "no_edit_fields");
+  }
+  if (input.price !== undefined && (!Number.isFinite(input.price) || input.price <= 0)) {
+    throw new ManualTradingError("invalid_price", 400, "invalid_price");
+  }
+  if (input.qty !== undefined && (!Number.isFinite(input.qty) || input.qty <= 0)) {
+    throw new ManualTradingError("invalid_qty", 400, "invalid_qty");
+  }
+
+  await adapter.tradeApi.modifyOrder({
+    symbol: await adapter.toExchangeSymbol(normalizedSymbol),
+    productType: adapter.productType,
+    orderId: input.orderId,
+    newSize: input.qty !== undefined ? String(input.qty) : undefined,
+    newPrice: input.price !== undefined ? String(input.price) : undefined,
+    newPresetStopSurplusPrice:
+      input.takeProfitPrice === undefined
+        ? undefined
+        : input.takeProfitPrice === null
+          ? ""
+          : String(input.takeProfitPrice),
+    newPresetStopLossPrice:
+      input.stopLossPrice === undefined
+        ? undefined
+        : input.stopLossPrice === null
+          ? ""
+          : String(input.stopLossPrice)
+  });
+  return { orderId: input.orderId };
+}
+
+function toPlanKind(value: unknown): "tp" | "sl" | null {
+  const text = String(value ?? "").toLowerCase();
+  if (text.includes("profit")) return "tp";
+  if (text.includes("loss")) return "sl";
+  return null;
+}
+
+export async function setPositionTpSl(
+  adapter: BitgetFuturesAdapter,
+  input: {
+    symbol: string;
+    side?: "long" | "short";
+    takeProfitPrice?: number | null;
+    stopLossPrice?: number | null;
+  }
+): Promise<{ ok: true }> {
+  const normalizedSymbol = normalizeCanonicalSymbol(input.symbol);
+  if (!normalizedSymbol) {
+    throw new ManualTradingError("symbol_required", 400, "symbol_required");
+  }
+  const exchangeSymbol = await adapter.toExchangeSymbol(normalizedSymbol);
+  const side =
+    input.side ??
+    (await listPositions(adapter, normalizedSymbol))[0]?.side;
+  if (side !== "long" && side !== "short") {
+    throw new ManualTradingError("position_side_required", 400, "position_side_required");
+  }
+  if (input.takeProfitPrice !== undefined && input.takeProfitPrice !== null && input.takeProfitPrice <= 0) {
+    throw new ManualTradingError("invalid_take_profit", 400, "invalid_take_profit");
+  }
+  if (input.stopLossPrice !== undefined && input.stopLossPrice !== null && input.stopLossPrice <= 0) {
+    throw new ManualTradingError("invalid_stop_loss", 400, "invalid_stop_loss");
+  }
+
+  const pendingRaw = await adapter.tradeApi.getPendingPlanOrders({
+    productType: adapter.productType,
+    symbol: exchangeSymbol,
+    pageSize: 100
+  });
+  const pendingRows = toOrderRows(pendingRaw);
+  const holdSide = side;
+  const cancelKinds = new Set<"tp" | "sl">();
+  if (input.takeProfitPrice !== undefined) cancelKinds.add("tp");
+  if (input.stopLossPrice !== undefined) cancelKinds.add("sl");
+
+  if (cancelKinds.size > 0) {
+    await Promise.allSettled(
+      pendingRows.map(async (row) => {
+        const rowSide = String(row.holdSide ?? row.posSide ?? "").toLowerCase();
+        if (rowSide && rowSide !== holdSide) return;
+        const kind = toPlanKind(row.planType ?? row.stopType ?? row.triggerType);
+        if (!kind || !cancelKinds.has(kind)) return;
+        const orderId = String(row.orderId ?? row.planOrderId ?? "").trim();
+        if (!orderId) return;
+        await adapter.tradeApi.cancelPlanOrder({
+          symbol: exchangeSymbol,
+          orderId,
+          productType: adapter.productType
+        });
+      })
+    );
+  }
+
+  if (input.takeProfitPrice !== undefined && input.takeProfitPrice !== null) {
+    await adapter.tradeApi.placePositionTpSl({
+      symbol: exchangeSymbol,
+      productType: adapter.productType,
+      marginCoin: adapter.marginCoin,
+      holdSide,
+      planType: "profit_plan",
+      triggerPrice: String(input.takeProfitPrice)
+    });
+  }
+  if (input.stopLossPrice !== undefined && input.stopLossPrice !== null) {
+    await adapter.tradeApi.placePositionTpSl({
+      symbol: exchangeSymbol,
+      productType: adapter.productType,
+      marginCoin: adapter.marginCoin,
+      holdSide,
+      planType: "loss_plan",
+      triggerPrice: String(input.stopLossPrice)
+    });
+  }
+  return { ok: true };
+}
+
 export async function cancelAllOrders(
   adapter: BitgetFuturesAdapter,
   symbol?: string
@@ -1084,13 +1735,26 @@ export async function cancelAllOrders(
   }
 
   const results = await Promise.allSettled(
-    openOrders.map(async (order) =>
-      adapter.tradeApi.cancelOrder({
+    openOrders.map(async (order) => {
+      const raw = toRecord(order.raw);
+      const isPlan =
+        (order.type ?? "").toLowerCase().includes("plan") ||
+        typeof raw?.planType === "string" ||
+        typeof raw?.planOrderId === "string";
+      if (isPlan) {
+        await adapter.tradeApi.cancelPlanOrder({
+          symbol: await adapter.toExchangeSymbol(order.symbol),
+          orderId: order.orderId,
+          productType: adapter.productType
+        });
+        return;
+      }
+      await adapter.tradeApi.cancelOrder({
         symbol: await adapter.toExchangeSymbol(order.symbol),
         orderId: order.orderId,
         productType: adapter.productType
-      })
-    )
+      });
+    })
   );
 
   const cancelled = results.filter((row) => row.status === "fulfilled").length;

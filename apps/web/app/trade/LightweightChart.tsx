@@ -4,11 +4,13 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import {
   CandlestickSeries,
   ColorType,
+  HistogramSeries,
   LineSeries,
   LineStyle,
   createSeriesMarkers,
   createChart,
   type CandlestickData,
+  type HistogramData,
   type IChartApi,
   type IPriceLine,
   type ISeriesMarkersPluginApi,
@@ -18,6 +20,7 @@ import {
   type Time,
   type UTCTimestamp
 } from "lightweight-charts";
+import { useTranslations } from "next-intl";
 import { apiGet, ApiError } from "../../lib/api";
 import type { TradeDeskPrefillPayload } from "../../src/schemas/tradeDeskPrefill";
 
@@ -54,6 +57,23 @@ type LightweightChartProps = {
   symbol: string;
   timeframe: string;
   prefill: TradeDeskPrefillPayload | null;
+  chartPreferences?: {
+    indicatorToggles?: Partial<IndicatorToggleState>;
+    showUpMarkers?: boolean;
+    showDownMarkers?: boolean;
+  } | null;
+  onChartPreferencesChange?: (next: {
+    indicatorToggles: IndicatorToggleState;
+    showUpMarkers: boolean;
+    showDownMarkers: boolean;
+  }) => void;
+  selectedPosition?: {
+    side: "long" | "short";
+    entryPrice: number | null;
+    markPrice: number | null;
+    takeProfitPrice: number | null;
+    stopLossPrice: number | null;
+  } | null;
 };
 
 const CHART_CANDLE_FETCH_LIMIT = 1000;
@@ -70,6 +90,8 @@ type IndicatorToggleState = {
   vwapSession: boolean;
   dailyOpen: boolean;
   smcStructure: boolean;
+  volumeOverlay: boolean;
+  pvsraVector: boolean;
 };
 
 type IndicatorPresetKey = "scalping" | "trend" | "off" | "all";
@@ -83,12 +105,14 @@ const DEFAULT_INDICATOR_TOGGLES: IndicatorToggleState = {
   emaCloud50: false,
   vwapSession: false,
   dailyOpen: false,
-  smcStructure: false
+  smcStructure: false,
+  volumeOverlay: false,
+  pvsraVector: false
 };
 
-const INDICATOR_PRESETS: Record<IndicatorPresetKey, { label: string; toggles: IndicatorToggleState }> = {
+const INDICATOR_PRESETS: Record<IndicatorPresetKey, { labelKey: string; toggles: IndicatorToggleState }> = {
   scalping: {
-    label: "Scalping",
+    labelKey: "presets.scalping",
     toggles: {
       ema5: true,
       ema13: true,
@@ -98,11 +122,13 @@ const INDICATOR_PRESETS: Record<IndicatorPresetKey, { label: string; toggles: In
       emaCloud50: false,
       vwapSession: true,
       dailyOpen: true,
-      smcStructure: false
+      smcStructure: false,
+      volumeOverlay: true,
+      pvsraVector: false
     }
   },
   trend: {
-    label: "Trend",
+    labelKey: "presets.trend",
     toggles: {
       ema5: false,
       ema13: false,
@@ -112,11 +138,13 @@ const INDICATOR_PRESETS: Record<IndicatorPresetKey, { label: string; toggles: In
       emaCloud50: true,
       vwapSession: false,
       dailyOpen: true,
-      smcStructure: true
+      smcStructure: true,
+      volumeOverlay: false,
+      pvsraVector: false
     }
   },
   off: {
-    label: "Alle aus",
+    labelKey: "presets.allOff",
     toggles: {
       ema5: false,
       ema13: false,
@@ -126,11 +154,13 @@ const INDICATOR_PRESETS: Record<IndicatorPresetKey, { label: string; toggles: In
       emaCloud50: false,
       vwapSession: false,
       dailyOpen: false,
-      smcStructure: false
+      smcStructure: false,
+      volumeOverlay: false,
+      pvsraVector: false
     }
   },
   all: {
-    label: "Alle an",
+    labelKey: "presets.allOn",
     toggles: {
       ema5: true,
       ema13: true,
@@ -140,7 +170,9 @@ const INDICATOR_PRESETS: Record<IndicatorPresetKey, { label: string; toggles: In
       emaCloud50: true,
       vwapSession: true,
       dailyOpen: true,
-      smcStructure: true
+      smcStructure: true,
+      volumeOverlay: true,
+      pvsraVector: true
     }
   }
 };
@@ -155,7 +187,9 @@ function togglesEqual(a: IndicatorToggleState, b: IndicatorToggleState): boolean
     a.emaCloud50 === b.emaCloud50 &&
     a.vwapSession === b.vwapSession &&
     a.dailyOpen === b.dailyOpen &&
-    a.smcStructure === b.smcStructure
+    a.smcStructure === b.smcStructure &&
+    a.volumeOverlay === b.volumeOverlay &&
+    a.pvsraVector === b.pvsraVector
   );
 }
 
@@ -166,16 +200,93 @@ function normalizeCandles(items: CandleApiItem[]): Array<CandleApiItem & { ts: n
     .sort((a, b) => a.ts - b.ts);
 }
 
-function toChartData(items: CandleApiItem[]): CandlestickData[] {
+function timeframeToSeconds(timeframe: string): number {
+  switch (timeframe) {
+    case "1m": return 60;
+    case "5m": return 300;
+    case "15m": return 900;
+    case "1h": return 3600;
+    case "4h": return 14400;
+    case "1d": return 86400;
+    default: return 900;
+  }
+}
+
+function applyLatestViewport(
+  chart: IChartApi | null,
+  candles: CandlestickData[],
+  timeframe: string,
+  visibleCount: number,
+  rightOffset: number
+): void {
+  if (!chart || candles.length === 0) return;
+  const _tfSec = timeframeToSeconds(timeframe);
+  void _tfSec;
+  const to = (candles.length - 1) + rightOffset;
+  const from = Math.max(0, to - Math.max(20, visibleCount) + 1);
+  chart.timeScale().setVisibleLogicalRange({ from, to });
+}
+
+function classifyPvsraColor(
+  items: Array<CandleApiItem & { ts: number }>,
+  index: number
+): string | null {
+  const row = items[index];
+  const lookback = 10;
+  if (index < lookback) return null;
+  const prev = items.slice(index - lookback, index);
+  const avgVol = prev.reduce((sum, item) => sum + Math.max(0, Number(item.volume ?? 0)), 0) / lookback;
+  const avgSpread = prev.reduce((sum, item) => sum + Math.max(0, item.high - item.low), 0) / lookback;
+  if (!Number.isFinite(avgVol) || avgVol <= 0 || !Number.isFinite(avgSpread) || avgSpread <= 0) {
+    return null;
+  }
+  const vol = Math.max(0, Number(row.volume ?? 0));
+  const spread = Math.max(0, row.high - row.low);
+  const volRatio = vol / avgVol;
+  const spreadRatio = spread / avgSpread;
+  const isBull = row.close >= row.open;
+
+  if (volRatio >= 2.2 && spreadRatio >= 1.8) return isBull ? "#34d399" : "#f87171";
+  if (volRatio >= 1.6) return isBull ? "#10b981" : "#ef4444";
+  if (spreadRatio >= 1.5) return isBull ? "#22c55e" : "#fb7185";
+  return null;
+}
+
+function toChartData(items: CandleApiItem[], usePvsraVector: boolean): CandlestickData[] {
+  const normalized = normalizeCandles(items);
   const out: CandlestickData[] = [];
-  for (const row of items) {
-    if (!row.ts || !Number.isFinite(row.ts)) continue;
-    out.push({
+  for (let index = 0; index < normalized.length; index += 1) {
+    const row = normalized[index];
+    const base: CandlestickData = {
       time: Math.floor(row.ts / 1000) as UTCTimestamp,
       open: row.open,
       high: row.high,
       low: row.low,
       close: row.close
+    };
+    if (usePvsraVector) {
+      const pvsraColor = classifyPvsraColor(normalized, index);
+      if (pvsraColor) {
+        base.color = pvsraColor;
+        base.borderColor = pvsraColor;
+        base.wickColor = pvsraColor;
+      }
+    }
+    out.push(base);
+  }
+  return out;
+}
+
+function buildVolumeHistogram(items: CandleApiItem[]): HistogramData<Time>[] {
+  const out: HistogramData<Time>[] = [];
+  for (const row of normalizeCandles(items)) {
+    const volume = Number(row.volume);
+    if (!Number.isFinite(volume)) continue;
+    const isUp = row.close >= row.open;
+    out.push({
+      time: Math.floor(row.ts / 1000) as UTCTimestamp,
+      value: Math.max(0, volume),
+      color: isUp ? "rgba(34,197,94,0.45)" : "rgba(239,68,68,0.45)"
     });
   }
   return out;
@@ -389,12 +500,18 @@ export function LightweightChart({
   exchangeAccountId,
   symbol,
   timeframe,
-  prefill
+  prefill,
+  chartPreferences,
+  onChartPreferencesChange,
+  selectedPosition
 }: LightweightChartProps) {
+  const t = useTranslations("system.trade.chart");
   const hostRef = useRef<HTMLDivElement | null>(null);
   const chartRef = useRef<IChartApi | null>(null);
   const candleSeriesRef = useRef<ISeriesApi<"Candlestick"> | null>(null);
+  const volumeSeriesRef = useRef<ISeriesApi<"Histogram"> | null>(null);
   const prefillLinesRef = useRef<IPriceLine[]>([]);
+  const selectedPositionLinesRef = useRef<IPriceLine[]>([]);
   const emaSeriesRef = useRef<Record<"ema5" | "ema13" | "ema50" | "ema200" | "ema800", ISeriesApi<"Line"> | null>>({
     ema5: null,
     ema13: null,
@@ -407,25 +524,61 @@ export function LightweightChart({
   const vwapSeriesRef = useRef<ISeriesApi<"Line"> | null>(null);
   const dailyOpenSeriesRef = useRef<ISeriesApi<"Line"> | null>(null);
   const markerPluginRef = useRef<ISeriesMarkersPluginApi<Time> | null>(null);
+  const shouldResetViewportRef = useRef(true);
+  const serializedPrefsRef = useRef<string>("");
   const [status, setStatus] = useState<"loading" | "ready" | "error">("loading");
-  const [statusMessage, setStatusMessage] = useState<string>("Loading candles...");
+  const [statusMessage, setStatusMessage] = useState<string>(t("status.loadingCandles"));
   const [rawCandles, setRawCandles] = useState<CandleApiItem[]>([]);
   const [lastClose, setLastClose] = useState<number | null>(null);
-  const [showUpMarkers, setShowUpMarkers] = useState(false);
-  const [showDownMarkers, setShowDownMarkers] = useState(false);
+  const [showUpMarkers, setShowUpMarkers] = useState(Boolean(chartPreferences?.showUpMarkers));
+  const [showDownMarkers, setShowDownMarkers] = useState(Boolean(chartPreferences?.showDownMarkers));
   const [predictionMarkers, setPredictionMarkers] = useState<SeriesMarker<Time>[]>([]);
   const [smcMarkers, setSmcMarkers] = useState<SeriesMarker<Time>[]>([]);
   const [indicatorToggles, setIndicatorToggles] = useState<IndicatorToggleState>(
-    DEFAULT_INDICATOR_TOGGLES
+    {
+      ...DEFAULT_INDICATOR_TOGGLES,
+      ...(chartPreferences?.indicatorToggles ?? {})
+    }
   );
   const activePreset = useMemo<IndicatorPresetKey | null>(() => {
     for (const [presetKey, preset] of Object.entries(INDICATOR_PRESETS) as Array<
-      [IndicatorPresetKey, { label: string; toggles: IndicatorToggleState }]
+      [IndicatorPresetKey, { labelKey: string; toggles: IndicatorToggleState }]
     >) {
       if (togglesEqual(indicatorToggles, preset.toggles)) return presetKey;
     }
     return null;
   }, [indicatorToggles]);
+
+  useEffect(() => {
+    if (!chartPreferences) return;
+    const nextToggles: IndicatorToggleState = {
+      ...DEFAULT_INDICATOR_TOGGLES,
+      ...(chartPreferences.indicatorToggles ?? {})
+    };
+    setIndicatorToggles(nextToggles);
+    setShowUpMarkers(Boolean(chartPreferences.showUpMarkers));
+    setShowDownMarkers(Boolean(chartPreferences.showDownMarkers));
+    serializedPrefsRef.current = JSON.stringify({
+      indicatorToggles: nextToggles,
+      showUpMarkers: Boolean(chartPreferences.showUpMarkers),
+      showDownMarkers: Boolean(chartPreferences.showDownMarkers)
+    });
+  }, [chartPreferences]);
+
+  useEffect(() => {
+    const serialized = JSON.stringify({
+      indicatorToggles,
+      showUpMarkers,
+      showDownMarkers
+    });
+    if (serialized === serializedPrefsRef.current) return;
+    serializedPrefsRef.current = serialized;
+    onChartPreferencesChange?.({
+      indicatorToggles,
+      showUpMarkers,
+      showDownMarkers
+    });
+  }, [indicatorToggles, onChartPreferencesChange, showDownMarkers, showUpMarkers]);
 
   const normalizedTimeframe = useMemo(() => {
     if (timeframe === "1m" || timeframe === "5m" || timeframe === "15m" || timeframe === "1h" || timeframe === "4h" || timeframe === "1d") {
@@ -468,6 +621,15 @@ export function LightweightChart({
       borderVisible: false,
       wickUpColor: "#22c55e",
       wickDownColor: "#ef4444"
+    });
+    volumeSeriesRef.current = chart.addSeries(HistogramSeries, {
+      priceScaleId: "",
+      lastValueVisible: false,
+      priceLineVisible: false,
+      visible: false
+    });
+    chart.priceScale("").applyOptions({
+      scaleMargins: { top: 0.72, bottom: 0 }
     });
     emaSeriesRef.current.ema5 = chart.addSeries(LineSeries, {
       color: "#f7d047",
@@ -544,12 +706,17 @@ export function LightweightChart({
       prefillLinesRef.current = [];
       markerPluginRef.current = null;
       candleSeriesRef.current = null;
+      volumeSeriesRef.current = null;
       chartRef.current = null;
       emaSeriesRef.current = { ema5: null, ema13: null, ema50: null, ema200: null, ema800: null };
       emaCloudUpperRef.current = null;
       emaCloudLowerRef.current = null;
       vwapSeriesRef.current = null;
       dailyOpenSeriesRef.current = null;
+      for (const line of selectedPositionLinesRef.current) {
+        candleSeries.removePriceLine(line);
+      }
+      selectedPositionLinesRef.current = [];
       chart.remove();
     };
   }, []);
@@ -558,7 +725,7 @@ export function LightweightChart({
     if (!exchangeAccountId || !symbol || !candleSeriesRef.current) return;
     let active = true;
     let timer: ReturnType<typeof setInterval> | null = null;
-    let initialViewportApplied = false;
+    shouldResetViewportRef.current = true;
 
     const fetchCandles = async () => {
       try {
@@ -567,33 +734,27 @@ export function LightweightChart({
         );
         if (!active) return;
         setRawCandles(payload.items ?? []);
-        const data = toChartData(payload.items);
-        candleSeriesRef.current?.setData(data);
-        chartRef.current?.timeScale().applyOptions({ rightOffset: CHART_RIGHT_OFFSET });
-        if (!initialViewportApplied && chartRef.current) {
-          const visibleBars = Math.min(CHART_VISIBLE_CANDLE_COUNT, Math.max(1, data.length));
-          const to = (data.length - 1) + CHART_RIGHT_OFFSET;
-          const from = Math.max(0, to - visibleBars + 1);
-          chartRef.current.timeScale().setVisibleLogicalRange({ from, to });
-          initialViewportApplied = true;
-        }
+        const data = toChartData(payload.items, false);
         const close = data.length > 0 ? data[data.length - 1]?.close ?? null : null;
         setLastClose(close ?? null);
         setStatus("ready");
         setStatusMessage(
           data.length > 0
-            ? `${Math.min(CHART_VISIBLE_CANDLE_COUNT, data.length)} visible · ${data.length} loaded`
-            : "No candles available"
+            ? t("status.visibleLoaded", {
+                visible: String(Math.min(CHART_VISIBLE_CANDLE_COUNT, data.length)),
+                loaded: String(data.length)
+              })
+            : t("status.noCandles")
         );
       } catch (error) {
         if (!active) return;
         setStatus("error");
-        setStatusMessage(errMsg(error));
+        setStatusMessage(t("status.chartError", { error: errMsg(error) }));
       }
     };
 
     setStatus("loading");
-    setStatusMessage("Loading candles...");
+    setStatusMessage(t("status.loadingCandles"));
     void fetchCandles();
     timer = setInterval(() => {
       void fetchCandles();
@@ -603,7 +764,7 @@ export function LightweightChart({
       active = false;
       if (timer) clearInterval(timer);
     };
-  }, [exchangeAccountId, symbol, normalizedTimeframe]);
+  }, [exchangeAccountId, symbol, normalizedTimeframe, t]);
 
   useEffect(() => {
     const series = candleSeriesRef.current;
@@ -662,9 +823,91 @@ export function LightweightChart({
   }, [prefill, lastClose]);
 
   useEffect(() => {
+    const series = candleSeriesRef.current;
+    if (!series) return;
+    for (const line of selectedPositionLinesRef.current) {
+      series.removePriceLine(line);
+    }
+    selectedPositionLinesRef.current = [];
+    if (!selectedPosition) return;
+
+    const nextLines: IPriceLine[] = [];
+    if (typeof selectedPosition.entryPrice === "number" && Number.isFinite(selectedPosition.entryPrice)) {
+      nextLines.push(
+        series.createPriceLine({
+          price: selectedPosition.entryPrice,
+          color: "#60a5fa",
+          lineWidth: 2,
+          lineStyle: LineStyle.Solid,
+          title: t("position.entry")
+        })
+      );
+    }
+    if (typeof selectedPosition.markPrice === "number" && Number.isFinite(selectedPosition.markPrice)) {
+      nextLines.push(
+        series.createPriceLine({
+          price: selectedPosition.markPrice,
+          color: "#f59e0b",
+          lineWidth: 1,
+          lineStyle: LineStyle.Dotted,
+          title: t("position.mark")
+        })
+      );
+    }
+    if (typeof selectedPosition.takeProfitPrice === "number" && Number.isFinite(selectedPosition.takeProfitPrice)) {
+      nextLines.push(
+        series.createPriceLine({
+          price: selectedPosition.takeProfitPrice,
+          color: "#22c55e",
+          lineWidth: 1,
+          lineStyle: LineStyle.Dashed,
+          title: t("position.tp")
+        })
+      );
+    }
+    if (typeof selectedPosition.stopLossPrice === "number" && Number.isFinite(selectedPosition.stopLossPrice)) {
+      nextLines.push(
+        series.createPriceLine({
+          price: selectedPosition.stopLossPrice,
+          color: "#ef4444",
+          lineWidth: 1,
+          lineStyle: LineStyle.Dashed,
+          title: t("position.sl")
+        })
+      );
+    }
+    selectedPositionLinesRef.current = nextLines;
+  }, [selectedPosition, t]);
+
+  useEffect(() => {
     if (!candleSeriesRef.current) return;
 
     const normalized = normalizeCandles(rawCandles);
+    const candleData = toChartData(rawCandles, indicatorToggles.pvsraVector);
+    candleSeriesRef.current.setData(candleData);
+    chartRef.current?.timeScale().applyOptions({ rightOffset: CHART_RIGHT_OFFSET });
+    if (shouldResetViewportRef.current) {
+      requestAnimationFrame(() => {
+        applyLatestViewport(
+          chartRef.current,
+          candleData,
+          normalizedTimeframe,
+          CHART_VISIBLE_CANDLE_COUNT,
+          CHART_RIGHT_OFFSET
+        );
+      });
+      shouldResetViewportRef.current = false;
+    }
+
+    if (indicatorToggles.volumeOverlay) {
+      const volumeData = buildVolumeHistogram(rawCandles);
+      volumeSeriesRef.current?.setData(volumeData);
+      volumeSeriesRef.current?.applyOptions({ visible: volumeData.length > 0 });
+    } else {
+      volumeSeriesRef.current?.setData([]);
+      volumeSeriesRef.current?.applyOptions({ visible: false });
+    }
+
     if (normalized.length === 0) {
       for (const key of ["ema5", "ema13", "ema50", "ema200", "ema800"] as const) {
         emaSeriesRef.current[key]?.setData([]);
@@ -762,7 +1005,7 @@ export function LightweightChart({
     } else {
       setSmcMarkers([]);
     }
-  }, [rawCandles, indicatorToggles]);
+  }, [rawCandles, indicatorToggles, normalizedTimeframe]);
 
   useEffect(() => {
     if (!exchangeAccountId || !symbol || !markerPluginRef.current) return;
@@ -849,9 +1092,9 @@ export function LightweightChart({
     <div>
       <div ref={hostRef} style={{ width: "100%", height: 520 }} />
       <div style={{ marginTop: 8, fontSize: 12, color: "var(--muted)", display: "flex", justifyContent: "space-between", gap: 8, flexWrap: "wrap" }}>
-        <span>Chart engine: lightweight-charts</span>
+        <span>{t("engine")}</span>
         <span>
-          {status === "error" ? `Chart error: ${statusMessage}` : statusMessage}
+          {statusMessage}
         </span>
       </div>
       <div style={{ marginTop: 8, display: "flex", gap: 14, flexWrap: "wrap", fontSize: 12 }}>
@@ -861,7 +1104,7 @@ export function LightweightChart({
             checked={showUpMarkers}
             onChange={(event) => setShowUpMarkers(event.target.checked)}
           />
-          Show Up Signals
+          {t("markers.showUp")}
         </label>
         <label style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
           <input
@@ -869,21 +1112,23 @@ export function LightweightChart({
             checked={showDownMarkers}
             onChange={(event) => setShowDownMarkers(event.target.checked)}
           />
-          Show Down Signals
+          {t("markers.showDown")}
         </label>
       </div>
       <div style={{ marginTop: 8, display: "flex", flexWrap: "wrap", gap: 10, fontSize: 12 }}>
-        <span style={{ opacity: 0.8 }}>Indicators:</span>
+        <span style={{ opacity: 0.8 }}>{t("indicators.title")}</span>
         {[
-          { key: "ema5", label: "EMA 5" },
-          { key: "ema13", label: "EMA 13" },
-          { key: "ema50", label: "EMA 50" },
-          { key: "ema200", label: "EMA 200" },
-          { key: "ema800", label: "EMA 800" },
-          { key: "emaCloud50", label: "EMA 50 Cloud" },
-          { key: "vwapSession", label: "Session VWAP" },
-          { key: "dailyOpen", label: "Daily Open" },
-          { key: "smcStructure", label: "SMC Structure (BOS/CHoCH)" }
+          { key: "ema5", label: t("indicators.ema5") },
+          { key: "ema13", label: t("indicators.ema13") },
+          { key: "ema50", label: t("indicators.ema50") },
+          { key: "ema200", label: t("indicators.ema200") },
+          { key: "ema800", label: t("indicators.ema800") },
+          { key: "emaCloud50", label: t("indicators.emaCloud50") },
+          { key: "vwapSession", label: t("indicators.vwapSession") },
+          { key: "dailyOpen", label: t("indicators.dailyOpen") },
+          { key: "smcStructure", label: t("indicators.smcStructure") },
+          { key: "volumeOverlay", label: t("indicators.volumeOverlay") },
+          { key: "pvsraVector", label: t("indicators.pvsraVector") }
         ].map((item) => (
           <label key={item.key} style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
             <input
@@ -901,7 +1146,7 @@ export function LightweightChart({
         ))}
       </div>
       <div style={{ marginTop: 8, display: "flex", flexWrap: "wrap", gap: 8, alignItems: "center" }}>
-        <span style={{ fontSize: 12, opacity: 0.8 }}>Presets:</span>
+        <span style={{ fontSize: 12, opacity: 0.8 }}>{t("presets.title")}</span>
         {(Object.keys(INDICATOR_PRESETS) as IndicatorPresetKey[]).map((presetKey) => {
           const preset = INDICATOR_PRESETS[presetKey];
           const selected = activePreset === presetKey;
@@ -919,7 +1164,7 @@ export function LightweightChart({
                 color: selected ? "#38bdf8" : undefined
               }}
             >
-              {preset.label}
+              {t(preset.labelKey)}
             </button>
           );
         })}

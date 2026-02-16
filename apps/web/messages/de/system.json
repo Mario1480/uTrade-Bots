@@ -269,6 +269,8 @@
       "retry": "Erneut versuchen",
       "addExchangeAccount": "Exchange-Konto hinzufügen",
       "apply": "Anwenden",
+      "edit": "Bearbeiten",
+      "save": "Speichern",
       "open": "Öffnen",
       "close": "Schließen",
       "openLong": "Long öffnen",
@@ -327,6 +329,8 @@
         "size": "Größe",
         "entry": "Entry",
         "mark": "Mark",
+        "stopLoss": "SL",
+        "takeProfit": "TP",
         "pnl": "PnL",
         "action": "Aktion"
       }
@@ -339,9 +343,52 @@
         "side": "Seite",
         "type": "Typ",
         "price": "Preis",
+        "limitPrice": "Limit",
+        "stopLoss": "SL",
+        "takeProfit": "TP",
         "qty": "Menge",
         "status": "Status",
         "action": "Aktion"
+      }
+    },
+    "chart": {
+      "engine": "Chart-Engine: lightweight-charts",
+      "status": {
+        "loadingCandles": "Kerzen werden geladen...",
+        "noCandles": "Keine Kerzen verfügbar",
+        "visibleLoaded": "{visible} sichtbar · {loaded} geladen",
+        "chartError": "Chart-Fehler: {error}"
+      },
+      "markers": {
+        "showUp": "Up-Signale anzeigen",
+        "showDown": "Down-Signale anzeigen"
+      },
+      "indicators": {
+        "title": "Indikatoren:",
+        "ema5": "EMA 5",
+        "ema13": "EMA 13",
+        "ema50": "EMA 50",
+        "ema200": "EMA 200",
+        "ema800": "EMA 800",
+        "emaCloud50": "EMA 50 Cloud",
+        "vwapSession": "Session VWAP",
+        "dailyOpen": "Tageseröffnung",
+        "smcStructure": "SMC Struktur (BOS/CHoCH)",
+        "volumeOverlay": "Volume Overlay",
+        "pvsraVector": "PVSRA Vector Kerzen"
+      },
+      "presets": {
+        "title": "Presets:",
+        "scalping": "Scalping",
+        "trend": "Trend",
+        "allOff": "Alle aus",
+        "allOn": "Alle an"
+      },
+      "position": {
+        "entry": "Entry",
+        "mark": "Mark",
+        "tp": "TP",
+        "sl": "SL"
       }
     },
     "qtyMode": {

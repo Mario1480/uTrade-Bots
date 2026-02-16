@@ -114,6 +114,27 @@ export type BitgetOrderPlaceRequest = {
   presetStopLossPrice?: string;
 };
 
+export type BitgetOrderModifyRequest = {
+  symbol: string;
+  productType: BitgetProductType;
+  orderId?: string;
+  clientOid?: string;
+  newPrice?: string;
+  newSize?: string;
+  newPresetStopSurplusPrice?: string;
+  newPresetStopLossPrice?: string;
+};
+
+export type BitgetPositionTpSlRequest = {
+  symbol: string;
+  productType: BitgetProductType;
+  marginCoin?: string;
+  holdSide: "long" | "short";
+  planType: "profit_plan" | "loss_plan";
+  triggerPrice: string;
+  executePrice?: string;
+};
+
 export type BitgetOrderRaw = {
   orderId?: string;
   clientOid?: string;

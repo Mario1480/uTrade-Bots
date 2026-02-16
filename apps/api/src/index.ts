@@ -79,9 +79,13 @@ import {
   getAiPayloadBudgetTelemetrySnapshot
 } from "./ai/payloadBudget.js";
 import {
+  cancelAllPaperOrders,
+  cancelPaperOrder,
   clearPaperMarketDataAccountId,
   clearPaperState,
   closePaperPosition,
+  editOpenOrder,
+  editPaperOrder,
   ManualTradingError,
   getPaperAccountState,
   isPaperTradingAccount,
@@ -104,6 +108,8 @@ import {
   resolveMarketDataTradingAccount,
   resolveTradingAccount,
   saveTradingSettings,
+  setPositionTpSl,
+  setPaperPositionTpSl,
   setPaperMarketDataAccountId
 } from "./trading.js";
 import {
@@ -349,7 +355,24 @@ const tradingSettingsSchema = z.object({
   exchangeAccountId: z.string().trim().min(1).nullable().optional(),
   symbol: z.string().trim().min(1).nullable().optional(),
   timeframe: z.string().trim().min(1).nullable().optional(),
-  marginMode: z.enum(["isolated", "cross"]).nullable().optional()
+  marginMode: z.enum(["isolated", "cross"]).nullable().optional(),
+  chartPreferences: z.object({
+    indicatorToggles: z.object({
+      ema5: z.boolean().optional(),
+      ema13: z.boolean().optional(),
+      ema50: z.boolean().optional(),
+      ema200: z.boolean().optional(),
+      ema800: z.boolean().optional(),
+      emaCloud50: z.boolean().optional(),
+      vwapSession: z.boolean().optional(),
+      dailyOpen: z.boolean().optional(),
+      smcStructure: z.boolean().optional(),
+      volumeOverlay: z.boolean().optional(),
+      pvsraVector: z.boolean().optional()
+    }).optional(),
+    showUpMarkers: z.boolean().optional(),
+    showDownMarkers: z.boolean().optional()
+  }).optional()
 });
 
 const alertsSettingsSchema = z.object({
@@ -651,6 +674,45 @@ const closePositionSchema = z.object({
   exchangeAccountId: z.string().trim().min(1).optional(),
   symbol: z.string().trim().min(1),
   side: z.enum(["long", "short"]).optional()
+});
+
+const editOrderSchema = z.object({
+  exchangeAccountId: z.string().trim().min(1).optional(),
+  orderId: z.string().trim().min(1),
+  symbol: z.string().trim().min(1),
+  price: z.number().positive().optional(),
+  qty: z.number().positive().optional(),
+  takeProfitPrice: z.number().positive().nullable().optional(),
+  stopLossPrice: z.number().positive().nullable().optional()
+}).superRefine((value, ctx) => {
+  if (
+    value.price === undefined &&
+    value.qty === undefined &&
+    value.takeProfitPrice === undefined &&
+    value.stopLossPrice === undefined
+  ) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ["orderId"],
+      message: "at least one editable field is required"
+    });
+  }
+});
+
+const positionTpSlSchema = z.object({
+  exchangeAccountId: z.string().trim().min(1).optional(),
+  symbol: z.string().trim().min(1),
+  side: z.enum(["long", "short"]).optional(),
+  takeProfitPrice: z.number().positive().nullable().optional(),
+  stopLossPrice: z.number().positive().nullable().optional()
+}).superRefine((value, ctx) => {
+  if (value.takeProfitPrice === undefined && value.stopLossPrice === undefined) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ["symbol"],
+      message: "takeProfitPrice or stopLossPrice is required"
+    });
+  }
 });
 
 const marketCandlesQuerySchema = z.object({
@@ -11211,7 +11273,7 @@ app.get("/api/orders/open", requireAuth, async (req, res) => {
     const adapter = createBitgetAdapter(resolved.marketDataAccount);
     try {
       const items = isPaperTradingAccount(resolved.selectedAccount)
-        ? await listPaperOpenOrders(resolved.selectedAccount)
+        ? await listPaperOpenOrders(resolved.selectedAccount, adapter, symbol ?? undefined)
         : await listOpenOrders(adapter, symbol ?? undefined);
       return res.json({
         exchangeAccountId: resolved.selectedAccount.id,
@@ -11250,6 +11312,8 @@ app.post("/api/orders", requireAuth, async (req, res) => {
           type: parsed.data.type,
           qty: parsed.data.qty,
           price: parsed.data.price,
+          takeProfitPrice: parsed.data.takeProfitPrice,
+          stopLossPrice: parsed.data.stopLossPrice,
           reduceOnly: parsed.data.reduceOnly
         });
         return res.status(201).json({
@@ -11292,6 +11356,57 @@ app.post("/api/orders", requireAuth, async (req, res) => {
   }
 });
 
+app.post("/api/orders/edit", requireAuth, async (req, res) => {
+  const user = getUserFromLocals(res);
+  const parsed = editOrderSchema.safeParse(req.body);
+  if (!parsed.success) {
+    return res.status(400).json({ error: "invalid_payload", details: parsed.error.flatten() });
+  }
+
+  try {
+    const resolved = await resolveMarketDataTradingAccount(user.id, parsed.data.exchangeAccountId);
+    const adapter = createBitgetAdapter(resolved.marketDataAccount);
+    try {
+      const symbol = normalizeSymbolInput(parsed.data.symbol);
+      if (!symbol) {
+        return res.status(400).json({ error: "symbol_required" });
+      }
+      if (isPaperTradingAccount(resolved.selectedAccount)) {
+        const updated = await editPaperOrder(resolved.selectedAccount, adapter, {
+          orderId: parsed.data.orderId,
+          symbol,
+          price: parsed.data.price,
+          qty: parsed.data.qty,
+          takeProfitPrice: parsed.data.takeProfitPrice,
+          stopLossPrice: parsed.data.stopLossPrice
+        });
+        return res.json({
+          exchangeAccountId: resolved.selectedAccount.id,
+          orderId: updated.orderId,
+          ok: true
+        });
+      }
+      const updated = await editOpenOrder(adapter, {
+        symbol,
+        orderId: parsed.data.orderId,
+        price: parsed.data.price,
+        qty: parsed.data.qty,
+        takeProfitPrice: parsed.data.takeProfitPrice,
+        stopLossPrice: parsed.data.stopLossPrice
+      });
+      return res.json({
+        exchangeAccountId: resolved.selectedAccount.id,
+        orderId: updated.orderId,
+        ok: true
+      });
+    } finally {
+      await adapter.close();
+    }
+  } catch (error) {
+    return sendManualTradingError(res, error);
+  }
+});
+
 app.post("/api/orders/cancel", requireAuth, async (req, res) => {
   const user = getUserFromLocals(res);
   const parsed = cancelOrderSchema.safeParse(req.body);
@@ -11300,13 +11415,14 @@ app.post("/api/orders/cancel", requireAuth, async (req, res) => {
   }
 
   try {
-    const account = await resolveTradingAccount(user.id, parsed.data.exchangeAccountId);
-    if (isPaperTradingAccount(account)) {
-      return res.json({ ok: true });
-    }
-    const adapter = createBitgetAdapter(account);
+    const resolved = await resolveMarketDataTradingAccount(user.id, parsed.data.exchangeAccountId);
+    const adapter = createBitgetAdapter(resolved.marketDataAccount);
     try {
       const symbol = normalizeSymbolInput(parsed.data.symbol);
+      if (isPaperTradingAccount(resolved.selectedAccount)) {
+        await cancelPaperOrder(resolved.selectedAccount, adapter, parsed.data.orderId, symbol ?? undefined);
+        return res.json({ ok: true });
+      }
       if (symbol) {
         await adapter.tradeApi.cancelOrder({
           symbol: await adapter.toExchangeSymbol(symbol),
@@ -11340,22 +11456,59 @@ app.post("/api/orders/cancel-all", requireAuth, async (req, res) => {
           ? req.body.symbol
           : null
     );
-    const account = await resolveTradingAccount(user.id, exchangeAccountId);
-    if (isPaperTradingAccount(account)) {
-      return res.json({
-        exchangeAccountId: account.id,
-        requested: 0,
-        cancelled: 0,
-        failed: 0
-      });
-    }
-    const adapter = createBitgetAdapter(account);
+    const resolved = await resolveMarketDataTradingAccount(user.id, exchangeAccountId);
+    const adapter = createBitgetAdapter(resolved.marketDataAccount);
 
     try {
-      const result = await cancelAllOrders(adapter, symbol ?? undefined);
+      const result = isPaperTradingAccount(resolved.selectedAccount)
+        ? await cancelAllPaperOrders(resolved.selectedAccount, adapter, symbol ?? undefined)
+        : await cancelAllOrders(adapter, symbol ?? undefined);
       return res.json({
-        exchangeAccountId: account.id,
+        exchangeAccountId: resolved.selectedAccount.id,
         ...result
+      });
+    } finally {
+      await adapter.close();
+    }
+  } catch (error) {
+    return sendManualTradingError(res, error);
+  }
+});
+
+app.post("/api/positions/tpsl", requireAuth, async (req, res) => {
+  const user = getUserFromLocals(res);
+  const parsed = positionTpSlSchema.safeParse(req.body);
+  if (!parsed.success) {
+    return res.status(400).json({ error: "invalid_payload", details: parsed.error.flatten() });
+  }
+
+  try {
+    const resolved = await resolveMarketDataTradingAccount(user.id, parsed.data.exchangeAccountId);
+    const adapter = createBitgetAdapter(resolved.marketDataAccount);
+    try {
+      const symbol = normalizeSymbolInput(parsed.data.symbol);
+      if (!symbol) {
+        return res.status(400).json({ error: "symbol_required" });
+      }
+      if (isPaperTradingAccount(resolved.selectedAccount)) {
+        await setPaperPositionTpSl(resolved.selectedAccount, adapter, {
+          symbol,
+          side: parsed.data.side,
+          takeProfitPrice: parsed.data.takeProfitPrice,
+          stopLossPrice: parsed.data.stopLossPrice
+        });
+      } else {
+        await setPositionTpSl(adapter, {
+          symbol,
+          side: parsed.data.side,
+          takeProfitPrice: parsed.data.takeProfitPrice,
+          stopLossPrice: parsed.data.stopLossPrice
+        });
+      }
+      return res.json({
+        exchangeAccountId: resolved.selectedAccount.id,
+        symbol,
+        ok: true
       });
     } finally {
       await adapter.close();
@@ -12736,7 +12889,7 @@ async function handleUserWsConnection(
         ? await Promise.all([
             getPaperAccountState(context.selectedAccount, context.adapter),
             listPaperPositions(context.selectedAccount, context.adapter),
-            listPaperOpenOrders(context.selectedAccount)
+            listPaperOpenOrders(context.selectedAccount, context.adapter)
           ])
         : await Promise.all([
             context.adapter.getAccountState(),

@@ -269,6 +269,8 @@
       "retry": "Retry",
       "addExchangeAccount": "Add Exchange Account",
       "apply": "Apply",
+      "edit": "Edit",
+      "save": "Save",
       "open": "Open",
       "close": "Close",
       "openLong": "Open Long",
@@ -327,6 +329,8 @@
         "size": "Size",
         "entry": "Entry",
         "mark": "Mark",
+        "stopLoss": "SL",
+        "takeProfit": "TP",
         "pnl": "PnL",
         "action": "Action"
       }
@@ -339,9 +343,52 @@
         "side": "Side",
         "type": "Type",
         "price": "Price",
+        "limitPrice": "Limit",
+        "stopLoss": "SL",
+        "takeProfit": "TP",
         "qty": "Qty",
         "status": "Status",
         "action": "Action"
+      }
+    },
+    "chart": {
+      "engine": "Chart engine: lightweight-charts",
+      "status": {
+        "loadingCandles": "Loading candles...",
+        "noCandles": "No candles available",
+        "visibleLoaded": "{visible} visible · {loaded} loaded",
+        "chartError": "Chart error: {error}"
+      },
+      "markers": {
+        "showUp": "Show Up Signals",
+        "showDown": "Show Down Signals"
+      },
+      "indicators": {
+        "title": "Indicators:",
+        "ema5": "EMA 5",
+        "ema13": "EMA 13",
+        "ema50": "EMA 50",
+        "ema200": "EMA 200",
+        "ema800": "EMA 800",
+        "emaCloud50": "EMA 50 Cloud",
+        "vwapSession": "Session VWAP",
+        "dailyOpen": "Daily Open",
+        "smcStructure": "SMC Structure (BOS/CHoCH)",
+        "volumeOverlay": "Volume Overlay",
+        "pvsraVector": "PVSRA Vector Candles"
+      },
+      "presets": {
+        "title": "Presets:",
+        "scalping": "Scalping",
+        "trend": "Trend",
+        "allOff": "All off",
+        "allOn": "All on"
+      },
+      "position": {
+        "entry": "Entry",
+        "mark": "Mark",
+        "tp": "TP",
+        "sl": "SL"
       }
     },
     "qtyMode": {

@@ -27,6 +27,23 @@ type TradingSettings = {
   symbol: string | null;
   timeframe: string | null;
   marginMode: MarginModeValue | null;
+  chartPreferences: {
+    indicatorToggles: {
+      ema5: boolean;
+      ema13: boolean;
+      ema50: boolean;
+      ema200: boolean;
+      ema800: boolean;
+      emaCloud50: boolean;
+      vwapSession: boolean;
+      dailyOpen: boolean;
+      smcStructure: boolean;
+      volumeOverlay: boolean;
+      pvsraVector: boolean;
+    };
+    showUpMarkers: boolean;
+    showDownMarkers: boolean;
+  };
 };
 
 type SymbolItem = {
@@ -56,6 +73,8 @@ type PositionItem = {
   entryPrice: number | null;
   markPrice: number | null;
   unrealizedPnl: number | null;
+  takeProfitPrice: number | null;
+  stopLossPrice: number | null;
 };
 
 type OpenOrderItem = {
@@ -66,6 +85,10 @@ type OpenOrderItem = {
   status: string | null;
   price: number | null;
   qty: number | null;
+  triggerPrice: number | null;
+  takeProfitPrice: number | null;
+  stopLossPrice: number | null;
+  reduceOnly: boolean | null;
   createdAt: string | null;
 };
 
@@ -96,6 +119,24 @@ const API_BASE =
   "http://localhost:4000";
 
 const TIMEFRAMES = ["1m", "5m", "15m", "1h", "4h", "1d"] as const;
+
+const DEFAULT_CHART_PREFERENCES: TradingSettings["chartPreferences"] = {
+  indicatorToggles: {
+    ema5: false,
+    ema13: false,
+    ema50: true,
+    ema200: true,
+    ema800: false,
+    emaCloud50: false,
+    vwapSession: false,
+    dailyOpen: false,
+    smcStructure: false,
+    volumeOverlay: false,
+    pvsraVector: false
+  },
+  showUpMarkers: false,
+  showDownMarkers: false
+};
 
 type OrderTypeValue = "market" | "limit";
 
@@ -193,6 +234,14 @@ function TradePageContent() {
   const [selectedAccountId, setSelectedAccountId] = useState("");
   const [selectedSymbol, setSelectedSymbol] = useState("BTCUSDT");
   const [timeframe, setTimeframe] = useState<string>("15m");
+  const [chartPreferences, setChartPreferences] = useState<TradingSettings["chartPreferences"]>(
+    DEFAULT_CHART_PREFERENCES
+  );
+  const [selectedPositionKey, setSelectedPositionKey] = useState<string | null>(null);
+  const [positionEditDrafts, setPositionEditDrafts] = useState<Record<string, { tp: string; sl: string }>>({});
+  const [orderEditDrafts, setOrderEditDrafts] = useState<Record<string, { price: string; qty: string; tp: string; sl: string }>>({});
+  const [positionSavingKey, setPositionSavingKey] = useState<string | null>(null);
+  const [orderSavingId, setOrderSavingId] = useState<string | null>(null);
 
   const [summary, setSummary] = useState<AccountSummary | null>(null);
   const [positions, setPositions] = useState<PositionItem[]>([]);
@@ -237,6 +286,18 @@ function TradePageContent() {
     () => symbols.find((row) => row.symbol === selectedSymbol) ?? null,
     [symbols, selectedSymbol]
   );
+  const selectedPosition = useMemo(() => {
+    if (!selectedPositionKey) return null;
+    const row = positions.find((item, index) => `${item.symbol}:${item.side}:${index}` === selectedPositionKey);
+    if (!row) return null;
+    return {
+      side: row.side,
+      entryPrice: row.entryPrice,
+      markPrice: row.markPrice,
+      takeProfitPrice: row.takeProfitPrice,
+      stopLossPrice: row.stopLossPrice
+    };
+  }, [positions, selectedPositionKey]);
   const isSpotShortPrefillBlocked =
     activePrefill?.marketType === "spot" &&
     activePrefill.signal === "down";
@@ -508,6 +569,14 @@ function TradePageContent() {
       } else {
         setMarginMode("isolated");
       }
+      setChartPreferences({
+        ...DEFAULT_CHART_PREFERENCES,
+        ...(settings.chartPreferences ?? {}),
+        indicatorToggles: {
+          ...DEFAULT_CHART_PREFERENCES.indicatorToggles,
+          ...(settings.chartPreferences?.indicatorToggles ?? {})
+        }
+      });
 
       if (prefillPayload?.symbol) {
         setSelectedSymbol(prefillPayload.symbol.trim().toUpperCase());
@@ -823,6 +892,12 @@ function TradePageContent() {
     };
   }, [selectedAccountId, selectedSymbol]);
 
+  useEffect(() => {
+    setSelectedPositionKey(null);
+    setPositionEditDrafts({});
+    setOrderEditDrafts({});
+  }, [selectedAccountId, selectedSymbol]);
+
   async function applyLeverage() {
     if (!selectedAccountId) return;
 
@@ -986,6 +1061,106 @@ function TradePageContent() {
       await reloadLiveTables(selectedAccountId, selectedSymbol);
     } catch (e) {
       setActionError(errMsg(e));
+    }
+  }
+
+  async function savePositionTpSl(position: PositionItem, rowKey: string) {
+    if (!selectedAccountId) return;
+    const draft = positionEditDrafts[rowKey];
+    if (!draft) return;
+    const tp = draft.tp.trim() === "" ? null : Number(draft.tp);
+    const sl = draft.sl.trim() === "" ? null : Number(draft.sl);
+    if (tp !== null && (!Number.isFinite(tp) || tp <= 0)) {
+      setActionError(t("messages.takeProfitGtZero"));
+      return;
+    }
+    if (sl !== null && (!Number.isFinite(sl) || sl <= 0)) {
+      setActionError(t("messages.stopLossGtZero"));
+      return;
+    }
+    setActionError(null);
+    setPositionSavingKey(rowKey);
+    try {
+      await apiPost("/api/positions/tpsl", {
+        exchangeAccountId: selectedAccountId,
+        symbol: position.symbol,
+        side: position.side,
+        takeProfitPrice: tp,
+        stopLossPrice: sl
+      });
+      await reloadLiveTables(selectedAccountId, selectedSymbol);
+      setPositionEditDrafts((prev) => {
+        const next = { ...prev };
+        delete next[rowKey];
+        return next;
+      });
+    } catch (e) {
+      setActionError(errMsg(e));
+    } finally {
+      setPositionSavingKey(null);
+    }
+  }
+
+  async function saveOrderEdit(order: OpenOrderItem) {
+    if (!selectedAccountId) return;
+    const draft = orderEditDrafts[order.orderId];
+    if (!draft) return;
+    const payload: Record<string, unknown> = {
+      exchangeAccountId: selectedAccountId,
+      orderId: order.orderId,
+      symbol: order.symbol
+    };
+    if (draft.price.trim() !== "") {
+      const value = Number(draft.price);
+      if (!Number.isFinite(value) || value <= 0) {
+        setActionError(t("messages.limitRequiresPrice"));
+        return;
+      }
+      payload.price = value;
+    }
+    if (draft.qty.trim() !== "") {
+      const value = Number(draft.qty);
+      if (!Number.isFinite(value) || value <= 0) {
+        setActionError(t("messages.quantityGtZero"));
+        return;
+      }
+      payload.qty = value;
+    }
+    if (draft.tp.trim() !== "") {
+      const value = Number(draft.tp);
+      if (!Number.isFinite(value) || value <= 0) {
+        setActionError(t("messages.takeProfitGtZero"));
+        return;
+      }
+      payload.takeProfitPrice = value;
+    } else {
+      payload.takeProfitPrice = null;
+    }
+    if (draft.sl.trim() !== "") {
+      const value = Number(draft.sl);
+      if (!Number.isFinite(value) || value <= 0) {
+        setActionError(t("messages.stopLossGtZero"));
+        return;
+      }
+      payload.stopLossPrice = value;
+    } else {
+      payload.stopLossPrice = null;
+    }
+
+    setActionError(null);
+    setOrderSavingId(order.orderId);
+    try {
+      await apiPost("/api/orders/edit", payload);
+      await reloadLiveTables(selectedAccountId, selectedSymbol);
+      setOrderEditDrafts((prev) => {
+        const next = { ...prev };
+        delete next[order.orderId];
+        return next;
+      });
+    } catch (e) {
+      setActionError(errMsg(e));
+    } finally {
+      setOrderSavingId(null);
     }
   }
 
@@ -1282,6 +1457,12 @@ function TradePageContent() {
                 symbol={selectedSymbol}
                 timeframe={timeframe}
                 prefill={activePrefill}
+                chartPreferences={chartPreferences}
+                selectedPosition={selectedPosition}
+                onChartPreferencesChange={(next) => {
+                  setChartPreferences(next);
+                  void persistSettings({ chartPreferences: next });
+                }}
               />
             </article>
 
@@ -1568,6 +1749,8 @@ function TradePageContent() {
                     <th style={{ padding: "8px 6px" }}>{t("positions.columns.size")}</th>
                     <th style={{ padding: "8px 6px" }}>{t("positions.columns.entry")}</th>
                     <th style={{ padding: "8px 6px" }}>{t("positions.columns.mark")}</th>
+                    <th style={{ padding: "8px 6px" }}>{t("positions.columns.stopLoss")}</th>
+                    <th style={{ padding: "8px 6px" }}>{t("positions.columns.takeProfit")}</th>
                     <th style={{ padding: "8px 6px" }}>{t("positions.columns.pnl")}</th>
                     <th style={{ padding: "8px 6px" }}>{t("positions.columns.action")}</th>
                   </tr>
@@ -1575,20 +1758,133 @@ function TradePageContent() {
                 <tbody>
                   {positions.length === 0 ? (
                     <tr>
-                      <td colSpan={6} style={{ padding: 10, color: "var(--muted)" }}>{t("positions.empty")}</td>
+                      <td colSpan={8} style={{ padding: 10, color: "var(--muted)" }}>{t("positions.empty")}</td>
                     </tr>
                   ) : (
                     positions.map((position, index) => (
-                      <tr key={`${position.side}_${index}`} style={{ borderTop: "1px solid rgba(255,255,255,.06)" }}>
+                      <tr
+                        key={`${position.side}_${index}`}
+                        style={{
+                          borderTop: "1px solid rgba(255,255,255,.06)",
+                          background:
+                            selectedPositionKey === `${position.symbol}:${position.side}:${index}`
+                              ? "rgba(56,189,248,0.08)"
+                              : "transparent",
+                          cursor: "pointer"
+                        }}
+                        onClick={() =>
+                          setSelectedPositionKey((prev) =>
+                            prev === `${position.symbol}:${position.side}:${index}`
+                              ? null
+                              : `${position.symbol}:${position.side}:${index}`
+                          )
+                        }
+                      >
                         <td style={{ padding: "8px 6px", color: position.side === "long" ? "#34d399" : "#f87171" }}>{position.side.toUpperCase()}</td>
                         <td style={{ padding: "8px 6px" }}>{fmt(position.size, 6)}</td>
                         <td style={{ padding: "8px 6px" }}>{fmt(position.entryPrice, 4)}</td>
                         <td style={{ padding: "8px 6px" }}>{fmt(position.markPrice, 4)}</td>
+                        <td style={{ padding: "8px 6px" }}>
+                          {positionEditDrafts[`${position.symbol}:${position.side}:${index}`] ? (
+                            <input
+                              className="input"
+                              style={{ width: 120 }}
+                              value={positionEditDrafts[`${position.symbol}:${position.side}:${index}`]?.sl ?? ""}
+                              onChange={(event) =>
+                                setPositionEditDrafts((prev) => ({
+                                  ...prev,
+                                  [`${position.symbol}:${position.side}:${index}`]: {
+                                    ...(prev[`${position.symbol}:${position.side}:${index}`] ?? { tp: "", sl: "" }),
+                                    sl: event.target.value
+                                  }
+                                }))
+                              }
+                            />
+                          ) : (
+                            fmt(position.stopLossPrice, 4)
+                          )}
+                        </td>
+                        <td style={{ padding: "8px 6px" }}>
+                          {positionEditDrafts[`${position.symbol}:${position.side}:${index}`] ? (
+                            <input
+                              className="input"
+                              style={{ width: 120 }}
+                              value={positionEditDrafts[`${position.symbol}:${position.side}:${index}`]?.tp ?? ""}
+                              onChange={(event) =>
+                                setPositionEditDrafts((prev) => ({
+                                  ...prev,
+                                  [`${position.symbol}:${position.side}:${index}`]: {
+                                    ...(prev[`${position.symbol}:${position.side}:${index}`] ?? { tp: "", sl: "" }),
+                                    tp: event.target.value
+                                  }
+                                }))
+                              }
+                            />
+                          ) : (
+                            fmt(position.takeProfitPrice, 4)
+                          )}
+                        </td>
                         <td style={{ padding: "8px 6px", color: (position.unrealizedPnl ?? 0) >= 0 ? "#34d399" : "#f87171" }}>
                           {fmt(position.unrealizedPnl, 2)}
                         </td>
                         <td style={{ padding: "8px 6px" }}>
-                          <button className="btn" onClick={() => void closePosition(position.side)}>{t("actions.close")}</button>
+                          {positionEditDrafts[`${position.symbol}:${position.side}:${index}`] ? (
+                            <div style={{ display: "flex", gap: 6 }}>
+                              <button
+                                className="btn"
+                                disabled={positionSavingKey === `${position.symbol}:${position.side}:${index}`}
+                                onClick={(event) => {
+                                  event.stopPropagation();
+                                  void savePositionTpSl(position, `${position.symbol}:${position.side}:${index}`);
+                                }}
+                              >
+                                {t("actions.save")}
+                              </button>
+                              <button
+                                className="btn"
+                                onClick={(event) => {
+                                  event.stopPropagation();
+                                  setPositionEditDrafts((prev) => {
+                                    const next = { ...prev };
+                                    delete next[`${position.symbol}:${position.side}:${index}`];
+                                    return next;
+                                  });
+                                }}
+                              >
+                                {t("actions.cancel")}
+                              </button>
+                            </div>
+                          ) : (
+                            <div style={{ display: "flex", gap: 6 }}>
+                              <button
+                                className="btn"
+                                onClick={(event) => {
+                                  event.stopPropagation();
+                                  setPositionEditDrafts((prev) => ({
+                                    ...prev,
+                                    [`${position.symbol}:${position.side}:${index}`]: {
+                                      tp:
+                                        position.takeProfitPrice !== null &&
+                                        Number.isFinite(position.takeProfitPrice)
+                                          ? String(position.takeProfitPrice)
+                                          : "",
+                                      sl:
+                                        position.stopLossPrice !== null &&
+                                        Number.isFinite(position.stopLossPrice)
+                                          ? String(position.stopLossPrice)
+                                          : ""
+                                    }
+                                  }));
+                                }}
+                              >
+                                {t("actions.edit")}
+                              </button>
+                              <button className="btn" onClick={(event) => {
+                                event.stopPropagation();
+                                void closePosition(position.side);
+                              }}>{t("actions.close")}</button>
+                            </div>
+                          )}
                         </td>
                       </tr>
                     ))
@@ -1614,7 +1910,9 @@ function TradePageContent() {
                     <th style={{ padding: "8px 6px" }}>{t("orders.columns.orderId")}</th>
                     <th style={{ padding: "8px 6px" }}>{t("orders.columns.side")}</th>
                     <th style={{ padding: "8px 6px" }}>{t("orders.columns.type")}</th>
-                    <th style={{ padding: "8px 6px" }}>{t("orders.columns.price")}</th>
+                    <th style={{ padding: "8px 6px" }}>{t("orders.columns.limitPrice")}</th>
+                    <th style={{ padding: "8px 6px" }}>{t("orders.columns.stopLoss")}</th>
+                    <th style={{ padding: "8px 6px" }}>{t("orders.columns.takeProfit")}</th>
                     <th style={{ padding: "8px 6px" }}>{t("orders.columns.qty")}</th>
                     <th style={{ padding: "8px 6px" }}>{t("orders.columns.status")}</th>
                     <th style={{ padding: "8px 6px" }}>{t("orders.columns.action")}</th>
@@ -1623,7 +1921,7 @@ function TradePageContent() {
                 <tbody>
                   {openOrders.length === 0 ? (
                     <tr>
-                      <td colSpan={7} style={{ padding: 10, color: "var(--muted)" }}>{t("orders.empty")}</td>
+                      <td colSpan={9} style={{ padding: 10, color: "var(--muted)" }}>{t("orders.empty")}</td>
                     </tr>
                   ) : (
                     openOrders.map((order) => (
@@ -1631,11 +1929,137 @@ function TradePageContent() {
                         <td style={{ padding: "8px 6px" }}>{order.orderId.slice(0, 12)}...</td>
                         <td style={{ padding: "8px 6px" }}>{order.side ?? "-"}</td>
                         <td style={{ padding: "8px 6px" }}>{order.type ?? "-"}</td>
-                        <td style={{ padding: "8px 6px" }}>{fmt(order.price, 4)}</td>
-                        <td style={{ padding: "8px 6px" }}>{fmt(order.qty, 6)}</td>
+                        <td style={{ padding: "8px 6px" }}>
+                          {orderEditDrafts[order.orderId] ? (
+                            <input
+                              className="input"
+                              style={{ width: 120 }}
+                              value={orderEditDrafts[order.orderId]?.price ?? ""}
+                              onChange={(event) =>
+                                setOrderEditDrafts((prev) => ({
+                                  ...prev,
+                                  [order.orderId]: {
+                                    ...(prev[order.orderId] ?? { price: "", qty: "", tp: "", sl: "" }),
+                                    price: event.target.value
+                                  }
+                                }))
+                              }
+                            />
+                          ) : (
+                            fmt(order.price, 4)
+                          )}
+                        </td>
+                        <td style={{ padding: "8px 6px" }}>
+                          {orderEditDrafts[order.orderId] ? (
+                            <input
+                              className="input"
+                              style={{ width: 120 }}
+                              value={orderEditDrafts[order.orderId]?.sl ?? ""}
+                              onChange={(event) =>
+                                setOrderEditDrafts((prev) => ({
+                                  ...prev,
+                                  [order.orderId]: {
+                                    ...(prev[order.orderId] ?? { price: "", qty: "", tp: "", sl: "" }),
+                                    sl: event.target.value
+                                  }
+                                }))
+                              }
+                            />
+                          ) : (
+                            fmt(order.stopLossPrice, 4)
+                          )}
+                        </td>
+                        <td style={{ padding: "8px 6px" }}>
+                          {orderEditDrafts[order.orderId] ? (
+                            <input
+                              className="input"
+                              style={{ width: 120 }}
+                              value={orderEditDrafts[order.orderId]?.tp ?? ""}
+                              onChange={(event) =>
+                                setOrderEditDrafts((prev) => ({
+                                  ...prev,
+                                  [order.orderId]: {
+                                    ...(prev[order.orderId] ?? { price: "", qty: "", tp: "", sl: "" }),
+                                    tp: event.target.value
+                                  }
+                                }))
+                              }
+                            />
+                          ) : (
+                            fmt(order.takeProfitPrice, 4)
+                          )}
+                        </td>
+                        <td style={{ padding: "8px 6px" }}>
+                          {orderEditDrafts[order.orderId] ? (
+                            <input
+                              className="input"
+                              style={{ width: 100 }}
+                              value={orderEditDrafts[order.orderId]?.qty ?? ""}
+                              onChange={(event) =>
+                                setOrderEditDrafts((prev) => ({
+                                  ...prev,
+                                  [order.orderId]: {
+                                    ...(prev[order.orderId] ?? { price: "", qty: "", tp: "", sl: "" }),
+                                    qty: event.target.value
+                                  }
+                                }))
+                              }
+                            />
+                          ) : (
+                            fmt(order.qty, 6)
+                          )}
+                        </td>
                         <td style={{ padding: "8px 6px" }}>{order.status ?? "-"}</td>
                         <td style={{ padding: "8px 6px" }}>
-                          <button className="btn" onClick={() => void cancelOrder(order.orderId)}>{t("actions.cancel")}</button>
+                          {orderEditDrafts[order.orderId] ? (
+                            <div style={{ display: "flex", gap: 6 }}>
+                              <button
+                                className="btn"
+                                disabled={orderSavingId === order.orderId}
+                                onClick={() => void saveOrderEdit(order)}
+                              >
+                                {t("actions.save")}
+                              </button>
+                              <button
+                                className="btn"
+                                onClick={() =>
+                                  setOrderEditDrafts((prev) => {
+                                    const next = { ...prev };
+                                    delete next[order.orderId];
+                                    return next;
+                                  })
+                                }
+                              >
+                                {t("actions.cancel")}
+                              </button>
+                            </div>
+                          ) : (
+                            <div style={{ display: "flex", gap: 6 }}>
+                              <button
+                                className="btn"
+                                onClick={() =>
+                                  setOrderEditDrafts((prev) => ({
+                                    ...prev,
+                                    [order.orderId]: {
+                                      price: order.price !== null && Number.isFinite(order.price) ? String(order.price) : "",
+                                      qty: order.qty !== null && Number.isFinite(order.qty) ? String(order.qty) : "",
+                                      tp:
+                                        order.takeProfitPrice !== null && Number.isFinite(order.takeProfitPrice)
+                                          ? String(order.takeProfitPrice)
+                                          : "",
+                                      sl:
+                                        order.stopLossPrice !== null && Number.isFinite(order.stopLossPrice)
+                                          ? String(order.stopLossPrice)
+                                          : ""
+                                    }
+                                  }))
+                                }
+                              >
+                                {t("actions.edit")}
+                              </button>
+                              <button className="btn" onClick={() => void cancelOrder(order.orderId)}>{t("actions.cancel")}</button>
+                            </div>
+                          )}
                         </td>
                       </tr>
                     ))

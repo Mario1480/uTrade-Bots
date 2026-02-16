@@ -1,6 +1,11 @@
 import { BITGET_DEFAULT_PRODUCT_TYPE, type BitgetProductType } from "./bitget.constants.js";
 import { BitgetRestClient } from "./bitget.rest.js";
-import type { BitgetOrderPlaceRequest, BitgetOrderRaw } from "./bitget.types.js";
+import type {
+  BitgetOrderModifyRequest,
+  BitgetOrderPlaceRequest,
+  BitgetOrderRaw,
+  BitgetPositionTpSlRequest
+} from "./bitget.types.js";
 
 export class BitgetTradeApi {
   constructor(private readonly rest: BitgetRestClient) {}
@@ -9,6 +14,14 @@ export class BitgetTradeApi {
     return this.rest.requestPrivate({
       method: "POST",
       endpoint: "/api/v2/mix/order/place-order",
+      body: payload
+    });
+  }
+
+  modifyOrder(payload: BitgetOrderModifyRequest): Promise<unknown> {
+    return this.rest.requestPrivate({
+      method: "POST",
+      endpoint: "/api/v2/mix/order/modify-order",
       body: payload
     });
   }
@@ -45,6 +58,48 @@ export class BitgetTradeApi {
         symbol: params.symbol,
         limit: params.pageSize,
         idLessThan: params.idLessThan
+      }
+    });
+  }
+
+  getPendingPlanOrders(params: {
+    productType?: BitgetProductType;
+    symbol?: string;
+    pageSize?: number;
+    idLessThan?: string;
+  } = {}): Promise<BitgetOrderRaw[]> {
+    return this.rest.requestPrivate({
+      method: "GET",
+      endpoint: "/api/v2/mix/order/orders-plan-pending",
+      query: {
+        productType: params.productType ?? BITGET_DEFAULT_PRODUCT_TYPE,
+        symbol: params.symbol,
+        limit: params.pageSize,
+        idLessThan: params.idLessThan
+      }
+    });
+  }
+
+  placePositionTpSl(payload: BitgetPositionTpSlRequest): Promise<unknown> {
+    return this.rest.requestPrivate({
+      method: "POST",
+      endpoint: "/api/v2/mix/order/place-pos-tpsl",
+      body: payload
+    });
+  }
+
+  cancelPlanOrder(params: {
+    symbol: string;
+    orderId: string;
+    productType?: BitgetProductType;
+  }): Promise<unknown> {
+    return this.rest.requestPrivate({
+      method: "POST",
+      endpoint: "/api/v2/mix/order/cancel-plan-order",
+      body: {
+        symbol: params.symbol,
+        orderId: params.orderId,
+        productType: params.productType ?? BITGET_DEFAULT_PRODUCT_TYPE
       }
     });
   }
