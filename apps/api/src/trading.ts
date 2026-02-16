@@ -1634,6 +1634,8 @@ export async function editOpenOrder(
   let nextQty = input.qty;
   let nextTakeProfit = input.takeProfitPrice;
   let nextStopLoss = input.stopLossPrice;
+  const tpExplicit = input.takeProfitPrice !== undefined;
+  const slExplicit = input.stopLossPrice !== undefined;
   let currentPrice: number | null = null;
   let currentQty: number | null = null;
   let currentTakeProfit: number | null = null;
@@ -1681,28 +1683,8 @@ export async function editOpenOrder(
     if (nextQty !== undefined && currentQty !== null && almostEqual(nextQty, currentQty)) {
       nextQty = undefined;
     }
-    if (nextTakeProfit !== undefined) {
-      if (nextTakeProfit === null && currentTakeProfit === null) {
-        nextTakeProfit = undefined;
-      } else if (
-        nextTakeProfit !== null &&
-        currentTakeProfit !== null &&
-        almostEqual(nextTakeProfit, currentTakeProfit)
-      ) {
-        nextTakeProfit = undefined;
-      }
-    }
-    if (nextStopLoss !== undefined) {
-      if (nextStopLoss === null && currentStopLoss === null) {
-        nextStopLoss = undefined;
-      } else if (
-        nextStopLoss !== null &&
-        currentStopLoss !== null &&
-        almostEqual(nextStopLoss, currentStopLoss)
-      ) {
-        nextStopLoss = undefined;
-      }
-    }
+    // Keep TP/SL explicit when provided by caller; they may need to be re-sent
+    // on price/size edits to avoid Bitget dropping preset values.
   } catch {
     // If detail lookup fails, keep original payload and let exchange validate.
   }
@@ -1766,17 +1748,27 @@ export async function editOpenOrder(
     // Keep best-effort values from detail lookup.
   }
 
-  if (
-    nextPrice === undefined &&
-    nextQty === undefined &&
-    nextTakeProfit === undefined &&
-    nextStopLoss === undefined
-  ) {
+  const modifiesPriceOrSize = nextPrice !== undefined || nextQty !== undefined;
+  const tpChanged =
+    nextTakeProfit !== undefined &&
+    (
+      (nextTakeProfit === null && currentTakeProfit !== null) ||
+      (nextTakeProfit !== null &&
+        (currentTakeProfit === null || !almostEqual(nextTakeProfit, currentTakeProfit)))
+    );
+  const slChanged =
+    nextStopLoss !== undefined &&
+    (
+      (nextStopLoss === null && currentStopLoss !== null) ||
+      (nextStopLoss !== null &&
+        (currentStopLoss === null || !almostEqual(nextStopLoss, currentStopLoss)))
+    );
+
+  if (!modifiesPriceOrSize && !tpChanged && !slChanged) {
     throw new ManualTradingError("no_edit_fields", 400, "no_edit_fields");
   }
 
   // Bitget requires price and size together when modifying either one.
-  const modifiesPriceOrSize = nextPrice !== undefined || nextQty !== undefined;
   if (modifiesPriceOrSize) {
     if (nextPrice === undefined) {
       if (currentPrice === null || !Number.isFinite(currentPrice) || currentPrice <= 0) {
@@ -1791,13 +1783,34 @@ export async function editOpenOrder(
       nextQty = currentQty;
     }
     // Bitget may clear preset TP/SL when modifying price/size unless sent explicitly.
-    // Preserve existing TP/SL by default for price/qty edits.
-    if (nextTakeProfit === undefined && currentTakeProfit !== null) {
+    // Preserve existing TP/SL for price/qty edits unless caller explicitly cleared them.
+    if (!tpExplicit && nextTakeProfit === undefined && currentTakeProfit !== null) {
       nextTakeProfit = currentTakeProfit;
     }
-    if (nextStopLoss === undefined && currentStopLoss !== null) {
+    if (!slExplicit && nextStopLoss === undefined && currentStopLoss !== null) {
       nextStopLoss = currentStopLoss;
     }
+
+    // For price/size edits we replace the order instead of modify-order because
+    // Bitget may drop preset TP/SL on modify-order in unilateral mode.
+    if (currentSide === null || currentOrderType !== "limit") {
+      throw new ManualTradingError("order_replace_context_missing", 400, "order_replace_context_missing");
+    }
+    await adapter.cancelOrder(input.orderId);
+    const replacement = await adapter.placeOrder({
+      symbol: normalizedSymbol,
+      side: currentSide,
+      type: currentOrderType,
+      qty: nextQty!,
+      price: nextPrice!,
+      takeProfitPrice:
+        nextTakeProfit === undefined || nextTakeProfit === null ? undefined : nextTakeProfit,
+      stopLossPrice:
+        nextStopLoss === undefined || nextStopLoss === null ? undefined : nextStopLoss,
+      reduceOnly: currentReduceOnly,
+      marginMode: currentMarginMode
+    });
+    return { orderId: replacement.orderId };
   }
 
   const buildModifyPayload = (newClientOid?: string) => ({
