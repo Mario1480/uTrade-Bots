@@ -211,6 +211,13 @@ function fmtIndicator(value: number | null | undefined, digits: number): string 
   return Number(value).toFixed(digits);
 }
 
+function numericEqual(a: number | null | undefined, b: number | null | undefined): boolean {
+  if (a === null || a === undefined || b === null || b === undefined) return a === b;
+  if (!Number.isFinite(a) || !Number.isFinite(b)) return false;
+  const tolerance = Math.max(1e-8, Math.abs(a) * 1e-8, Math.abs(b) * 1e-8);
+  return Math.abs(a - b) <= tolerance;
+}
+
 function decodeBase64UrlJson(value: string): unknown | null {
   try {
     const normalized = value.replace(/-/g, "+").replace(/_/g, "/");
@@ -1110,13 +1117,17 @@ function TradePageContent() {
       orderId: order.orderId,
       symbol: order.symbol
     };
+    let hasEditableChange = false;
     if (draft.price.trim() !== "") {
       const value = Number(draft.price);
       if (!Number.isFinite(value) || value <= 0) {
         setActionError(t("messages.limitRequiresPrice"));
         return;
       }
-      payload.price = value;
+      if (!numericEqual(value, order.price)) {
+        payload.price = value;
+        hasEditableChange = true;
+      }
     }
     if (draft.qty.trim() !== "") {
       const value = Number(draft.qty);
@@ -1124,7 +1135,10 @@ function TradePageContent() {
         setActionError(t("messages.quantityGtZero"));
         return;
       }
-      payload.qty = value;
+      if (!numericEqual(value, order.qty)) {
+        payload.qty = value;
+        hasEditableChange = true;
+      }
     }
     if (draft.tp.trim() !== "") {
       const value = Number(draft.tp);
@@ -1133,8 +1147,14 @@ function TradePageContent() {
         return;
       }
       payload.takeProfitPrice = value;
+      if (!numericEqual(value, order.takeProfitPrice)) {
+        hasEditableChange = true;
+      }
     } else {
       payload.takeProfitPrice = null;
+      if (order.takeProfitPrice !== null) {
+        hasEditableChange = true;
+      }
     }
     if (draft.sl.trim() !== "") {
       const value = Number(draft.sl);
@@ -1143,8 +1163,19 @@ function TradePageContent() {
         return;
       }
       payload.stopLossPrice = value;
+      if (!numericEqual(value, order.stopLossPrice)) {
+        hasEditableChange = true;
+      }
     } else {
       payload.stopLossPrice = null;
+      if (order.stopLossPrice !== null) {
+        hasEditableChange = true;
+      }
+    }
+
+    if (!hasEditableChange) {
+      setActionError(t("messages.noChanges"));
+      return;
     }
 
     setActionError(null);

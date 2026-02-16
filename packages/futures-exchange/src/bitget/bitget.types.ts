@@ -119,6 +119,7 @@ export type BitgetOrderModifyRequest = {
   productType: BitgetProductType;
   orderId?: string;
   clientOid?: string;
+  newClientOid?: string;
   newPrice?: string;
   newSize?: string;
   newPresetStopSurplusPrice?: string;

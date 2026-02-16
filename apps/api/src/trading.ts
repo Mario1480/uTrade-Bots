@@ -903,8 +903,20 @@ export async function listOpenOrders(
       price: toNumber(row.price ?? row.px),
       qty: toNumber(row.size ?? row.qty ?? row.baseVolume),
       triggerPrice: toNumber(row.triggerPrice ?? row.triggerPx),
-      takeProfitPrice: toNumber(row.presetStopSurplusPrice ?? row.takeProfitPrice ?? row.tp),
-      stopLossPrice: toNumber(row.presetStopLossPrice ?? row.stopLossPrice ?? row.sl),
+      takeProfitPrice: toNumber(
+        row.presetStopSurplusPrice ??
+        row.stopSurplusTriggerPrice ??
+        row.stopSurplusExecutePrice ??
+        row.takeProfitPrice ??
+        row.tp
+      ),
+      stopLossPrice: toNumber(
+        row.presetStopLossPrice ??
+        row.stopLossTriggerPrice ??
+        row.stopLossExecutePrice ??
+        row.stopLossPrice ??
+        row.sl
+      ),
       reduceOnly:
         typeof row.reduceOnly === "boolean"
           ? row.reduceOnly
@@ -1622,6 +1634,14 @@ export async function editOpenOrder(
   let nextQty = input.qty;
   let nextTakeProfit = input.takeProfitPrice;
   let nextStopLoss = input.stopLossPrice;
+  let currentPrice: number | null = null;
+  let currentQty: number | null = null;
+  let currentTakeProfit: number | null = null;
+  let currentStopLoss: number | null = null;
+  let currentSide: "buy" | "sell" | null = null;
+  let currentOrderType: "limit" | "market" | null = null;
+  let currentReduceOnly = false;
+  let currentMarginMode: "isolated" | "cross" = "cross";
 
   try {
     const detailRaw = await adapter.tradeApi.getOrderDetail({
@@ -1629,20 +1649,31 @@ export async function editOpenOrder(
       orderId: input.orderId
     });
     const detail = toRecord(detailRaw);
-    const currentPrice = getNumber(detail, ["price", "orderPrice", "limitPrice"]);
-    const currentQty = getNumber(detail, ["size", "baseVolume", "qty"]);
-    const currentTakeProfit = getNumber(detail, [
+    currentPrice = getNumber(detail, ["price", "orderPrice", "limitPrice"]);
+    currentQty = getNumber(detail, ["size", "baseVolume", "qty"]);
+    currentTakeProfit = getNumber(detail, [
       "presetStopSurplusPrice",
       "takeProfitPrice",
       "stopSurplusTriggerPrice",
       "stopSurplusExecutePrice"
     ]);
-    const currentStopLoss = getNumber(detail, [
+    currentStopLoss = getNumber(detail, [
       "presetStopLossPrice",
       "stopLossPrice",
       "stopLossTriggerPrice",
       "stopLossExecutePrice"
     ]);
+    const sideRaw = getString(detail, ["side", "orderSide", "tradeSide"])?.toLowerCase() ?? "";
+    if (sideRaw.includes("buy")) currentSide = "buy";
+    if (sideRaw.includes("sell")) currentSide = "sell";
+    const typeRaw = getString(detail, ["orderType", "type"])?.toLowerCase() ?? "";
+    if (typeRaw === "limit" || typeRaw === "market") {
+      currentOrderType = typeRaw;
+    }
+    const reduceOnlyRaw = String(detail?.reduceOnly ?? detail?.reduceOnlyFlag ?? "").toLowerCase();
+    currentReduceOnly = reduceOnlyRaw === "yes" || reduceOnlyRaw === "true" || reduceOnlyRaw === "1";
+    const marginModeRaw = getString(detail, ["marginMode", "marginType"])?.toLowerCase() ?? "";
+    currentMarginMode = marginModeRaw.includes("isolated") ? "isolated" : "cross";
 
     if (nextPrice !== undefined && currentPrice !== null && almostEqual(nextPrice, currentPrice)) {
       nextPrice = undefined;
@@ -1676,6 +1707,65 @@ export async function editOpenOrder(
     // If detail lookup fails, keep original payload and let exchange validate.
   }
 
+  // Enrich current order snapshot from pending orders (detail endpoint may omit TP/SL fields).
+  try {
+    const pendingRaw = await adapter.tradeApi.getPendingOrders({
+      productType: adapter.productType,
+      symbol: exchangeSymbol,
+      pageSize: 100
+    });
+    const pendingRows = toOrderRows(pendingRaw);
+    const pending = pendingRows.find((row) => String(row.orderId ?? "").trim() === input.orderId);
+    if (pending) {
+      if (currentPrice === null) {
+        currentPrice = getNumber(pending, ["price", "orderPrice", "limitPrice"]);
+      }
+      if (currentQty === null) {
+        currentQty = getNumber(pending, ["size", "baseVolume", "qty"]);
+      }
+      if (nextTakeProfit === undefined && currentTakeProfit === null) {
+        currentTakeProfit = getNumber(pending, [
+          "presetStopSurplusPrice",
+          "takeProfitPrice",
+          "stopSurplusTriggerPrice",
+          "stopSurplusExecutePrice",
+          "tp"
+        ]);
+      }
+      if (nextStopLoss === undefined && currentStopLoss === null) {
+        currentStopLoss = getNumber(pending, [
+          "presetStopLossPrice",
+          "stopLossPrice",
+          "stopLossTriggerPrice",
+          "stopLossExecutePrice",
+          "sl"
+        ]);
+      }
+      if (currentSide === null) {
+        const rowSide = getString(pending, ["side", "orderSide", "tradeSide"])?.toLowerCase() ?? "";
+        if (rowSide.includes("buy")) currentSide = "buy";
+        if (rowSide.includes("sell")) currentSide = "sell";
+      }
+      if (currentOrderType === null) {
+        const rowType = getString(pending, ["orderType", "type"])?.toLowerCase() ?? "";
+        if (rowType === "limit" || rowType === "market") {
+          currentOrderType = rowType;
+        }
+      }
+      const rowReduceOnly = String(pending?.reduceOnly ?? pending?.reduceOnlyFlag ?? "").toLowerCase();
+      if (rowReduceOnly) {
+        currentReduceOnly =
+          rowReduceOnly === "yes" || rowReduceOnly === "true" || rowReduceOnly === "1";
+      }
+      const rowMarginMode = getString(pending, ["marginMode", "marginType"])?.toLowerCase() ?? "";
+      if (rowMarginMode) {
+        currentMarginMode = rowMarginMode.includes("isolated") ? "isolated" : "cross";
+      }
+    }
+  } catch {
+    // Keep best-effort values from detail lookup.
+  }
+
   if (
     nextPrice === undefined &&
     nextQty === undefined &&
@@ -1685,10 +1775,36 @@ export async function editOpenOrder(
     throw new ManualTradingError("no_edit_fields", 400, "no_edit_fields");
   }
 
-  await adapter.tradeApi.modifyOrder({
+  // Bitget requires price and size together when modifying either one.
+  const modifiesPriceOrSize = nextPrice !== undefined || nextQty !== undefined;
+  if (modifiesPriceOrSize) {
+    if (nextPrice === undefined) {
+      if (currentPrice === null || !Number.isFinite(currentPrice) || currentPrice <= 0) {
+        throw new ManualTradingError("invalid_price", 400, "invalid_price");
+      }
+      nextPrice = currentPrice;
+    }
+    if (nextQty === undefined) {
+      if (currentQty === null || !Number.isFinite(currentQty) || currentQty <= 0) {
+        throw new ManualTradingError("invalid_qty", 400, "invalid_qty");
+      }
+      nextQty = currentQty;
+    }
+    // Bitget may clear preset TP/SL when modifying price/size unless sent explicitly.
+    // Preserve existing TP/SL by default for price/qty edits.
+    if (nextTakeProfit === undefined && currentTakeProfit !== null) {
+      nextTakeProfit = currentTakeProfit;
+    }
+    if (nextStopLoss === undefined && currentStopLoss !== null) {
+      nextStopLoss = currentStopLoss;
+    }
+  }
+
+  const buildModifyPayload = (newClientOid?: string) => ({
     symbol: exchangeSymbol,
     productType: adapter.productType,
     orderId: input.orderId,
+    newClientOid,
     newSize: nextQty !== undefined ? String(nextQty) : undefined,
     newPrice: nextPrice !== undefined ? String(nextPrice) : undefined,
     newPresetStopSurplusPrice:
@@ -1704,7 +1820,60 @@ export async function editOpenOrder(
           ? ""
           : String(nextStopLoss)
   });
-  return { orderId: input.orderId };
+
+  const updated = await adapter.tradeApi.modifyOrder(buildModifyPayload()).then(() => ({ orderId: input.orderId })).catch(async (error) => {
+    let activeError = error;
+    const firstText = String(activeError ?? "").toLowerCase();
+    const firstCode = String((activeError as any)?.options?.code ?? "");
+    const needsNewClientOid =
+      firstCode === "45115" ||
+      firstText.includes("newclientoid") ||
+      firstText.includes("please pass in newclientoid");
+    const modifiesPriceOrSize = nextPrice !== undefined || nextQty !== undefined;
+
+    if (needsNewClientOid && modifiesPriceOrSize) {
+      try {
+        const suffix = `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 7)}`;
+        await adapter.tradeApi.modifyOrder(buildModifyPayload(`edit_${suffix}`));
+        return { orderId: input.orderId };
+      } catch (retryError) {
+        activeError = retryError;
+      }
+    }
+
+    const text = String(activeError ?? "").toLowerCase();
+    const code = String((activeError as any)?.options?.code ?? "");
+    const onlyTpSlEdit =
+      nextPrice === undefined &&
+      nextQty === undefined &&
+      (nextTakeProfit !== undefined || nextStopLoss !== undefined);
+    const isUnchangedError =
+      code === "40923" ||
+      text.includes("order size and price have not changed");
+    if (!onlyTpSlEdit || !isUnchangedError) {
+      throw activeError;
+    }
+    if (currentSide === null || currentOrderType !== "limit" || currentQty === null || currentPrice === null) {
+      throw error;
+    }
+
+    // Bitget may reject TP/SL-only modify-order updates. Replace the limit order with updated presets.
+    const replacementTakeProfit = nextTakeProfit === undefined ? currentTakeProfit : nextTakeProfit;
+    const replacementStopLoss = nextStopLoss === undefined ? currentStopLoss : nextStopLoss;
+    await adapter.cancelOrder(input.orderId);
+    return adapter.placeOrder({
+      symbol: normalizedSymbol,
+      side: currentSide,
+      type: currentOrderType,
+      qty: currentQty,
+      price: currentPrice,
+      takeProfitPrice: replacementTakeProfit ?? undefined,
+      stopLossPrice: replacementStopLoss ?? undefined,
+      reduceOnly: currentReduceOnly,
+      marginMode: currentMarginMode
+    });
+  });
+  return updated;
 }
 
 function toPlanKind(value: unknown): "tp" | "sl" | null {

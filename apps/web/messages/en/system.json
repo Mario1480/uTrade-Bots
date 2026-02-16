@@ -419,7 +419,8 @@
       "quantityBelowMin": "Quantity is below minimum ({min}).",
       "limitRequiresPrice": "Limit orders require a valid price.",
       "takeProfitGtZero": "Take profit must be greater than 0.",
-      "stopLossGtZero": "Stop loss must be greater than 0."
+      "stopLossGtZero": "Stop loss must be greater than 0.",
+      "noChanges": "No changes to save."
     },
     "misc": {
       "na": "n/a",
