@@ -257,6 +257,7 @@ type RunningPredictionItem = {
 };
 
 type PredictionQualitySummary = {
+  resetAt?: string | null;
   sampleSize: number;
   tp: number;
   sl: number;
@@ -268,6 +269,7 @@ type PredictionQualitySummary = {
 };
 
 type PredictionMetricsResponse = {
+  resetAt?: string | null;
   timeframe: PredictionTimeframe | null;
   symbol: string | null;
   from: string | null;
@@ -399,6 +401,27 @@ function resolveExpectedMove(row: PredictionListItem, source: SignalSource): num
   return row.expectedMovePct;
 }
 
+function signalModeForRow(row: Pick<PredictionListItem, "signalMode">): CreateSignalMode {
+  if (row.signalMode === "local_only" || row.signalMode === "ai_only" || row.signalMode === "both") {
+    return row.signalMode;
+  }
+  return "both";
+}
+
+function isRowDisagreementRelevant(row: Pick<PredictionListItem, "signalMode">): boolean {
+  return signalModeForRow(row) === "both";
+}
+
+function getEffectiveRowSource(
+  row: Pick<PredictionListItem, "signalMode">,
+  selectedSource: SignalSource
+): SignalSource {
+  const mode = signalModeForRow(row);
+  if (mode === "ai_only") return "ai";
+  if (mode === "local_only") return "local";
+  return selectedSource;
+}
+
 function signalModeLabel(
   mode: CreateSignalMode | undefined,
   labels: {
@@ -517,9 +540,10 @@ function isStrategyAllowedByEntitlements(
 
 function canSendToDesk(row: PredictionListItem, source: SignalSource): boolean {
   if (!row.accountId) return false;
-  const signal = resolveSignal(row, source);
+  const effectiveSource = getEffectiveRowSource(row, source);
+  const signal = resolveSignal(row, effectiveSource);
   if (signal === "neutral") return false;
-  const confidencePct = confidenceToPct(resolveConfidence(row, source));
+  const confidencePct = confidenceToPct(resolveConfidence(row, effectiveSource));
   const targetPct =
     typeof row.confidenceTargetPct === "number" && Number.isFinite(row.confidenceTargetPct)
       ? Math.max(0, Math.min(100, row.confidenceTargetPct))
@@ -544,14 +568,18 @@ function resolvePredictionActionState(
     readyToSend: "Ready to send"
   }
 ): { state: PredictionActionState; label: string; canSend: boolean } {
+  const effectiveSource = getEffectiveRowSource(row, source);
   const targetPct =
     typeof row.confidenceTargetPct === "number" && Number.isFinite(row.confidenceTargetPct)
       ? Math.max(0, Math.min(100, row.confidenceTargetPct))
       : 0;
-  const signal = resolveSignal(row, source);
-  const confidencePct = confidenceToPct(resolveConfidence(row, source));
+  const signal = resolveSignal(row, effectiveSource);
+  const confidencePct = confidenceToPct(resolveConfidence(row, effectiveSource));
   const localSignal = row.localPrediction?.signal ?? row.signal;
-  const aiDisagrees = Boolean(row.aiPrediction) && row.aiPrediction!.signal !== localSignal;
+  const aiDisagrees =
+    isRowDisagreementRelevant(row)
+    && Boolean(row.aiPrediction)
+    && row.aiPrediction!.signal !== localSignal;
   const canSend = canSendToDesk(row, source);
 
   if (!row.accountId) return { state: "no_account", label: labels.noAccount, canSend };
@@ -609,6 +637,13 @@ function fmtNum(value: unknown, decimals = 2): string {
 function asRecord(value: unknown): Record<string, unknown> {
   if (!value || typeof value !== "object" || Array.isArray(value)) return {};
   return value as Record<string, unknown>;
+}
+
+function normalizeExactSymbolForPerformance(value: string): string | null {
+  const normalized = value.trim().toUpperCase();
+  if (!normalized) return null;
+  if (!/^[A-Z0-9:_-]{3,40}$/.test(normalized)) return null;
+  return normalized;
 }
 
 function readHitValue(value: unknown): boolean | null {
@@ -723,6 +758,8 @@ export default function PredictionsPage() {
   const [notice, setNotice] = useState<string | null>(null);
   const [quality, setQuality] = useState<PredictionQualitySummary | null>(null);
   const [metrics, setMetrics] = useState<PredictionMetricsResponse | null>(null);
+  const [performanceResetAt, setPerformanceResetAt] = useState<string | null>(null);
+  const [resettingPerformance, setResettingPerformance] = useState(false);
   const [runningRows, setRunningRows] = useState<RunningPredictionItem[]>([]);
   const [runningLoading, setRunningLoading] = useState(true);
   const [runningActionId, setRunningActionId] = useState<string | null>(null);
@@ -763,6 +800,24 @@ export default function PredictionsPage() {
   const [eventsLoadingStateId, setEventsLoadingStateId] = useState<string | null>(null);
   const [eventsErrorByStateId, setEventsErrorByStateId] = useState<Record<string, string | null>>({});
   const [expandedEventsByStateId, setExpandedEventsByStateId] = useState<Record<string, boolean>>({});
+
+  const performanceFilterSymbol = useMemo(() => {
+    const normalized = normalizeExactSymbolForPerformance(filterSymbol);
+    if (!normalized) return null;
+    const knownSymbols = new Set<string>();
+    for (const row of rows) knownSymbols.add(row.symbol.toUpperCase());
+    for (const row of createSymbols) knownSymbols.add(row.symbol.toUpperCase());
+    return knownSymbols.has(normalized) ? normalized : null;
+  }, [createSymbols, filterSymbol, rows]);
+
+  function buildPerformanceQueryParams(includeBins = false): URLSearchParams {
+    const params = new URLSearchParams();
+    if (performanceFilterSymbol) params.set("symbol", performanceFilterSymbol);
+    if (filterTimeframe !== "all") params.set("timeframe", filterTimeframe);
+    params.set("signalSource", signalSource);
+    if (includeBins) params.set("bins", "10");
+    return params;
+  }
 
   async function loadPredictions() {
     setLoading(true);
@@ -807,8 +862,12 @@ export default function PredictionsPage() {
 
   async function loadPredictionQuality() {
     try {
-      const payload = await apiGet<PredictionQualitySummary>("/api/predictions/quality");
+      const query = buildPerformanceQueryParams(false).toString();
+      const payload = await apiGet<PredictionQualitySummary>(
+        `/api/predictions/quality${query ? `?${query}` : ""}`
+      );
       setQuality(payload);
+      setPerformanceResetAt(payload.resetAt ?? null);
     } catch {
       setQuality(null);
     }
@@ -816,8 +875,12 @@ export default function PredictionsPage() {
 
   async function loadPredictionMetrics() {
     try {
-      const payload = await apiGet<PredictionMetricsResponse>("/api/predictions/metrics?bins=10");
+      const query = buildPerformanceQueryParams(true).toString();
+      const payload = await apiGet<PredictionMetricsResponse>(
+        `/api/predictions/metrics${query ? `?${query}` : ""}`
+      );
       setMetrics(payload);
+      setPerformanceResetAt((prev) => payload.resetAt ?? prev);
     } catch {
       setMetrics(null);
     }
@@ -980,8 +1043,6 @@ export default function PredictionsPage() {
   useEffect(() => {
     void loadPredictions();
     void loadRunningPredictions();
-    void loadPredictionQuality();
-    void loadPredictionMetrics();
     void loadAccounts();
     void loadPublicAiPrompts();
     void loadStrategyEntitlements();
@@ -1003,6 +1064,14 @@ export default function PredictionsPage() {
     const timer = setInterval(() => setNowMs(Date.now()), 1000);
     return () => clearInterval(timer);
   }, []);
+
+  useEffect(() => {
+    const timer = window.setTimeout(() => {
+      void loadPredictionQuality();
+      void loadPredictionMetrics();
+    }, 280);
+    return () => window.clearTimeout(timer);
+  }, [filterSymbol, filterTimeframe, signalSource, rows, createSymbols]);
 
   const selectedStrategyRef = useMemo(
     () => decodeStrategySelectValue(newStrategySelectValue),
@@ -1135,25 +1204,26 @@ export default function PredictionsPage() {
     const symbolSearch = filterSymbol.trim().toUpperCase();
 
     const next = rows.filter((row) => {
+      const effectiveSource = getEffectiveRowSource(row, signalSource);
       if (symbolSearch && !row.symbol.toUpperCase().includes(symbolSearch)) return false;
-      if (filterSignal !== "all" && resolveSignal(row, signalSource) !== filterSignal) return false;
+      if (filterSignal !== "all" && resolveSignal(row, effectiveSource) !== filterSignal) return false;
       if (filterTimeframe !== "all" && row.timeframe !== filterTimeframe) return false;
       return true;
     });
 
     next.sort((a, b) => {
+      const sourceA = getEffectiveRowSource(a, signalSource);
+      const sourceB = getEffectiveRowSource(b, signalSource);
       if (sortMode === "confidence") {
+        const confidenceB = resolveConfidence(b, sourceB);
+        const confidenceA = resolveConfidence(a, sourceA);
         return (
-          (resolveConfidence(b, signalSource) <= 1
-            ? resolveConfidence(b, signalSource) * 100
-            : resolveConfidence(b, signalSource)) -
-          (resolveConfidence(a, signalSource) <= 1
-            ? resolveConfidence(a, signalSource) * 100
-            : resolveConfidence(a, signalSource))
+          (confidenceB <= 1 ? confidenceB * 100 : confidenceB) -
+          (confidenceA <= 1 ? confidenceA * 100 : confidenceA)
         );
       }
       if (sortMode === "move") {
-        return Math.abs(resolveExpectedMove(b, signalSource)) - Math.abs(resolveExpectedMove(a, signalSource));
+        return Math.abs(resolveExpectedMove(b, sourceB)) - Math.abs(resolveExpectedMove(a, sourceA));
       }
       return new Date(b.tsCreated).getTime() - new Date(a.tsCreated).getTime();
     });
@@ -1179,6 +1249,7 @@ export default function PredictionsPage() {
   const aiDisagreementRowsCount = useMemo(
     () =>
       filteredRows.filter((row) => {
+        if (!isRowDisagreementRelevant(row)) return false;
         const localSignal = row.localPrediction?.signal ?? row.signal;
         return Boolean(row.aiPrediction) && row.aiPrediction!.signal !== localSignal;
       }).length,
@@ -1205,18 +1276,19 @@ export default function PredictionsPage() {
         row?.localPrediction ?? readAiPrediction(asRecord(detail.featureSnapshot).localPrediction);
       const aiPrediction =
         row?.aiPrediction ?? readAiPrediction(asRecord(detail.featureSnapshot).aiPrediction);
+      const effectiveSource = row ? getEffectiveRowSource(row, signalSource) : signalSource;
       if (!detail.accountId) {
         throw new Error("No exchange account available for this prediction.");
       }
       const detailForPrefill: PredictionDetailResponse =
-        signalSource === "ai" && aiPrediction
+        effectiveSource === "ai" && aiPrediction
           ? {
               ...detail,
               signal: aiPrediction.signal,
               confidence: aiPrediction.confidence,
               expectedMovePct: aiPrediction.expectedMovePct
             }
-          : signalSource === "local" && localPrediction
+          : effectiveSource === "local" && localPrediction
             ? {
                 ...detail,
                 signal: localPrediction.signal,
@@ -1440,6 +1512,30 @@ export default function PredictionsPage() {
     setSortMode("newest");
   }
 
+  async function resetPerformanceStats() {
+    const confirmed = window.confirm(tPred("performance.resetConfirm"));
+    if (!confirmed) return;
+    setResettingPerformance(true);
+    setActionError(null);
+    try {
+      const payload = await apiPost<{ ok: boolean; resetAt: string }>(
+        "/api/predictions/performance/reset",
+        {}
+      );
+      setPerformanceResetAt(payload.resetAt ?? null);
+      await Promise.all([loadPredictionQuality(), loadPredictionMetrics()]);
+      setNotice(
+        tPred("performance.resetSuccess", {
+          date: payload.resetAt ? new Date(payload.resetAt).toLocaleString() : "n/a"
+        })
+      );
+    } catch (e) {
+      setActionError(errMsg(e));
+    } finally {
+      setResettingPerformance(false);
+    }
+  }
+
   function renderIndicatorDetail(row: PredictionListItem) {
     const rowId = row.id;
     const detail = detailsById[rowId];
@@ -1450,21 +1546,11 @@ export default function PredictionsPage() {
     const strategyRef = row.strategyRef ?? normalizeStrategyRef(detailSnapshot.strategyRef);
     const strategyRunOutput = asRecord(detailSnapshot.strategyRunOutput);
     const strategyRunDebug = asRecord(detailSnapshot.strategyRunDebug);
-    const activeSignal = signalSource === "ai" && aiPrediction
-      ? aiPrediction.signal
-      : signalSource === "local" && localPrediction
-        ? localPrediction.signal
-        : row.signal;
-    const activeConfidence = signalSource === "ai" && aiPrediction
-      ? aiPrediction.confidence
-      : signalSource === "local" && localPrediction
-        ? localPrediction.confidence
-        : row.confidence;
-    const activeMove = signalSource === "ai" && aiPrediction
-      ? aiPrediction.expectedMovePct
-      : signalSource === "local" && localPrediction
-        ? localPrediction.expectedMovePct
-        : row.expectedMovePct;
+    const effectiveSource = getEffectiveRowSource(row, signalSource);
+    const activeSignal = resolveSignal(row, effectiveSource);
+    const activeConfidence = resolveConfidence(row, effectiveSource);
+    const activeMove = resolveExpectedMove(row, effectiveSource);
+    const showLocalAiComparison = isRowDisagreementRelevant(row);
     const loadingDetail = detailsLoadingId === rowId;
     const dataGap = Boolean(indicators?.dataGap || detail?.riskFlags?.dataGap);
     const updatedAtIso = row.lastUpdatedAt ?? row.tsCreated;
@@ -1539,8 +1625,10 @@ export default function PredictionsPage() {
             Reason: {manualReason.shortReason}
           </div>
           <div className="predictionContextReason">
-            Signal source: {signalSource === "ai" ? "AI" : "Local"}
-            {signalSource === "ai" && !aiPrediction ? " (AI value unavailable, using local)" : ""}
+            Signal source: {effectiveSource === "ai" ? "AI" : "Local"}
+            {showLocalAiComparison && effectiveSource === "ai" && !aiPrediction
+              ? " (AI value unavailable, using local)"
+              : ""}
           </div>
           <div className="predictionContextReason">
             {tPred("create.signalMode")}: {signalModeLabel(row.signalMode, modeLabels)}
@@ -1555,7 +1643,7 @@ export default function PredictionsPage() {
 
           {dataGap ? (
             <span className="predictionDetailWarning">
-              Data gap detected
+              {tPred("detail.dataGapDetected")}
             </span>
           ) : null}
 
@@ -1567,15 +1655,17 @@ export default function PredictionsPage() {
                 conf {fmtConfidence(activeConfidence)} · move {activeMove.toFixed(2)}%
               </div>
             </div>
-            <div className="card predictionIndicatorCard">
-              <div className="predictionIndicatorTitle">Local vs AI signal</div>
-              <div className="predictionIndicatorValue">
-                {(localPrediction?.signal ?? row.signal)} / {aiPrediction?.signal ?? "n/a"}
+            {showLocalAiComparison ? (
+              <div className="card predictionIndicatorCard">
+                <div className="predictionIndicatorTitle">Local vs AI signal</div>
+                <div className="predictionIndicatorValue">
+                  {(localPrediction?.signal ?? row.signal)} / {aiPrediction?.signal ?? "n/a"}
+                </div>
+                <div className="predictionIndicatorMeta">
+                  local {fmtConfidence(localPrediction?.confidence ?? row.confidence)} · ai {aiPrediction ? fmtConfidence(aiPrediction.confidence) : "n/a"}
+                </div>
               </div>
-              <div className="predictionIndicatorMeta">
-                local {fmtConfidence(localPrediction?.confidence ?? row.confidence)} · ai {aiPrediction ? fmtConfidence(aiPrediction.confidence) : "n/a"}
-              </div>
-            </div>
+            ) : null}
             <div className="card predictionIndicatorCard">
               <div className="predictionIndicatorTitle">Strategy run</div>
               <div className="predictionIndicatorValue">
@@ -2239,9 +2329,18 @@ export default function PredictionsPage() {
           </div>
         </div>
         <div className="predictionsFiltersHeader">
-          <div className="predictionsFiltersSummary">
-            {tPred("feed.summary", { listed: filteredRows.length, actionable: actionableRowsCount })}
-            {activeFiltersCount > 0 ? `, ${tPred("feed.activeFilters", { count: activeFiltersCount })}` : ""}
+          <div className="predictionFeedSummaryChips">
+            <span className="predictionFeedChip">
+              {tPred("feed.summary", { listed: filteredRows.length, actionable: actionableRowsCount })}
+            </span>
+            <span className="predictionFeedChip">
+              {signalSource === "ai" ? tPred("feed.signalSourceAi") : tPred("feed.signalSourceLocal")}
+            </span>
+            {activeFiltersCount > 0 ? (
+              <span className="predictionFeedChip">
+                {tPred("feed.activeFilters", { count: activeFiltersCount })}
+              </span>
+            ) : null}
           </div>
           <div className="predictionsFiltersActions">
             <button
@@ -2251,6 +2350,20 @@ export default function PredictionsPage() {
               disabled={activeFiltersCount === 0}
             >
               {tPred("feed.resetFilters")}
+            </button>
+            <button
+              className="btn"
+              type="button"
+              onClick={() => {
+                void Promise.all([
+                  loadPredictions(),
+                  loadPredictionQuality(),
+                  loadPredictionMetrics()
+                ]);
+              }}
+              disabled={loading}
+            >
+              {loading ? tPred("running.refreshing") : tPred("running.refresh")}
             </button>
           </div>
         </div>
@@ -2282,20 +2395,6 @@ export default function PredictionsPage() {
             <option value="confidence">{tPred("feed.sortConfidence")}</option>
             <option value="move">{tPred("feed.sortMove")}</option>
           </select>
-          <button
-            className="btn"
-            type="button"
-            onClick={() => {
-              void Promise.all([
-                loadPredictions(),
-                loadPredictionQuality(),
-                loadPredictionMetrics()
-              ]);
-            }}
-            disabled={loading}
-          >
-            {loading ? tPred("running.refreshing") : tPred("running.refresh")}
-          </button>
         </div>
 
         <div className="predictionsListContent">
@@ -2310,8 +2409,8 @@ export default function PredictionsPage() {
             </div>
           ) : (
             <>
-          <div className="predictionsDesktopTableWrap" style={{ overflowX: "auto" }}>
-            <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
+          <div className="predictionsDesktopTableWrap">
+            <table className="predictionsTable">
               <thead>
                 <tr style={{ textAlign: "left", color: "var(--muted)" }}>
                   <th style={{ padding: "8px 6px" }}>{tPred("feed.table.symbol")}</th>
@@ -2332,13 +2431,18 @@ export default function PredictionsPage() {
               </thead>
               <tbody>
                 {filteredRows.map((row) => {
-                  const activeSignal = resolveSignal(row, signalSource);
-                  const activeConfidence = resolveConfidence(row, signalSource);
-                  const activeMove = resolveExpectedMove(row, signalSource);
+                  const effectiveSource = getEffectiveRowSource(row, signalSource);
+                  const activeSignal = resolveSignal(row, effectiveSource);
+                  const activeConfidence = resolveConfidence(row, effectiveSource);
+                  const activeMove = resolveExpectedMove(row, effectiveSource);
                   const localComparisonSignal = row.localPrediction?.signal ?? row.signal;
                   const aiComparisonAvailable = Boolean(row.aiPrediction);
-                  const aiDisagrees = aiComparisonAvailable && row.aiPrediction!.signal !== localComparisonSignal;
-                  const actionState = resolvePredictionActionState(row, signalSource, actionStateLabels);
+                  const showLocalAiComparison = isRowDisagreementRelevant(row);
+                  const aiDisagrees =
+                    showLocalAiComparison
+                    && aiComparisonAvailable
+                    && row.aiPrediction!.signal !== localComparisonSignal;
+                  const actionState = resolvePredictionActionState(row, effectiveSource, actionStateLabels);
                   const expanded = expandedDetailId === row.id;
                   const loadingDetail = detailsLoadingId === row.id;
                   const updatedAtIso = row.lastUpdatedAt ?? row.tsCreated;
@@ -2368,12 +2472,12 @@ export default function PredictionsPage() {
                         <td style={{ padding: "8px 6px" }}>{row.timeframe}</td>
                         <td style={{ padding: "8px 6px" }}>
                           <span className="badge" style={signalBadgeStyle(activeSignal)}>{activeSignal}</span>
-                          {aiComparisonAvailable ? (
+                          {showLocalAiComparison && aiComparisonAvailable ? (
                             <div style={{ color: "var(--muted)", fontSize: 11, marginTop: 4 }}>
                               local {localComparisonSignal} / ai {row.aiPrediction?.signal}
                             </div>
                           ) : null}
-                          {signalSource === "ai" && !aiComparisonAvailable ? (
+                          {showLocalAiComparison && effectiveSource === "ai" && !aiComparisonAvailable ? (
                             <div style={{ color: "var(--muted)", fontSize: 11, marginTop: 4 }}>
                               {tPred("feed.aiUnavailableUsingLocal")}
                             </div>
@@ -2416,7 +2520,7 @@ export default function PredictionsPage() {
                               <span key={`${row.id}_${tag}`} className="badge">{tag}</span>
                             ))}
                           </div>
-                          <div style={{ color: "var(--muted)", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+                          <div className="predictionExplanationClamp">
                             {row.explanation || "-"}
                           </div>
                         </td>
@@ -2473,8 +2577,8 @@ export default function PredictionsPage() {
                         </td>
                       </tr>
                       {expanded ? (
-                        <tr style={{ borderTop: "1px dashed rgba(255,255,255,.08)" }}>
-                          <td colSpan={14} style={{ padding: "10px 6px" }}>
+                        <tr className="predictionRowDetail">
+                          <td colSpan={14}>
                             {renderIndicatorDetail(row)}
                           </td>
                         </tr>
@@ -2488,10 +2592,11 @@ export default function PredictionsPage() {
 
           <div className="predictionsMobileList">
             {filteredRows.map((row) => {
-              const activeSignal = resolveSignal(row, signalSource);
-              const activeConfidence = resolveConfidence(row, signalSource);
-              const activeMove = resolveExpectedMove(row, signalSource);
-              const actionState = resolvePredictionActionState(row, signalSource, actionStateLabels);
+              const effectiveSource = getEffectiveRowSource(row, signalSource);
+              const activeSignal = resolveSignal(row, effectiveSource);
+              const activeConfidence = resolveConfidence(row, effectiveSource);
+              const activeMove = resolveExpectedMove(row, effectiveSource);
+              const actionState = resolvePredictionActionState(row, effectiveSource, actionStateLabels);
               const expanded = expandedDetailId === row.id;
               const loadingDetail = detailsLoadingId === row.id;
               const updatedAtIso = row.lastUpdatedAt ?? row.tsCreated;
@@ -2621,9 +2726,30 @@ export default function PredictionsPage() {
       </section>
 
       <section className="card predictionsSection">
-        <div className="predictionCreateTitle">{tPred("performance.title")}</div>
-        <div className="predictionsSectionHint">
-          {tPred("performance.hint")}
+        <div className="predictionsPerformanceHeader">
+          <div>
+            <div className="predictionCreateTitle">{tPred("performance.title")}</div>
+            <div className="predictionsSectionHint">
+              {tPred("performance.hint")}
+            </div>
+            {performanceResetAt ? (
+              <div className="predictionsSectionHint predictionsPerformanceResetMeta">
+                {tPred("performance.sinceReset", {
+                  date: new Date(performanceResetAt).toLocaleString()
+                })}
+              </div>
+            ) : null}
+          </div>
+          <div className="predictionsPerformanceActions">
+            <button
+              className="btn"
+              type="button"
+              onClick={() => void resetPerformanceStats()}
+              disabled={resettingPerformance}
+            >
+              {resettingPerformance ? tPred("running.refreshing") : tPred("performance.reset")}
+            </button>
+          </div>
         </div>
         <div className="predictionsQualityGrid">
           <div className="card" style={{ margin: 0, padding: 10 }}>

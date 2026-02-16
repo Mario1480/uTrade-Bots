@@ -1,5 +1,5 @@
 {
-  "title": "AI-Prognosen",
+  "title": "Prognosen Dashboard",
   "subtitle": "Wähle eine Prognose und fülle das Ticket im manuellen Trading Desk vor.",
   "header": {
     "dashboard": "Dashboard",
@@ -160,6 +160,10 @@
   "performance": {
     "title": "Performance und Kalibrierung",
     "hint": "Historische Qualität der generierten Prognosen.",
+    "reset": "Statistiken zurücksetzen",
+    "resetConfirm": "Performance- und Kalibrierungs-Baseline für deinen User zurücksetzen?",
+    "resetSuccess": "Performance-Baseline zurückgesetzt um {date}.",
+    "sinceReset": "Seit Reset: {date}",
     "evaluatedSignals": "Ausgewertete Signale",
     "tpWinRate": "TP-Trefferquote",
     "avgOutcomePnl": "Ø Ergebnis-PnL",
@@ -179,6 +183,9 @@
     "localOnly": "Nur Lokal",
     "aiOnly": "Nur AI",
     "both": "Lokal + AI"
+  },
+  "detail": {
+    "dataGapDetected": "Datenluecke erkannt (zu wenige/unregelmaessige Candle-Historie)."
   },
   "misc": {
     "na": "n/a",

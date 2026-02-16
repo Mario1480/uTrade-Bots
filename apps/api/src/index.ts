@@ -732,9 +732,17 @@ const predictionMetricsQuerySchema = z.object({
   timeframe: z.enum(["5m", "15m", "1h", "4h", "1d"]).optional(),
   tf: z.enum(["5m", "15m", "1h", "4h", "1d"]).optional(),
   symbol: z.string().trim().min(1).optional(),
+  signalSource: z.enum(["local", "ai"]).optional(),
   from: z.string().datetime().optional(),
   to: z.string().datetime().optional(),
   bins: z.coerce.number().int().min(2).max(20).default(10)
+});
+
+const predictionQualityQuerySchema = z.object({
+  timeframe: z.enum(["5m", "15m", "1h", "4h", "1d"]).optional(),
+  tf: z.enum(["5m", "15m", "1h", "4h", "1d"]).optional(),
+  symbol: z.string().trim().min(1).optional(),
+  signalSource: z.enum(["local", "ai"]).optional()
 });
 
 const thresholdsLatestQuerySchema = z.object({
@@ -934,6 +942,7 @@ const GLOBAL_SETTING_PREDICTION_DEFAULTS_KEY = "admin.predictionDefaults";
 const GLOBAL_SETTING_ADMIN_BACKEND_ACCESS_KEY = "admin.backendAccess";
 const GLOBAL_SETTING_AI_PROMPTS_KEY = AI_PROMPT_SETTINGS_GLOBAL_SETTING_KEY;
 const GLOBAL_SETTING_AI_TRACE_KEY = AI_TRACE_SETTINGS_GLOBAL_SETTING_KEY;
+const GLOBAL_SETTING_PREDICTION_PERFORMANCE_RESET_KEY = "predictions.performanceResetByUser.v1";
 const DEFAULT_PREDICTION_SIGNAL_MODE = normalizePredictionSignalMode(
   process.env.PREDICTION_DEFAULT_SIGNAL_MODE
 );
@@ -1330,6 +1339,43 @@ function parseStoredAdminBackendAccess(value: unknown): { userIds: string[] } {
     )
   );
   return { userIds };
+}
+
+function parsePredictionPerformanceResetMap(value: unknown): { byUserId: Record<string, string> } {
+  const record = parseJsonObject(value);
+  const rawByUserId = parseJsonObject(record.byUserId);
+  const byUserId: Record<string, string> = {};
+  for (const [userId, rawIso] of Object.entries(rawByUserId)) {
+    if (typeof rawIso !== "string") continue;
+    const parsed = new Date(rawIso);
+    if (Number.isNaN(parsed.getTime())) continue;
+    byUserId[userId] = parsed.toISOString();
+  }
+  return { byUserId };
+}
+
+async function getPredictionPerformanceResetAt(userId: string): Promise<Date | null> {
+  const stored = parsePredictionPerformanceResetMap(
+    await getGlobalSettingValue(GLOBAL_SETTING_PREDICTION_PERFORMANCE_RESET_KEY)
+  );
+  const raw = stored.byUserId[userId];
+  if (!raw) return null;
+  const parsed = new Date(raw);
+  if (Number.isNaN(parsed.getTime())) return null;
+  return parsed;
+}
+
+async function setPredictionPerformanceResetAt(userId: string, nowIso: string): Promise<string> {
+  const stored = parsePredictionPerformanceResetMap(
+    await getGlobalSettingValue(GLOBAL_SETTING_PREDICTION_PERFORMANCE_RESET_KEY)
+  );
+  const parsedNow = new Date(nowIso);
+  const normalizedNow = Number.isNaN(parsedNow.getTime())
+    ? new Date().toISOString()
+    : parsedNow.toISOString();
+  stored.byUserId[userId] = normalizedNow;
+  await setGlobalSettingValue(GLOBAL_SETTING_PREDICTION_PERFORMANCE_RESET_KEY, stored);
+  return normalizedNow;
 }
 
 async function getAdminBackendAccessUserIdSet(): Promise<Set<string>> {
@@ -10079,13 +10125,43 @@ app.get("/api/predictions", requireAuth, async (req, res) => {
   });
 });
 
+app.post("/api/predictions/performance/reset", requireAuth, async (_req, res) => {
+  const user = getUserFromLocals(res);
+  const resetAt = await setPredictionPerformanceResetAt(user.id, new Date().toISOString());
+  return res.json({
+    ok: true,
+    resetAt
+  });
+});
+
 app.get("/api/predictions/quality", requireAuth, async (req, res) => {
   const user = getUserFromLocals(res);
-  const rows = await db.prediction.findMany({
-    where: {
-      userId: user.id,
-      outcomeStatus: "closed"
-    },
+  const parsed = predictionQualityQuerySchema.safeParse(req.query ?? {});
+  if (!parsed.success) {
+    return res.status(400).json({ error: "invalid_query", details: parsed.error.flatten() });
+  }
+
+  const timeframeInput = parsed.data.timeframe ?? parsed.data.tf;
+  const timeframe = timeframeInput ? normalizePredictionTimeframe(timeframeInput) : null;
+  const symbol = parsed.data.symbol ? normalizeSymbolInput(parsed.data.symbol) : null;
+  const signalSource = parsed.data.signalSource;
+  if (parsed.data.symbol !== undefined && !symbol) {
+    return res.status(400).json({ error: "invalid_symbol" });
+  }
+
+  const resetAt = await getPredictionPerformanceResetAt(user.id);
+  const where: Record<string, unknown> = {
+    userId: user.id,
+    outcomeStatus: "closed"
+  };
+  if (timeframe) where.timeframe = timeframe;
+  if (symbol) where.symbol = symbol;
+  if (resetAt) {
+    where.tsCreated = { gte: resetAt };
+  }
+
+  const rowsRaw = await db.prediction.findMany({
+    where,
     orderBy: { tsCreated: "desc" },
     take: 2000,
     select: {
@@ -10099,6 +10175,12 @@ app.get("/api/predictions/quality", requireAuth, async (req, res) => {
       outcomePnlPct: true
     }
   });
+  const rows = signalSource
+    ? rowsRaw.filter((row) => {
+        const snapshot = asRecord(row.featuresSnapshot);
+        return readSelectedSignalSource(snapshot) === signalSource;
+      })
+    : rowsRaw;
 
   let tp = 0;
   let sl = 0;
@@ -10187,6 +10269,7 @@ app.get("/api/predictions/quality", requireAuth, async (req, res) => {
       : null;
 
   return res.json({
+    resetAt: resetAt ? resetAt.toISOString() : null,
     sampleSize,
     tp,
     sl,
@@ -10216,18 +10299,26 @@ app.get("/api/predictions/metrics", requireAuth, async (req, res) => {
   const timeframeInput = parsed.data.timeframe ?? parsed.data.tf;
   const timeframe = timeframeInput ? normalizePredictionTimeframe(timeframeInput) : null;
   const symbol = parsed.data.symbol ? normalizeSymbolInput(parsed.data.symbol) : null;
+  const signalSource = parsed.data.signalSource;
   const from = parsed.data.from ? new Date(parsed.data.from) : null;
   const to = parsed.data.to ? new Date(parsed.data.to) : null;
   if (symbol !== null && !symbol) {
     return res.status(400).json({ error: "invalid_symbol" });
   }
+  const resetAt = await getPredictionPerformanceResetAt(user.id);
+  const effectiveFrom =
+    from && resetAt
+      ? from.getTime() > resetAt.getTime()
+        ? from
+        : resetAt
+      : from ?? resetAt;
 
   const where: Record<string, unknown> = { userId: user.id };
   if (timeframe) where.timeframe = timeframe;
   if (symbol) where.symbol = symbol;
-  if (from || to) {
+  if (effectiveFrom || to) {
     where.tsCreated = {
-      ...(from ? { gte: from } : {}),
+      ...(effectiveFrom ? { gte: effectiveFrom } : {}),
       ...(to ? { lte: to } : {})
     };
   }
@@ -10241,12 +10332,17 @@ app.get("/api/predictions/metrics", requireAuth, async (req, res) => {
       signal: true,
       confidence: true,
       expectedMovePct: true,
+      featuresSnapshot: true,
       outcomeMeta: true
     }
   });
 
   const samples: PredictionEvaluatorSample[] = [];
   for (const row of rows) {
+    if (signalSource) {
+      const snapshot = asRecord(row.featuresSnapshot);
+      if (readSelectedSignalSource(snapshot) !== signalSource) continue;
+    }
     const signal = normalizePredictionSignal(row.signal);
     const realized = readRealizedPayloadFromOutcomeMeta(row.outcomeMeta);
     if (typeof realized.realizedReturnPct !== "number") continue;
@@ -10274,10 +10370,12 @@ app.get("/api/predictions/metrics", requireAuth, async (req, res) => {
 
   const summary = buildPredictionMetricsSummary(samples, parsed.data.bins);
   return res.json({
+    resetAt: resetAt ? resetAt.toISOString() : null,
     timeframe,
     symbol,
-    from: from ? from.toISOString() : null,
+    from: effectiveFrom ? effectiveFrom.toISOString() : null,
     to: to ? to.toISOString() : null,
+    signalSource: signalSource ?? null,
     bins: parsed.data.bins,
     ...summary
   });

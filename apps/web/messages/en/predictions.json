@@ -1,5 +1,5 @@
 {
-  "title": "AI Predictions",
+  "title": "Predictions Dashboard",
   "subtitle": "Select a prediction and prefill the Manual Trading Desk ticket.",
   "header": {
     "dashboard": "Dashboard",
@@ -160,6 +160,10 @@
   "performance": {
     "title": "Performance & Calibration",
     "hint": "Historical quality of generated predictions.",
+    "reset": "Reset stats",
+    "resetConfirm": "Reset performance and calibration baseline for your user?",
+    "resetSuccess": "Performance baseline reset at {date}.",
+    "sinceReset": "Since reset: {date}",
     "evaluatedSignals": "Evaluated Signals",
     "tpWinRate": "TP Win Rate",
     "avgOutcomePnl": "Avg Outcome PnL",
@@ -179,6 +183,9 @@
     "localOnly": "Local only",
     "aiOnly": "AI only",
     "both": "Local + AI"
+  },
+  "detail": {
+    "dataGapDetected": "Data gap detected (insufficient/irregular candle history)."
   },
   "misc": {
     "na": "n/a",
