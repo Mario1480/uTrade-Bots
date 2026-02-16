@@ -1,6 +1,10 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { filterFeatureSnapshotForAiPrompt } from "./promptSettings.js";
+import {
+  filterFeatureSnapshotForAiPrompt,
+  parseStoredAiPromptSettings,
+  resolveAiPromptRuntimeSettingsForContext
+} from "./promptSettings.js";
 
 test("filterFeatureSnapshotForAiPrompt keeps only selected indicators and context keys", () => {
   const snapshot = {
@@ -83,4 +87,49 @@ test("filterFeatureSnapshotForAiPrompt includes selected core indicator paths", 
   assert.equal(filtered.prefillExchange, "bitget");
   assert.equal((filtered as any).indicators?.rsi_14, 45.2);
   assert.equal((filtered as any).indicators?.macd, undefined);
+});
+
+test("ai prompt template defaults marketAnalysisUpdateEnabled to false", () => {
+  const parsed = parseStoredAiPromptSettings({
+    activePromptId: "prompt_a",
+    prompts: [
+      {
+        id: "prompt_a",
+        name: "A",
+        promptText: "x",
+        indicatorKeys: ["rsi"],
+        ohlcvBars: 100,
+        timeframe: null,
+        directionPreference: "either",
+        confidenceTargetPct: 60,
+        isPublic: false
+      }
+    ]
+  });
+
+  assert.equal(parsed.prompts[0]?.marketAnalysisUpdateEnabled, false);
+});
+
+test("ai prompt template keeps marketAnalysisUpdateEnabled=true and exposes it in runtime settings", () => {
+  const parsed = parseStoredAiPromptSettings({
+    activePromptId: "prompt_analysis",
+    prompts: [
+      {
+        id: "prompt_analysis",
+        name: "Analysis",
+        promptText: "analysis only",
+        indicatorKeys: ["history_context"],
+        ohlcvBars: 120,
+        timeframe: "4h",
+        directionPreference: "either",
+        confidenceTargetPct: 60,
+        marketAnalysisUpdateEnabled: true,
+        isPublic: true
+      }
+    ]
+  });
+
+  assert.equal(parsed.prompts[0]?.marketAnalysisUpdateEnabled, true);
+  const runtime = resolveAiPromptRuntimeSettingsForContext(parsed, {}, "db");
+  assert.equal(runtime.marketAnalysisUpdateEnabled, true);
 });

@@ -148,6 +148,7 @@ export type AiPromptTemplate = {
   timeframe: AiPromptTimeframe | null;
   directionPreference: AiPromptDirectionPreference;
   confidenceTargetPct: number;
+  marketAnalysisUpdateEnabled: boolean;
   isPublic: boolean;
   createdAt: string;
   updatedAt: string;
@@ -172,6 +173,7 @@ export type AiPromptRuntimeSettings = {
   timeframe: AiPromptTimeframe | null;
   directionPreference: AiPromptDirectionPreference;
   confidenceTargetPct: number;
+  marketAnalysisUpdateEnabled: boolean;
   source: "default" | "db";
   activePromptId: string | null;
   activePromptName: string | null;
@@ -258,6 +260,7 @@ export const DEFAULT_AI_PROMPT_SETTINGS: AiPromptSettingsStored = {
       timeframe: null,
       directionPreference: DEFAULT_PROMPT_DIRECTION_PREFERENCE,
       confidenceTargetPct: DEFAULT_PROMPT_CONFIDENCE_TARGET_PCT,
+      marketAnalysisUpdateEnabled: false,
       isPublic: false,
       createdAt: new Date(0).toISOString(),
       updatedAt: new Date(0).toISOString()
@@ -379,6 +382,10 @@ function parseTemplate(value: unknown, index: number): AiPromptTemplate | null {
       objectValue.confidenceTargetPct,
       DEFAULT_PROMPT_CONFIDENCE_TARGET_PCT
     ),
+    marketAnalysisUpdateEnabled: normalizeBool(
+      objectValue.marketAnalysisUpdateEnabled,
+      false
+    ),
     isPublic: normalizeBool(objectValue.isPublic, false),
     createdAt: parseDateIso(objectValue.createdAt, nowIso),
     updatedAt: parseDateIso(objectValue.updatedAt, nowIso)
@@ -408,6 +415,7 @@ function cloneStoredSettings(value: AiPromptSettingsStored): AiPromptSettingsSto
       timeframe: item.timeframe,
       directionPreference: item.directionPreference,
       confidenceTargetPct: item.confidenceTargetPct,
+      marketAnalysisUpdateEnabled: item.marketAnalysisUpdateEnabled,
       isPublic: item.isPublic,
       createdAt: item.createdAt,
       updatedAt: item.updatedAt
@@ -523,6 +531,7 @@ export function resolveAiPromptRuntimeSettingsForContext(
     timeframe: active.timeframe,
     directionPreference: active.directionPreference,
     confidenceTargetPct: active.confidenceTargetPct,
+    marketAnalysisUpdateEnabled: active.marketAnalysisUpdateEnabled,
     source,
     activePromptId: active.id,
     activePromptName: active.name,
@@ -543,6 +552,7 @@ function toRuntimeFromTemplate(
     timeframe: template.timeframe,
     directionPreference: template.directionPreference,
     confidenceTargetPct: template.confidenceTargetPct,
+    marketAnalysisUpdateEnabled: template.marketAnalysisUpdateEnabled,
     source,
     activePromptId: template.id,
     activePromptName: template.name,
@@ -579,6 +589,7 @@ export function getAiPromptTemplateByIdFromSettings(
     timeframe: found.timeframe,
     directionPreference: found.directionPreference,
     confidenceTargetPct: found.confidenceTargetPct,
+    marketAnalysisUpdateEnabled: found.marketAnalysisUpdateEnabled,
     isPublic: found.isPublic,
     createdAt: found.createdAt,
     updatedAt: found.updatedAt
@@ -666,6 +677,7 @@ export function getPublicAiPromptTemplates(
       timeframe: item.timeframe,
       directionPreference: item.directionPreference,
       confidenceTargetPct: item.confidenceTargetPct,
+      marketAnalysisUpdateEnabled: item.marketAnalysisUpdateEnabled,
       isPublic: item.isPublic,
       createdAt: item.createdAt,
       updatedAt: item.updatedAt
@@ -699,6 +711,10 @@ export function parseStoredAiPromptSettings(value: unknown): AiPromptSettingsSto
       confidenceTargetPct: normalizeConfidenceTarget(
         objectValue.confidenceTargetPct,
         DEFAULT_PROMPT_CONFIDENCE_TARGET_PCT
+      ),
+      marketAnalysisUpdateEnabled: normalizeBool(
+        objectValue.marketAnalysisUpdateEnabled,
+        false
       ),
       isPublic: false,
       createdAt: nowIso,
@@ -734,6 +750,10 @@ export function parseStoredAiPromptSettings(value: unknown): AiPromptSettingsSto
         confidenceTargetPct: normalizeConfidenceTarget(
           raw.confidenceTargetPct,
           DEFAULT_PROMPT_CONFIDENCE_TARGET_PCT
+        ),
+        marketAnalysisUpdateEnabled: normalizeBool(
+          raw.marketAnalysisUpdateEnabled,
+          false
         ),
         isPublic: false,
         createdAt: nowIso,

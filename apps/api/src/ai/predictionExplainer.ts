@@ -747,6 +747,7 @@ function buildPromptVersion(settings: AiPromptRuntimeSettings): string {
     timeframe: settings.timeframe,
     directionPreference: settings.directionPreference,
     confidenceTargetPct: settings.confidenceTargetPct,
+    marketAnalysisUpdateEnabled: settings.marketAnalysisUpdateEnabled,
     activePromptId: settings.activePromptId,
     activePromptName: settings.activePromptName,
     selectedFrom: settings.selectedFrom,

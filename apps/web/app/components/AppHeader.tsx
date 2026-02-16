@@ -40,6 +40,13 @@ export default function AppHeader() {
     return `${targetPath}?${query}`;
   }
 
+  function handleLocaleSwitch(targetLocale: AppLocale) {
+    if (targetLocale === locale) return;
+    const targetPath = switchLocalePath(targetLocale);
+    document.cookie = `utrade_locale=${targetLocale}; path=/; max-age=31536000`;
+    window.location.assign(targetPath);
+  }
+
   return (
     <header className="appHeader">
       <div className="container appHeaderInner">
@@ -69,8 +76,20 @@ export default function AppHeader() {
           <Link href={hrefFor("/calendar")} className="btn">{tNav("calendar")}</Link>
           <Link href={hrefFor("/settings")} className="btn">{tNav("settings")}</Link>
           <Link href={hrefFor("/help")} className="btn">{tNav("help")}</Link>
-          <Link href={switchLocalePath("en")} className={`btn ${locale === "en" ? "btnPrimary" : ""}`}>EN</Link>
-          <Link href={switchLocalePath("de")} className={`btn ${locale === "de" ? "btnPrimary" : ""}`}>DE</Link>
+          <button
+            type="button"
+            className={`btn ${locale === "en" ? "btnPrimary" : ""}`}
+            onClick={() => handleLocaleSwitch("en")}
+          >
+            EN
+          </button>
+          <button
+            type="button"
+            className={`btn ${locale === "de" ? "btnPrimary" : ""}`}
+            onClick={() => handleLocaleSwitch("de")}
+          >
+            DE
+          </button>
           <LogoutButton />
         </nav>
       </div>

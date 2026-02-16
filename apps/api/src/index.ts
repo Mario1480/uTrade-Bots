@@ -476,6 +476,7 @@ const aiPromptTemplateSchema = z.object({
   timeframe: z.enum(["5m", "15m", "1h", "4h", "1d"]).nullable().default(null),
   directionPreference: z.enum(["long", "short", "either"]).default("either"),
   confidenceTargetPct: z.number().min(0).max(100).default(60),
+  marketAnalysisUpdateEnabled: z.boolean().default(false),
   isPublic: z.boolean().default(false),
   createdAt: z.string().datetime().optional(),
   updatedAt: z.string().datetime().optional()
@@ -1043,6 +1044,14 @@ function readAiPromptTemplateName(snapshot: Record<string, unknown>): string | n
   if (typeof snapshot.aiPromptTemplateName !== "string") return null;
   const trimmed = snapshot.aiPromptTemplateName.trim();
   return trimmed.length > 0 ? trimmed : null;
+}
+
+function readAiPromptMarketAnalysisUpdateEnabled(snapshot: Record<string, unknown>): boolean {
+  const raw = snapshot.aiPromptMarketAnalysisUpdateEnabled;
+  if (typeof raw === "boolean") return raw;
+  if (raw === "true" || raw === "1" || raw === 1) return true;
+  if (raw === "false" || raw === "0" || raw === 0) return false;
+  return false;
 }
 
 function readLocalStrategyId(snapshot: Record<string, unknown>): string | null {
@@ -2850,6 +2859,10 @@ async function generateAutoPredictionForUser(
       selectedPromptSettings?.activePromptId ?? requestedPromptTemplateId;
     inferred.featureSnapshot.aiPromptTemplateName =
       selectedPromptSettings?.activePromptName ?? null;
+    inferred.featureSnapshot.aiPromptMarketAnalysisUpdateEnabled =
+      selectedStrategyRef?.kind === "ai"
+        ? Boolean(selectedPromptSettings?.marketAnalysisUpdateEnabled)
+        : false;
     inferred.featureSnapshot.localStrategyId = selectedLocalStrategy?.id ?? null;
     inferred.featureSnapshot.localStrategyName = selectedLocalStrategy?.name ?? null;
     inferred.featureSnapshot.aiPromptLicenseMode = promptLicenseDecision.mode;
@@ -3032,6 +3045,24 @@ async function generateAutoPredictionForUser(
       signalSource: created.signalSource,
       aiPromptTemplateName: selectedPromptSettings?.activePromptName ?? null
     });
+    if (readAiPromptMarketAnalysisUpdateEnabled(featureSnapshotForState)) {
+      await notifyMarketAnalysisUpdate({
+        userId,
+        exchange: account.exchange,
+        exchangeAccountLabel: account.label,
+        symbol: canonicalSymbol,
+        marketType: payload.marketType,
+        timeframe: effectiveTimeframe,
+        signal: created.prediction.signal,
+        confidence: created.prediction.confidence,
+        expectedMovePct: created.prediction.expectedMovePct,
+        predictionId: created.rowId,
+        explanation: created.explanation.explanation,
+        source: "auto",
+        signalSource: created.signalSource,
+        aiPromptTemplateName: selectedPromptSettings?.activePromptName ?? null
+      });
+    }
 
     return {
       persisted: created.persisted,
@@ -3827,6 +3858,58 @@ async function notifyTradablePrediction(params: {
   } catch (error) {
     // eslint-disable-next-line no-console
     console.warn("[telegram] prediction notification failed", {
+      userId: params.userId,
+      predictionId: params.predictionId ?? null,
+      reason: String(error)
+    });
+  }
+}
+
+async function notifyMarketAnalysisUpdate(params: {
+  userId: string;
+  exchange: string;
+  exchangeAccountLabel: string;
+  symbol: string;
+  marketType: PredictionMarketType;
+  timeframe: PredictionTimeframe;
+  signal: PredictionSignal;
+  confidence: number;
+  expectedMovePct: number;
+  predictionId: string | null;
+  explanation?: string | null;
+  source: "manual" | "auto";
+  signalSource: PredictionSignalSource;
+  aiPromptTemplateName?: string | null;
+}): Promise<void> {
+  const config = await resolveTelegramConfig();
+  if (!config) return;
+
+  const promptName =
+    typeof params.aiPromptTemplateName === "string" && params.aiPromptTemplateName.trim()
+      ? params.aiPromptTemplateName.trim()
+      : null;
+  const explanation = typeof params.explanation === "string" ? params.explanation.trim() : "";
+  const deskLink = buildManualDeskPredictionLink(params.predictionId);
+  const confidencePct = confidenceToPct(params.confidence);
+  const text = buildTelegramText([
+    "📊 MARKET ANALYSIS UPDATE",
+    `${params.symbol} (${params.marketType}, ${params.timeframe})`,
+    `Source: ${params.source} · signal source: ${params.signalSource}`,
+    `Prompt: ${promptName ?? "n/a"}`,
+    `State: ${params.signal.toUpperCase()} · confidence ${confidencePct.toFixed(1)}% · move ${params.expectedMovePct.toFixed(2)}%`,
+    `Exchange: ${params.exchangeAccountLabel}`,
+    explanation ? `Analysis: ${explanation}` : null
+  ]);
+
+  try {
+    await sendTelegramMessage({
+      ...config,
+      text,
+      linkButton: deskLink ? { text: "Open here", url: deskLink } : null
+    });
+  } catch (error) {
+    // eslint-disable-next-line no-console
+    console.warn("[telegram] market analysis notification failed", {
       userId: params.userId,
       predictionId: params.predictionId ?? null,
       reason: String(error)
@@ -5987,6 +6070,8 @@ async function refreshPredictionStateForTemplate(params: {
               source: runtimePromptSettings.source,
               activePromptId: runtimePromptSettings.activePromptId,
               activePromptName: runtimePromptSettings.activePromptName,
+              marketAnalysisUpdateEnabled:
+                runtimePromptSettings.marketAnalysisUpdateEnabled,
               selectedFrom: runtimePromptSettings.selectedFrom,
               matchedScopeType: runtimePromptSettings.matchedScopeType,
               matchedOverrideId: runtimePromptSettings.matchedOverrideId
@@ -6005,10 +6090,17 @@ async function refreshPredictionStateForTemplate(params: {
     if (runtimePromptSettings) {
       inferred.featureSnapshot.aiPromptTemplateId = runtimePromptSettings.activePromptId;
       inferred.featureSnapshot.aiPromptTemplateName = runtimePromptSettings.activePromptName;
+      inferred.featureSnapshot.aiPromptMarketAnalysisUpdateEnabled = Boolean(
+        runtimePromptSettings.marketAnalysisUpdateEnabled
+      );
     } else {
       inferred.featureSnapshot.aiPromptTemplateId = runtimePromptTemplateId;
       inferred.featureSnapshot.aiPromptTemplateName =
         runtimePromptTemplateId ? requestedPromptTemplateName : null;
+      inferred.featureSnapshot.aiPromptMarketAnalysisUpdateEnabled =
+        requestedStrategyRefEffective?.kind === "ai"
+          ? readAiPromptMarketAnalysisUpdateEnabled(template.featureSnapshot)
+          : false;
     }
     inferred.featureSnapshot.aiPromptLicenseMode = promptLicenseDecision.mode;
     inferred.featureSnapshot.aiPromptLicenseWouldBlock = promptLicenseDecision.wouldBlock;
@@ -6287,6 +6379,24 @@ async function refreshPredictionStateForTemplate(params: {
           signalSource: selectedPrediction.source,
           aiPromptTemplateName: readAiPromptTemplateName(inferred.featureSnapshot)
         });
+        if (readAiPromptMarketAnalysisUpdateEnabled(inferred.featureSnapshot)) {
+          await notifyMarketAnalysisUpdate({
+            userId: template.userId,
+            exchange: account.exchange,
+            exchangeAccountLabel: account.label,
+            symbol: template.symbol,
+            marketType: template.marketType,
+            timeframe: template.timeframe,
+            signal: selectedPrediction.signal,
+            confidence: selectedPrediction.confidence,
+            expectedMovePct: selectedPrediction.expectedMovePct,
+            predictionId: historyRow.id,
+            explanation: explainer.explanation,
+            source: "auto",
+            signalSource: selectedPrediction.source,
+            aiPromptTemplateName: readAiPromptTemplateName(inferred.featureSnapshot)
+          });
+        }
       }
     }
 
@@ -7807,6 +7917,7 @@ function normalizeAiPromptSettingsPayload(
       timeframe: row.timeframe ?? null,
       directionPreference: row.directionPreference,
       confidenceTargetPct: row.confidenceTargetPct,
+      marketAnalysisUpdateEnabled: Boolean(row.marketAnalysisUpdateEnabled),
       isPublic: Boolean(row.isPublic),
       createdAt,
       updatedAt
@@ -9439,6 +9550,10 @@ app.post("/api/predictions/generate", requireAuth, async (req, res) => {
     aiPromptTemplateRequestedId: requestedPromptTemplateId,
     aiPromptTemplateId: selectedPromptSettings?.activePromptId ?? requestedPromptTemplateId,
     aiPromptTemplateName: selectedPromptSettings?.activePromptName ?? null,
+    aiPromptMarketAnalysisUpdateEnabled:
+      selectedStrategyRef?.kind === "ai"
+        ? Boolean(selectedPromptSettings?.marketAnalysisUpdateEnabled)
+        : false,
     localStrategyId: selectedLocalStrategy?.id ?? null,
     localStrategyName: selectedLocalStrategy?.name ?? null,
     compositeStrategyId: selectedCompositeStrategy?.id ?? null,
@@ -9631,6 +9746,32 @@ app.post("/api/predictions/generate", requireAuth, async (req, res) => {
     signalSource: created.signalSource,
     aiPromptTemplateName: readAiPromptTemplateName(snapshot)
   });
+  if (readAiPromptMarketAnalysisUpdateEnabled(snapshot)) {
+    await notifyMarketAnalysisUpdate({
+      userId: user.id,
+      exchange:
+        typeof snapshot.prefillExchange === "string" &&
+        snapshot.prefillExchange.trim()
+          ? snapshot.prefillExchange.trim().toLowerCase()
+          : "bitget",
+      exchangeAccountLabel:
+        typeof snapshot.prefillExchangeAccountId === "string" &&
+        snapshot.prefillExchangeAccountId.trim()
+          ? snapshot.prefillExchangeAccountId.trim()
+          : "n/a",
+      symbol: payload.symbol,
+      marketType: payload.marketType,
+      timeframe: payload.timeframe,
+      signal: created.prediction.signal,
+      confidence: created.prediction.confidence,
+      expectedMovePct: created.prediction.expectedMovePct,
+      predictionId: created.rowId,
+      explanation: created.explanation.explanation,
+      source: "manual",
+      signalSource: created.signalSource,
+      aiPromptTemplateName: readAiPromptTemplateName(snapshot)
+    });
+  }
 
   return res.status(created.persisted ? 201 : 202).json({
     persisted: created.persisted,

@@ -204,6 +204,8 @@
     "no": "nein",
     "promptLibraryTitle": "Prompt-Bibliothek",
     "publicPrompt": "Öffentlicher Prompt (für User sichtbar)",
+    "marketAnalysisUpdateEnabled": "Telegram Market-Analysis-Updates für diesen Prompt senden",
+    "analysisUpdate": "Analyse-Update",
     "clearIndicators": "Indikatoren leeren",
     "saving": "Speichern...",
     "updatePrompt": "Prompt aktualisieren",

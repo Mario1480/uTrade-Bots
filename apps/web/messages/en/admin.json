@@ -204,6 +204,8 @@
     "no": "no",
     "promptLibraryTitle": "Prompt Library",
     "publicPrompt": "Public prompt (visible to users)",
+    "marketAnalysisUpdateEnabled": "Send Telegram market analysis updates for this prompt",
+    "analysisUpdate": "Analysis update",
     "clearIndicators": "Clear indicators",
     "saving": "Saving...",
     "updatePrompt": "Update prompt",

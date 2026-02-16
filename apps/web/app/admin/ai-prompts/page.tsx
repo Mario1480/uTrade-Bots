@@ -22,6 +22,7 @@ type PromptTemplate = {
   timeframe: "5m" | "15m" | "1h" | "4h" | "1d" | null;
   directionPreference: "long" | "short" | "either";
   confidenceTargetPct: number;
+  marketAnalysisUpdateEnabled: boolean;
   isPublic: boolean;
   createdAt: string;
   updatedAt: string;
@@ -51,17 +52,18 @@ type PreviewResponse = {
     symbol?: string | null;
     timeframe?: string | null;
   };
-  runtimeSettings: {
-    promptText: string;
-    indicatorKeys: string[];
-    ohlcvBars: number;
-    timeframe: "5m" | "15m" | "1h" | "4h" | "1d" | null;
-    directionPreference: "long" | "short" | "either";
-    confidenceTargetPct: number;
-    source: "default" | "db";
-    activePromptId: string | null;
-    activePromptName: string | null;
-    selectedFrom: "active_prompt" | "default";
+    runtimeSettings: {
+      promptText: string;
+      indicatorKeys: string[];
+      ohlcvBars: number;
+      timeframe: "5m" | "15m" | "1h" | "4h" | "1d" | null;
+      directionPreference: "long" | "short" | "either";
+      confidenceTargetPct: number;
+      marketAnalysisUpdateEnabled: boolean;
+      source: "default" | "db";
+      activePromptId: string | null;
+      activePromptName: string | null;
+      selectedFrom: "active_prompt" | "default";
     matchedScopeType: null;
     matchedOverrideId: null;
   };
@@ -99,6 +101,7 @@ function clonePrompts(prompts: PromptTemplate[]): PromptTemplate[] {
     confidenceTargetPct: Number.isFinite(Number(item.confidenceTargetPct))
       ? Math.max(0, Math.min(100, Number(item.confidenceTargetPct)))
       : 60,
+    marketAnalysisUpdateEnabled: Boolean(item.marketAnalysisUpdateEnabled),
     isPublic: item.isPublic,
     createdAt: item.createdAt,
     updatedAt: item.updatedAt
@@ -136,6 +139,7 @@ export default function AdminAiPromptsPage() {
   const [promptTimeframe, setPromptTimeframe] = useState<"" | "5m" | "15m" | "1h" | "4h" | "1d">("");
   const [promptDirectionPreference, setPromptDirectionPreference] = useState<"long" | "short" | "either">("either");
   const [promptConfidenceTargetPct, setPromptConfidenceTargetPct] = useState("60");
+  const [promptMarketAnalysisUpdateEnabled, setPromptMarketAnalysisUpdateEnabled] = useState(false);
   const [promptOhlcvBars, setPromptOhlcvBars] = useState("100");
 
   const [previewExchange, setPreviewExchange] = useState("bitget");
@@ -222,6 +226,7 @@ export default function AdminAiPromptsPage() {
     setPromptTimeframe("");
     setPromptDirectionPreference("either");
     setPromptConfidenceTargetPct("60");
+    setPromptMarketAnalysisUpdateEnabled(false);
     setPromptOhlcvBars("100");
   }
 
@@ -234,6 +239,7 @@ export default function AdminAiPromptsPage() {
     setPromptTimeframe(prompt.timeframe ?? "");
     setPromptDirectionPreference(prompt.directionPreference ?? "either");
     setPromptConfidenceTargetPct(String(prompt.confidenceTargetPct ?? 60));
+    setPromptMarketAnalysisUpdateEnabled(Boolean(prompt.marketAnalysisUpdateEnabled));
     setPromptOhlcvBars(String(prompt.ohlcvBars ?? 100));
   }
 
@@ -276,6 +282,7 @@ export default function AdminAiPromptsPage() {
       timeframe: promptTimeframe || null,
       directionPreference: promptDirectionPreference,
       confidenceTargetPct: Math.round(confidenceTargetPct),
+      marketAnalysisUpdateEnabled: promptMarketAnalysisUpdateEnabled,
       isPublic: promptIsPublic,
       createdAt:
         editingPromptId
@@ -484,6 +491,17 @@ export default function AdminAiPromptsPage() {
               </div>
 
               <div className="settingsTwoColGrid" style={{ marginBottom: 8 }}>
+                <label className="inlineCheck">
+                  <input
+                    type="checkbox"
+                    checked={promptMarketAnalysisUpdateEnabled}
+                    onChange={(e) => setPromptMarketAnalysisUpdateEnabled(e.target.checked)}
+                  />
+                  {t("marketAnalysisUpdateEnabled")}
+                </label>
+              </div>
+
+              <div className="settingsTwoColGrid" style={{ marginBottom: 8 }}>
                 <label className="settingsField">
                   <span className="settingsFieldLabel">Timeframe lock (optional)</span>
                   <select className="input" value={promptTimeframe} onChange={(e) => setPromptTimeframe(e.target.value as "" | "5m" | "15m" | "1h" | "4h" | "1d")}>
@@ -580,6 +598,7 @@ export default function AdminAiPromptsPage() {
                       <th>TF</th>
                       <th>Dir</th>
                       <th>Conf %</th>
+                      <th>{t("analysisUpdate")}</th>
                       <th>OHLCV</th>
                       <th>Indicators</th>
                       <th>Updated</th>
@@ -595,6 +614,7 @@ export default function AdminAiPromptsPage() {
                         <td>{prompt.timeframe ?? "-"}</td>
                         <td>{prompt.directionPreference ?? "either"}</td>
                         <td>{Number.isFinite(Number(prompt.confidenceTargetPct)) ? Number(prompt.confidenceTargetPct).toFixed(0) : "60"}</td>
+                        <td>{prompt.marketAnalysisUpdateEnabled ? t("yes") : t("no")}</td>
                         <td>{Number.isFinite(Number(prompt.ohlcvBars)) ? Math.trunc(Number(prompt.ohlcvBars)) : 100}</td>
                         <td>{prompt.indicatorKeys.length}</td>
                         <td>{prompt.updatedAt ? new Date(prompt.updatedAt).toLocaleString() : "-"}</td>
