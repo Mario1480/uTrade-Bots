@@ -7,8 +7,8 @@
   "sections": {
     "gettingStarted": {
       "title": "Getting Started",
-      "line1": "Create a bot by selecting an exchange and a trading pair, then save the configuration and start the bot.",
-      "line2": "Tip: use Config Presets to save a known-good setup and apply it to new bots quickly."
+      "line1": "Create an exchange account in Settings, then open Predictions or Manual Trading to start.",
+      "line2": "For first tests, use paper mode and verify API/runner health before going live."
     },
     "exchangeKeys": {
       "title": "Exchange API Keys",
@@ -16,23 +16,17 @@
       "line2": "Keys are protected; viewing or editing requires Re-Auth (OTP).",
       "line3": "Common issues: invalid key, IP whitelist not updated, missing trade permissions."
     },
-    "botSettings": {
-      "title": "Bot Settings Explained",
-      "line1": "Futures Strategy: spread, levels, step, distribution, jitter, skew, max skew.",
-      "line2": "Volume Bot: daily target, min/max trade, mode.",
-      "line3": "Risk: min balance, max deviation, max open orders, daily loss."
+    "predictions": {
+      "title": "Predictions & Signals",
+      "line1": "Create schedules in Predictions and choose a strategy (AI, Local, or Composite).",
+      "line2": "Use confidence, tags, and signal source filters to review only actionable setups.",
+      "line3": "Use 'Send to Trading Desk' to prefill tickets without automatic order execution."
     },
-    "priceSupport": {
-      "title": "Price Support",
-      "line1": "When mid price drops below the floor, Price Support buys until mid is back above the floor.",
-      "line2": "It uses a separate budget and stops automatically when the budget is depleted.",
-      "line3": "A Telegram notification is sent on depletion, and a manual restart is required."
-    },
-    "priceFollow": {
-      "title": "Price Follow (Master / Slave)",
-      "line1": "The master exchange provides the price feed (no bot required on master).",
-      "line2": "The slave exchange executes trades based on that master feed.",
-      "line3": "Stale master feed and deviation protection prevent unsafe orders."
+    "strategies": {
+      "title": "Strategy Modes",
+      "line1": "AI strategies explain and classify setups based on selected indicator payloads.",
+      "line2": "Local strategies are deterministic and run inside the backend for stable results.",
+      "line3": "Composite strategies chain local and AI steps; use dry-run before enabling."
     },
     "manualTrading": {
       "title": "Manual Trading",
@@ -55,9 +49,9 @@
     },
     "troubleshooting": {
       "title": "Troubleshooting",
-      "line1": "Bot shows ERROR: check runtime reason, keys, balances, and exchange health.",
-      "line2": "No orders: config too strict, price follow deviation, or post-only rejects.",
-      "line3": "Runner not updating: check runner status and readiness endpoints."
+      "line1": "If data is missing: check API health, runner status, and websocket connectivity.",
+      "line2": "If prediction actions fail: review strategy config, permissions, and trace logs.",
+      "line3": "If orders are rejected: verify exchange permissions, symbol limits, and margin settings."
     }
   }
 }

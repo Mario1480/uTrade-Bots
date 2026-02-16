@@ -7,9 +7,8 @@ import { withLocalePath, type AppLocale } from "../../i18n/config";
 const HELP_SECTION_KEYS = [
   { id: "getting-started", key: "gettingStarted", lines: 2 },
   { id: "exchange-keys", key: "exchangeKeys", lines: 3 },
-  { id: "bot-settings", key: "botSettings", lines: 3 },
-  { id: "price-support", key: "priceSupport", lines: 3 },
-  { id: "price-follow", key: "priceFollow", lines: 3 },
+  { id: "predictions", key: "predictions", lines: 3 },
+  { id: "strategies", key: "strategies", lines: 3 },
   { id: "manual-trading", key: "manualTrading", lines: 3 },
   { id: "roles", key: "roles", lines: 3 },
   { id: "security", key: "security", lines: 4 },
@@ -73,8 +72,8 @@ export default function HelpPage() {
           {t("contactBody")}
         </div>
         <div style={{ marginTop: 8 }}>
-          <a className="btn btnPrimary" href="mailto:support@uliquid.vip">
-            support@uliquid.vip
+          <a className="btn btnPrimary" href="mailto:support@utrade.vip">
+            support@utrade.vip
           </a>
         </div>
       </section>

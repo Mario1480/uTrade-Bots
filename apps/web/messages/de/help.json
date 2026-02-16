@@ -7,8 +7,8 @@
   "sections": {
     "gettingStarted": {
       "title": "Erste Schritte",
-      "line1": "Erstelle einen Bot durch Auswahl von Exchange und Trading-Paar, speichere die Konfiguration und starte den Bot.",
-      "line2": "Tipp: Nutze Config Presets, um bewährte Setups schnell auf neue Bots anzuwenden."
+      "line1": "Lege zuerst ein Exchange-Konto in den Einstellungen an und öffne dann Prognosen oder manuelles Trading.",
+      "line2": "Für erste Tests nutze den Paper-Modus und prüfe API/Runner-Status vor Live-Betrieb."
     },
     "exchangeKeys": {
       "title": "Exchange-API-Schlüssel",
@@ -16,23 +16,17 @@
       "line2": "Keys sind geschützt; Anzeigen/Bearbeiten erfordert Re-Auth (OTP).",
       "line3": "Häufige Probleme: ungültiger Key, IP-Whitelist nicht aktualisiert, fehlende Trading-Rechte."
     },
-    "botSettings": {
-      "title": "Bot-Einstellungen erklärt",
-      "line1": "Futures-Strategie: Spread, Levels, Step, Distribution, Jitter, Skew, Max Skew.",
-      "line2": "Volume Bot: Tagesziel, Min/Max Trade, Modus.",
-      "line3": "Risiko: Min Balance, Max Deviation, Max Open Orders, Daily Loss."
+    "predictions": {
+      "title": "Prognosen und Signale",
+      "line1": "Erstelle Zeitpläne in Prognosen und wähle eine Strategie (AI, Lokal oder Composite).",
+      "line2": "Nutze Konfidenz-, Tag- und Signalquellen-Filter, um nur handelbare Setups zu sehen.",
+      "line3": "Mit „An Trading Desk senden“ wird nur das Ticket vorgefüllt, ohne automatische Orderausführung."
     },
-    "priceSupport": {
-      "title": "Preisstützung",
-      "line1": "Wenn der Mid-Preis unter die Floor-Linie fällt, kauft Price Support bis der Mid-Preis wieder darüber liegt.",
-      "line2": "Es verwendet ein separates Budget und stoppt automatisch bei Budgetverbrauch.",
-      "line3": "Bei Budget-Depletion wird eine Telegram-Nachricht gesendet; manueller Neustart ist erforderlich."
-    },
-    "priceFollow": {
-      "title": "Preisfolge (Master / Slave)",
-      "line1": "Die Master-Exchange liefert den Preis-Feed (kein Bot auf Master nötig).",
-      "line2": "Die Slave-Exchange führt Trades basierend auf diesem Feed aus.",
-      "line3": "Stale-Feed- und Deviation-Schutz verhindern unsichere Orders."
+    "strategies": {
+      "title": "Strategie-Modi",
+      "line1": "AI-Strategien erklären und klassifizieren Setups anhand der gewählten Indikatordaten.",
+      "line2": "Lokale Strategien laufen deterministisch im Backend für stabile Ergebnisse.",
+      "line3": "Composite-Strategien verketten lokale und AI-Schritte; vor Aktivierung per Dry-Run testen."
     },
     "manualTrading": {
       "title": "Manuelles Trading",
@@ -55,9 +49,9 @@
     },
     "troubleshooting": {
       "title": "Fehlerbehebung",
-      "line1": "Bot zeigt FEHLER: Runtime-Grund, Schlüssel, Balances und Exchange-Health prüfen.",
-      "line2": "Keine Orders: Konfig zu streng, Price-Follow-Deviation oder Post-only-Rejects.",
-      "line3": "Runner aktualisiert nicht: Runner-Status und Readiness-Endpunkte prüfen."
+      "line1": "Wenn Daten fehlen: API-Health, Runner-Status und Websocket-Verbindung prüfen.",
+      "line2": "Wenn Prognose-Aktionen fehlschlagen: Strategie-Konfiguration, Berechtigungen und Trace-Logs prüfen.",
+      "line3": "Wenn Orders abgelehnt werden: Exchange-Rechte, Symbol-Limits und Margin-Einstellungen prüfen."
     }
   }
 }
