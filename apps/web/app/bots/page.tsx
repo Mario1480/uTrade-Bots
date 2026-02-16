@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useMemo } from "react";
 import { useSearchParams } from "next/navigation";
+import { useTranslations } from "next-intl";
 import { ApiError, apiGet } from "../../lib/api";
 import { Suspense, useEffect, useState } from "react";
 
@@ -33,6 +34,7 @@ function errMsg(e: unknown): string {
 }
 
 function BotsPageContent() {
+  const t = useTranslations("system.botsList");
   const searchParams = useSearchParams();
   const [bots, setBots] = useState<BotItem[]>([]);
   const [loading, setLoading] = useState(true);
@@ -80,40 +82,40 @@ function BotsPageContent() {
 
   const titleSuffix = useMemo(() => {
     if (!exchangeAccountId) return "";
-    return ` for account ${exchangeAccountId.slice(0, 8)}…`;
-  }, [exchangeAccountId]);
+    return t("titleSuffix", { account: `${exchangeAccountId.slice(0, 8)}…` });
+  }, [exchangeAccountId, t]);
 
   return (
     <div>
       <div className="dashboardHeader">
         <div>
-          <h2 style={{ margin: 0 }}>Bots{titleSuffix}</h2>
+          <h2 style={{ margin: 0 }}>{t("title")}{titleSuffix}</h2>
           <div style={{ fontSize: 13, color: "var(--muted)" }}>
-            {statusFilter ? `Status filter: ${statusFilter}` : "All bot statuses"}
+            {statusFilter ? t("statusFilter", { status: statusFilter }) : t("allStatuses")}
           </div>
         </div>
         <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-          <Link href="/dashboard" className="btn">Dashboard</Link>
-          <Link href="/bots/new" className="btn btnPrimary">New Bot</Link>
+          <Link href="/dashboard" className="btn">{t("actions.dashboard")}</Link>
+          <Link href="/bots/new" className="btn btnPrimary">{t("actions.newBot")}</Link>
         </div>
       </div>
 
       {error ? (
         <div className="card" style={{ padding: 12, borderColor: "#ef4444", marginBottom: 12 }}>
-          <strong>Load error:</strong> {error}
+          <strong>{t("loadError")}:</strong> {error}
         </div>
       ) : null}
 
       <div className="botGrid">
         {loading ? (
-          <div className="card" style={{ padding: 16 }}>Loading bots…</div>
+          <div className="card" style={{ padding: 16 }}>{t("loading")}</div>
         ) : visibleBots.length === 0 ? (
           <div className="card" style={{ padding: 16 }}>
-            <div style={{ fontWeight: 700, marginBottom: 6 }}>No bots match this filter</div>
+            <div style={{ fontWeight: 700, marginBottom: 6 }}>{t("emptyTitle")}</div>
             <div style={{ fontSize: 13, color: "var(--muted)", marginBottom: 10 }}>
-              Try another account/status filter or create a new bot.
+              {t("emptyHint")}
             </div>
-            <Link href="/bots/new" className="btn btnPrimary">Create Bot</Link>
+            <Link href="/bots/new" className="btn btnPrimary">{t("actions.createBot")}</Link>
           </div>
         ) : (
           visibleBots.map((bot) => (
@@ -122,7 +124,7 @@ function BotsPageContent() {
                 <div>
                   <div className="botName">{bot.name}</div>
                   <div className="botMeta">
-                    {bot.exchangeAccount?.label ?? "No Account"} · {bot.exchange} · {bot.symbol}
+                    {bot.exchangeAccount?.label ?? t("noAccount")} · {bot.exchange} · {bot.symbol}
                   </div>
                 </div>
                 <span className={`badge ${bot.status === "running" ? "badgeOk" : bot.status === "error" ? "badgeDanger" : "badgeWarn"}`}>
@@ -137,10 +139,10 @@ function BotsPageContent() {
               ) : null}
 
               <div style={{ marginTop: 12, display: "flex", gap: 8, flexWrap: "wrap" }}>
-                <Link href={`/bots/${bot.id}`} className="btn">Open</Link>
+                <Link href={`/bots/${bot.id}`} className="btn">{t("actions.open")}</Link>
                 {bot.exchangeAccountId ? (
                   <Link href={`/trade?exchangeAccountId=${encodeURIComponent(bot.exchangeAccountId)}`} className="btn">
-                    Manual Trading
+                    {t("actions.manualTrading")}
                   </Link>
                 ) : null}
               </div>
@@ -153,8 +155,9 @@ function BotsPageContent() {
 }
 
 export default function BotsPage() {
+  const t = useTranslations("system.botsList");
   return (
-    <Suspense fallback={<div>Loading bots page…</div>}>
+    <Suspense fallback={<div>{t("loadingPage")}</div>}>
       <BotsPageContent />
     </Suspense>
   );

@@ -1,18 +1,24 @@
-import Link from "next/link";
+"use client";
 
-export default async function BotSettingsPage({ params }: { params: Promise<{ id: string }> }) {
-  const { id } = await params;
+import Link from "next/link";
+import { useParams } from "next/navigation";
+import { useTranslations } from "next-intl";
+
+export default function BotSettingsPage() {
+  const t = useTranslations("system.botsSettings");
+  const params = useParams<{ id: string }>();
+  const id = params.id;
 
   return (
     <div>
-      <h2 style={{ marginTop: 0 }}>Bot Settings</h2>
+      <h2 style={{ marginTop: 0 }}>{t("title")}</h2>
       <div className="card" style={{ padding: 14 }}>
         <p style={{ marginTop: 0 }}>
-          Futures skeleton mode is active. Advanced per-bot settings are intentionally reduced.
+          {t("description")}
         </p>
         <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-          <Link href={`/bots/${id}`} className="btn">Back to Bot</Link>
-          <Link href="/" className="btn">Dashboard</Link>
+          <Link href={`/bots/${id}`} className="btn">{t("backToBot")}</Link>
+          <Link href="/" className="btn">{t("dashboard")}</Link>
         </div>
       </div>
     </div>

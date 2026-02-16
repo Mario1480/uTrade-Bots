@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
+import { useTranslations } from "next-intl";
 import { ApiError, apiGet } from "../../lib/api";
 
 type CalendarImpact = "low" | "medium" | "high";
@@ -58,6 +59,7 @@ function impactClass(impact: CalendarImpact): string {
 }
 
 export default function CalendarPage() {
+  const t = useTranslations("system.calendar");
   const [currency, setCurrency] = useState("USD");
   const [impact, setImpact] = useState<CalendarImpact>("high");
   const [from, setFrom] = useState(() => toDateInput(new Date()));
@@ -108,9 +110,9 @@ export default function CalendarPage() {
     <div>
       <div className="dashboardHeader">
         <div>
-          <h2 style={{ margin: 0 }}>Economic Calendar</h2>
+          <h2 style={{ margin: 0 }}>{t("title")}</h2>
           <div style={{ fontSize: 13, color: "var(--muted)" }}>
-            High-impact macro events and blackout status.
+            {t("subtitle")}
           </div>
         </div>
       </div>
@@ -118,32 +120,32 @@ export default function CalendarPage() {
       <div className="card" style={{ padding: 12, marginBottom: 12 }}>
         <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(150px,1fr))", gap: 10 }}>
           <label>
-            <div style={{ fontSize: 12, color: "var(--muted)", marginBottom: 4 }}>Currency</div>
+            <div style={{ fontSize: 12, color: "var(--muted)", marginBottom: 4 }}>{t("filters.currency")}</div>
             <select className="input" value={currency} onChange={(e) => setCurrency(e.target.value.toUpperCase())}>
               <option value="USD">USD</option>
               <option value="EUR">EUR</option>
             </select>
           </label>
           <label>
-            <div style={{ fontSize: 12, color: "var(--muted)", marginBottom: 4 }}>Impact</div>
+            <div style={{ fontSize: 12, color: "var(--muted)", marginBottom: 4 }}>{t("filters.impact")}</div>
             <select className="input" value={impact} onChange={(e) => setImpact(e.target.value as CalendarImpact)}>
-              <option value="high">high</option>
-              <option value="medium">medium</option>
-              <option value="low">low</option>
+              <option value="high">{t("impact.high")}</option>
+              <option value="medium">{t("impact.medium")}</option>
+              <option value="low">{t("impact.low")}</option>
             </select>
           </label>
           <label>
-            <div style={{ fontSize: 12, color: "var(--muted)", marginBottom: 4 }}>From</div>
+            <div style={{ fontSize: 12, color: "var(--muted)", marginBottom: 4 }}>{t("filters.from")}</div>
             <input className="input" type="date" value={from} onChange={(e) => setFrom(e.target.value)} />
           </label>
           <label>
-            <div style={{ fontSize: 12, color: "var(--muted)", marginBottom: 4 }}>To</div>
+            <div style={{ fontSize: 12, color: "var(--muted)", marginBottom: 4 }}>{t("filters.to")}</div>
             <input className="input" type="date" value={to} onChange={(e) => setTo(e.target.value)} />
           </label>
           <div style={{ display: "flex", alignItems: "end", gap: 8 }}>
-            <button className="btn" onClick={() => setFrom(toDateInput(new Date()))} type="button">Today</button>
-            <button className="btn" onClick={() => setTo(toDateInput(addDays(new Date(), 3)))} type="button">Next 3d</button>
-            <button className="btn btnPrimary" onClick={() => void load()} type="button">Refresh</button>
+            <button className="btn" onClick={() => setFrom(toDateInput(new Date()))} type="button">{t("actions.today")}</button>
+            <button className="btn" onClick={() => setTo(toDateInput(addDays(new Date(), 3)))} type="button">{t("actions.next3d")}</button>
+            <button className="btn btnPrimary" onClick={() => void load()} type="button">{t("actions.refresh")}</button>
           </div>
         </div>
       </div>
@@ -158,35 +160,35 @@ export default function CalendarPage() {
           }}
         >
           <div style={{ fontWeight: 700, marginBottom: 6 }}>
-            {nextSummary.blackoutActive ? "Blackout active" : "No active blackout"} ({nextSummary.currency})
+            {nextSummary.blackoutActive ? t("summary.blackoutActive") : t("summary.noBlackout")} ({nextSummary.currency})
           </div>
           {nextSummary.blackoutActive && nextSummary.activeWindow ? (
             <div style={{ color: "var(--muted)", fontSize: 13 }}>
-              Until {new Date(nextSummary.activeWindow.to).toLocaleString()} · {nextSummary.activeWindow.event.title}
+              {t("summary.until")} {new Date(nextSummary.activeWindow.to).toLocaleString()} · {nextSummary.activeWindow.event.title}
             </div>
           ) : nextSummary.nextEvent ? (
             <div style={{ color: "var(--muted)", fontSize: 13 }}>
-              Next {nextSummary.impactMin} event: {nextSummary.nextEvent.title} at{" "}
+              {t("summary.nextEvent", { impact: nextSummary.impactMin })}: {nextSummary.nextEvent.title} {t("summary.at")}{" "}
               {new Date(nextSummary.nextEvent.ts).toLocaleString()}
             </div>
           ) : (
-            <div style={{ color: "var(--muted)", fontSize: 13 }}>No upcoming events in selected range.</div>
+            <div style={{ color: "var(--muted)", fontSize: 13 }}>{t("summary.noUpcoming")}</div>
           )}
         </div>
       ) : null}
 
       {error ? (
         <div className="card" style={{ padding: 12, borderColor: "#ef4444", marginBottom: 12 }}>
-          <strong>Load error:</strong> {error}
+          <strong>{t("loadError")}:</strong> {error}
         </div>
       ) : null}
 
       <div className="card" style={{ padding: 12 }}>
-        <div style={{ fontWeight: 700, marginBottom: 8 }}>Events</div>
+        <div style={{ fontWeight: 700, marginBottom: 8 }}>{t("eventsTitle")}</div>
         {loading ? (
-          <div style={{ color: "var(--muted)" }}>Loading events...</div>
+          <div style={{ color: "var(--muted)" }}>{t("loadingEvents")}</div>
         ) : grouped.length === 0 ? (
-          <div style={{ color: "var(--muted)" }}>No events found for the selected filters.</div>
+          <div style={{ color: "var(--muted)" }}>{t("noEvents")}</div>
         ) : (
           grouped.map(([day, rows]) => (
             <div key={day} style={{ marginBottom: 14 }}>
@@ -202,7 +204,7 @@ export default function CalendarPage() {
                       {new Date(event.ts).toLocaleString()} · {event.country} · {event.currency}
                     </div>
                     <div style={{ fontSize: 12, color: "var(--muted)", marginTop: 4 }}>
-                      Forecast: {fmtNumber(event.forecast)} · Previous: {fmtNumber(event.previous)} · Actual: {fmtNumber(event.actual)}
+                      {t("forecast")}: {fmtNumber(event.forecast)} · {t("previous")}: {fmtNumber(event.previous)} · {t("actual")}: {fmtNumber(event.actual)}
                     </div>
                   </div>
                 ))}

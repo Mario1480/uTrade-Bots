@@ -1,16 +1,22 @@
-import Link from "next/link";
+"use client";
 
-export default async function PriceSupportPage({ params }: { params: Promise<{ id: string }> }) {
-  const { id } = await params;
+import Link from "next/link";
+import { useParams } from "next/navigation";
+import { useTranslations } from "next-intl";
+
+export default function PriceSupportPage() {
+  const t = useTranslations("system.botsPriceSupport");
+  const params = useParams<{ id: string }>();
+  const id = params.id;
 
   return (
     <div>
-      <h2 style={{ marginTop: 0 }}>Futures Extensions</h2>
+      <h2 style={{ marginTop: 0 }}>{t("title")}</h2>
       <div className="card" style={{ padding: 14 }}>
         <p style={{ marginTop: 0 }}>
-          This route is reserved for future futures-specific extensions.
+          {t("description")}
         </p>
-        <Link href={`/bots/${id}`} className="btn">Back to Bot</Link>
+        <Link href={`/bots/${id}`} className="btn">{t("backToBot")}</Link>
       </div>
     </div>
   );

@@ -1,10 +1,12 @@
 import { cookies, headers } from "next/headers";
+import { getRequestConfig } from "next-intl/server";
 import {
   DEFAULT_LOCALE,
   LOCALE_COOKIE_NAME,
   isLocale,
   type AppLocale
 } from "./config";
+import { getMessages } from "./messages";
 
 export async function resolveRequestLocale(): Promise<AppLocale> {
   const headerStore = await headers();
@@ -18,3 +20,11 @@ export async function resolveRequestLocale(): Promise<AppLocale> {
 
   return DEFAULT_LOCALE;
 }
+
+export default getRequestConfig(async () => {
+  const locale = await resolveRequestLocale();
+  return {
+    locale,
+    messages: getMessages(locale)
+  };
+});

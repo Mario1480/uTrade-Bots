@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect, useMemo, useState } from "react";
+import { useTranslations } from "next-intl";
 import { ApiError, apiGet, apiPost } from "../../../lib/api";
 
 type ExchangeAccount = {
@@ -24,6 +25,7 @@ function errMsg(e: unknown): string {
 }
 
 export default function NewBotPage() {
+  const t = useTranslations("system.botsNew");
   const router = useRouter();
   const [accounts, setAccounts] = useState<ExchangeAccount[]>([]);
   const [name, setName] = useState("");
@@ -125,36 +127,36 @@ export default function NewBotPage() {
   return (
     <div className="container" style={{ maxWidth: 760 }}>
       <div style={{ marginBottom: 12 }}>
-        <Link href="/" className="btn">Back</Link>
+        <Link href="/" className="btn">{t("actions.back")}</Link>
       </div>
 
       <div className="card" style={{ padding: 18 }}>
-        <h2 style={{ marginTop: 0 }}>Create Bot</h2>
+        <h2 style={{ marginTop: 0 }}>{t("title")}</h2>
         <div style={{ fontSize: 13, color: "var(--muted)", marginBottom: 10 }}>
-          Bot is bound to one exchange account.
+          {t("subtitle")}
         </div>
 
         {error ? <div style={{ marginBottom: 10, color: "#ef4444", fontSize: 13 }}>{error}</div> : null}
 
         {accounts.length === 0 ? (
           <div className="card" style={{ padding: 10 }}>
-            <div style={{ marginBottom: 8 }}>No exchange account found.</div>
-            <Link href="/settings" className="btn btnPrimary">Add exchange account</Link>
+            <div style={{ marginBottom: 8 }}>{t("noExchangeAccount")}</div>
+            <Link href="/settings" className="btn btnPrimary">{t("actions.addExchangeAccount")}</Link>
           </div>
         ) : (
           <form onSubmit={onSubmit} style={{ display: "grid", gap: 10 }}>
             <label style={{ display: "grid", gap: 6 }}>
-              <span style={{ fontSize: 12, color: "var(--muted)" }}>Name</span>
+              <span style={{ fontSize: 12, color: "var(--muted)" }}>{t("fields.name")}</span>
               <input className="input" value={name} onChange={(e) => setName(e.target.value)} required />
             </label>
 
             <label style={{ display: "grid", gap: 6 }}>
-              <span style={{ fontSize: 12, color: "var(--muted)" }}>Symbol</span>
+              <span style={{ fontSize: 12, color: "var(--muted)" }}>{t("fields.symbol")}</span>
               <input className="input" value={symbol} onChange={(e) => setSymbol(e.target.value)} required />
             </label>
 
             <label style={{ display: "grid", gap: 6 }}>
-              <span style={{ fontSize: 12, color: "var(--muted)" }}>Exchange Account</span>
+              <span style={{ fontSize: 12, color: "var(--muted)" }}>{t("fields.exchangeAccount")}</span>
               <select className="input" value={exchangeAccountId} onChange={(e) => setExchangeAccountId(e.target.value)}>
                 {accounts.map((account) => (
                   <option key={account.id} value={account.id}>
@@ -166,38 +168,38 @@ export default function NewBotPage() {
 
             <div style={{ display: "grid", gridTemplateColumns: "repeat(2, minmax(0, 1fr))", gap: 10 }}>
               <label style={{ display: "grid", gap: 6 }}>
-                <span style={{ fontSize: 12, color: "var(--muted)" }}>Strategy</span>
+                <span style={{ fontSize: 12, color: "var(--muted)" }}>{t("fields.strategy")}</span>
                 <select className="input" value={strategyKey} onChange={(e) => setStrategyKey(e.target.value as StrategyKey)}>
                   <option value="dummy">dummy</option>
                   <option value="prediction_copier">prediction_copier</option>
                 </select>
               </label>
               <label style={{ display: "grid", gap: 6 }}>
-                <span style={{ fontSize: 12, color: "var(--muted)" }}>Margin Mode</span>
+                <span style={{ fontSize: 12, color: "var(--muted)" }}>{t("fields.marginMode")}</span>
                 <select className="input" value={marginMode} onChange={(e) => setMarginMode(e.target.value as "isolated" | "cross")}>
-                  <option value="isolated">isolated</option>
-                  <option value="cross">cross</option>
+                  <option value="isolated">{t("options.isolated")}</option>
+                  <option value="cross">{t("options.cross")}</option>
                 </select>
               </label>
               <label style={{ display: "grid", gap: 6 }}>
-                <span style={{ fontSize: 12, color: "var(--muted)" }}>Leverage</span>
+                <span style={{ fontSize: 12, color: "var(--muted)" }}>{t("fields.leverage")}</span>
                 <input className="input" type="number" min={1} max={125} value={leverage} onChange={(e) => setLeverage(Number(e.target.value || 1))} />
               </label>
               <label style={{ display: "grid", gap: 6 }}>
-                <span style={{ fontSize: 12, color: "var(--muted)" }}>Tick (ms)</span>
+                <span style={{ fontSize: 12, color: "var(--muted)" }}>{t("fields.tickMs")}</span>
                 <input className="input" type="number" min={100} max={60_000} value={tickMs} onChange={(e) => setTickMs(Number(e.target.value || 1000))} />
               </label>
             </div>
 
             {strategyKey === "prediction_copier" ? (
               <div className="card" style={{ padding: 12, display: "grid", gap: 10 }}>
-                <div style={{ fontSize: 13, fontWeight: 600 }}>Prediction Copier Settings</div>
+                <div style={{ fontSize: 13, fontWeight: 600 }}>{t("copier.title")}</div>
                 <div style={{ fontSize: 12, color: "var(--muted)" }}>
-                  Kopiert Signale aus <code>predictions_state</code> (enter/exit) mit Risk-Filter.
+                  {t("copier.descriptionBefore")} <code>predictions_state</code> {t("copier.descriptionAfter")}
                 </div>
                 <div style={{ display: "grid", gridTemplateColumns: "repeat(2, minmax(0, 1fr))", gap: 10 }}>
                   <label style={{ display: "grid", gap: 6 }}>
-                    <span style={{ fontSize: 12, color: "var(--muted)" }}>Prediction TF</span>
+                    <span style={{ fontSize: 12, color: "var(--muted)" }}>{t("copier.fields.predictionTf")}</span>
                     <select className="input" value={copierTimeframe} onChange={(e) => setCopierTimeframe(e.target.value as CopierTimeframe)}>
                       <option value="5m">5m</option>
                       <option value="15m">15m</option>
@@ -206,7 +208,7 @@ export default function NewBotPage() {
                     </select>
                   </label>
                   <label style={{ display: "grid", gap: 6 }}>
-                    <span style={{ fontSize: 12, color: "var(--muted)" }}>Min confidence (%)</span>
+                    <span style={{ fontSize: 12, color: "var(--muted)" }}>{t("copier.fields.minConfidence")}</span>
                     <input
                       className="input"
                       type="number"
@@ -217,7 +219,7 @@ export default function NewBotPage() {
                     />
                   </label>
                   <label style={{ display: "grid", gap: 6 }}>
-                    <span style={{ fontSize: 12, color: "var(--muted)" }}>Max prediction age (sec)</span>
+                    <span style={{ fontSize: 12, color: "var(--muted)" }}>{t("copier.fields.maxPredictionAge")}</span>
                     <input
                       className="input"
                       type="number"
@@ -228,14 +230,14 @@ export default function NewBotPage() {
                     />
                   </label>
                   <label style={{ display: "grid", gap: 6 }}>
-                    <span style={{ fontSize: 12, color: "var(--muted)" }}>Order type</span>
+                    <span style={{ fontSize: 12, color: "var(--muted)" }}>{t("copier.fields.orderType")}</span>
                     <select className="input" value={copierOrderType} onChange={(e) => setCopierOrderType(e.target.value as CopierOrderType)}>
-                      <option value="market">market</option>
-                      <option value="limit">limit</option>
+                      <option value="market">{t("options.market")}</option>
+                      <option value="limit">{t("options.limit")}</option>
                     </select>
                   </label>
                   <label style={{ display: "grid", gap: 6 }}>
-                    <span style={{ fontSize: 12, color: "var(--muted)" }}>Sizing type</span>
+                    <span style={{ fontSize: 12, color: "var(--muted)" }}>{t("copier.fields.sizingType")}</span>
                     <select className="input" value={copierSizingType} onChange={(e) => setCopierSizingType(e.target.value as CopierSizingType)}>
                       <option value="fixed_usd">fixed_usd</option>
                       <option value="equity_pct">equity_pct</option>
@@ -243,7 +245,7 @@ export default function NewBotPage() {
                     </select>
                   </label>
                   <label style={{ display: "grid", gap: 6 }}>
-                    <span style={{ fontSize: 12, color: "var(--muted)" }}>Sizing value</span>
+                    <span style={{ fontSize: 12, color: "var(--muted)" }}>{t("copier.fields.sizingValue")}</span>
                     <input
                       className="input"
                       type="number"
@@ -255,19 +257,19 @@ export default function NewBotPage() {
                   </label>
                 </div>
                 <label style={{ display: "grid", gap: 6 }}>
-                  <span style={{ fontSize: 12, color: "var(--muted)" }}>Block tags (comma separated)</span>
+                  <span style={{ fontSize: 12, color: "var(--muted)" }}>{t("copier.fields.blockTags")}</span>
                   <input
                     className="input"
                     value={copierBlockTags}
                     onChange={(e) => setCopierBlockTags(e.target.value)}
-                    placeholder="news_risk,data_gap,low_liquidity"
+                    placeholder={t("copier.blockTagsPlaceholder")}
                   />
                 </label>
               </div>
             ) : null}
 
             <button className="btn btnPrimary" type="submit" disabled={!canCreate}>
-              {saving ? "Creating..." : "Create Bot"}
+              {saving ? t("actions.creating") : t("actions.createBot")}
             </button>
           </form>
         )}

@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { Suspense, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
+import { useTranslations } from "next-intl";
 import { ApiError, apiGet, apiPost } from "../../lib/api";
 import {
   buildTradeDeskPrefillPayload,
@@ -105,28 +106,28 @@ type QtyInputModeValue = "quantity" | "cost" | "value";
 
 type QtyInputModeOption = {
   value: QtyInputModeValue;
-  title: string;
-  description: string;
+  titleKey: "quantity" | "cost" | "value";
+  descriptionKey: "quantityDesc" | "costDesc" | "valueDesc";
   unit: string;
 };
 
 const QTY_INPUT_MODE_OPTIONS: QtyInputModeOption[] = [
   {
     value: "quantity",
-    title: "Quantity",
-    description: "Quantity of the futures position, measured in base asset.",
+    titleKey: "quantity",
+    descriptionKey: "quantityDesc",
     unit: "BASE"
   },
   {
     value: "cost",
-    title: "Cost",
-    description: "Margin amount used for the trade.",
+    titleKey: "cost",
+    descriptionKey: "costDesc",
     unit: "USDT"
   },
   {
     value: "value",
-    title: "Value",
-    description: "Notional value of the position.",
+    titleKey: "value",
+    descriptionKey: "valueDesc",
     unit: "USDT"
   }
 ];
@@ -181,6 +182,7 @@ function decodeBase64UrlJson(value: string): unknown | null {
 }
 
 function TradePageContent() {
+  const t = useTranslations("system.trade");
   const router = useRouter();
   const searchParams = useSearchParams();
   const wsBase = useMemo(() => toWsBase(API_BASE), []);
@@ -451,7 +453,7 @@ function TradePageContent() {
     }
 
     if (prefill.marketType === "spot" && prefill.signal === "down") {
-      setPrefillInfo("Spot short is not supported. Side prefill was skipped.");
+      setPrefillInfo(t("messages.spotShortNotSupported"));
       return;
     }
 
@@ -636,7 +638,7 @@ function TradePageContent() {
         }
 
         if (!parsedPrefill) {
-          setSoftWarning("Invalid prefill payload.");
+          setSoftWarning(t("messages.invalidPrefillPayload"));
         }
       } else if (predictionIdParam) {
         try {
@@ -644,7 +646,7 @@ function TradePageContent() {
             `/api/predictions/${encodeURIComponent(predictionIdParam)}`
           );
           if (!detail.accountId) {
-            setSoftWarning("Prediction has no exchange account mapping for prefill.");
+            setSoftWarning(t("messages.predictionNoAccountMapping"));
           } else {
             const built = buildTradeDeskPrefillPayload(detail);
             parsedPrefill = built.payload;
@@ -653,7 +655,7 @@ function TradePageContent() {
             }
           }
         } catch (e) {
-          setSoftWarning(`Unable to load prediction prefill (${errMsg(e)}).`);
+          setSoftWarning(t("messages.unableToLoadPredictionPrefill", { error: errMsg(e) }));
         }
       }
 
@@ -715,12 +717,12 @@ function TradePageContent() {
       }
 
       if (payload.type === "error") {
-        setError(payload.message ?? "Market websocket error");
+        setError(payload.message ?? t("messages.marketWebsocketError"));
       }
     };
 
     marketWs.onerror = () => {
-      setError("Market stream disconnected.");
+      setError(t("messages.marketStreamDisconnected"));
     };
 
     return () => {
@@ -788,7 +790,7 @@ function TradePageContent() {
     };
 
     userWs.onerror = () => {
-      setError("User stream disconnected.");
+      setError(t("messages.userStreamDisconnected"));
     };
 
     return () => {
@@ -826,7 +828,7 @@ function TradePageContent() {
 
     const parsedLeverage = Number(leverage);
     if (!Number.isFinite(parsedLeverage) || parsedLeverage < 1 || parsedLeverage > 125) {
-      setActionError("Leverage must be between 1 and 125.");
+      setActionError(t("messages.leverageRangeError"));
       return;
     }
 
@@ -856,12 +858,12 @@ function TradePageContent() {
     const parsedStopLoss = Number(stopLossPrice);
 
     if (!Number.isFinite(parsedQtyInput) || parsedQtyInput <= 0) {
-      setActionError("Quantity must be greater than 0.");
+      setActionError(t("messages.quantityGtZero"));
       return;
     }
 
     if (!orderQtyValue || !Number.isFinite(orderQtyValue) || orderQtyValue <= 0) {
-      setActionError("Unable to derive order quantity for selected unit.");
+      setActionError(t("messages.unableDeriveQty"));
       return;
     }
 
@@ -875,7 +877,7 @@ function TradePageContent() {
     }
 
     if (minQty !== null && Number.isFinite(minQty) && minQty > 0 && parsedQty < minQty) {
-      setActionError(`Quantity is below minimum (${minQty}).`);
+      setActionError(t("messages.quantityBelowMin", { min: String(minQty) }));
       return;
     }
 
@@ -884,12 +886,12 @@ function TradePageContent() {
     }
 
     if (orderType === "limit" && (!Number.isFinite(parsedPrice) || parsedPrice <= 0)) {
-      setActionError("Limit orders require a valid price.");
+      setActionError(t("messages.limitRequiresPrice"));
       return;
     }
 
     if (!Number.isFinite(parsedLeverage) || parsedLeverage < 1 || parsedLeverage > 125) {
-      setActionError("Leverage must be between 1 and 125.");
+      setActionError(t("messages.leverageRangeError"));
       return;
     }
 
@@ -898,7 +900,7 @@ function TradePageContent() {
       takeProfitPrice.trim().length > 0 &&
       (!Number.isFinite(parsedTakeProfit) || parsedTakeProfit <= 0)
     ) {
-      setActionError("Take profit must be greater than 0.");
+      setActionError(t("messages.takeProfitGtZero"));
       return;
     }
 
@@ -907,7 +909,7 @@ function TradePageContent() {
       stopLossPrice.trim().length > 0 &&
       (!Number.isFinite(parsedStopLoss) || parsedStopLoss <= 0)
     ) {
-      setActionError("Stop loss must be greater than 0.");
+      setActionError(t("messages.stopLossGtZero"));
       return;
     }
 
@@ -1006,22 +1008,22 @@ function TradePageContent() {
     <div className="tradeDeskWrap">
       <div className="dashboardHeader">
         <div>
-          <h2 style={{ margin: 0 }}>Manual Trading Desk</h2>
+          <h2 style={{ margin: 0 }}>{t("title")}</h2>
           <div style={{ fontSize: 13, color: "var(--muted)" }}>
-            TradingView + futures order controls.
+            {t("subtitle")}
           </div>
         </div>
         <div className="tradeDeskActions">
-          <Link href="/dashboard" className="btn">Dashboard</Link>
+          <Link href="/dashboard" className="btn">{t("actions.dashboard")}</Link>
           <Link href={selectedAccountId ? `/bots?exchangeAccountId=${encodeURIComponent(selectedAccountId)}` : "/bots"} className="btn">
-            Bots
+            {t("actions.bots")}
           </Link>
         </div>
       </div>
 
       {error ? (
         <div className="card tradeDeskNotice tradeDeskNoticeError">
-          <strong>Error:</strong> {error}
+          <strong>{t("alerts.error")}:</strong> {error}
           <div style={{ marginTop: 8 }}>
             <button
               className="btn"
@@ -1030,7 +1032,7 @@ function TradePageContent() {
                 void loadDeskData(selectedAccountId, selectedSymbol);
               }}
             >
-              Retry
+              {t("actions.retry")}
             </button>
           </div>
         </div>
@@ -1038,13 +1040,13 @@ function TradePageContent() {
 
       {actionError ? (
         <div className="card tradeDeskNotice tradeDeskNoticeError">
-          <strong>Action failed:</strong> {actionError}
+          <strong>{t("alerts.actionFailed")}:</strong> {actionError}
         </div>
       ) : null}
 
       {softWarning ? (
         <div className="card tradeDeskNotice tradeDeskNoticeWarn">
-          <strong>Warning:</strong> {softWarning}
+          <strong>{t("alerts.warning")}:</strong> {softWarning}
         </div>
       ) : null}
 
@@ -1052,20 +1054,20 @@ function TradePageContent() {
         <div className="card tradeDeskNotice tradeDeskNoticeInfo">
           <div style={{ display: "flex", justifyContent: "space-between", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
             <div>
-              <strong>Prediction Context</strong>
+              <strong>{t("prefill.title")}</strong>
               <div style={{ fontSize: 12, color: "var(--muted)", marginTop: 4 }}>
                 {activePrefill.symbol} · {activePrefill.marketType} · {activePrefill.timeframe} · {fmtConfidence(activePrefill.confidence)} ·{" "}
                 {new Date(activePrefill.tsCreated).toLocaleString()}
               </div>
               <div style={{ fontSize: 12, color: "var(--muted)", marginTop: 2 }}>
-                Signal: {activePrefill.signal} · Side: {activePrefill.side ?? "manual"}
+                {t("prefill.signal")}: {activePrefill.signal} · {t("prefill.side")}: {activePrefill.side ?? t("prefill.manual")}
                 {typeof activePrefill.expectedMovePct === "number"
-                  ? ` · Move: ${activePrefill.expectedMovePct.toFixed(2)}%`
+                  ? ` · ${t("prefill.move")}: ${activePrefill.expectedMovePct.toFixed(2)}%`
                   : ""}
               </div>
               {activePrefill.leverage ? (
                 <div style={{ fontSize: 12, color: "var(--muted)", marginTop: 2 }}>
-                  Prefill leverage: {activePrefill.leverage}x
+                  {t("prefill.prefillLeverage")}: {activePrefill.leverage}x
                 </div>
               ) : null}
             </div>
@@ -1075,14 +1077,14 @@ function TradePageContent() {
                 type="button"
                 onClick={() => setPrefillContextExpanded((prev) => !prev)}
               >
-                {prefillContextExpanded ? "Hide context" : "Show context"}
+                {prefillContextExpanded ? t("prefill.hideContext") : t("prefill.showContext")}
               </button>
-              <Link href="/predictions" className="btn">Back to Prediction</Link>
-              <button className="btn" onClick={clearPrefill} type="button">Clear Prefill</button>
+              <Link href="/predictions" className="btn">{t("prefill.backToPrediction")}</Link>
+              <button className="btn" onClick={clearPrefill} type="button">{t("prefill.clearPrefill")}</button>
             </div>
           </div>
           <div style={{ marginTop: 8, fontSize: 12, color: "var(--muted)" }}>
-            Prediction ID: {activePrefill.predictionId}
+            {t("prefill.predictionId")}: {activePrefill.predictionId}
           </div>
           {prefillInfo ? (
             <div style={{ marginTop: 8, fontSize: 12, color: "#f59e0b" }}>{prefillInfo}</div>
@@ -1099,7 +1101,7 @@ function TradePageContent() {
 
               {activePrefill.explanation ? (
                 <details>
-                  <summary style={{ cursor: "pointer", fontSize: 12 }}>AI explanation</summary>
+                  <summary style={{ cursor: "pointer", fontSize: 12 }}>{t("prefill.aiExplanation")}</summary>
                   <div style={{ marginTop: 6, fontSize: 12 }}>{activePrefill.explanation}</div>
                 </details>
               ) : null}
@@ -1126,7 +1128,7 @@ function TradePageContent() {
                   <div style={{ fontSize: 11, color: "var(--muted)" }}>VWAP dist%</div>
                   <div style={{ fontWeight: 700 }}>{fmtIndicator(activePrefill.indicators?.vwap?.dist_pct, 2)}</div>
                   <div style={{ fontSize: 11, color: "var(--muted)", marginTop: 2 }}>
-                    mode {activePrefill.indicators?.vwap?.mode ?? "n/a"}
+                    mode {activePrefill.indicators?.vwap?.mode ?? t("misc.na")}
                   </div>
                 </div>
                 <div className="card" style={{ margin: 0, padding: 8 }}>
@@ -1162,7 +1164,7 @@ function TradePageContent() {
               </div>
 
               <div className="card" style={{ margin: 0, padding: 8 }}>
-                <div style={{ fontSize: 11, color: "var(--muted)", marginBottom: 4 }}>Key drivers</div>
+                <div style={{ fontSize: 11, color: "var(--muted)", marginBottom: 4 }}>{t("prefill.keyDrivers")}</div>
                 {activePrefill.keyDrivers?.length ? (
                   <ul style={{ margin: 0, paddingLeft: 18, fontSize: 12 }}>
                     {activePrefill.keyDrivers.slice(0, 5).map((driver) => (
@@ -1172,7 +1174,7 @@ function TradePageContent() {
                     ))}
                   </ul>
                 ) : (
-                  <div style={{ fontSize: 12, color: "var(--muted)" }}>n/a</div>
+                  <div style={{ fontSize: 12, color: "var(--muted)" }}>{t("misc.na")}</div>
                 )}
               </div>
             </div>
@@ -1181,29 +1183,29 @@ function TradePageContent() {
       ) : null}
 
       {loading ? (
-        <div className="card tradeDeskSection">Loading trading desk…</div>
+        <div className="card tradeDeskSection">{t("loadingDesk")}</div>
       ) : accounts.length === 0 ? (
         <div className="card tradeDeskSection">
-          <div style={{ fontWeight: 700, marginBottom: 8 }}>No exchange accounts available</div>
+          <div style={{ fontWeight: 700, marginBottom: 8 }}>{t("noAccountsTitle")}</div>
           <div style={{ color: "var(--muted)", marginBottom: 12 }}>
-            Add a Bitget account first to use manual trading.
+            {t("noAccountsHint")}
           </div>
-          <Link href="/settings" className="btn btnPrimary">Add Exchange Account</Link>
+          <Link href="/settings" className="btn btnPrimary">{t("actions.addExchangeAccount")}</Link>
         </div>
       ) : (
         <>
           <section className="card tradeDeskSection">
             <div className="tradeDeskSectionHeader">
               <div>
-                <div className="tradeDeskSectionTitle">Trading Context</div>
+                <div className="tradeDeskSectionTitle">{t("sections.tradingContext")}</div>
                 <div className="tradeDeskSectionHint">
-                  Select account, symbol and timeframe used by chart and order ticket.
+                  {t("contextHint")}
                 </div>
               </div>
             </div>
             <div className="tradeDeskContextGrid">
               <label className="tradeDeskField">
-                <div className="tradeDeskFieldLabel">Exchange account</div>
+                <div className="tradeDeskFieldLabel">{t("fields.exchangeAccount")}</div>
                 <select
                   className="input"
                   value={selectedAccountId}
@@ -1222,7 +1224,7 @@ function TradePageContent() {
               </label>
 
               <label className="tradeDeskField">
-                <div className="tradeDeskFieldLabel">Symbol</div>
+                <div className="tradeDeskFieldLabel">{t("fields.symbol")}</div>
                 <select
                   className="input"
                   value={selectedSymbol}
@@ -1235,14 +1237,14 @@ function TradePageContent() {
                 >
                   {symbols.map((symbol) => (
                     <option key={symbol.symbol} value={symbol.symbol}>
-                      {symbol.symbol} {symbol.tradable ? "" : "(restricted)"}
+                      {symbol.symbol} {symbol.tradable ? "" : `(${t("misc.restricted")})`}
                     </option>
                   ))}
                 </select>
               </label>
 
               <label className="tradeDeskField">
-                <div className="tradeDeskFieldLabel">Timeframe</div>
+                <div className="tradeDeskFieldLabel">{t("fields.timeframe")}</div>
                 <select
                   className="input"
                   value={timeframe}
@@ -1259,9 +1261,9 @@ function TradePageContent() {
               </label>
 
               <div className="tradeDeskField">
-                <div className="tradeDeskFieldLabel">Account Snapshot</div>
+                <div className="tradeDeskFieldLabel">{t("fields.accountSnapshot")}</div>
                 <div className="card tradeDeskSummary">
-                  Eq: {fmt(summary?.equity)} | Avail: {fmt(summary?.availableMargin)}
+                  {t("fields.eq")}: {fmt(summary?.equity)} | {t("fields.avail")}: {fmt(summary?.availableMargin)}
                 </div>
               </div>
             </div>
@@ -1274,7 +1276,7 @@ function TradePageContent() {
               <div className="tradeDeskPaneTitle">
                 {selectedSymbol} {selectedSymbolMeta?.status ? `- ${selectedSymbolMeta.status}` : ""}
               </div>
-              <div className="tradeDeskPaneHint">Live market chart</div>
+              <div className="tradeDeskPaneHint">{t("sections.liveMarketChart")}</div>
               <LightweightChart
                 exchangeAccountId={selectedAccountId}
                 symbol={selectedSymbol}
@@ -1284,8 +1286,8 @@ function TradePageContent() {
             </article>
 
             <article className="card tradeDeskPane">
-              <div className="tradeDeskPaneTitle">Order Entry</div>
-              <div className="tradeDeskPaneHint">Place manual futures orders with live account data.</div>
+              <div className="tradeDeskPaneTitle">{t("sections.orderEntry")}</div>
+              <div className="tradeDeskPaneHint">{t("orderEntryHint")}</div>
 
               <div className="tradeOrderPanel">
                 <div className="tradeOrderTopRow">
@@ -1298,7 +1300,7 @@ function TradePageContent() {
                       }}
                       type="button"
                     >
-                      Isolated
+                      {t("fields.isolated")}
                     </button>
                     <button
                       className={`tradeOrderModeBtn ${marginMode === "cross" ? "tradeOrderModeBtnActive" : ""}`}
@@ -1308,11 +1310,11 @@ function TradePageContent() {
                       }}
                       type="button"
                     >
-                      Cross
+                      {t("fields.cross")}
                     </button>
                   </div>
                   <div className="tradeOrderLeverageControl">
-                    <div className="tradeOrderLeverageLabel">Leverage (x)</div>
+                    <div className="tradeOrderLeverageLabel">{t("fields.leverage")}</div>
                     <div className="tradeOrderLeverageGroup">
                       <input
                         className="tradeOrderLeverageInput"
@@ -1329,7 +1331,7 @@ function TradePageContent() {
                         onClick={() => void applyLeverage()}
                         type="button"
                       >
-                        {isApplyingLeverage ? "..." : "Apply"}
+                        {isApplyingLeverage ? "..." : t("actions.apply")}
                       </button>
                     </div>
                   </div>
@@ -1341,14 +1343,14 @@ function TradePageContent() {
                     onClick={() => setEntryMode("open")}
                     type="button"
                   >
-                    Open
+                    {t("actions.open")}
                   </button>
                   <button
                     className={`tradeOrderEntryModeBtn ${entryMode === "close" ? "tradeOrderEntryModeBtnActive" : ""}`}
                     onClick={() => setEntryMode("close")}
                     type="button"
                   >
-                    Close
+                    {t("actions.close")}
                   </button>
                 </div>
 
@@ -1358,25 +1360,25 @@ function TradePageContent() {
                     onClick={() => setOrderType("limit")}
                     type="button"
                   >
-                    Limit
+                    {t("fields.limit")}
                   </button>
                   <button
                     className={`tradeOrderTypeTab ${orderType === "market" ? "tradeOrderTypeTabActive" : ""}`}
                     onClick={() => setOrderType("market")}
                     type="button"
                   >
-                    Market
+                    {t("fields.market")}
                   </button>
                 </div>
 
                 <div className="tradeOrderMetaRow">
-                  <span>Available</span>
+                  <span>{t("fields.available")}</span>
                   <strong>{fmt(summary?.availableMargin, 3)} USDT</strong>
                 </div>
 
                 {orderType === "limit" ? (
                   <label className="tradeOrderField">
-                    <span>Price</span>
+                    <span>{t("fields.price")}</span>
                     <div className="tradeOrderInputRow">
                       <input
                         className="tradeOrderInput"
@@ -1401,7 +1403,7 @@ function TradePageContent() {
                 ) : null}
 
                 <label className="tradeOrderField">
-                  <span>{qtyInputModeOption.title}</span>
+                  <span>{t(`qtyMode.${qtyInputModeOption.titleKey}`)}</span>
                   <div className="tradeOrderInputRow">
                     <input
                       className="tradeOrderInput"
@@ -1434,21 +1436,21 @@ function TradePageContent() {
 
                 <div className="tradeOrderDualStats">
                   <div className="tradeOrderDualRow">
-                    <span>Position size</span>
+                    <span>{t("fields.positionSize")}</span>
                     <strong>
                       <span>{fmt(orderQtyValue, 4)}</span>
                       <span className="tradeOrderValueUnit"> {baseAssetUnit}</span>
                     </strong>
                   </div>
                   <div className="tradeOrderDualRow">
-                    <span>Cost</span>
+                    <span>{t("fields.cost")}</span>
                     <strong>
                       <span>{fmt(estimatedCost, 4)}</span>
                       <span className="tradeOrderValueUnit"> USDT</span>
                     </strong>
                   </div>
                   <div className="tradeOrderDualRow">
-                    <span>Est. liq. price</span>
+                    <span>{t("fields.estimatedLiqPrice")}</span>
                     <strong>
                       <span className="tradeOrderValueLong">{fmt(estimatedLiquidation.long, 1)}</span>
                       <span className="tradeOrderValueSlash"> / </span>
@@ -1463,13 +1465,13 @@ function TradePageContent() {
                     checked={tpSlEnabled}
                     onChange={(event) => setTpSlEnabled(event.target.checked)}
                   />
-                  <span>TP/SL</span>
+                  <span>{t("fields.tpSl")}</span>
                 </label>
 
                 {tpSlEnabled ? (
                   <div className="tradeOrderTpSlGrid">
                     <label className="tradeOrderField">
-                      <span>Take Profit</span>
+                      <span>{t("fields.takeProfit")}</span>
                       <input
                         className="tradeOrderInput"
                         value={takeProfitPrice}
@@ -1478,7 +1480,7 @@ function TradePageContent() {
                       />
                     </label>
                     <label className="tradeOrderField">
-                      <span>Stop Loss</span>
+                      <span>{t("fields.stopLoss")}</span>
                       <input
                         className="tradeOrderInput"
                         value={stopLossPrice}
@@ -1490,14 +1492,14 @@ function TradePageContent() {
                 ) : null}
 
                 <div className="tradeOrderMetaRow">
-                  <span>Time in force</span>
+                  <span>{t("fields.timeInForce")}</span>
                   <strong>{orderType === "limit" ? "GTC" : "IOC"}</strong>
                 </div>
 
                 {activePrefill ? (
                   <div className="tradeOrderMetaRow">
-                    <span>Prefilled side</span>
-                    <strong>{activePrefill.side ? activePrefill.side.toUpperCase() : "Manual selection required"}</strong>
+                    <span>{t("fields.prefilledSide")}</span>
+                    <strong>{activePrefill.side ? activePrefill.side.toUpperCase() : t("fields.manualSelectionRequired")}</strong>
                   </div>
                 ) : null}
 
@@ -1509,8 +1511,8 @@ function TradePageContent() {
                     onClick={() => void submitOrder("long")}
                     type="button"
                   >
-                    {entryMode === "open" ? "Open Long" : "Close Short"}
-                    {activePrefill?.side === "long" ? " (Suggested)" : ""}
+                    {entryMode === "open" ? t("actions.openLong") : t("actions.closeShort")}
+                    {activePrefill?.side === "long" ? ` (${t("actions.suggested")})` : ""}
                   </button>
                   <button
                     className="btn btnStop"
@@ -1519,27 +1521,27 @@ function TradePageContent() {
                     onClick={() => void submitOrder("short")}
                     type="button"
                   >
-                    {entryMode === "open" ? "Open Short" : "Close Long"}
-                    {activePrefill?.side === "short" ? " (Suggested)" : ""}
+                    {entryMode === "open" ? t("actions.openShort") : t("actions.closeLong")}
+                    {activePrefill?.side === "short" ? ` (${t("actions.suggested")})` : ""}
                   </button>
                 </div>
 
                 <div className="tradeOrderMetaRow">
-                  <span>Max</span>
+                  <span>{t("fields.max")}</span>
                   <strong>{estimatedMaxInputByMode ? `${fmt(estimatedMaxInputByMode, 4)} ${qtyDisplayUnit}` : "-"}</strong>
                 </div>
 
-                <button className="btn" onClick={() => void cancelAll()} type="button">Cancel All ({selectedSymbol})</button>
+                <button className="btn" onClick={() => void cancelAll()} type="button">{t("actions.cancelAll")} ({selectedSymbol})</button>
 
                 <div className="tradeOrderDivider" />
 
-                <div className="tradeOrderInfoTitle">Account</div>
+                <div className="tradeOrderInfoTitle">{t("fields.account")}</div>
                 <div className="tradeOrderInfoGrid">
-                  <div className="tradeOrderInfoRow"><span>Margin</span><strong>{fmt(summary?.availableMargin, 3)}</strong></div>
-                  <div className="tradeOrderInfoRow"><span>Equity</span><strong>{fmt(summary?.equity, 3)}</strong></div>
-                  <div className="tradeOrderInfoRow"><span>Last</span><strong>{fmt(ticker?.last, 4)}</strong></div>
-                  <div className="tradeOrderInfoRow"><span>Mark</span><strong>{fmt(ticker?.mark, 4)}</strong></div>
-                  <div className="tradeOrderInfoRow"><span>Bid / Ask</span><strong>{fmt(ticker?.bid, 4)} / {fmt(ticker?.ask, 4)}</strong></div>
+                  <div className="tradeOrderInfoRow"><span>{t("fields.margin")}</span><strong>{fmt(summary?.availableMargin, 3)}</strong></div>
+                  <div className="tradeOrderInfoRow"><span>{t("fields.equity")}</span><strong>{fmt(summary?.equity, 3)}</strong></div>
+                  <div className="tradeOrderInfoRow"><span>{t("fields.last")}</span><strong>{fmt(ticker?.last, 4)}</strong></div>
+                  <div className="tradeOrderInfoRow"><span>{t("fields.mark")}</span><strong>{fmt(ticker?.mark, 4)}</strong></div>
+                  <div className="tradeOrderInfoRow"><span>{t("fields.bidAsk")}</span><strong>{fmt(ticker?.bid, 4)} / {fmt(ticker?.ask, 4)}</strong></div>
                 </div>
 
                 <div className="tradeOrderSelectedAccount">
@@ -1552,28 +1554,28 @@ function TradePageContent() {
           <section className="card tradeDeskSection">
             <div className="tradeDeskSectionHeader">
               <div>
-                <div className="tradeDeskSectionTitle">Positions</div>
-                <div className="tradeDeskSectionHint">Open positions for the selected market.</div>
+                <div className="tradeDeskSectionTitle">{t("sections.positions")}</div>
+                <div className="tradeDeskSectionHint">{t("positions.hint")}</div>
               </div>
-              <div className="tradeDeskSectionHint">Symbol: {selectedSymbol}</div>
+              <div className="tradeDeskSectionHint">{t("positions.symbol")}: {selectedSymbol}</div>
             </div>
 
             <div style={{ overflowX: "auto" }}>
               <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
                 <thead>
                   <tr style={{ textAlign: "left", color: "var(--muted)" }}>
-                    <th style={{ padding: "8px 6px" }}>Side</th>
-                    <th style={{ padding: "8px 6px" }}>Size</th>
-                    <th style={{ padding: "8px 6px" }}>Entry</th>
-                    <th style={{ padding: "8px 6px" }}>Mark</th>
-                    <th style={{ padding: "8px 6px" }}>PnL</th>
-                    <th style={{ padding: "8px 6px" }}>Action</th>
+                    <th style={{ padding: "8px 6px" }}>{t("positions.columns.side")}</th>
+                    <th style={{ padding: "8px 6px" }}>{t("positions.columns.size")}</th>
+                    <th style={{ padding: "8px 6px" }}>{t("positions.columns.entry")}</th>
+                    <th style={{ padding: "8px 6px" }}>{t("positions.columns.mark")}</th>
+                    <th style={{ padding: "8px 6px" }}>{t("positions.columns.pnl")}</th>
+                    <th style={{ padding: "8px 6px" }}>{t("positions.columns.action")}</th>
                   </tr>
                 </thead>
                 <tbody>
                   {positions.length === 0 ? (
                     <tr>
-                      <td colSpan={6} style={{ padding: 10, color: "var(--muted)" }}>No open positions.</td>
+                      <td colSpan={6} style={{ padding: 10, color: "var(--muted)" }}>{t("positions.empty")}</td>
                     </tr>
                   ) : (
                     positions.map((position, index) => (
@@ -1586,7 +1588,7 @@ function TradePageContent() {
                           {fmt(position.unrealizedPnl, 2)}
                         </td>
                         <td style={{ padding: "8px 6px" }}>
-                          <button className="btn" onClick={() => void closePosition(position.side)}>Close</button>
+                          <button className="btn" onClick={() => void closePosition(position.side)}>{t("actions.close")}</button>
                         </td>
                       </tr>
                     ))
@@ -1599,29 +1601,29 @@ function TradePageContent() {
           <section className="card tradeDeskSection">
             <div className="tradeDeskSectionHeader">
               <div>
-                <div className="tradeDeskSectionTitle">Open Orders</div>
-                <div className="tradeDeskSectionHint">Manage active orders before they fill.</div>
+                <div className="tradeDeskSectionTitle">{t("sections.openOrders")}</div>
+                <div className="tradeDeskSectionHint">{t("orders.hint")}</div>
               </div>
-              <button className="btn" onClick={() => void cancelAll()}>Cancel All</button>
+              <button className="btn" onClick={() => void cancelAll()}>{t("actions.cancelAll")}</button>
             </div>
 
             <div style={{ overflowX: "auto" }}>
               <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
                 <thead>
                   <tr style={{ textAlign: "left", color: "var(--muted)" }}>
-                    <th style={{ padding: "8px 6px" }}>Order ID</th>
-                    <th style={{ padding: "8px 6px" }}>Side</th>
-                    <th style={{ padding: "8px 6px" }}>Type</th>
-                    <th style={{ padding: "8px 6px" }}>Price</th>
-                    <th style={{ padding: "8px 6px" }}>Qty</th>
-                    <th style={{ padding: "8px 6px" }}>Status</th>
-                    <th style={{ padding: "8px 6px" }}>Action</th>
+                    <th style={{ padding: "8px 6px" }}>{t("orders.columns.orderId")}</th>
+                    <th style={{ padding: "8px 6px" }}>{t("orders.columns.side")}</th>
+                    <th style={{ padding: "8px 6px" }}>{t("orders.columns.type")}</th>
+                    <th style={{ padding: "8px 6px" }}>{t("orders.columns.price")}</th>
+                    <th style={{ padding: "8px 6px" }}>{t("orders.columns.qty")}</th>
+                    <th style={{ padding: "8px 6px" }}>{t("orders.columns.status")}</th>
+                    <th style={{ padding: "8px 6px" }}>{t("orders.columns.action")}</th>
                   </tr>
                 </thead>
                 <tbody>
                   {openOrders.length === 0 ? (
                     <tr>
-                      <td colSpan={7} style={{ padding: 10, color: "var(--muted)" }}>No open orders.</td>
+                      <td colSpan={7} style={{ padding: 10, color: "var(--muted)" }}>{t("orders.empty")}</td>
                     </tr>
                   ) : (
                     openOrders.map((order) => (
@@ -1633,7 +1635,7 @@ function TradePageContent() {
                         <td style={{ padding: "8px 6px" }}>{fmt(order.qty, 6)}</td>
                         <td style={{ padding: "8px 6px" }}>{order.status ?? "-"}</td>
                         <td style={{ padding: "8px 6px" }}>
-                          <button className="btn" onClick={() => void cancelOrder(order.orderId)}>Cancel</button>
+                          <button className="btn" onClick={() => void cancelOrder(order.orderId)}>{t("actions.cancel")}</button>
                         </td>
                       </tr>
                     ))
@@ -1649,12 +1651,12 @@ function TradePageContent() {
         <div className="tradeModalBackdrop" onClick={() => setIsQtyModeModalOpen(false)}>
           <div className="tradeModalCard" onClick={(event) => event.stopPropagation()}>
             <div className="tradeModalHeader">
-              <h3>Futures unit setting</h3>
+              <h3>{t("qtyMode.title")}</h3>
               <button
                 type="button"
                 className="tradeModalCloseBtn"
                 onClick={() => setIsQtyModeModalOpen(false)}
-                aria-label="Close"
+                aria-label={t("actions.close")}
               >
                 ×
               </button>
@@ -1672,9 +1674,9 @@ function TradePageContent() {
                     onClick={() => setQtyInputModeDraft(option.value)}
                   >
                     <div className="tradeModalOptionTitle">
-                      {option.title}-{unit}
+                      {t(`qtyMode.${option.titleKey}`)}-{unit}
                     </div>
-                    <div className="tradeModalOptionDescription">{option.description}</div>
+                    <div className="tradeModalOptionDescription">{t(`qtyMode.${option.descriptionKey}`)}</div>
                   </button>
                 );
               })}
@@ -1686,7 +1688,7 @@ function TradePageContent() {
                 className="tradeModalSecondaryBtn"
                 onClick={() => setIsQtyModeModalOpen(false)}
               >
-                Cancel
+                {t("actions.cancel")}
               </button>
               <button
                 type="button"
@@ -1698,7 +1700,7 @@ function TradePageContent() {
                   setIsQtyModeModalOpen(false);
                 }}
               >
-                Confirm
+                {t("actions.confirm")}
               </button>
             </div>
           </div>
@@ -1709,8 +1711,9 @@ function TradePageContent() {
 }
 
 export default function TradePage() {
+  const t = useTranslations("system.trade");
   return (
-    <Suspense fallback={<div>Loading trade page…</div>}>
+    <Suspense fallback={<div>{t("loadingPage")}</div>}>
       <TradePageContent />
     </Suspense>
   );

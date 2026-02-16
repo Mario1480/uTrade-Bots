@@ -2,5 +2,376 @@
   "maintenance": {
     "title": "Maintenance mode",
     "description": "Trading actions are disabled while the system is in read-only mode."
+  },
+  "botsList": {
+    "title": "Bots",
+    "titleSuffix": " for account {account}",
+    "statusFilter": "Status filter: {status}",
+    "allStatuses": "All bot statuses",
+    "loadError": "Load error",
+    "loading": "Loading bots...",
+    "loadingPage": "Loading bots page...",
+    "emptyTitle": "No bots match this filter",
+    "emptyHint": "Try another account/status filter or create a new bot.",
+    "noAccount": "No Account",
+    "actions": {
+      "dashboard": "Dashboard",
+      "newBot": "New Bot",
+      "createBot": "Create Bot",
+      "open": "Open",
+      "manualTrading": "Manual Trading"
+    }
+  },
+  "botsNew": {
+    "title": "Create Bot",
+    "subtitle": "Bot is bound to one exchange account.",
+    "noExchangeAccount": "No exchange account found.",
+    "fields": {
+      "name": "Name",
+      "symbol": "Symbol",
+      "exchangeAccount": "Exchange Account",
+      "strategy": "Strategy",
+      "marginMode": "Margin Mode",
+      "leverage": "Leverage",
+      "tickMs": "Tick (ms)"
+    },
+    "options": {
+      "isolated": "isolated",
+      "cross": "cross",
+      "market": "market",
+      "limit": "limit"
+    },
+    "actions": {
+      "back": "Back",
+      "addExchangeAccount": "Add exchange account",
+      "creating": "Creating...",
+      "createBot": "Create Bot"
+    },
+    "copier": {
+      "title": "Prediction Copier Settings",
+      "descriptionBefore": "Copies signals from",
+      "descriptionAfter": "(enter/exit) with risk filter.",
+      "fields": {
+        "predictionTf": "Prediction TF",
+        "minConfidence": "Min confidence (%)",
+        "maxPredictionAge": "Max prediction age (sec)",
+        "orderType": "Order type",
+        "sizingType": "Sizing type",
+        "sizingValue": "Sizing value",
+        "blockTags": "Block tags (comma separated)"
+      },
+      "blockTagsPlaceholder": "news_risk,data_gap,low_liquidity"
+    }
+  },
+  "botsDetails": {
+    "loadError": "Load error",
+    "loading": "Loading...",
+    "na": "n/a",
+    "futuresConfigTitle": "Futures Config",
+    "actions": {
+      "back": "Back",
+      "start": "Start",
+      "starting": "Starting...",
+      "stop": "Stop",
+      "stopping": "Stopping..."
+    },
+    "fields": {
+      "botStatus": "Bot status",
+      "exchangeAccount": "Exchange account",
+      "runnerStatus": "Runner status",
+      "runtimeReason": "Runtime reason",
+      "runtimeUpdated": "Runtime updated",
+      "strategy": "Strategy",
+      "marginMode": "Margin mode",
+      "leverage": "Leverage",
+      "tickInterval": "Tick interval",
+      "testnet": "Testnet"
+    }
+  },
+  "botsPriceSupport": {
+    "title": "Futures Extensions",
+    "description": "This route is reserved for future futures-specific extensions.",
+    "backToBot": "Back to Bot"
+  },
+  "botsSettings": {
+    "title": "Bot Settings",
+    "description": "Futures skeleton mode is active. Advanced per-bot settings are intentionally reduced.",
+    "backToBot": "Back to Bot",
+    "dashboard": "Dashboard"
+  },
+  "calendar": {
+    "title": "Economic Calendar",
+    "subtitle": "High-impact macro events and blackout status.",
+    "filters": {
+      "currency": "Currency",
+      "impact": "Impact",
+      "from": "From",
+      "to": "To"
+    },
+    "impact": {
+      "high": "high",
+      "medium": "medium",
+      "low": "low"
+    },
+    "actions": {
+      "today": "Today",
+      "next3d": "Next 3d",
+      "refresh": "Refresh"
+    },
+    "summary": {
+      "blackoutActive": "Blackout active",
+      "noBlackout": "No active blackout",
+      "until": "Until",
+      "nextEvent": "Next {impact} event",
+      "at": "at",
+      "noUpcoming": "No upcoming events in selected range."
+    },
+    "loadError": "Load error",
+    "eventsTitle": "Events",
+    "loadingEvents": "Loading events...",
+    "noEvents": "No events found for the selected filters.",
+    "forecast": "Forecast",
+    "previous": "Previous",
+    "actual": "Actual"
+  },
+  "settingsMain": {
+    "title": "Settings",
+    "subtitle": "User self-service and exchange account management.",
+    "messages": {
+      "saved": "Saved.",
+      "saving": "saving...",
+      "updated": "updated",
+      "passwordsDoNotMatch": "Passwords do not match.",
+      "sendingCode": "sending code...",
+      "validMinutes": "valid {minutes} min",
+      "resetCodeSent": "If the account exists, a reset code was sent{expires}.",
+      "updatingPassword": "updating password...",
+      "newPasswordMismatch": "New password and confirmation do not match.",
+      "passwordUpdated": "Password updated. Please sign in again if your session expires."
+    },
+    "admin": {
+      "access": "Access",
+      "description": "User management, global Telegram, offered CEX list and SMTP settings.",
+      "openBackend": "Open admin backend"
+    },
+    "account": {
+      "title": "Account",
+      "profile": "Profile"
+    },
+    "sections": {
+      "accountSettings": "Account Settings",
+      "integrationsSecurity": "Integrations / Security",
+      "exchangeSettings": "Exchange Settings",
+      "security": "Security",
+      "notifications": "Notifications",
+      "licenseManagement": "License Management"
+    },
+    "exchange": {
+      "addTitle": "Add Exchange Account",
+      "paperHint": "Paper accounts simulate execution and require one live account for market data.",
+      "noEnabledExchange": "No exchange is enabled by admin yet.",
+      "fields": {
+        "exchange": "Exchange",
+        "label": "Label",
+        "marketDataAccount": "Market data account (required)",
+        "apiKey": "API Key",
+        "apiSecret": "API Secret",
+        "passphraseRequired": "Passphrase (required for Bitget)",
+        "passphraseOptional": "Passphrase (optional)"
+      },
+      "selectLiveCex": "Select live CEX account",
+      "createLiveFirst": "Create a live exchange account first.",
+      "addAccount": "Add account",
+      "existingAccounts": "Existing Accounts",
+      "noAccounts": "No accounts yet.",
+      "marketData": "Market data",
+      "notConfigured": "Not configured",
+      "lastSync": "Last sync",
+      "never": "Never",
+      "syncing": "Syncing...",
+      "syncNow": "Sync now"
+    },
+    "security": {
+      "description": "Manage password and session security without leaving this page.",
+      "passwordTitle": "Password",
+      "currentPassword": "Current password",
+      "newPassword": "New password",
+      "confirmPassword": "Confirm new password",
+      "createPassword": "Create new password",
+      "sessionTitle": "Session Security",
+      "autoLogout": "Enable auto-logout",
+      "idleMinutes": "Idle minutes",
+      "requireOtp": "Require OTP re-auth for sensitive actions",
+      "resetTitle": "Reset via Email Code",
+      "resetDescription": "Use this if you forgot your current password.",
+      "accountEmail": "Account email",
+      "emailPlaceholder": "you@example.com",
+      "sendResetCode": "Send reset code",
+      "resetCode": "Reset code (6 digits)",
+      "resetCodePlaceholder": "123456",
+      "resetPassword": "Reset password",
+      "devResetCode": "Dev reset code"
+    },
+    "notifications": {
+      "description": "Configure Telegram alerts for tradable prediction signals directly here.",
+      "openBot": "Open Bot (@utrade_ai_signals_bot)",
+      "botTokenManaged": "Bot token is managed globally by admin. You only need your Chat ID here.",
+      "tokenMissing": "Telegram bot token is not configured by admin yet.",
+      "tipBefore": "Tip: For Telegram groups, the Chat ID usually starts with",
+      "tipAfter": ".",
+      "chatId": "Chat ID",
+      "sending": "Sending...",
+      "sendTest": "Send test message"
+    },
+    "license": {
+      "prepared": "License controls are prepared but currently disabled in this environment.",
+      "onceEnabled": "Once enabled, this section will provide license status, key management, and verification actions.",
+      "open": "Open license management",
+      "currentlyDisabled": "Currently disabled",
+      "disabledLabel": "License Management (Disabled)"
+    },
+    "actions": {
+      "delete": "Delete"
+    }
+  },
+  "trade": {
+    "title": "Manual Trading Desk",
+    "subtitle": "TradingView + futures order controls.",
+    "loadingPage": "Loading trade page...",
+    "loadingDesk": "Loading trading desk...",
+    "noAccountsTitle": "No exchange accounts available",
+    "noAccountsHint": "Add a Bitget account first to use manual trading.",
+    "contextHint": "Select account, symbol and timeframe used by chart and order ticket.",
+    "orderEntryHint": "Place manual futures orders with live account data.",
+    "alerts": {
+      "error": "Error",
+      "actionFailed": "Action failed",
+      "warning": "Warning"
+    },
+    "prefill": {
+      "title": "Prediction Context",
+      "signal": "Signal",
+      "side": "Side",
+      "manual": "manual",
+      "move": "Move",
+      "prefillLeverage": "Prefill leverage",
+      "hideContext": "Hide context",
+      "showContext": "Show context",
+      "backToPrediction": "Back to Prediction",
+      "clearPrefill": "Clear Prefill",
+      "predictionId": "Prediction ID",
+      "aiExplanation": "AI explanation",
+      "keyDrivers": "Key drivers"
+    },
+    "actions": {
+      "dashboard": "Dashboard",
+      "bots": "Bots",
+      "retry": "Retry",
+      "addExchangeAccount": "Add Exchange Account",
+      "apply": "Apply",
+      "open": "Open",
+      "close": "Close",
+      "openLong": "Open Long",
+      "closeShort": "Close Short",
+      "openShort": "Open Short",
+      "closeLong": "Close Long",
+      "suggested": "Suggested",
+      "cancelAll": "Cancel All",
+      "cancel": "Cancel",
+      "confirm": "Confirm"
+    },
+    "fields": {
+      "exchangeAccount": "Exchange account",
+      "symbol": "Symbol",
+      "timeframe": "Timeframe",
+      "accountSnapshot": "Account Snapshot",
+      "eq": "Eq",
+      "avail": "Avail",
+      "isolated": "Isolated",
+      "cross": "Cross",
+      "leverage": "Leverage (x)",
+      "limit": "Limit",
+      "market": "Market",
+      "available": "Available",
+      "price": "Price",
+      "takeProfit": "Take Profit",
+      "stopLoss": "Stop Loss",
+      "positionSize": "Position size",
+      "cost": "Cost",
+      "estimatedLiqPrice": "Est. liq. price",
+      "tpSl": "TP/SL",
+      "timeInForce": "Time in force",
+      "prefilledSide": "Prefilled side",
+      "manualSelectionRequired": "Manual selection required",
+      "max": "Max",
+      "account": "Account",
+      "margin": "Margin",
+      "equity": "Equity",
+      "last": "Last",
+      "mark": "Mark",
+      "bidAsk": "Bid / Ask"
+    },
+    "sections": {
+      "tradingContext": "Trading Context",
+      "liveMarketChart": "Live market chart",
+      "orderEntry": "Order Entry",
+      "positions": "Positions",
+      "openOrders": "Open Orders"
+    },
+    "positions": {
+      "hint": "Open positions for the selected market.",
+      "symbol": "Symbol",
+      "empty": "No open positions.",
+      "columns": {
+        "side": "Side",
+        "size": "Size",
+        "entry": "Entry",
+        "mark": "Mark",
+        "pnl": "PnL",
+        "action": "Action"
+      }
+    },
+    "orders": {
+      "hint": "Manage active orders before they fill.",
+      "empty": "No open orders.",
+      "columns": {
+        "orderId": "Order ID",
+        "side": "Side",
+        "type": "Type",
+        "price": "Price",
+        "qty": "Qty",
+        "status": "Status",
+        "action": "Action"
+      }
+    },
+    "qtyMode": {
+      "title": "Futures unit setting",
+      "quantity": "Quantity",
+      "cost": "Cost",
+      "value": "Value",
+      "quantityDesc": "Quantity of the futures position, measured in base asset.",
+      "costDesc": "Margin amount used for the trade.",
+      "valueDesc": "Notional value of the position."
+    },
+    "messages": {
+      "spotShortNotSupported": "Spot short is not supported. Side prefill was skipped.",
+      "invalidPrefillPayload": "Invalid prefill payload.",
+      "predictionNoAccountMapping": "Prediction has no exchange account mapping for prefill.",
+      "unableToLoadPredictionPrefill": "Unable to load prediction prefill ({error}).",
+      "marketWebsocketError": "Market websocket error",
+      "marketStreamDisconnected": "Market stream disconnected.",
+      "userStreamDisconnected": "User stream disconnected.",
+      "leverageRangeError": "Leverage must be between 1 and 125.",
+      "quantityGtZero": "Quantity must be greater than 0.",
+      "unableDeriveQty": "Unable to derive order quantity for selected unit.",
+      "quantityBelowMin": "Quantity is below minimum ({min}).",
+      "limitRequiresPrice": "Limit orders require a valid price.",
+      "takeProfitGtZero": "Take profit must be greater than 0.",
+      "stopLossGtZero": "Stop loss must be greater than 0."
+    },
+    "misc": {
+      "na": "n/a",
+      "restricted": "restricted"
+    }
   }
 }

@@ -1,7 +1,7 @@
 {
-  "title": "Support & Hilfe",
-  "subtitle": "Leitfäden für Setup, Sicherheit und Fehlerbehebung.",
-  "quickLinks": "Quick Links",
+  "title": "Support und Hilfe",
+  "subtitle": "Leitfäden für Einrichtung, Sicherheit und Fehlerbehebung.",
+  "quickLinks": "Schnelllinks",
   "contactTitle": "Support kontaktieren",
   "contactBody": "Bitte Workspace-Name, Bot-Name oder ID, Zeitstempel, Screenshot und relevante API/Runner-Logs angeben.",
   "sections": {
@@ -11,25 +11,25 @@
       "line2": "Tipp: Nutze Config Presets, um bewährte Setups schnell auf neue Bots anzuwenden."
     },
     "exchangeKeys": {
-      "title": "Exchange API Keys",
+      "title": "Exchange-API-Schlüssel",
       "line1": "Benötigte Berechtigungen: nur Trading (keine Auszahlungen).",
       "line2": "Keys sind geschützt; Anzeigen/Bearbeiten erfordert Re-Auth (OTP).",
       "line3": "Häufige Probleme: ungültiger Key, IP-Whitelist nicht aktualisiert, fehlende Trading-Rechte."
     },
     "botSettings": {
       "title": "Bot-Einstellungen erklärt",
-      "line1": "Futures Strategy: Spread, Levels, Step, Distribution, Jitter, Skew, Max Skew.",
+      "line1": "Futures-Strategie: Spread, Levels, Step, Distribution, Jitter, Skew, Max Skew.",
       "line2": "Volume Bot: Tagesziel, Min/Max Trade, Modus.",
-      "line3": "Risk: Min Balance, Max Deviation, Max Open Orders, Daily Loss."
+      "line3": "Risiko: Min Balance, Max Deviation, Max Open Orders, Daily Loss."
     },
     "priceSupport": {
-      "title": "Price Support",
+      "title": "Preisstützung",
       "line1": "Wenn der Mid-Preis unter die Floor-Linie fällt, kauft Price Support bis der Mid-Preis wieder darüber liegt.",
       "line2": "Es verwendet ein separates Budget und stoppt automatisch bei Budgetverbrauch.",
       "line3": "Bei Budget-Depletion wird eine Telegram-Nachricht gesendet; manueller Neustart ist erforderlich."
     },
     "priceFollow": {
-      "title": "Price Follow (Master / Slave)",
+      "title": "Preisfolge (Master / Slave)",
       "line1": "Die Master-Exchange liefert den Preis-Feed (kein Bot auf Master nötig).",
       "line2": "Die Slave-Exchange führt Trades basierend auf diesem Feed aus.",
       "line3": "Stale-Feed- und Deviation-Schutz verhindern unsichere Orders."
@@ -50,12 +50,12 @@
       "title": "Sicherheit",
       "line1": "Cookie-basierte Sessions sind durch CSRF-Schutz abgesichert.",
       "line2": "Re-Auth (OTP) ist für sensible Aktionen erforderlich.",
-      "line3": "Optionale Email-2FA ist verfügbar.",
+      "line3": "Optionale E-Mail-2FA ist verfügbar.",
       "line4": "Audit-Logs helfen beim Nachverfolgen sensibler Änderungen und Aktionen."
     },
     "troubleshooting": {
       "title": "Fehlerbehebung",
-      "line1": "Bot zeigt ERROR: Runtime-Grund, Keys, Balances und Exchange-Health prüfen.",
+      "line1": "Bot zeigt FEHLER: Runtime-Grund, Schlüssel, Balances und Exchange-Health prüfen.",
       "line2": "Keine Orders: Konfig zu streng, Price-Follow-Deviation oder Post-only-Rejects.",
       "line3": "Runner aktualisiert nicht: Runner-Status und Readiness-Endpunkte prüfen."
     }

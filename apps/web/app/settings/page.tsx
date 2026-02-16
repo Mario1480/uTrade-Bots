@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { useEffect, useState } from "react";
+import { useTranslations } from "next-intl";
 import { ApiError, apiDelete, apiGet, apiPost, apiPut } from "../../lib/api";
 
 type MeResponse = {
@@ -66,6 +67,8 @@ function errMsgWithDetails(e: unknown): string {
 }
 
 export default function SettingsPage() {
+  const tMain = useTranslations("system.settingsMain");
+  const tCommon = useTranslations("settings.common");
   const [me, setMe] = useState<MeResponse["user"] | null>(null);
   const [isSuperadmin, setIsSuperadmin] = useState(false);
   const [hasAdminBackendAccess, setHasAdminBackendAccess] = useState(false);
@@ -319,7 +322,7 @@ export default function SettingsPage() {
       if (typeof data.isSuperadmin === "boolean") {
         setIsSuperadmin(Boolean(data.isSuperadmin));
       }
-      setSecuritySettingsMsg("Saved.");
+      setSecuritySettingsMsg(tMain("messages.saved"));
     } catch (e) {
       setSecuritySettingsMsg(errMsg(e));
     } finally {
@@ -328,11 +331,11 @@ export default function SettingsPage() {
   }
 
   async function savePassword() {
-    setPasswordStatus("saving...");
+    setPasswordStatus(tMain("messages.saving"));
     setPasswordError("");
     if (newPassword !== confirmPassword) {
       setPasswordStatus("");
-      setPasswordError("Passwords do not match.");
+      setPasswordError(tMain("messages.passwordsDoNotMatch"));
       return;
     }
     try {
@@ -340,7 +343,7 @@ export default function SettingsPage() {
         currentPassword,
         newPassword
       });
-      setPasswordStatus("updated");
+      setPasswordStatus(tMain("messages.updated"));
       setCurrentPassword("");
       setNewPassword("");
       setConfirmPassword("");
@@ -352,7 +355,7 @@ export default function SettingsPage() {
   }
 
   async function requestResetCode() {
-    setResetStatus("sending code...");
+    setResetStatus(tMain("messages.sendingCode"));
     setResetError("");
     setResetDevCode(null);
     try {
@@ -361,7 +364,9 @@ export default function SettingsPage() {
         { email: resetEmail }
       );
       setResetStatus(
-        `If the account exists, a reset code was sent${payload?.expiresInMinutes ? ` (valid ${payload.expiresInMinutes} min)` : ""}.`
+        tMain("messages.resetCodeSent", {
+          expires: payload?.expiresInMinutes ? ` (${tMain("messages.validMinutes", { minutes: payload.expiresInMinutes })})` : ""
+        })
       );
       if (payload?.devCode) setResetDevCode(payload.devCode);
     } catch (e) {
@@ -371,11 +376,11 @@ export default function SettingsPage() {
   }
 
   async function confirmResetPassword() {
-    setResetStatus("updating password...");
+    setResetStatus(tMain("messages.updatingPassword"));
     setResetError("");
     if (resetNewPassword !== resetConfirmPassword) {
       setResetStatus("");
-      setResetError("New password and confirmation do not match.");
+      setResetError(tMain("messages.newPasswordMismatch"));
       return;
     }
     try {
@@ -384,7 +389,7 @@ export default function SettingsPage() {
         code: resetCode,
         newPassword: resetNewPassword
       });
-      setResetStatus("Password updated. Please sign in again if your session expires.");
+      setResetStatus(tMain("messages.passwordUpdated"));
       setResetCode("");
       setResetNewPassword("");
       setResetConfirmPassword("");
@@ -399,9 +404,9 @@ export default function SettingsPage() {
 
   return (
     <div className="settingsWrap">
-      <h2 style={{ marginTop: 0 }}>Settings</h2>
+      <h2 style={{ marginTop: 0 }}>{tMain("title")}</h2>
       <div style={{ fontSize: 13, color: "var(--muted)", marginBottom: 12 }}>
-        User self-service and exchange account management.
+        {tMain("subtitle")}
       </div>
 
       {error ? (
@@ -420,29 +425,29 @@ export default function SettingsPage() {
           <section className="card settingsSection settingsLandingGroupCard settingsLandingGroupAdmin">
             <div className="settingsSectionHeader">
               <h3 style={{ margin: 0 }}>Admin</h3>
-              <div className="settingsSectionMeta">Access</div>
+              <div className="settingsSectionMeta">{tMain("admin.access")}</div>
             </div>
             <div className="settingsSectionMeta">
-              User management, global Telegram, offered CEX list and SMTP settings.
+              {tMain("admin.description")}
             </div>
             <Link href="/admin" className="btn btnPrimary">
-              Open admin backend
+              {tMain("admin.openBackend")}
             </Link>
           </section>
         ) : null}
 
         <section className="card settingsSection settingsLandingGroupCard settingsLandingGroupAccount">
           <div className="settingsSectionHeader">
-            <h3 style={{ margin: 0 }}>Account</h3>
-            <div className="settingsSectionMeta">Profile</div>
+            <h3 style={{ margin: 0 }}>{tMain("account.title")}</h3>
+            <div className="settingsSectionMeta">{tMain("account.profile")}</div>
           </div>
-          {loading ? <div>Loading...</div> : <div>{me?.email ?? "-"}</div>}
+          {loading ? <div>{tCommon("loading")}</div> : <div>{me?.email ?? "-"}</div>}
         </section>
 
         <section className="card settingsSection settingsLandingGroupCard settingsLandingGroupSettings">
         <div className="settingsSectionHeader">
-          <h3 style={{ margin: 0 }}>Account Settings</h3>
-          <div className="settingsSectionMeta">Integrations / Security</div>
+          <h3 style={{ margin: 0 }}>{tMain("sections.accountSettings")}</h3>
+          <div className="settingsSectionMeta">{tMain("sections.integrationsSecurity")}</div>
         </div>
         <div className="settingsAccordion">
           <div className={`settingsAccordionItem settingsAccordionItemIntegrations ${openSettingsSection === "exchange_settings" ? "settingsAccordionItemOpen" : ""}`}>
@@ -452,24 +457,24 @@ export default function SettingsPage() {
               onClick={() => toggleSettingsSection("exchange_settings")}
               aria-expanded={openSettingsSection === "exchange_settings"}
             >
-              <span>Exchange Settings</span>
+              <span>{tMain("sections.exchangeSettings")}</span>
               <span className={`settingsAccordionChevron ${openSettingsSection === "exchange_settings" ? "settingsAccordionChevronOpen" : ""}`}>▾</span>
             </button>
             {openSettingsSection === "exchange_settings" ? (
               <div className="settingsAccordionBody">
-                <div className="settingsInlineTitle">Add Exchange Account</div>
+                <div className="settingsInlineTitle">{tMain("exchange.addTitle")}</div>
                 <div className="settingsMutedText" style={{ marginBottom: 8 }}>
-                  Paper accounts simulate execution and require one live account for market data.
+                  {tMain("exchange.paperHint")}
                 </div>
                 <form onSubmit={createAccount} className="settingsFormGrid">
                   {exchangeOptions.length === 0 ? (
                     <div className="settingsMutedText">
-                      No exchange is enabled by admin yet.
+                      {tMain("exchange.noEnabledExchange")}
                     </div>
                   ) : null}
                   <div className="settingsTwoColGrid">
                     <label className="settingsField">
-                      <span className="settingsFieldLabel">Exchange</span>
+                      <span className="settingsFieldLabel">{tMain("exchange.fields.exchange")}</span>
                       <select className="input" value={exchange} onChange={(e) => setExchange(e.target.value)} required>
                         {exchangeOptions.map((option) => (
                           <option key={option.value} value={option.value}>
@@ -479,13 +484,13 @@ export default function SettingsPage() {
                       </select>
                     </label>
                     <label className="settingsField">
-                      <span className="settingsFieldLabel">Label</span>
+                      <span className="settingsFieldLabel">{tMain("exchange.fields.label")}</span>
                       <input className="input" value={label} onChange={(e) => setLabel(e.target.value)} required />
                     </label>
                   </div>
                   {paperMode ? (
                     <label className="settingsField">
-                      <span className="settingsFieldLabel">Market data account (required)</span>
+                      <span className="settingsFieldLabel">{tMain("exchange.fields.marketDataAccount")}</span>
                       <select
                         className="input"
                         value={marketDataExchangeAccountId}
@@ -493,7 +498,7 @@ export default function SettingsPage() {
                         required
                       >
                         <option value="" disabled>
-                          Select live CEX account
+                          {tMain("exchange.selectLiveCex")}
                         </option>
                         {marketDataAccounts.map((item) => (
                           <option key={item.id} value={item.id}>
@@ -503,23 +508,23 @@ export default function SettingsPage() {
                       </select>
                       {marketDataAccounts.length === 0 ? (
                         <span className="settingsMutedText">
-                          Create a live exchange account first.
+                          {tMain("exchange.createLiveFirst")}
                         </span>
                       ) : null}
                     </label>
                   ) : (
                     <>
                       <label className="settingsField">
-                        <span className="settingsFieldLabel">API Key</span>
+                        <span className="settingsFieldLabel">{tMain("exchange.fields.apiKey")}</span>
                         <input className="input" value={apiKey} onChange={(e) => setApiKey(e.target.value)} required />
                       </label>
                       <label className="settingsField">
-                        <span className="settingsFieldLabel">API Secret</span>
+                        <span className="settingsFieldLabel">{tMain("exchange.fields.apiSecret")}</span>
                         <input className="input" value={apiSecret} onChange={(e) => setApiSecret(e.target.value)} required />
                       </label>
                       <label className="settingsField">
                         <span className="settingsFieldLabel">
-                          {passphraseRequired ? "Passphrase (required for Bitget)" : "Passphrase (optional)"}
+                          {passphraseRequired ? tMain("exchange.fields.passphraseRequired") : tMain("exchange.fields.passphraseOptional")}
                         </span>
                         <input
                           className="input"
@@ -543,15 +548,15 @@ export default function SettingsPage() {
                         : (!apiKey || !apiSecret || (passphraseRequired && !passphrase)))
                     }
                   >
-                    {saving ? "Saving..." : "Add account"}
+                    {saving ? tCommon("saving") : tMain("exchange.addAccount")}
                   </button>
                 </form>
 
                 <div className="settingsAccordionDivider" />
 
-                <div className="settingsInlineTitle" style={{ marginBottom: 8 }}>Existing Accounts</div>
+                <div className="settingsInlineTitle" style={{ marginBottom: 8 }}>{tMain("exchange.existingAccounts")}</div>
                 {accounts.length === 0 ? (
-                  <div className="settingsMutedText">No accounts yet.</div>
+                  <div className="settingsMutedText">{tMain("exchange.noAccounts")}</div>
                 ) : (
                   <div className="settingsAccountList">
                     {accounts.map((account) => (
@@ -563,12 +568,12 @@ export default function SettingsPage() {
                           </div>
                           {account.exchange === "paper" ? (
                             <div className="settingsMutedText">
-                              Market data: {account.marketDataLabel ?? account.marketDataExchangeAccountId ?? "Not configured"}
+                              {tMain("exchange.marketData")}: {account.marketDataLabel ?? account.marketDataExchangeAccountId ?? tMain("exchange.notConfigured")}
                               {account.marketDataExchange ? ` (${account.marketDataExchange.toUpperCase()})` : ""}
                             </div>
                           ) : null}
                           <div className="settingsMutedText">
-                            Last sync: {account.lastUsedAt ? new Date(account.lastUsedAt).toLocaleString() : "Never"}
+                            {tMain("exchange.lastSync")}: {account.lastUsedAt ? new Date(account.lastUsedAt).toLocaleString() : tMain("exchange.never")}
                           </div>
                         </div>
                         <div className="settingsAccountActions">
@@ -577,10 +582,10 @@ export default function SettingsPage() {
                             onClick={() => void syncAccount(account.id)}
                             disabled={syncingId === account.id}
                           >
-                            {syncingId === account.id ? "Syncing..." : "Sync now"}
+                            {syncingId === account.id ? tMain("exchange.syncing") : tMain("exchange.syncNow")}
                           </button>
                           <button className="btn" onClick={() => void deleteAccount(account.id)}>
-                            Delete
+                            {tMain("actions.delete")}
                           </button>
                         </div>
                       </div>
@@ -598,19 +603,19 @@ export default function SettingsPage() {
               onClick={() => toggleSettingsSection("security")}
               aria-expanded={openSettingsSection === "security"}
             >
-              <span>Security</span>
+              <span>{tMain("sections.security")}</span>
               <span className={`settingsAccordionChevron ${openSettingsSection === "security" ? "settingsAccordionChevronOpen" : ""}`}>▾</span>
             </button>
             {openSettingsSection === "security" ? (
               <div className="settingsAccordionBody">
                 <div className="settingsSectionMeta">
-                  Manage password and session security without leaving this page.
+                  {tMain("security.description")}
                 </div>
 
-                <div className="settingsInlineTitle" style={{ marginBottom: 8 }}>Password</div>
+                <div className="settingsInlineTitle" style={{ marginBottom: 8 }}>{tMain("security.passwordTitle")}</div>
                 <div className="settingsFormGrid" style={{ marginBottom: 10 }}>
                   <label className="settingsField">
-                    <span className="settingsFieldLabel">Current password</span>
+                    <span className="settingsFieldLabel">{tMain("security.currentPassword")}</span>
                     <input
                       className="input"
                       type="password"
@@ -619,7 +624,7 @@ export default function SettingsPage() {
                     />
                   </label>
                   <label className="settingsField">
-                    <span className="settingsFieldLabel">New password</span>
+                    <span className="settingsFieldLabel">{tMain("security.newPassword")}</span>
                     <input
                       className="input"
                       type="password"
@@ -628,7 +633,7 @@ export default function SettingsPage() {
                     />
                   </label>
                   <label className="settingsField">
-                    <span className="settingsFieldLabel">Confirm new password</span>
+                    <span className="settingsFieldLabel">{tMain("security.confirmPassword")}</span>
                     <input
                       className="input"
                       type="password"
@@ -643,7 +648,7 @@ export default function SettingsPage() {
                       onClick={() => void savePassword()}
                       disabled={!currentPassword || !newPassword}
                     >
-                      Create new password
+                      {tMain("security.createPassword")}
                     </button>
                     <span className="settingsMutedText">{passwordStatus}</span>
                   </div>
@@ -652,7 +657,7 @@ export default function SettingsPage() {
 
                 <div className="settingsAccordionDivider" />
 
-                <div className="settingsInlineTitle" style={{ marginBottom: 8 }}>Session Security</div>
+                <div className="settingsInlineTitle" style={{ marginBottom: 8 }}>{tMain("security.sessionTitle")}</div>
                 <div style={{ display: "grid", gap: 10, marginBottom: 10, maxWidth: 420 }}>
                   <label style={{ display: "flex", gap: 8, alignItems: "center" }}>
                     <input
@@ -661,10 +666,10 @@ export default function SettingsPage() {
                       onChange={(e) => setAutoLogoutEnabled(e.target.checked)}
                       disabled={securitySettingsLoading || securitySettingsSaving}
                     />
-                    <span>Enable auto-logout</span>
+                    <span>{tMain("security.autoLogout")}</span>
                   </label>
                   <label className="settingsField">
-                    <span className="settingsFieldLabel">Idle minutes</span>
+                    <span className="settingsFieldLabel">{tMain("security.idleMinutes")}</span>
                     <input
                       className="input"
                       type="number"
@@ -683,7 +688,7 @@ export default function SettingsPage() {
                         onChange={(e) => setOtpEnabled(e.target.checked)}
                         disabled={securitySettingsLoading || securitySettingsSaving}
                       />
-                      <span>Require OTP re-auth for sensitive actions</span>
+                      <span>{tMain("security.requireOtp")}</span>
                     </label>
                   ) : null}
                 </div>
@@ -694,7 +699,7 @@ export default function SettingsPage() {
                     onClick={() => void saveSecuritySettings()}
                     disabled={securitySettingsLoading || securitySettingsSaving}
                   >
-                    {securitySettingsSaving ? "Saving..." : "Save settings"}
+                    {securitySettingsSaving ? tCommon("saving") : tCommon("saveSettings")}
                   </button>
                   <button
                     className="btn"
@@ -702,7 +707,7 @@ export default function SettingsPage() {
                     onClick={() => void loadSecuritySettings()}
                     disabled={securitySettingsLoading || securitySettingsSaving}
                   >
-                    {securitySettingsLoading ? "Loading..." : "Reload"}
+                    {securitySettingsLoading ? tCommon("loading") : tCommon("reload")}
                   </button>
                 </div>
                 {securitySettingsMsg ? (
@@ -711,38 +716,38 @@ export default function SettingsPage() {
 
                 <div className="settingsAccordionDivider" />
 
-                <div className="settingsInlineTitle" style={{ marginBottom: 8 }}>Reset via Email Code</div>
+                <div className="settingsInlineTitle" style={{ marginBottom: 8 }}>{tMain("security.resetTitle")}</div>
                 <div className="settingsMutedText" style={{ marginBottom: 10 }}>
-                  Use this if you forgot your current password.
+                  {tMain("security.resetDescription")}
                 </div>
                 <div className="settingsFormGrid" style={{ maxWidth: 420 }}>
                   <label className="settingsField">
-                    <span className="settingsFieldLabel">Account email</span>
+                    <span className="settingsFieldLabel">{tMain("security.accountEmail")}</span>
                     <input
                       className="input"
                       type="email"
                       value={resetEmail}
                       onChange={(e) => setResetEmail(e.target.value)}
-                      placeholder="you@example.com"
+                      placeholder={tMain("security.emailPlaceholder")}
                     />
                   </label>
                   <div>
                     <button className="btn" type="button" onClick={() => void requestResetCode()} disabled={!resetEmail}>
-                      Send reset code
+                      {tMain("security.sendResetCode")}
                     </button>
                   </div>
                   <label className="settingsField">
-                    <span className="settingsFieldLabel">Reset code (6 digits)</span>
+                    <span className="settingsFieldLabel">{tMain("security.resetCode")}</span>
                     <input
                       className="input"
                       value={resetCode}
                       onChange={(e) => setResetCode(e.target.value)}
                       maxLength={6}
-                      placeholder="123456"
+                      placeholder={tMain("security.resetCodePlaceholder")}
                     />
                   </label>
                   <label className="settingsField">
-                    <span className="settingsFieldLabel">New password</span>
+                    <span className="settingsFieldLabel">{tMain("security.newPassword")}</span>
                     <input
                       className="input"
                       type="password"
@@ -752,7 +757,7 @@ export default function SettingsPage() {
                     />
                   </label>
                   <label className="settingsField">
-                    <span className="settingsFieldLabel">Confirm new password</span>
+                    <span className="settingsFieldLabel">{tMain("security.confirmPassword")}</span>
                     <input
                       className="input"
                       type="password"
@@ -768,13 +773,13 @@ export default function SettingsPage() {
                       onClick={() => void confirmResetPassword()}
                       disabled={!resetEmail || resetCode.length !== 6 || resetNewPassword.length < 8}
                     >
-                      Reset password
+                      {tMain("security.resetPassword")}
                     </button>
                   </div>
                   {resetStatus ? <div className="settingsMutedText">{resetStatus}</div> : null}
                   {resetDevCode ? (
                     <div style={{ fontSize: 12, color: "#facc15" }}>
-                      Dev reset code: <b>{resetDevCode}</b>
+                      {tMain("security.devResetCode")}: <b>{resetDevCode}</b>
                     </div>
                   ) : null}
                   {resetError ? <div style={{ fontSize: 12, color: "#ff6b6b" }}>{resetError}</div> : null}
@@ -790,13 +795,13 @@ export default function SettingsPage() {
               onClick={() => toggleSettingsSection("notifications")}
               aria-expanded={openSettingsSection === "notifications"}
             >
-              <span>Notifications</span>
+              <span>{tMain("sections.notifications")}</span>
               <span className={`settingsAccordionChevron ${openSettingsSection === "notifications" ? "settingsAccordionChevronOpen" : ""}`}>▾</span>
             </button>
             {openSettingsSection === "notifications" ? (
               <div className="settingsAccordionBody">
                 <div className="settingsSectionMeta">
-                  Configure Telegram alerts for tradable prediction signals directly here.
+                  {tMain("notifications.description")}
                 </div>
                 <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 10 }}>
                   <a
@@ -805,23 +810,23 @@ export default function SettingsPage() {
                     target="_blank"
                     rel="noreferrer"
                   >
-                    Open Bot (@utrade_ai_signals_bot)
+                    {tMain("notifications.openBot")}
                   </a>
                 </div>
                 <div className="settingsMutedText" style={{ marginBottom: 10 }}>
-                  Bot token is managed globally by admin. You only need your Chat ID here.
+                  {tMain("notifications.botTokenManaged")}
                 </div>
                 {!notificationTokenConfigured ? (
                   <div style={{ color: "#fca5a5", marginBottom: 10, fontSize: 12 }}>
-                    Telegram bot token is not configured by admin yet.
+                    {tMain("notifications.tokenMissing")}
                   </div>
                 ) : null}
                 <div className="settingsMutedText" style={{ marginBottom: 10 }}>
-                  Tip: For Telegram groups, the Chat ID usually starts with <b>-100</b>.
+                  {tMain("notifications.tipBefore")} <b>-100</b> {tMain("notifications.tipAfter")}
                 </div>
                 <div className="settingsFormGrid" style={{ marginBottom: 10 }}>
                   <label className="settingsField">
-                    <span className="settingsFieldLabel">Chat ID</span>
+                    <span className="settingsFieldLabel">{tMain("notifications.chatId")}</span>
                     <input
                       className="input"
                       placeholder="123456789"
@@ -837,7 +842,7 @@ export default function SettingsPage() {
                     onClick={() => void saveNotificationConfig()}
                     disabled={notificationSaving}
                   >
-                    {notificationSaving ? "Saving..." : "Save settings"}
+                    {notificationSaving ? tCommon("saving") : tCommon("saveSettings")}
                   </button>
                   <button
                     className="btn"
@@ -845,7 +850,7 @@ export default function SettingsPage() {
                     onClick={() => void sendNotificationTest()}
                     disabled={notificationSending}
                   >
-                    {notificationSending ? "Sending..." : "Send test message"}
+                    {notificationSending ? tMain("notifications.sending") : tMain("notifications.sendTest")}
                   </button>
                 </div>
                 {notificationMsg ? (
@@ -862,24 +867,24 @@ export default function SettingsPage() {
               onClick={() => toggleSettingsSection("license_management")}
               aria-expanded={openSettingsSection === "license_management"}
             >
-              <span>License Management</span>
+              <span>{tMain("sections.licenseManagement")}</span>
               <span className={`settingsAccordionChevron ${openSettingsSection === "license_management" ? "settingsAccordionChevronOpen" : ""}`}>▾</span>
             </button>
             {openSettingsSection === "license_management" ? (
               <div className="settingsAccordionBody">
                 <div className="settingsSectionMeta" style={{ marginBottom: 8 }}>
-                  License controls are prepared but currently disabled in this environment.
+                  {tMain("license.prepared")}
                 </div>
                 <div className="settingsMutedText" style={{ marginBottom: 10 }}>
-                  Once enabled, this section will provide license status, key management, and verification actions.
+                  {tMain("license.onceEnabled")}
                 </div>
                 {licenseManagementEnabled ? (
                   <Link href="/settings/subscription" className="btn btnPrimary">
-                    Open license management
+                    {tMain("license.open")}
                   </Link>
                 ) : (
-                  <button className="btn" type="button" disabled title="Currently disabled">
-                    License Management (Disabled)
+                  <button className="btn" type="button" disabled title={tMain("license.currentlyDisabled")}>
+                    {tMain("license.disabledLabel")}
                   </button>
                 )}
               </div>

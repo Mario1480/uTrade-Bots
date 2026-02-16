@@ -2,5 +2,376 @@
   "maintenance": {
     "title": "Wartungsmodus",
     "description": "Trading-Aktionen sind deaktiviert, solange das System im Read-Only-Modus läuft."
+  },
+  "botsList": {
+    "title": "Bots",
+    "titleSuffix": " für Konto {account}",
+    "statusFilter": "Status-Filter: {status}",
+    "allStatuses": "Alle Bot-Status",
+    "loadError": "Ladefehler",
+    "loading": "Bots werden geladen...",
+    "loadingPage": "Bots-Seite wird geladen...",
+    "emptyTitle": "Keine Bots für diesen Filter",
+    "emptyHint": "Versuche einen anderen Konto-/Statusfilter oder erstelle einen neuen Bot.",
+    "noAccount": "Kein Konto",
+    "actions": {
+      "dashboard": "Dashboard",
+      "newBot": "Neuer Bot",
+      "createBot": "Bot erstellen",
+      "open": "Öffnen",
+      "manualTrading": "Manuelles Trading"
+    }
+  },
+  "botsNew": {
+    "title": "Bot erstellen",
+    "subtitle": "Der Bot ist an ein Exchange-Konto gebunden.",
+    "noExchangeAccount": "Kein Exchange-Konto gefunden.",
+    "fields": {
+      "name": "Name",
+      "symbol": "Symbol",
+      "exchangeAccount": "Exchange-Konto",
+      "strategy": "Strategie",
+      "marginMode": "Margin-Modus",
+      "leverage": "Leverage",
+      "tickMs": "Tick (ms)"
+    },
+    "options": {
+      "isolated": "isolated",
+      "cross": "cross",
+      "market": "market",
+      "limit": "limit"
+    },
+    "actions": {
+      "back": "Zurück",
+      "addExchangeAccount": "Exchange-Konto hinzufügen",
+      "creating": "Wird erstellt...",
+      "createBot": "Bot erstellen"
+    },
+    "copier": {
+      "title": "Prediction-Copier Einstellungen",
+      "descriptionBefore": "Kopiert Signale aus",
+      "descriptionAfter": "(Entry/Exit) mit Risiko-Filter.",
+      "fields": {
+        "predictionTf": "Prediction TF",
+        "minConfidence": "Min. Confidence (%)",
+        "maxPredictionAge": "Max. Prediction-Alter (Sek)",
+        "orderType": "Order-Typ",
+        "sizingType": "Sizing-Typ",
+        "sizingValue": "Sizing-Wert",
+        "blockTags": "Block-Tags (kommagetrennt)"
+      },
+      "blockTagsPlaceholder": "news_risk,data_gap,low_liquidity"
+    }
+  },
+  "botsDetails": {
+    "loadError": "Ladefehler",
+    "loading": "Wird geladen...",
+    "na": "k. A.",
+    "futuresConfigTitle": "Futures-Konfiguration",
+    "actions": {
+      "back": "Zurück",
+      "start": "Start",
+      "starting": "Startet...",
+      "stop": "Stopp",
+      "stopping": "Stoppt..."
+    },
+    "fields": {
+      "botStatus": "Bot-Status",
+      "exchangeAccount": "Exchange-Konto",
+      "runnerStatus": "Runner-Status",
+      "runtimeReason": "Runtime-Grund",
+      "runtimeUpdated": "Runtime aktualisiert",
+      "strategy": "Strategie",
+      "marginMode": "Margin-Modus",
+      "leverage": "Leverage",
+      "tickInterval": "Tick-Intervall",
+      "testnet": "Testnet"
+    }
+  },
+  "botsPriceSupport": {
+    "title": "Futures-Erweiterungen",
+    "description": "Diese Route ist für zukünftige futures-spezifische Erweiterungen reserviert.",
+    "backToBot": "Zurück zum Bot"
+  },
+  "botsSettings": {
+    "title": "Bot-Einstellungen",
+    "description": "Der Futures-Skeleton-Modus ist aktiv. Erweiterte Bot-Einstellungen sind bewusst reduziert.",
+    "backToBot": "Zurück zum Bot",
+    "dashboard": "Dashboard"
+  },
+  "calendar": {
+    "title": "Wirtschaftskalender",
+    "subtitle": "Makro-Events mit hoher Relevanz und Blackout-Status.",
+    "filters": {
+      "currency": "Währung",
+      "impact": "Auswirkung",
+      "from": "Von",
+      "to": "Bis"
+    },
+    "impact": {
+      "high": "hoch",
+      "medium": "mittel",
+      "low": "niedrig"
+    },
+    "actions": {
+      "today": "Heute",
+      "next3d": "Nächste 3T",
+      "refresh": "Aktualisieren"
+    },
+    "summary": {
+      "blackoutActive": "Blackout aktiv",
+      "noBlackout": "Kein aktiver Blackout",
+      "until": "Bis",
+      "nextEvent": "Nächstes {impact}-Event",
+      "at": "um",
+      "noUpcoming": "Keine kommenden Events im gewählten Zeitraum."
+    },
+    "loadError": "Ladefehler",
+    "eventsTitle": "Events",
+    "loadingEvents": "Events werden geladen...",
+    "noEvents": "Keine Events für die gewählten Filter gefunden.",
+    "forecast": "Prognose",
+    "previous": "Vorher",
+    "actual": "Aktuell"
+  },
+  "settingsMain": {
+    "title": "Einstellungen",
+    "subtitle": "Benutzer-Selbstverwaltung und Exchange-Kontoverwaltung.",
+    "messages": {
+      "saved": "Gespeichert.",
+      "saving": "wird gespeichert...",
+      "updated": "aktualisiert",
+      "passwordsDoNotMatch": "Passwörter stimmen nicht überein.",
+      "sendingCode": "Code wird gesendet...",
+      "validMinutes": "{minutes} Min gültig",
+      "resetCodeSent": "Wenn der Account existiert, wurde ein Reset-Code gesendet{expires}.",
+      "updatingPassword": "Passwort wird aktualisiert...",
+      "newPasswordMismatch": "Neues Passwort und Bestätigung stimmen nicht überein.",
+      "passwordUpdated": "Passwort aktualisiert. Bitte erneut anmelden, falls die Session abläuft."
+    },
+    "admin": {
+      "access": "Zugriff",
+      "description": "Benutzerverwaltung, globales Telegram, angebotene CEX-Liste und SMTP-Einstellungen.",
+      "openBackend": "Admin-Backend öffnen"
+    },
+    "account": {
+      "title": "Konto",
+      "profile": "Profil"
+    },
+    "sections": {
+      "accountSettings": "Kontoeinstellungen",
+      "integrationsSecurity": "Integrationen / Sicherheit",
+      "exchangeSettings": "Exchange-Einstellungen",
+      "security": "Sicherheit",
+      "notifications": "Benachrichtigungen",
+      "licenseManagement": "Lizenzverwaltung"
+    },
+    "exchange": {
+      "addTitle": "Exchange-Konto hinzufügen",
+      "paperHint": "Paper-Konten simulieren Ausführung und benötigen ein Live-Konto für Marktdaten.",
+      "noEnabledExchange": "Es ist noch keine Exchange durch den Admin aktiviert.",
+      "fields": {
+        "exchange": "Exchange",
+        "label": "Label",
+        "marketDataAccount": "Marktdaten-Konto (erforderlich)",
+        "apiKey": "API Key",
+        "apiSecret": "API Secret",
+        "passphraseRequired": "Passphrase (für Bitget erforderlich)",
+        "passphraseOptional": "Passphrase (optional)"
+      },
+      "selectLiveCex": "Live-CEX-Konto auswählen",
+      "createLiveFirst": "Erstelle zuerst ein Live-Exchange-Konto.",
+      "addAccount": "Konto hinzufügen",
+      "existingAccounts": "Bestehende Konten",
+      "noAccounts": "Noch keine Konten vorhanden.",
+      "marketData": "Marktdaten",
+      "notConfigured": "Nicht konfiguriert",
+      "lastSync": "Letzter Sync",
+      "never": "Nie",
+      "syncing": "Synchronisiert...",
+      "syncNow": "Jetzt synchronisieren"
+    },
+    "security": {
+      "description": "Passwort- und Session-Sicherheit verwalten, ohne diese Seite zu verlassen.",
+      "passwordTitle": "Passwort",
+      "currentPassword": "Aktuelles Passwort",
+      "newPassword": "Neues Passwort",
+      "confirmPassword": "Neues Passwort bestätigen",
+      "createPassword": "Neues Passwort erstellen",
+      "sessionTitle": "Session-Sicherheit",
+      "autoLogout": "Auto-Logout aktivieren",
+      "idleMinutes": "Leerlauf-Minuten",
+      "requireOtp": "OTP-Re-Auth für sensible Aktionen verlangen",
+      "resetTitle": "Reset per E-Mail-Code",
+      "resetDescription": "Verwende dies, wenn du dein aktuelles Passwort vergessen hast.",
+      "accountEmail": "Account-E-Mail",
+      "emailPlaceholder": "du@beispiel.de",
+      "sendResetCode": "Reset-Code senden",
+      "resetCode": "Reset-Code (6 Stellen)",
+      "resetCodePlaceholder": "123456",
+      "resetPassword": "Passwort zurücksetzen",
+      "devResetCode": "Dev-Reset-Code"
+    },
+    "notifications": {
+      "description": "Telegram-Benachrichtigungen für handelbare Prediction-Signale direkt hier konfigurieren.",
+      "openBot": "Bot öffnen (@utrade_ai_signals_bot)",
+      "botTokenManaged": "Der Bot-Token wird global vom Admin verwaltet. Hier wird nur deine Chat-ID benötigt.",
+      "tokenMissing": "Telegram-Bot-Token ist noch nicht durch den Admin konfiguriert.",
+      "tipBefore": "Tipp: Bei Telegram-Gruppen beginnt die Chat-ID meist mit",
+      "tipAfter": ".",
+      "chatId": "Chat-ID",
+      "sending": "Wird gesendet...",
+      "sendTest": "Testnachricht senden"
+    },
+    "license": {
+      "prepared": "Lizenzfunktionen sind vorbereitet, in dieser Umgebung aber aktuell deaktiviert.",
+      "onceEnabled": "Sobald aktiviert, bietet dieser Bereich Lizenzstatus, Key-Management und Verifizierungsaktionen.",
+      "open": "Lizenzverwaltung öffnen",
+      "currentlyDisabled": "Aktuell deaktiviert",
+      "disabledLabel": "Lizenzverwaltung (deaktiviert)"
+    },
+    "actions": {
+      "delete": "Löschen"
+    }
+  },
+  "trade": {
+    "title": "Manuelles Trading Desk",
+    "subtitle": "Chart + Futures-Order-Steuerung.",
+    "loadingPage": "Trade-Seite wird geladen...",
+    "loadingDesk": "Trading Desk wird geladen...",
+    "noAccountsTitle": "Keine Exchange-Konten verfügbar",
+    "noAccountsHint": "Füge zuerst ein Bitget-Konto hinzu, um manuell zu handeln.",
+    "contextHint": "Wähle Konto, Symbol und Timeframe für Chart und Order-Ticket.",
+    "orderEntryHint": "Platziere manuelle Futures-Orders mit Live-Kontodaten.",
+    "alerts": {
+      "error": "Fehler",
+      "actionFailed": "Aktion fehlgeschlagen",
+      "warning": "Warnung"
+    },
+    "prefill": {
+      "title": "Prediction-Kontext",
+      "signal": "Signal",
+      "side": "Richtung",
+      "manual": "manuell",
+      "move": "Bewegung",
+      "prefillLeverage": "Prefill-Leverage",
+      "hideContext": "Kontext ausblenden",
+      "showContext": "Kontext anzeigen",
+      "backToPrediction": "Zurück zur Prediction",
+      "clearPrefill": "Prefill löschen",
+      "predictionId": "Prediction-ID",
+      "aiExplanation": "AI-Erklärung",
+      "keyDrivers": "Wichtige Treiber"
+    },
+    "actions": {
+      "dashboard": "Dashboard",
+      "bots": "Bots",
+      "retry": "Erneut versuchen",
+      "addExchangeAccount": "Exchange-Konto hinzufügen",
+      "apply": "Anwenden",
+      "open": "Öffnen",
+      "close": "Schließen",
+      "openLong": "Long öffnen",
+      "closeShort": "Short schließen",
+      "openShort": "Short öffnen",
+      "closeLong": "Long schließen",
+      "suggested": "Vorgeschlagen",
+      "cancelAll": "Alle stornieren",
+      "cancel": "Stornieren",
+      "confirm": "Bestätigen"
+    },
+    "fields": {
+      "exchangeAccount": "Exchange-Konto",
+      "symbol": "Symbol",
+      "timeframe": "Timeframe",
+      "accountSnapshot": "Konto-Snapshot",
+      "eq": "Eq",
+      "avail": "Verfügbar",
+      "isolated": "Isolated",
+      "cross": "Cross",
+      "leverage": "Leverage (x)",
+      "limit": "Limit",
+      "market": "Market",
+      "available": "Verfügbar",
+      "price": "Preis",
+      "takeProfit": "Take Profit",
+      "stopLoss": "Stop Loss",
+      "positionSize": "Positionsgröße",
+      "cost": "Kosten",
+      "estimatedLiqPrice": "Gesch. Liq.-Preis",
+      "tpSl": "TP/SL",
+      "timeInForce": "Time in force",
+      "prefilledSide": "Vorgefüllte Richtung",
+      "manualSelectionRequired": "Manuelle Auswahl erforderlich",
+      "max": "Max",
+      "account": "Konto",
+      "margin": "Margin",
+      "equity": "Equity",
+      "last": "Last",
+      "mark": "Mark",
+      "bidAsk": "Bid / Ask"
+    },
+    "sections": {
+      "tradingContext": "Trading-Kontext",
+      "liveMarketChart": "Live-Marktchart",
+      "orderEntry": "Order-Eingabe",
+      "positions": "Positionen",
+      "openOrders": "Offene Orders"
+    },
+    "positions": {
+      "hint": "Offene Positionen für den gewählten Markt.",
+      "symbol": "Symbol",
+      "empty": "Keine offenen Positionen.",
+      "columns": {
+        "side": "Seite",
+        "size": "Größe",
+        "entry": "Entry",
+        "mark": "Mark",
+        "pnl": "PnL",
+        "action": "Aktion"
+      }
+    },
+    "orders": {
+      "hint": "Verwalte aktive Orders vor der Ausführung.",
+      "empty": "Keine offenen Orders.",
+      "columns": {
+        "orderId": "Order-ID",
+        "side": "Seite",
+        "type": "Typ",
+        "price": "Preis",
+        "qty": "Menge",
+        "status": "Status",
+        "action": "Aktion"
+      }
+    },
+    "qtyMode": {
+      "title": "Futures-Einheit einstellen",
+      "quantity": "Menge",
+      "cost": "Kosten",
+      "value": "Wert",
+      "quantityDesc": "Menge der Futures-Position, gemessen im Basis-Asset.",
+      "costDesc": "Verwendeter Margin-Betrag für den Trade.",
+      "valueDesc": "Nominalwert der Position."
+    },
+    "messages": {
+      "spotShortNotSupported": "Spot-Short wird nicht unterstützt. Side-Prefill wurde übersprungen.",
+      "invalidPrefillPayload": "Ungültiger Prefill-Payload.",
+      "predictionNoAccountMapping": "Prediction hat kein Exchange-Konto-Mapping für Prefill.",
+      "unableToLoadPredictionPrefill": "Prediction-Prefill konnte nicht geladen werden ({error}).",
+      "marketWebsocketError": "Market-Websocket-Fehler",
+      "marketStreamDisconnected": "Market-Stream getrennt.",
+      "userStreamDisconnected": "User-Stream getrennt.",
+      "leverageRangeError": "Leverage muss zwischen 1 und 125 liegen.",
+      "quantityGtZero": "Menge muss größer als 0 sein.",
+      "unableDeriveQty": "Order-Menge für die ausgewählte Einheit konnte nicht abgeleitet werden.",
+      "quantityBelowMin": "Menge liegt unter dem Minimum ({min}).",
+      "limitRequiresPrice": "Limit-Orders benötigen einen gültigen Preis.",
+      "takeProfitGtZero": "Take Profit muss größer als 0 sein.",
+      "stopLossGtZero": "Stop Loss muss größer als 0 sein."
+    },
+    "misc": {
+      "na": "k. A.",
+      "restricted": "eingeschränkt"
+    }
   }
 }
