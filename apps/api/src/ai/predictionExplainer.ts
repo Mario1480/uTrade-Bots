@@ -65,7 +65,9 @@ type ExplainerTag = (typeof EXPLAINER_TAG_ALLOWLIST)[number];
 const allowlist = new Set<string>(EXPLAINER_TAG_ALLOWLIST);
 
 const baseOutputSchema = z.object({
-  explanation: z.string().min(1).max(400),
+  // Keep this loose and enforce final constraints in validateExplainerOutput.
+  // Some model responses are valid enough except explanation length/emptiness.
+  explanation: z.string().max(4000).optional(),
   tags: z.array(z.string()).max(5),
   keyDrivers: z.array(
     z.object({
@@ -583,13 +585,21 @@ export function validateExplainerOutput(
   }
 
   const tags = normalizeTags(parsed.data.tags);
-  const explanation = parsed.data.explanation.trim().slice(0, 400);
   const aiPrediction =
     normalizeAiPrediction(parsed.data.aiPrediction) ??
     deriveFallbackAiPrediction({
       featureSnapshot,
       baselinePrediction
     });
+  const explanationRaw =
+    typeof parsed.data.explanation === "string" ? parsed.data.explanation.trim() : "";
+  const explanation =
+    explanationRaw.length > 0
+      ? explanationRaw.slice(0, 400)
+      : clampText(
+          `Signal ${aiPrediction.signal} with ${(aiPrediction.confidence * 100).toFixed(1)}% confidence ` +
+          `and expected move ${aiPrediction.expectedMovePct.toFixed(2)}% based on provided features.`
+        );
 
   return {
     explanation,

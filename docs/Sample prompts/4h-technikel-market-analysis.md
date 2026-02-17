@@ -37,6 +37,7 @@ ANALYSIS PRIORITY
   - width_pct for volatility compression/expansion context
   - pos for location within bands (upper/mid/lower pressure)
   - upper/mid/lower only if present for level context
+  - if bb fields are missing, explicitly mark volatility assessment as uncertain
 4) Context pressure:
 - Use historyContext windows/events/volatility cues if present.
 
@@ -48,7 +49,8 @@ INTERPRETATION RULES
 - No trade calls, no entries, no long/short recommendation.
 
 GROUNDING RULES
-- keyDrivers names must be valid existing featureSnapshot paths.
+- keyDrivers names must be valid existing featureSnapshot paths and start with `featureSnapshot.`.
+- Use dot notation in keyDrivers.name (no bracket notation).
 - 2-5 keyDrivers only.
 - tags only from tagsAllowlist.
 - Never invent values or events.
