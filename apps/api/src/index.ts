@@ -4640,10 +4640,8 @@ async function notifyMarketAnalysisUpdate(params: {
   const text = buildTelegramText([
     "📊 MARKET ANALYSIS UPDATE",
     `${params.symbol} (${params.marketType}, ${params.timeframe})`,
-    `Source: ${params.source} · signal source: ${params.signalSource}`,
+    `Signal source: ${params.signalSource}`,
     `Prompt: ${promptName ?? "n/a"}`,
-    `State: ${params.signal.toUpperCase()} · confidence ${confidencePct.toFixed(1)}% · move ${params.expectedMovePct.toFixed(2)}%`,
-    `Exchange: ${params.exchangeAccountLabel}`,
     explanation ? `Analysis: ${explanation}` : null
   ]);
 
