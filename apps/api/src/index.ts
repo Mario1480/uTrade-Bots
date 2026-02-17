@@ -13094,28 +13094,29 @@ async function deleteBotForUser(userId: string, botId: string): Promise<{ delete
     // Worker loop also exits on DB status lookup, queue cleanup is best-effort only.
   }
 
-  await db.$transaction(async (tx: any) => {
-    await ignoreMissingTable(() => tx.botMetric.deleteMany({ where: { botId: bot.id } }));
-    await ignoreMissingTable(() => tx.botAlert.deleteMany({ where: { botId: bot.id } }));
-    await ignoreMissingTable(() => tx.riskEvent.deleteMany({ where: { botId: bot.id } }));
-    await ignoreMissingTable(() => tx.botRuntime.deleteMany({ where: { botId: bot.id } }));
-    await ignoreMissingTable(() => tx.botTradeState.deleteMany({ where: { botId: bot.id } }));
-    await ignoreMissingTable(() => tx.futuresBotConfig.deleteMany({ where: { botId: bot.id } }));
-    await ignoreMissingTable(() => tx.marketMakingConfig.deleteMany({ where: { botId: bot.id } }));
-    await ignoreMissingTable(() => tx.volumeConfig.deleteMany({ where: { botId: bot.id } }));
-    await ignoreMissingTable(() => tx.riskConfig.deleteMany({ where: { botId: bot.id } }));
-    await ignoreMissingTable(() => tx.botNotificationConfig.deleteMany({ where: { botId: bot.id } }));
-    await ignoreMissingTable(() => tx.botPriceSupportConfig.deleteMany({ where: { botId: bot.id } }));
-    await ignoreMissingTable(() => tx.botFillCursor.deleteMany({ where: { botId: bot.id } }));
-    await ignoreMissingTable(() => tx.botFillSeen.deleteMany({ where: { botId: bot.id } }));
-    await ignoreMissingTable(() => tx.botOrderMap.deleteMany({ where: { botId: bot.id } }));
-    await ignoreMissingTable(() => tx.manualTradeLog.deleteMany({ where: { botId: bot.id } }));
-    await ignoreMissingTable(() => tx.prediction.updateMany({
-      where: { botId: bot.id },
-      data: { botId: null }
-    }));
-    await ignoreMissingTable(() => tx.bot.delete({ where: { id: bot.id } }));
-  });
+  // Best-effort cleanup without one shared SQL transaction.
+  // Reason: older VPS schemas may miss some tables; in a single transaction
+  // one failing statement aborts the whole transaction (Postgres 25P02).
+  await ignoreMissingTable(() => db.botMetric.deleteMany({ where: { botId: bot.id } }));
+  await ignoreMissingTable(() => db.botAlert.deleteMany({ where: { botId: bot.id } }));
+  await ignoreMissingTable(() => db.riskEvent.deleteMany({ where: { botId: bot.id } }));
+  await ignoreMissingTable(() => db.botRuntime.deleteMany({ where: { botId: bot.id } }));
+  await ignoreMissingTable(() => db.botTradeState.deleteMany({ where: { botId: bot.id } }));
+  await ignoreMissingTable(() => db.futuresBotConfig.deleteMany({ where: { botId: bot.id } }));
+  await ignoreMissingTable(() => db.marketMakingConfig.deleteMany({ where: { botId: bot.id } }));
+  await ignoreMissingTable(() => db.volumeConfig.deleteMany({ where: { botId: bot.id } }));
+  await ignoreMissingTable(() => db.riskConfig.deleteMany({ where: { botId: bot.id } }));
+  await ignoreMissingTable(() => db.botNotificationConfig.deleteMany({ where: { botId: bot.id } }));
+  await ignoreMissingTable(() => db.botPriceSupportConfig.deleteMany({ where: { botId: bot.id } }));
+  await ignoreMissingTable(() => db.botFillCursor.deleteMany({ where: { botId: bot.id } }));
+  await ignoreMissingTable(() => db.botFillSeen.deleteMany({ where: { botId: bot.id } }));
+  await ignoreMissingTable(() => db.botOrderMap.deleteMany({ where: { botId: bot.id } }));
+  await ignoreMissingTable(() => db.manualTradeLog.deleteMany({ where: { botId: bot.id } }));
+  await ignoreMissingTable(() => db.prediction.updateMany({
+    where: { botId: bot.id },
+    data: { botId: null }
+  }));
+  await ignoreMissingTable(() => db.bot.delete({ where: { id: bot.id } }));
 
   return { deletedBotId: bot.id };
 }
