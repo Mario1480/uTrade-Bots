@@ -15,6 +15,7 @@ const listQuerySchema = z.object({
   from: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
   to: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
   impact: impactSchema.optional(),
+  impacts: z.string().trim().max(64).optional(),
   currency: z.string().trim().min(1).max(16).optional()
 });
 
@@ -37,6 +38,18 @@ type RegisterEconomicCalendarRoutesDeps = {
   requireSuperadmin: (res: express.Response) => Promise<boolean>;
 };
 
+function parseImpactList(raw: string | undefined): ("low" | "medium" | "high")[] | undefined {
+  if (!raw) return undefined;
+  const parsed = raw
+    .split(",")
+    .map((entry) => entry.trim().toLowerCase())
+    .filter((entry): entry is "low" | "medium" | "high" => (
+      entry === "low" || entry === "medium" || entry === "high"
+    ));
+  if (parsed.length === 0) return undefined;
+  return Array.from(new Set(parsed));
+}
+
 export function registerEconomicCalendarRoutes(
   app: Express,
   deps: RegisterEconomicCalendarRoutesDeps
@@ -53,7 +66,8 @@ export function registerEconomicCalendarRoutes(
         from: parsed.data.from ?? null,
         to: parsed.data.to ?? null,
         currency: parsed.data.currency ?? null,
-        impactMin: parsed.data.impact ?? "low"
+        impactMin: parsed.data.impact ?? "low",
+        impacts: parseImpactList(parsed.data.impacts)
       });
       return res.json({ events });
     } catch (error) {

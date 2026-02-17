@@ -16,40 +16,17 @@ import {
 } from "../src/access/accessSection";
 
 type EconomicCalendarSummary = {
+  id: string;
+  sourceId: string;
+  ts: string;
+  country: string;
   currency: string;
-  impactMin: "low" | "medium" | "high";
-  blackoutActive: boolean;
-  activeWindow: {
-    from: string;
-    to: string;
-    event: {
-      id: string;
-      title: string;
-      ts: string;
-      impact: "low" | "medium" | "high";
-      currency: string;
-      country: string;
-      sourceId: string;
-      forecast: number | null;
-      previous: number | null;
-      actual: number | null;
-      source: string;
-    };
-  } | null;
-  nextEvent: {
-    id: string;
-    title: string;
-    ts: string;
-    impact: "low" | "medium" | "high";
-    currency: string;
-    country: string;
-    sourceId: string;
-    forecast: number | null;
-    previous: number | null;
-    actual: number | null;
-    source: string;
-  } | null;
-  asOf: string;
+  title: string;
+  impact: "low" | "medium" | "high";
+  forecast: number | null;
+  previous: number | null;
+  actual: number | null;
+  source: string;
 };
 
 type DashboardOverviewResponse = {
@@ -92,7 +69,8 @@ export default function Page() {
   const [overview, setOverview] = useState<ExchangeAccountOverview[]>([]);
   const [overviewTotals, setOverviewTotals] = useState<DashboardTotals | null>(null);
   const [alerts, setAlerts] = useState<DashboardAlert[]>([]);
-  const [calendarSummary, setCalendarSummary] = useState<EconomicCalendarSummary | null>(null);
+  const [calendarEvents, setCalendarEvents] = useState<EconomicCalendarSummary[]>([]);
+  const [calendarLoadError, setCalendarLoadError] = useState(false);
   const [accessVisibility, setAccessVisibility] = useState<AccessSectionVisibility>(
     DEFAULT_ACCESS_SECTION_VISIBILITY
   );
@@ -103,13 +81,16 @@ export default function Page() {
     let mounted = true;
 
     async function load() {
+      const today = new Date().toISOString().slice(0, 10);
       setLoading(true);
       setError(null);
       try {
         const [overviewResult, alertsResult, calendarResult, accessResult] = await Promise.allSettled([
           apiGet<DashboardOverviewResponse | ExchangeAccountOverview[]>("/dashboard/overview"),
           apiGet<DashboardAlertsResponse>("/dashboard/alerts?limit=10"),
-          apiGet<EconomicCalendarSummary>("/economic-calendar/next?currency=USD&impact=high"),
+          apiGet<{ events: EconomicCalendarSummary[] }>(
+            `/economic-calendar?from=${today}&to=${today}&currency=USD&impacts=high,medium`
+          ),
           apiGet<{ visibility?: AccessSectionVisibility }>("/settings/access-section")
         ]);
         if (!mounted) return;
@@ -131,9 +112,12 @@ export default function Page() {
           setAlerts([]);
         }
         if (calendarResult.status === "fulfilled") {
-          setCalendarSummary(calendarResult.value ?? null);
+          const events = Array.isArray(calendarResult.value?.events) ? calendarResult.value.events : [];
+          setCalendarEvents(events);
+          setCalendarLoadError(false);
         } else {
-          setCalendarSummary(null);
+          setCalendarEvents([]);
+          setCalendarLoadError(true);
         }
         if (accessResult.status === "fulfilled" && accessResult.value?.visibility) {
           setAccessVisibility({
@@ -221,27 +205,40 @@ export default function Page() {
       <AlertsFeed alerts={alerts} />
 
       <div className="card" style={{ padding: 12, marginBottom: 12 }}>
-        <div style={{ fontWeight: 700, marginBottom: 4 }}>{t("calendar.title")}</div>
-        {calendarSummary ? (
-          calendarSummary.blackoutActive && calendarSummary.activeWindow ? (
-            <div style={{ fontSize: 13, color: "#ef4444" }}>
-              {t("calendar.blackout", {
-                to: new Date(calendarSummary.activeWindow.to).toLocaleString(),
-                title: calendarSummary.activeWindow.event.title
-              })}
-            </div>
-          ) : calendarSummary.nextEvent ? (
-            <div style={{ fontSize: 13, color: "var(--muted)" }}>
-              {t("calendar.nextEvent", {
-                title: calendarSummary.nextEvent.title,
-                ts: new Date(calendarSummary.nextEvent.ts).toLocaleString()
-              })}
-            </div>
-          ) : (
-            <div style={{ fontSize: 13, color: "var(--muted)" }}>{t("calendar.none")}</div>
-          )
-        ) : (
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8, marginBottom: 6 }}>
+          <div style={{ fontWeight: 700 }}>{t("calendar.title")}</div>
+          {accessVisibility.economicCalendar ? (
+            <Link href={withLocalePath("/calendar", locale)} className="btn">{t("calendar.open")}</Link>
+          ) : null}
+        </div>
+        {calendarLoadError ? (
+          <div style={{ fontSize: 13, color: "var(--muted)" }}>{t("calendar.unavailable")}</div>
+        ) : loading && calendarEvents.length === 0 ? (
           <div style={{ fontSize: 13, color: "var(--muted)" }}>{t("calendar.loading")}</div>
+        ) : calendarEvents.length === 0 ? (
+          <div style={{ fontSize: 13, color: "var(--muted)" }}>{t("calendar.none")}</div>
+        ) : (
+          <div style={{ display: "grid", gap: 6 }}>
+            <div style={{ fontSize: 12, color: "var(--muted)" }}>
+              {t("calendar.todayCount", { count: calendarEvents.length })}
+            </div>
+            {calendarEvents.slice(0, 5).map((event) => (
+              <div key={event.id} style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+                <span className={`badge ${
+                  event.impact === "high"
+                    ? "calendarImpactBadgeHigh"
+                    : event.impact === "medium"
+                      ? "calendarImpactBadgeMedium"
+                      : "calendarImpactBadgeLow"
+                }`}>
+                  {event.impact.toUpperCase()}
+                </span>
+                <span style={{ fontSize: 13, color: "var(--muted)" }}>
+                  {new Date(event.ts).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })} · {event.title}
+                </span>
+              </div>
+            ))}
+          </div>
         )}
       </div>
 

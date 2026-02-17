@@ -297,6 +297,7 @@ async function listEventsFromDb(params: {
   to: Date;
   currency?: string;
   impactMin?: EconomicImpact;
+  impacts?: EconomicImpact[];
 }): Promise<EconomicEventView[]> {
   if (!hasCalendarModels(params.db)) return [];
   const where: Record<string, unknown> = {
@@ -314,13 +315,17 @@ async function listEventsFromDb(params: {
     orderBy: [{ ts: "asc" }]
   });
   const minWeight = impactWeight(normalizeImpact(params.impactMin ?? "low"));
+  const impactAllowlist = params.impacts && params.impacts.length > 0
+    ? new Set(params.impacts.map((entry) => normalizeImpact(entry)))
+    : null;
   return rows
     .map((row: any) => toEventView({
       ...row,
       sourceId: row.sourceId,
       ts: row.ts
     }))
-    .filter((event: EconomicEventView) => impactWeight(event.impact) >= minWeight);
+    .filter((event: EconomicEventView) => impactWeight(event.impact) >= minWeight)
+    .filter((event: EconomicEventView) => !impactAllowlist || impactAllowlist.has(event.impact));
 }
 
 function dateRangeFromInput(params: {
@@ -344,6 +349,7 @@ export async function listEconomicEvents(params: {
   to?: string | null;
   currency?: string | null;
   impactMin?: EconomicImpact | null;
+  impacts?: EconomicImpact[] | null;
 }): Promise<EconomicEventView[]> {
   const range = dateRangeFromInput({
     from: params.from ?? null,
@@ -353,12 +359,16 @@ export async function listEconomicEvents(params: {
 
   const currency = params.currency ? params.currency.trim().toUpperCase() : undefined;
   const impact = params.impactMin ? normalizeImpact(params.impactMin) : "low";
+  const impacts = (params.impacts ?? [])
+    .map((entry) => normalizeImpact(entry))
+    .filter((entry, index, list) => list.indexOf(entry) === index);
   return listEventsFromDb({
     db: params.db,
     from: range.from,
     to: range.to,
     currency,
-    impactMin: impact
+    impactMin: impact,
+    impacts
   });
 }
 

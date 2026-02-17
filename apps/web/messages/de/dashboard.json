@@ -28,11 +28,12 @@
     "agoDays": "vor {count}d"
   },
   "calendar": {
-    "title": "Wirtschaftskalender (USD / hoch)",
-    "blackout": "Blackout aktiv bis {to} · {title}",
-    "nextEvent": "Nächstes Event: {title} um {ts}",
-    "none": "Keine kommenden High-Impact-Events.",
-    "loading": "Kalenderstatus wird geladen..."
+    "title": "Wirtschaftskalender (heute · USD · hoch+mittel)",
+    "none": "Heute keine High-/Medium-Events.",
+    "loading": "Kalenderstatus wird geladen...",
+    "unavailable": "Kalenderstatus aktuell nicht verfügbar.",
+    "open": "Kalender öffnen",
+    "todayCount": "{count} Events heute"
   },
   "errors": {
     "load": "Ladefehler:"

@@ -33,6 +33,8 @@ type NextSummary = {
   asOf: string;
 };
 
+const IMPACT_ORDER: CalendarImpact[] = ["high", "medium", "low"];
+
 function errMsg(error: unknown): string {
   if (error instanceof ApiError) return `${error.message} (HTTP ${error.status})`;
   if (error && typeof error === "object" && "message" in error) return String((error as any).message);
@@ -53,15 +55,15 @@ function addDays(value: Date, days: number): Date {
 }
 
 function impactClass(impact: CalendarImpact): string {
-  if (impact === "high") return "predictionReasonBadgeTrigger";
-  if (impact === "medium") return "predictionReasonBadgeScheduled";
-  return "predictionReasonBadgeUnknown";
+  if (impact === "high") return "calendarImpactBadgeHigh";
+  if (impact === "medium") return "calendarImpactBadgeMedium";
+  return "calendarImpactBadgeLow";
 }
 
 export default function CalendarPage() {
   const t = useTranslations("system.calendar");
   const [currency, setCurrency] = useState("USD");
-  const [impact, setImpact] = useState<CalendarImpact>("high");
+  const [impacts, setImpacts] = useState<CalendarImpact[]>(["high"]);
   const [from, setFrom] = useState(() => toDateInput(new Date()));
   const [to, setTo] = useState(() => toDateInput(addDays(new Date(), 3)));
   const [events, setEvents] = useState<EconomicEvent[]>([]);
@@ -69,16 +71,40 @@ export default function CalendarPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
+  const sortedImpacts = useMemo(
+    () => IMPACT_ORDER.filter((impact) => impacts.includes(impact)),
+    [impacts]
+  );
+
+  const summaryImpact = useMemo<CalendarImpact>(() => {
+    if (sortedImpacts.includes("high")) return "high";
+    if (sortedImpacts.includes("medium")) return "medium";
+    return "low";
+  }, [sortedImpacts]);
+
+  function toggleImpact(nextImpact: CalendarImpact) {
+    setImpacts((current) => {
+      const has = current.includes(nextImpact);
+      if (has) {
+        if (current.length <= 1) return current;
+        return current.filter((entry) => entry !== nextImpact);
+      }
+      const merged = [...current, nextImpact];
+      return IMPACT_ORDER.filter((entry) => merged.includes(entry));
+    });
+  }
+
   async function load() {
     setLoading(true);
     setError(null);
     try {
+      const impactList = sortedImpacts.join(",");
       const [eventsResp, nextResp] = await Promise.all([
         apiGet<{ events: EconomicEvent[] }>(
-          `/economic-calendar?from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}&impact=${impact}&currency=${encodeURIComponent(currency)}`
+          `/economic-calendar?from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}&impacts=${encodeURIComponent(impactList)}&currency=${encodeURIComponent(currency)}`
         ),
         apiGet<NextSummary>(
-          `/economic-calendar/next?currency=${encodeURIComponent(currency)}&impact=${impact}`
+          `/economic-calendar/next?currency=${encodeURIComponent(currency)}&impact=${summaryImpact}`
         )
       ]);
       setEvents(Array.isArray(eventsResp.events) ? eventsResp.events : []);
@@ -93,7 +119,7 @@ export default function CalendarPage() {
   useEffect(() => {
     void load();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [currency, impact, from, to]);
+  }, [currency, sortedImpacts.join(","), summaryImpact, from, to]);
 
   const grouped = useMemo(() => {
     const map = new Map<string, EconomicEvent[]>();
@@ -128,11 +154,26 @@ export default function CalendarPage() {
           </label>
           <label>
             <div style={{ fontSize: 12, color: "var(--muted)", marginBottom: 4 }}>{t("filters.impact")}</div>
-            <select className="input" value={impact} onChange={(e) => setImpact(e.target.value as CalendarImpact)}>
-              <option value="high">{t("impact.high")}</option>
-              <option value="medium">{t("impact.medium")}</option>
-              <option value="low">{t("impact.low")}</option>
-            </select>
+            <div style={{ display: "flex", gap: 6, flexWrap: "wrap", minHeight: 38, alignItems: "center" }}>
+              {IMPACT_ORDER.map((entry) => {
+                const active = impacts.includes(entry);
+                return (
+                  <button
+                    key={entry}
+                    type="button"
+                    className={`badge ${impactClass(entry)}`}
+                    style={{
+                      background: active ? "rgba(255,255,255,0.08)" : "transparent",
+                      opacity: active ? 1 : 0.6,
+                      cursor: "pointer"
+                    }}
+                    onClick={() => toggleImpact(entry)}
+                  >
+                    {t(`impact.${entry}`)}
+                  </button>
+                );
+              })}
+            </div>
           </label>
           <label>
             <div style={{ fontSize: 12, color: "var(--muted)", marginBottom: 4 }}>{t("filters.from")}</div>

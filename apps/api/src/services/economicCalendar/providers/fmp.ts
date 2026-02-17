@@ -173,9 +173,10 @@ export async function fetchFmpEconomicEvents(params: {
     to: params.to,
     apikey: apiKey
   };
-  if (params.currencies && params.currencies.length > 0) {
-    query.countries = params.currencies.join(",");
-  }
+
+  const requestedCurrencies = (params.currencies ?? [])
+    .map((entry) => String(entry).trim().toUpperCase())
+    .filter(Boolean);
 
   const candidates = [
     toUrl(baseUrl, "/stable/economic-calendar", query),
@@ -195,7 +196,11 @@ export async function fetchFmpEconomicEvents(params: {
       }
       const payload = await response.json();
       const normalized = normalizeFmpEventsPayload(payload);
-      if (normalized.length > 0) return normalized;
+      const filtered =
+        requestedCurrencies.length > 0
+          ? normalized.filter((event) => requestedCurrencies.includes(event.currency))
+          : normalized;
+      if (filtered.length > 0) return filtered;
       if (Array.isArray(payload)) return [];
       lastError = "invalid_payload";
     } catch (error) {

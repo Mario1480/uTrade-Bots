@@ -7682,34 +7682,34 @@ app.delete("/admin/users/:id", requireAuth, async (req, res) => {
 
   await db.$transaction(async (tx: any) => {
     if (botIds.length > 0) {
-      await tx.botMetric.deleteMany({ where: { botId: { in: botIds } } });
-      await tx.botAlert.deleteMany({ where: { botId: { in: botIds } } });
-      await tx.riskEvent.deleteMany({ where: { botId: { in: botIds } } });
-      await tx.botRuntime.deleteMany({ where: { botId: { in: botIds } } });
-      await tx.futuresBotConfig.deleteMany({ where: { botId: { in: botIds } } });
-      await tx.marketMakingConfig.deleteMany({ where: { botId: { in: botIds } } });
-      await tx.volumeConfig.deleteMany({ where: { botId: { in: botIds } } });
-      await tx.riskConfig.deleteMany({ where: { botId: { in: botIds } } });
-      await tx.botNotificationConfig.deleteMany({ where: { botId: { in: botIds } } });
-      await tx.botPriceSupportConfig.deleteMany({ where: { botId: { in: botIds } } });
-      await tx.botFillCursor.deleteMany({ where: { botId: { in: botIds } } });
-      await tx.botFillSeen.deleteMany({ where: { botId: { in: botIds } } });
-      await tx.botOrderMap.deleteMany({ where: { botId: { in: botIds } } });
-      await tx.manualTradeLog.deleteMany({ where: { botId: { in: botIds } } });
-      await tx.bot.deleteMany({ where: { id: { in: botIds } } });
+      await ignoreMissingTable(() => tx.botMetric.deleteMany({ where: { botId: { in: botIds } } }));
+      await ignoreMissingTable(() => tx.botAlert.deleteMany({ where: { botId: { in: botIds } } }));
+      await ignoreMissingTable(() => tx.riskEvent.deleteMany({ where: { botId: { in: botIds } } }));
+      await ignoreMissingTable(() => tx.botRuntime.deleteMany({ where: { botId: { in: botIds } } }));
+      await ignoreMissingTable(() => tx.futuresBotConfig.deleteMany({ where: { botId: { in: botIds } } }));
+      await ignoreMissingTable(() => tx.marketMakingConfig.deleteMany({ where: { botId: { in: botIds } } }));
+      await ignoreMissingTable(() => tx.volumeConfig.deleteMany({ where: { botId: { in: botIds } } }));
+      await ignoreMissingTable(() => tx.riskConfig.deleteMany({ where: { botId: { in: botIds } } }));
+      await ignoreMissingTable(() => tx.botNotificationConfig.deleteMany({ where: { botId: { in: botIds } } }));
+      await ignoreMissingTable(() => tx.botPriceSupportConfig.deleteMany({ where: { botId: { in: botIds } } }));
+      await ignoreMissingTable(() => tx.botFillCursor.deleteMany({ where: { botId: { in: botIds } } }));
+      await ignoreMissingTable(() => tx.botFillSeen.deleteMany({ where: { botId: { in: botIds } } }));
+      await ignoreMissingTable(() => tx.botOrderMap.deleteMany({ where: { botId: { in: botIds } } }));
+      await ignoreMissingTable(() => tx.manualTradeLog.deleteMany({ where: { botId: { in: botIds } } }));
+      await ignoreMissingTable(() => tx.bot.deleteMany({ where: { id: { in: botIds } } }));
     }
 
-    await tx.prediction.deleteMany({ where: { userId: user.id } });
-    await tx.predictionState.deleteMany({ where: { userId: user.id } });
-    await tx.manualTradeLog.deleteMany({ where: { userId: user.id } });
-    await tx.exchangeAccount.deleteMany({ where: { userId: user.id } });
-    await tx.botConfigPreset.deleteMany({ where: { createdByUserId: user.id } });
-    await tx.auditEvent.deleteMany({ where: { actorUserId: user.id } });
-    await tx.workspaceMember.deleteMany({ where: { userId: user.id } });
-    await tx.reauthOtp.deleteMany({ where: { userId: user.id } });
-    await tx.reauthSession.deleteMany({ where: { userId: user.id } });
-    await tx.session.deleteMany({ where: { userId: user.id } });
-    await tx.user.delete({ where: { id: user.id } });
+    await ignoreMissingTable(() => tx.prediction.deleteMany({ where: { userId: user.id } }));
+    await ignoreMissingTable(() => tx.predictionState.deleteMany({ where: { userId: user.id } }));
+    await ignoreMissingTable(() => tx.manualTradeLog.deleteMany({ where: { userId: user.id } }));
+    await ignoreMissingTable(() => tx.exchangeAccount.deleteMany({ where: { userId: user.id } }));
+    await ignoreMissingTable(() => tx.botConfigPreset.deleteMany({ where: { createdByUserId: user.id } }));
+    await ignoreMissingTable(() => tx.auditEvent.deleteMany({ where: { actorUserId: user.id } }));
+    await ignoreMissingTable(() => tx.workspaceMember.deleteMany({ where: { userId: user.id } }));
+    await ignoreMissingTable(() => tx.reauthOtp.deleteMany({ where: { userId: user.id } }));
+    await ignoreMissingTable(() => tx.reauthSession.deleteMany({ where: { userId: user.id } }));
+    await ignoreMissingTable(() => tx.session.deleteMany({ where: { userId: user.id } }));
+    await ignoreMissingTable(() => tx.user.delete({ where: { id: user.id } }));
   });
 
   const backendAccessSettings = parseStoredAdminBackendAccess(
@@ -13095,26 +13095,26 @@ async function deleteBotForUser(userId: string, botId: string): Promise<{ delete
   }
 
   await db.$transaction(async (tx: any) => {
-    await tx.botMetric.deleteMany({ where: { botId: bot.id } });
-    await tx.botAlert.deleteMany({ where: { botId: bot.id } });
-    await tx.riskEvent.deleteMany({ where: { botId: bot.id } });
-    await tx.botRuntime.deleteMany({ where: { botId: bot.id } });
-    await tx.botTradeState.deleteMany({ where: { botId: bot.id } });
-    await tx.futuresBotConfig.deleteMany({ where: { botId: bot.id } });
-    await tx.marketMakingConfig.deleteMany({ where: { botId: bot.id } });
-    await tx.volumeConfig.deleteMany({ where: { botId: bot.id } });
-    await tx.riskConfig.deleteMany({ where: { botId: bot.id } });
-    await tx.botNotificationConfig.deleteMany({ where: { botId: bot.id } });
-    await tx.botPriceSupportConfig.deleteMany({ where: { botId: bot.id } });
-    await tx.botFillCursor.deleteMany({ where: { botId: bot.id } });
-    await tx.botFillSeen.deleteMany({ where: { botId: bot.id } });
-    await tx.botOrderMap.deleteMany({ where: { botId: bot.id } });
-    await tx.manualTradeLog.deleteMany({ where: { botId: bot.id } });
-    await tx.prediction.updateMany({
+    await ignoreMissingTable(() => tx.botMetric.deleteMany({ where: { botId: bot.id } }));
+    await ignoreMissingTable(() => tx.botAlert.deleteMany({ where: { botId: bot.id } }));
+    await ignoreMissingTable(() => tx.riskEvent.deleteMany({ where: { botId: bot.id } }));
+    await ignoreMissingTable(() => tx.botRuntime.deleteMany({ where: { botId: bot.id } }));
+    await ignoreMissingTable(() => tx.botTradeState.deleteMany({ where: { botId: bot.id } }));
+    await ignoreMissingTable(() => tx.futuresBotConfig.deleteMany({ where: { botId: bot.id } }));
+    await ignoreMissingTable(() => tx.marketMakingConfig.deleteMany({ where: { botId: bot.id } }));
+    await ignoreMissingTable(() => tx.volumeConfig.deleteMany({ where: { botId: bot.id } }));
+    await ignoreMissingTable(() => tx.riskConfig.deleteMany({ where: { botId: bot.id } }));
+    await ignoreMissingTable(() => tx.botNotificationConfig.deleteMany({ where: { botId: bot.id } }));
+    await ignoreMissingTable(() => tx.botPriceSupportConfig.deleteMany({ where: { botId: bot.id } }));
+    await ignoreMissingTable(() => tx.botFillCursor.deleteMany({ where: { botId: bot.id } }));
+    await ignoreMissingTable(() => tx.botFillSeen.deleteMany({ where: { botId: bot.id } }));
+    await ignoreMissingTable(() => tx.botOrderMap.deleteMany({ where: { botId: bot.id } }));
+    await ignoreMissingTable(() => tx.manualTradeLog.deleteMany({ where: { botId: bot.id } }));
+    await ignoreMissingTable(() => tx.prediction.updateMany({
       where: { botId: bot.id },
       data: { botId: null }
-    });
-    await tx.bot.delete({ where: { id: bot.id } });
+    }));
+    await ignoreMissingTable(() => tx.bot.delete({ where: { id: bot.id } }));
   });
 
   return { deletedBotId: bot.id };
@@ -13143,6 +13143,23 @@ app.delete("/bots/:id", requireAuth, async (req, res) => {
 function wsSend(socket: WebSocket, payload: unknown) {
   if (socket.readyState !== WebSocket.OPEN) return;
   socket.send(JSON.stringify(payload));
+}
+
+function isMissingTableError(error: unknown): boolean {
+  if (!error || typeof error !== "object") return false;
+  const code = "code" in error ? String((error as any).code ?? "") : "";
+  const message = "message" in error ? String((error as any).message ?? "") : String(error);
+  if (code === "P2021") return true;
+  return /table .* does not exist/i.test(message) || /relation .* does not exist/i.test(message);
+}
+
+async function ignoreMissingTable<T>(operation: () => Promise<T>): Promise<T | null> {
+  try {
+    return await operation();
+  } catch (error) {
+    if (isMissingTableError(error)) return null;
+    throw error;
+  }
 }
 
 function coerceFirstItem(payload: unknown): unknown {

@@ -28,11 +28,12 @@
     "agoDays": "{count}d ago"
   },
   "calendar": {
-    "title": "Economic Calendar (USD / high)",
-    "blackout": "Blackout active until {to} · {title}",
-    "nextEvent": "Next event: {title} at {ts}",
-    "none": "No upcoming high-impact events.",
-    "loading": "Loading calendar status..."
+    "title": "Economic Calendar (today · USD · high+medium)",
+    "none": "No high/medium events today.",
+    "loading": "Loading calendar status...",
+    "unavailable": "Calendar status currently unavailable.",
+    "open": "Open Calendar",
+    "todayCount": "{count} events today"
   },
   "errors": {
     "load": "Load error:"
