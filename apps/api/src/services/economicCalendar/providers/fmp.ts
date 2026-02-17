@@ -21,6 +21,12 @@ function normalizeImpact(value: unknown): EconomicImpact {
   return "low";
 }
 
+function impactScore(value: EconomicImpact): number {
+  if (value === "high") return 3;
+  if (value === "medium") return 2;
+  return 1;
+}
+
 function parseNumeric(value: unknown): number | null {
   if (value === null || value === undefined) return null;
   if (typeof value === "number") return Number.isFinite(value) ? value : null;
@@ -108,6 +114,29 @@ function deriveSourceId(raw: FmpRawEvent, ts: Date, country: string, currency: s
   return crypto.createHash("sha1").update(payload).digest("hex");
 }
 
+function mergeEconomicEvents(eventSets: EconomicEventNormalized[][]): EconomicEventNormalized[] {
+  const merged = new Map<string, EconomicEventNormalized>();
+  for (const rows of eventSets) {
+    for (const row of rows) {
+      const existing = merged.get(row.sourceId);
+      if (!existing) {
+        merged.set(row.sourceId, { ...row });
+        continue;
+      }
+      merged.set(row.sourceId, {
+        ...existing,
+        // Prefer non-null numeric fields from later/better endpoint snapshots.
+        forecast: existing.forecast ?? row.forecast,
+        previous: existing.previous ?? row.previous,
+        actual: existing.actual ?? row.actual,
+        // Keep stronger impact label if it differs.
+        impact: impactScore(row.impact) > impactScore(existing.impact) ? row.impact : existing.impact
+      });
+    }
+  }
+  return [...merged.values()].sort((a, b) => a.ts.getTime() - b.ts.getTime());
+}
+
 export function normalizeFmpEventsPayload(payload: unknown): EconomicEventNormalized[] {
   if (!Array.isArray(payload)) return [];
   const out: EconomicEventNormalized[] = [];
@@ -184,6 +213,7 @@ export async function fetchFmpEconomicEvents(params: {
   ];
 
   let lastError: string | null = null;
+  const successfulResults: EconomicEventNormalized[][] = [];
   for (const url of candidates) {
     try {
       const response = await fetch(url, {
@@ -200,12 +230,18 @@ export async function fetchFmpEconomicEvents(params: {
         requestedCurrencies.length > 0
           ? normalized.filter((event) => requestedCurrencies.includes(event.currency))
           : normalized;
-      if (filtered.length > 0) return filtered;
-      if (Array.isArray(payload)) return [];
+      if (Array.isArray(payload)) {
+        successfulResults.push(filtered);
+        continue;
+      }
       lastError = "invalid_payload";
     } catch (error) {
       lastError = String(error);
     }
+  }
+
+  if (successfulResults.length > 0) {
+    return mergeEconomicEvents(successfulResults);
   }
 
   throw new Error(lastError ?? "fmp_fetch_failed");
