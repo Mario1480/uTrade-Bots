@@ -54,6 +54,21 @@ test("filterFeatureSnapshotForAiPrompt keeps only selected indicators and contex
         internal: { trend: "bullish" }
       },
       cloud: { price_pos: 0.8 }
+    },
+    mtf: {
+      runTimeframe: "5m",
+      timeframes: ["1h", "5m"],
+      frames: {
+        "1h": {
+          indicators: { rsi_14: 55.5, macd: { hist: 0.01 } },
+          advancedIndicators: {
+            smartMoneyConcepts: {
+              internal: { trend: "bullish" }
+            },
+            cloud: { price_pos: 0.7 }
+          }
+        }
+      }
     }
   } as Record<string, unknown>;
 
@@ -72,6 +87,11 @@ test("filterFeatureSnapshotForAiPrompt keeps only selected indicators and contex
   );
   assert.equal((filtered as any).advancedIndicators?.cloud, undefined);
   assert.equal((filtered as any).indicators, undefined);
+  assert.equal(
+    (filtered as any).mtf?.frames?.["1h"]?.advancedIndicators?.smartMoneyConcepts?.internal?.trend,
+    "bullish"
+  );
+  assert.equal((filtered as any).mtf?.frames?.["1h"]?.advancedIndicators?.cloud, undefined);
 });
 
 test("filterFeatureSnapshotForAiPrompt includes selected core indicator paths", () => {
@@ -108,6 +128,8 @@ test("ai prompt template defaults marketAnalysisUpdateEnabled to false", () => {
   });
 
   assert.equal(parsed.prompts[0]?.marketAnalysisUpdateEnabled, false);
+  assert.deepEqual(parsed.prompts[0]?.timeframes, []);
+  assert.equal(parsed.prompts[0]?.runTimeframe, null);
 });
 
 test("ai prompt template keeps marketAnalysisUpdateEnabled=true and exposes it in runtime settings", () => {
@@ -120,6 +142,8 @@ test("ai prompt template keeps marketAnalysisUpdateEnabled=true and exposes it i
         promptText: "analysis only",
         indicatorKeys: ["history_context"],
         ohlcvBars: 120,
+        timeframes: ["1h", "5m"],
+        runTimeframe: "5m",
         timeframe: "4h",
         directionPreference: "either",
         confidenceTargetPct: 60,
@@ -130,6 +154,58 @@ test("ai prompt template keeps marketAnalysisUpdateEnabled=true and exposes it i
   });
 
   assert.equal(parsed.prompts[0]?.marketAnalysisUpdateEnabled, true);
+  assert.deepEqual(parsed.prompts[0]?.timeframes, ["1h", "5m"]);
+  assert.equal(parsed.prompts[0]?.runTimeframe, "5m");
+  assert.equal(parsed.prompts[0]?.timeframe, "5m");
   const runtime = resolveAiPromptRuntimeSettingsForContext(parsed, {}, "db");
   assert.equal(runtime.marketAnalysisUpdateEnabled, true);
+  assert.deepEqual(runtime.timeframes, ["1h", "5m"]);
+  assert.equal(runtime.runTimeframe, "5m");
+});
+
+test("legacy timeframe maps to timeframes and runTimeframe", () => {
+  const parsed = parseStoredAiPromptSettings({
+    activePromptId: "prompt_legacy",
+    prompts: [
+      {
+        id: "prompt_legacy",
+        name: "Legacy",
+        promptText: "x",
+        indicatorKeys: ["rsi"],
+        ohlcvBars: 100,
+        timeframe: "15m",
+        directionPreference: "either",
+        confidenceTargetPct: 60,
+        isPublic: false
+      }
+    ]
+  });
+
+  assert.deepEqual(parsed.prompts[0]?.timeframes, ["15m"]);
+  assert.equal(parsed.prompts[0]?.runTimeframe, "15m");
+  assert.equal(parsed.prompts[0]?.timeframe, "15m");
+});
+
+test("invalid runTimeframe is normalized to first timeframe", () => {
+  const parsed = parseStoredAiPromptSettings({
+    activePromptId: "prompt_mtf",
+    prompts: [
+      {
+        id: "prompt_mtf",
+        name: "MTF",
+        promptText: "x",
+        indicatorKeys: ["rsi"],
+        ohlcvBars: 100,
+        timeframes: ["1h", "5m"],
+        runTimeframe: "4h",
+        directionPreference: "either",
+        confidenceTargetPct: 60,
+        isPublic: false
+      }
+    ]
+  });
+
+  assert.deepEqual(parsed.prompts[0]?.timeframes, ["1h", "5m"]);
+  assert.equal(parsed.prompts[0]?.runTimeframe, "1h");
+  assert.equal(parsed.prompts[0]?.timeframe, "1h");
 });

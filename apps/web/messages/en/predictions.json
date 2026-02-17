@@ -38,6 +38,7 @@
     "enforced": "enforced",
     "previewOff": "preview/off",
     "promptLockTimeframe": "Prompt lock timeframe",
+    "promptTfSetHint": "Prompt TF set: {set} (run: {run})",
     "localType": "Local type",
     "compositeVersion": "Composite version",
     "noExplicitStrategy": "No explicit strategy selected (AI system default).",
@@ -73,6 +74,7 @@
     "validationSelectPair": "Please select a pair.",
     "validationLeverageRange": "Leverage must be between 1 and 125 for futures.",
     "createdNotice": "Prediction created for {symbol} ({timeframe}) with signal {signal} and confidence {confidence}. Mode: {modeLabel}, active source: {source}. Strategy: {strategy}. Dir: {direction}, conf target: {target}%.",
+    "existingNotice": "Prediction schedule already exists for {symbol} ({timeframe}). Existing schedule kept. Strategy: {strategy}.",
     "eventsLoadFailed": "Unable to load events."
   },
   "running": {

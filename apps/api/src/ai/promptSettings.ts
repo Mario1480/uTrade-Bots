@@ -145,6 +145,8 @@ export type AiPromptTemplate = {
   promptText: string;
   indicatorKeys: AiPromptIndicatorKey[];
   ohlcvBars: number;
+  timeframes: AiPromptTimeframe[];
+  runTimeframe: AiPromptTimeframe | null;
   timeframe: AiPromptTimeframe | null;
   directionPreference: AiPromptDirectionPreference;
   confidenceTargetPct: number;
@@ -170,6 +172,8 @@ export type AiPromptRuntimeSettings = {
   promptText: string;
   indicatorKeys: AiPromptIndicatorKey[];
   ohlcvBars: number;
+  timeframes: AiPromptTimeframe[];
+  runTimeframe: AiPromptTimeframe | null;
   timeframe: AiPromptTimeframe | null;
   directionPreference: AiPromptDirectionPreference;
   confidenceTargetPct: number;
@@ -210,6 +214,9 @@ const AI_PROMPT_CONTEXT_BASE_KEYS = new Set<string>([
   "thresholdBars",
   "ohlcvSeries",
   "historyContext",
+  "mtf",
+  "promptTimeframes",
+  "promptRunTimeframe",
   "qualitySampleSize",
   "qualityWinRatePct",
   "qualityTpCount",
@@ -241,6 +248,7 @@ const defaultIndicatorKeys = AI_PROMPT_INDICATOR_OPTIONS.map(
 const DEFAULT_PROMPT_OHLCV_BARS = 100;
 const MIN_PROMPT_OHLCV_BARS = 20;
 const MAX_PROMPT_OHLCV_BARS = 500;
+const MAX_PROMPT_TIMEFRAMES = 4;
 const DEFAULT_PROMPT_DIRECTION_PREFERENCE: AiPromptDirectionPreference = "either";
 const DEFAULT_PROMPT_CONFIDENCE_TARGET_PCT = 60;
 
@@ -257,6 +265,8 @@ export const DEFAULT_AI_PROMPT_SETTINGS: AiPromptSettingsStored = {
       promptText: "",
       indicatorKeys: [...defaultIndicatorKeys],
       ohlcvBars: DEFAULT_PROMPT_OHLCV_BARS,
+      timeframes: [],
+      runTimeframe: null,
       timeframe: null,
       directionPreference: DEFAULT_PROMPT_DIRECTION_PREFERENCE,
       confidenceTargetPct: DEFAULT_PROMPT_CONFIDENCE_TARGET_PCT,
@@ -339,6 +349,39 @@ function normalizeTimeframe(value: unknown): AiPromptTimeframe | null {
   return null;
 }
 
+function normalizeTimeframes(
+  value: unknown,
+  fallbackTimeframe: AiPromptTimeframe | null
+): AiPromptTimeframe[] {
+  const out: AiPromptTimeframe[] = [];
+  const seen = new Set<AiPromptTimeframe>();
+  if (Array.isArray(value)) {
+    for (const entry of value) {
+      const normalized = normalizeTimeframe(entry);
+      if (!normalized || seen.has(normalized)) continue;
+      seen.add(normalized);
+      out.push(normalized);
+      if (out.length >= MAX_PROMPT_TIMEFRAMES) break;
+    }
+  }
+  if (out.length === 0 && fallbackTimeframe) {
+    out.push(fallbackTimeframe);
+  }
+  return out;
+}
+
+function normalizeRunTimeframe(
+  value: unknown,
+  timeframes: readonly AiPromptTimeframe[],
+  fallbackTimeframe: AiPromptTimeframe | null
+): AiPromptTimeframe | null {
+  const direct = normalizeTimeframe(value);
+  if (direct && timeframes.includes(direct)) return direct;
+  if (fallbackTimeframe && timeframes.includes(fallbackTimeframe)) return fallbackTimeframe;
+  if (timeframes.length > 0) return timeframes[0];
+  return null;
+}
+
 function normalizeDirectionPreference(
   value: unknown,
   fallback: AiPromptDirectionPreference
@@ -366,6 +409,13 @@ function parseTemplate(value: unknown, index: number): AiPromptTemplate | null {
   const nowIso = new Date().toISOString();
   const idRaw = typeof objectValue.id === "string" ? objectValue.id.trim() : "";
   const id = idRaw || `prompt_${index}_${Math.random().toString(36).slice(2, 8)}`;
+  const legacyTimeframe = normalizeTimeframe(objectValue.timeframe);
+  const timeframes = normalizeTimeframes(objectValue.timeframes, legacyTimeframe);
+  const runTimeframe = normalizeRunTimeframe(
+    objectValue.runTimeframe,
+    timeframes,
+    legacyTimeframe
+  );
 
   return {
     id,
@@ -373,7 +423,9 @@ function parseTemplate(value: unknown, index: number): AiPromptTemplate | null {
     promptText: sanitizePromptText(objectValue.promptText),
     indicatorKeys: normalizeIndicatorKeys(objectValue.indicatorKeys),
     ohlcvBars: normalizeOhlcvBars(objectValue.ohlcvBars, DEFAULT_PROMPT_OHLCV_BARS),
-    timeframe: normalizeTimeframe(objectValue.timeframe),
+    timeframes,
+    runTimeframe,
+    timeframe: runTimeframe,
     directionPreference: normalizeDirectionPreference(
       objectValue.directionPreference,
       DEFAULT_PROMPT_DIRECTION_PREFERENCE
@@ -412,6 +464,8 @@ function cloneStoredSettings(value: AiPromptSettingsStored): AiPromptSettingsSto
       promptText: item.promptText,
       indicatorKeys: [...item.indicatorKeys],
       ohlcvBars: item.ohlcvBars,
+      timeframes: [...item.timeframes],
+      runTimeframe: item.runTimeframe,
       timeframe: item.timeframe,
       directionPreference: item.directionPreference,
       confidenceTargetPct: item.confidenceTargetPct,
@@ -528,6 +582,8 @@ export function resolveAiPromptRuntimeSettingsForContext(
     promptText: active.promptText,
     indicatorKeys: [...active.indicatorKeys],
     ohlcvBars: active.ohlcvBars,
+    timeframes: [...active.timeframes],
+    runTimeframe: active.runTimeframe,
     timeframe: active.timeframe,
     directionPreference: active.directionPreference,
     confidenceTargetPct: active.confidenceTargetPct,
@@ -549,6 +605,8 @@ function toRuntimeFromTemplate(
     promptText: template.promptText,
     indicatorKeys: [...template.indicatorKeys],
     ohlcvBars: template.ohlcvBars,
+    timeframes: [...template.timeframes],
+    runTimeframe: template.runTimeframe,
     timeframe: template.timeframe,
     directionPreference: template.directionPreference,
     confidenceTargetPct: template.confidenceTargetPct,
@@ -586,6 +644,8 @@ export function getAiPromptTemplateByIdFromSettings(
     promptText: found.promptText,
     indicatorKeys: [...found.indicatorKeys],
     ohlcvBars: found.ohlcvBars,
+    timeframes: [...found.timeframes],
+    runTimeframe: found.runTimeframe,
     timeframe: found.timeframe,
     directionPreference: found.directionPreference,
     confidenceTargetPct: found.confidenceTargetPct,
@@ -674,6 +734,8 @@ export function getPublicAiPromptTemplates(
       promptText: item.promptText,
       indicatorKeys: [...item.indicatorKeys],
       ohlcvBars: item.ohlcvBars,
+      timeframes: [...item.timeframes],
+      runTimeframe: item.runTimeframe,
       timeframe: item.timeframe,
       directionPreference: item.directionPreference,
       confidenceTargetPct: item.confidenceTargetPct,
@@ -697,13 +759,22 @@ export function parseStoredAiPromptSettings(value: unknown): AiPromptSettingsSto
     Object.prototype.hasOwnProperty.call(objectValue, "indicatorKeys");
 
   if (isLegacySingle && !objectValue.prompts && !objectValue.presets) {
+    const legacyTimeframe = normalizeTimeframe(objectValue.timeframe);
+    const timeframes = normalizeTimeframes(objectValue.timeframes, legacyTimeframe);
+    const runTimeframe = normalizeRunTimeframe(
+      objectValue.runTimeframe,
+      timeframes,
+      legacyTimeframe
+    );
     const prompt: AiPromptTemplate = {
       id: "legacy_prompt",
       name: "Legacy Prompt",
       promptText: sanitizePromptText(objectValue.promptText),
       indicatorKeys: normalizeIndicatorKeys(objectValue.indicatorKeys),
       ohlcvBars: normalizeOhlcvBars(objectValue.ohlcvBars, DEFAULT_PROMPT_OHLCV_BARS),
-      timeframe: normalizeTimeframe(objectValue.timeframe),
+      timeframes,
+      runTimeframe,
+      timeframe: runTimeframe,
       directionPreference: normalizeDirectionPreference(
         objectValue.directionPreference,
         DEFAULT_PROMPT_DIRECTION_PREFERENCE
@@ -736,13 +807,22 @@ export function parseStoredAiPromptSettings(value: unknown): AiPromptSettingsSto
 
     const fromPreset = (key: "A" | "B", fallbackName: string): AiPromptTemplate => {
       const raw = asObject(presets[key]) ?? {};
+      const legacyTimeframe = normalizeTimeframe(raw.timeframe);
+      const timeframes = normalizeTimeframes(raw.timeframes, legacyTimeframe);
+      const runTimeframe = normalizeRunTimeframe(
+        raw.runTimeframe,
+        timeframes,
+        legacyTimeframe
+      );
       return {
         id: `legacy_preset_${key.toLowerCase()}`,
         name: sanitizeName(raw.name, fallbackName),
         promptText: sanitizePromptText(raw.promptText),
         indicatorKeys: normalizeIndicatorKeys(raw.indicatorKeys),
         ohlcvBars: normalizeOhlcvBars(raw.ohlcvBars, DEFAULT_PROMPT_OHLCV_BARS),
-        timeframe: normalizeTimeframe(raw.timeframe),
+        timeframes,
+        runTimeframe,
+        timeframe: runTimeframe,
         directionPreference: normalizeDirectionPreference(
           raw.directionPreference,
           DEFAULT_PROMPT_DIRECTION_PREFERENCE
@@ -820,6 +900,38 @@ export function filterFeatureSnapshotForAiPrompt(
       if (value === undefined) continue;
       setByPath(filtered, path, value);
     }
+  }
+
+  const mtfRaw = asObject(base.mtf);
+  const mtfFrames = asObject(mtfRaw?.frames);
+  if (mtfRaw && mtfFrames) {
+    const filteredFrames: Record<string, unknown> = {};
+    for (const [timeframe, frameValue] of Object.entries(mtfFrames)) {
+      const frame = asObject(frameValue);
+      if (!frame) continue;
+      const frameFiltered: Record<string, unknown> = {};
+      for (const [key, value] of Object.entries(frame)) {
+        if (key === "indicators" || key === "advancedIndicators" || key === "tradersReality") continue;
+        if (!shouldPreservePromptContextKey(key)) continue;
+        frameFiltered[key] = deepClone(value);
+      }
+      for (const option of AI_PROMPT_INDICATOR_OPTIONS) {
+        if (!selected.has(option.key)) continue;
+        for (const path of option.paths) {
+          const value = getByPath(frame, path);
+          if (value === undefined) continue;
+          setByPath(frameFiltered, path, value);
+        }
+      }
+      filteredFrames[timeframe] = frameFiltered;
+    }
+
+    const nextMtfSource = asObject(deepClone(mtfRaw)) ?? {};
+    const nextMtf: Record<string, unknown> = {
+      ...nextMtfSource
+    };
+    nextMtf.frames = filteredFrames;
+    filtered.mtf = nextMtf;
   }
 
   return filtered;

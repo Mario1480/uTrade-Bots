@@ -19,6 +19,8 @@ type PromptTemplate = {
   promptText: string;
   indicatorKeys: string[];
   ohlcvBars: number;
+  timeframes: Array<"5m" | "15m" | "1h" | "4h" | "1d">;
+  runTimeframe: "5m" | "15m" | "1h" | "4h" | "1d" | null;
   timeframe: "5m" | "15m" | "1h" | "4h" | "1d" | null;
   directionPreference: "long" | "short" | "either";
   confidenceTargetPct: number;
@@ -56,6 +58,8 @@ type PreviewResponse = {
       promptText: string;
       indicatorKeys: string[];
       ohlcvBars: number;
+      timeframes: Array<"5m" | "15m" | "1h" | "4h" | "1d">;
+      runTimeframe: "5m" | "15m" | "1h" | "4h" | "1d" | null;
       timeframe: "5m" | "15m" | "1h" | "4h" | "1d" | null;
       directionPreference: "long" | "short" | "either";
       confidenceTargetPct: number;
@@ -93,7 +97,13 @@ function clonePrompts(prompts: PromptTemplate[]): PromptTemplate[] {
     ohlcvBars: Number.isFinite(Number(item.ohlcvBars))
       ? Math.max(20, Math.min(500, Math.trunc(Number(item.ohlcvBars))))
       : 100,
-    timeframe: item.timeframe ?? null,
+    timeframes: Array.isArray(item.timeframes)
+      ? item.timeframes.filter((value): value is "5m" | "15m" | "1h" | "4h" | "1d" =>
+        value === "5m" || value === "15m" || value === "1h" || value === "4h" || value === "1d"
+      ).slice(0, 4)
+      : (item.timeframe ? [item.timeframe] : []),
+    runTimeframe: item.runTimeframe ?? item.timeframe ?? null,
+    timeframe: item.runTimeframe ?? item.timeframe ?? null,
     directionPreference:
       item.directionPreference === "long" || item.directionPreference === "short"
         ? item.directionPreference
@@ -136,7 +146,8 @@ export default function AdminAiPromptsPage() {
   const [promptText, setPromptText] = useState("");
   const [promptIsPublic, setPromptIsPublic] = useState(false);
   const [promptIndicatorKeys, setPromptIndicatorKeys] = useState<string[]>([]);
-  const [promptTimeframe, setPromptTimeframe] = useState<"" | "5m" | "15m" | "1h" | "4h" | "1d">("");
+  const [promptTimeframes, setPromptTimeframes] = useState<Array<"5m" | "15m" | "1h" | "4h" | "1d">>([]);
+  const [promptRunTimeframe, setPromptRunTimeframe] = useState<"" | "5m" | "15m" | "1h" | "4h" | "1d">("");
   const [promptDirectionPreference, setPromptDirectionPreference] = useState<"long" | "short" | "either">("either");
   const [promptConfidenceTargetPct, setPromptConfidenceTargetPct] = useState("60");
   const [promptMarketAnalysisUpdateEnabled, setPromptMarketAnalysisUpdateEnabled] = useState(false);
@@ -223,7 +234,8 @@ export default function AdminAiPromptsPage() {
     setPromptText("");
     setPromptIsPublic(false);
     setPromptIndicatorKeys([]);
-    setPromptTimeframe("");
+    setPromptTimeframes([]);
+    setPromptRunTimeframe("");
     setPromptDirectionPreference("either");
     setPromptConfidenceTargetPct("60");
     setPromptMarketAnalysisUpdateEnabled(false);
@@ -236,7 +248,11 @@ export default function AdminAiPromptsPage() {
     setPromptText(prompt.promptText);
     setPromptIsPublic(Boolean(prompt.isPublic));
     setPromptIndicatorKeys([...(prompt.indicatorKeys ?? [])]);
-    setPromptTimeframe(prompt.timeframe ?? "");
+    const nextTimeframes = Array.isArray(prompt.timeframes) && prompt.timeframes.length > 0
+      ? prompt.timeframes
+      : (prompt.timeframe ? [prompt.timeframe] : []);
+    setPromptTimeframes(nextTimeframes);
+    setPromptRunTimeframe((prompt.runTimeframe ?? prompt.timeframe ?? "") as "" | "5m" | "15m" | "1h" | "4h" | "1d");
     setPromptDirectionPreference(prompt.directionPreference ?? "either");
     setPromptConfidenceTargetPct(String(prompt.confidenceTargetPct ?? 60));
     setPromptMarketAnalysisUpdateEnabled(Boolean(prompt.marketAnalysisUpdateEnabled));
@@ -247,6 +263,22 @@ export default function AdminAiPromptsPage() {
     setPromptIndicatorKeys((prev) =>
       prev.includes(key) ? prev.filter((entry) => entry !== key) : [...prev, key]
     );
+  }
+
+  function togglePromptTimeframe(value: "5m" | "15m" | "1h" | "4h" | "1d") {
+    setPromptTimeframes((prev) => {
+      if (prev.includes(value)) {
+        const next = prev.filter((entry) => entry !== value);
+        if (!next.includes(promptRunTimeframe as any)) {
+          setPromptRunTimeframe(next[0] ?? "");
+        }
+        return next;
+      }
+      if (prev.length >= 4) return prev;
+      const next = [...prev, value];
+      if (!promptRunTimeframe) setPromptRunTimeframe(value);
+      return next;
+    });
   }
 
   function setAllPromptIndicators(enabled: boolean) {
@@ -271,15 +303,29 @@ export default function AdminAiPromptsPage() {
       setError(t("messages.ohlcvRange"));
       return;
     }
+    if (promptTimeframes.length > 0 && !promptRunTimeframe) {
+      setError(t("messages.runTimeframeRequired"));
+      return;
+    }
+    if (promptTimeframes.length > 0 && !promptTimeframes.includes(promptRunTimeframe as any)) {
+      setError(t("messages.runTimeframeMustBeInSet"));
+      return;
+    }
 
     const nowIso = new Date().toISOString();
+    const normalizedTimeframes = Array.from(new Set(promptTimeframes)).slice(0, 4);
+    const normalizedRunTimeframe = normalizedTimeframes.length > 0
+      ? ((promptRunTimeframe || normalizedTimeframes[0]) as "5m" | "15m" | "1h" | "4h" | "1d")
+      : null;
     const nextPrompt: PromptTemplate = {
       id: editingPromptId ?? makePromptId(),
       name,
       promptText,
       indicatorKeys: Array.from(new Set(promptIndicatorKeys)),
       ohlcvBars: Math.round(ohlcvBars),
-      timeframe: promptTimeframe || null,
+      timeframes: normalizedTimeframes,
+      runTimeframe: normalizedRunTimeframe,
+      timeframe: normalizedRunTimeframe,
       directionPreference: promptDirectionPreference,
       confidenceTargetPct: Math.round(confidenceTargetPct),
       marketAnalysisUpdateEnabled: promptMarketAnalysisUpdateEnabled,
@@ -501,15 +547,36 @@ export default function AdminAiPromptsPage() {
                 </label>
               </div>
 
-              <div className="settingsTwoColGrid" style={{ marginBottom: 8 }}>
+      <div className="settingsTwoColGrid" style={{ marginBottom: 8 }}>
                 <label className="settingsField">
-                  <span className="settingsFieldLabel">Timeframe lock (optional)</span>
-                  <select className="input" value={promptTimeframe} onChange={(e) => setPromptTimeframe(e.target.value as "" | "5m" | "15m" | "1h" | "4h" | "1d")}>
-                    <option value="">No lock (user can choose)</option>
+                  <span className="settingsFieldLabel">{t("timeframes")}</span>
+                  <span className="settingsMutedText">{t("maxTimeframesHint")}</span>
+                  <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginTop: 6 }}>
                     {TIMEFRAME_OPTIONS.map((tf) => (
-                      <option key={tf} value={tf}>
+                      <label key={`tf-${tf}`} className="inlineCheck">
+                        <input
+                          type="checkbox"
+                          checked={promptTimeframes.includes(tf)}
+                          onChange={() => togglePromptTimeframe(tf)}
+                        />
                         {tf}
-                      </option>
+                      </label>
+                    ))}
+                  </div>
+                </label>
+                <label className="settingsField">
+                  <span className="settingsFieldLabel">{t("runTimeframe")}</span>
+                  <select
+                    className="input"
+                    value={promptRunTimeframe}
+                    onChange={(e) => setPromptRunTimeframe(e.target.value as "" | "5m" | "15m" | "1h" | "4h" | "1d")}
+                    disabled={promptTimeframes.length === 0}
+                  >
+                    {promptTimeframes.length === 0 ? (
+                      <option value="">{t("noTimeframeLock")}</option>
+                    ) : null}
+                    {promptTimeframes.map((tf) => (
+                      <option key={`run-${tf}`} value={tf}>{tf}</option>
                     ))}
                   </select>
                 </label>
@@ -596,6 +663,7 @@ export default function AdminAiPromptsPage() {
                       <th>Name</th>
                       <th>Public</th>
                       <th>TF</th>
+                      <th>{t("runTimeframeShort")}</th>
                       <th>Dir</th>
                       <th>Conf %</th>
                       <th>{t("analysisUpdate")}</th>
@@ -611,7 +679,8 @@ export default function AdminAiPromptsPage() {
                       <tr key={prompt.id}>
                         <td>{prompt.name}</td>
                         <td>{prompt.isPublic ? "yes" : "no"}</td>
-                        <td>{prompt.timeframe ?? "-"}</td>
+                        <td>{prompt.timeframes?.length ? prompt.timeframes.join(", ") : "-"}</td>
+                        <td>{prompt.runTimeframe ?? prompt.timeframe ?? "-"}</td>
                         <td>{prompt.directionPreference ?? "either"}</td>
                         <td>{Number.isFinite(Number(prompt.confidenceTargetPct)) ? Number(prompt.confidenceTargetPct).toFixed(0) : "60"}</td>
                         <td>{prompt.marketAnalysisUpdateEnabled ? t("yes") : t("no")}</td>

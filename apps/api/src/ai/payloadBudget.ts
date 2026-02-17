@@ -113,6 +113,79 @@ function setHistoryContext(payload: Record<string, unknown>, history: HistoryCon
   featureSnapshot.historyContext = history as unknown as Record<string, unknown>;
 }
 
+function getMtfFrames(payload: Record<string, unknown>): {
+  featureSnapshot: Record<string, unknown>;
+  mtf: Record<string, unknown>;
+  frames: Record<string, unknown>;
+  runTimeframe: string | null;
+} | null {
+  const featureSnapshot = asObject(payload.featureSnapshot);
+  if (!featureSnapshot) return null;
+  const mtf = asObject(featureSnapshot.mtf);
+  if (!mtf) return null;
+  const frames = asObject(mtf.frames);
+  if (!frames) return null;
+  const runTimeframe = typeof mtf.runTimeframe === "string" ? mtf.runTimeframe : null;
+  return { featureSnapshot, mtf, frames, runTimeframe };
+}
+
+function trimMtfOhlcvBars(payload: Record<string, unknown>, limit: number): boolean {
+  const mtfCtx = getMtfFrames(payload);
+  if (!mtfCtx) return false;
+  let changed = false;
+  const nextFrames: Record<string, unknown> = {};
+  for (const [timeframe, frameRaw] of Object.entries(mtfCtx.frames)) {
+    const frame = asObject(frameRaw);
+    if (!frame) {
+      nextFrames[timeframe] = frameRaw;
+      continue;
+    }
+    const ohlcv = asObject(frame.ohlcvSeries);
+    const bars = Array.isArray(ohlcv?.bars) ? ohlcv.bars : null;
+    if (!ohlcv || !bars) {
+      nextFrames[timeframe] = frame;
+      continue;
+    }
+    if (bars.length > limit) {
+      changed = true;
+      const trimmed = bars.slice(-limit);
+      nextFrames[timeframe] = {
+        ...frame,
+        ohlcvSeries: {
+          ...ohlcv,
+          bars: trimmed,
+          count: trimmed.length
+        }
+      };
+    } else {
+      nextFrames[timeframe] = frame;
+    }
+  }
+  if (!changed) return false;
+  mtfCtx.featureSnapshot.mtf = {
+    ...mtfCtx.mtf,
+    frames: nextFrames
+  };
+  return true;
+}
+
+function dropMtfNonRunFrames(payload: Record<string, unknown>): boolean {
+  const mtfCtx = getMtfFrames(payload);
+  if (!mtfCtx || !mtfCtx.runTimeframe) return false;
+  const runFrame = mtfCtx.frames[mtfCtx.runTimeframe];
+  if (!runFrame) return false;
+  const frameKeys = Object.keys(mtfCtx.frames);
+  if (frameKeys.length <= 1) return false;
+  mtfCtx.featureSnapshot.mtf = {
+    ...mtfCtx.mtf,
+    timeframes: [mtfCtx.runTimeframe],
+    frames: {
+      [mtfCtx.runTimeframe]: runFrame
+    }
+  };
+  return true;
+}
+
 function ensurePayloadMeta(payload: Record<string, unknown>): Record<string, unknown> {
   const existing = asObject(payload.meta);
   if (existing) return existing;
@@ -159,6 +232,27 @@ function trimPayloadForBudget(payload: Record<string, unknown>, maxPayloadBytes:
   };
 
   const payloadBytes = () => bytesOf(current);
+  if (payloadBytes() <= maxPayloadBytes) {
+    return { payload: current, flags, overBudget: false };
+  }
+
+  if (trimMtfOhlcvBars(current, 30)) {
+    flags.push("mtf_ohlcv_trimmed_30");
+  }
+  if (payloadBytes() <= maxPayloadBytes) {
+    return { payload: current, flags, overBudget: false };
+  }
+
+  if (trimMtfOhlcvBars(current, 10)) {
+    flags.push("mtf_ohlcv_trimmed_10");
+  }
+  if (payloadBytes() <= maxPayloadBytes) {
+    return { payload: current, flags, overBudget: false };
+  }
+
+  if (dropMtfNonRunFrames(current)) {
+    flags.push("mtf_non_run_frames_dropped");
+  }
   if (payloadBytes() <= maxPayloadBytes) {
     return { payload: current, flags, overBudget: false };
   }

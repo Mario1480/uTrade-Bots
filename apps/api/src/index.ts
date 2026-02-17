@@ -516,12 +516,34 @@ const aiPromptTemplateSchema = z.object({
   indicatorKeys: z.array(z.string().trim().min(1)).max(128).default([]),
   ohlcvBars: z.number().int().min(20).max(500).default(100),
   timeframe: z.enum(["5m", "15m", "1h", "4h", "1d"]).nullable().default(null),
+  timeframes: z.array(z.enum(["5m", "15m", "1h", "4h", "1d"])).max(4).default([]),
+  runTimeframe: z.enum(["5m", "15m", "1h", "4h", "1d"]).nullable().default(null),
   directionPreference: z.enum(["long", "short", "either"]).default("either"),
   confidenceTargetPct: z.number().min(0).max(100).default(60),
   marketAnalysisUpdateEnabled: z.boolean().default(false),
   isPublic: z.boolean().default(false),
   createdAt: z.string().datetime().optional(),
   updatedAt: z.string().datetime().optional()
+}).superRefine((value, ctx) => {
+  const seen = new Set<string>();
+  for (const [index, timeframe] of value.timeframes.entries()) {
+    if (seen.has(timeframe)) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "timeframes must be unique",
+        path: ["timeframes", index]
+      });
+      continue;
+    }
+    seen.add(timeframe);
+  }
+  if (value.timeframes.length > 0 && value.runTimeframe && !value.timeframes.includes(value.runTimeframe)) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: "runTimeframe must be included in timeframes",
+      path: ["runTimeframe"]
+    });
+  }
 });
 
 const adminAiPromptsSchema = z.object({
@@ -2450,6 +2472,201 @@ function timeframeToIntervalMs(timeframe: PredictionTimeframe): number {
   return 24 * 60 * 60 * 1000;
 }
 
+function normalizePredictionTimeframeCandidate(value: unknown): PredictionTimeframe | null {
+  if (typeof value !== "string") return null;
+  const trimmed = value.trim() as PredictionTimeframe;
+  return PREDICTION_TIMEFRAMES.has(trimmed) ? trimmed : null;
+}
+
+function normalizePromptTimeframeSetForRuntime(
+  settings: {
+    timeframe?: unknown;
+    timeframes?: unknown;
+    runTimeframe?: unknown;
+  } | null | undefined,
+  fallbackTimeframe: PredictionTimeframe
+): { timeframes: PredictionTimeframe[]; runTimeframe: PredictionTimeframe } {
+  const out: PredictionTimeframe[] = [];
+  const seen = new Set<PredictionTimeframe>();
+  const pushTf = (value: unknown) => {
+    const normalized = normalizePredictionTimeframeCandidate(value);
+    if (!normalized || seen.has(normalized)) return;
+    seen.add(normalized);
+    out.push(normalized);
+  };
+
+  if (settings && Array.isArray(settings.timeframes)) {
+    for (const value of settings.timeframes) {
+      pushTf(value);
+      if (out.length >= 4) break;
+    }
+  }
+
+  const legacyTimeframe = normalizePredictionTimeframeCandidate(settings?.timeframe);
+  if (out.length === 0 && legacyTimeframe) {
+    pushTf(legacyTimeframe);
+  }
+
+  let runTimeframe =
+    normalizePredictionTimeframeCandidate(settings?.runTimeframe)
+    ?? legacyTimeframe
+    ?? fallbackTimeframe;
+  if (!seen.has(runTimeframe)) {
+    if (out.length >= 4) {
+      runTimeframe = out[0];
+    } else {
+      out.push(runTimeframe);
+      seen.add(runTimeframe);
+    }
+  }
+  if (out.length === 0) {
+    out.push(runTimeframe);
+  }
+  return { timeframes: out, runTimeframe };
+}
+
+async function buildMtfFramesForPrediction(params: {
+  adapter: BitgetFuturesAdapter;
+  exchange: string;
+  accountId: string;
+  symbol: string;
+  marketType: PredictionMarketType;
+  timeframes: PredictionTimeframe[];
+  runTimeframe: PredictionTimeframe;
+  runFrame: {
+    candles: CandleBar[];
+    indicators: ReturnType<typeof computeIndicators>;
+    advancedIndicators: ReturnType<typeof computeAdvancedIndicators>;
+  };
+}): Promise<{
+  runTimeframe: PredictionTimeframe;
+  timeframes: PredictionTimeframe[];
+  frames: Record<string, Record<string, unknown>>;
+}> {
+  const dedupedTimeframes = normalizePromptTimeframeSetForRuntime(
+    {
+      timeframes: params.timeframes,
+      runTimeframe: params.runTimeframe
+    },
+    params.runTimeframe
+  ).timeframes;
+  const frames: Record<string, Record<string, unknown>> = {};
+  const exchangeSymbol = await params.adapter.toExchangeSymbol(params.symbol);
+
+  for (const timeframe of dedupedTimeframes) {
+    let candles: CandleBar[];
+    let indicators: ReturnType<typeof computeIndicators>;
+    let advancedIndicators: ReturnType<typeof computeAdvancedIndicators>;
+
+    if (timeframe === params.runTimeframe) {
+      candles = params.runFrame.candles;
+      indicators = params.runFrame.indicators;
+      advancedIndicators = params.runFrame.advancedIndicators;
+    } else {
+      const indicatorSettingsResolution = await resolveIndicatorSettings({
+        db,
+        exchange: params.exchange,
+        accountId: params.accountId,
+        symbol: params.symbol,
+        timeframe
+      });
+      const indicatorComputeSettings = toIndicatorComputeSettings(
+        indicatorSettingsResolution.config
+      );
+      const advancedIndicatorSettings = toAdvancedIndicatorComputeSettings(
+        indicatorSettingsResolution.config
+      );
+      const candleLookback = Math.max(
+        120,
+        minimumCandlesForIndicatorsWithSettings(timeframe, indicatorComputeSettings)
+      );
+      const candlesRaw = await params.adapter.marketApi.getCandles({
+        symbol: exchangeSymbol,
+        productType: params.adapter.productType,
+        granularity: timeframeToBitgetGranularity(timeframe),
+        limit: candleLookback
+      });
+      candles = bucketCandles(parseBitgetCandles(candlesRaw), timeframe);
+      if (candles.length < 20) continue;
+      indicators = computeIndicators(candles, timeframe, {
+        exchange: params.exchange,
+        symbol: params.symbol,
+        marketType: params.marketType,
+        logVwapMetrics: false,
+        settings: indicatorComputeSettings
+      });
+      advancedIndicators = computeAdvancedIndicators(
+        candles,
+        timeframe,
+        advancedIndicatorSettings
+      );
+    }
+
+    const frameSnapshot: Record<string, unknown> = {
+      timeframe,
+      indicators,
+      advancedIndicators,
+      rsi: asNumber(indicators.rsi_14),
+      atrPct: asNumber(indicators.atr_pct),
+      ohlcvSeries: buildOhlcvSeriesFeature(candles, timeframe)
+    };
+
+    await buildAndAttachHistoryContext({
+      db,
+      featureSnapshot: frameSnapshot,
+      candles,
+      timeframe,
+      indicators,
+      advancedIndicators,
+      exchange: params.exchange,
+      symbol: params.symbol,
+      marketType: params.marketType,
+      options: AI_HISTORY_CONTEXT_OPTIONS
+    });
+    if (advancedIndicators.dataGap) {
+      const riskFlags = asRecord(frameSnapshot.riskFlags) ?? {};
+      frameSnapshot.riskFlags = { ...riskFlags, dataGap: true };
+    }
+    frames[timeframe] = frameSnapshot;
+  }
+
+  const effectiveTimeframes = dedupedTimeframes.filter((timeframe) => Boolean(frames[timeframe]));
+  if (!effectiveTimeframes.includes(params.runTimeframe)) {
+    const runFrameSnapshot: Record<string, unknown> = {
+      timeframe: params.runTimeframe,
+      indicators: params.runFrame.indicators,
+      advancedIndicators: params.runFrame.advancedIndicators,
+      rsi: asNumber(params.runFrame.indicators.rsi_14),
+      atrPct: asNumber(params.runFrame.indicators.atr_pct),
+      ohlcvSeries: buildOhlcvSeriesFeature(params.runFrame.candles, params.runTimeframe)
+    };
+    await buildAndAttachHistoryContext({
+      db,
+      featureSnapshot: runFrameSnapshot,
+      candles: params.runFrame.candles,
+      timeframe: params.runTimeframe,
+      indicators: params.runFrame.indicators,
+      advancedIndicators: params.runFrame.advancedIndicators,
+      exchange: params.exchange,
+      symbol: params.symbol,
+      marketType: params.marketType,
+      options: AI_HISTORY_CONTEXT_OPTIONS
+    });
+    if (params.runFrame.advancedIndicators.dataGap) {
+      const riskFlags = asRecord(runFrameSnapshot.riskFlags) ?? {};
+      runFrameSnapshot.riskFlags = { ...riskFlags, dataGap: true };
+    }
+    frames[params.runTimeframe] = runFrameSnapshot;
+    effectiveTimeframes.unshift(params.runTimeframe);
+  }
+
+  return {
+    runTimeframe: params.runTimeframe,
+    timeframes: effectiveTimeframes,
+    frames
+  };
+}
+
 type FeatureThresholdRecord = {
   exchange: string;
   symbol: string;
@@ -2932,6 +3149,8 @@ async function generateAutoPredictionForUser(
   compositeStrategyId: string | null;
   compositeStrategyName: string | null;
   strategyRef: PredictionStrategyRef | null;
+  existing?: boolean;
+  existingStateId?: string | null;
 }> {
   const resolvedAccount = await resolveMarketDataTradingAccount(userId, payload.exchangeAccountId);
   const account = resolvedAccount.selectedAccount;
@@ -3074,13 +3293,20 @@ async function generateAutoPredictionForUser(
           requirePublic: !requestIsSuperadmin
         })
       : await getAiPromptRuntimeSettings(promptScopeContextDraft);
+    const promptTimeframeConfig = normalizePromptTimeframeSetForRuntime(
+      selectedPromptSettings,
+      requestedTimeframe
+    );
     const allowPromptTimeframeOverride =
       !selectedStrategyRef || selectedStrategyRef.kind === "ai";
     const effectiveTimeframe = (
       allowPromptTimeframeOverride
-        ? (selectedPromptSettings?.timeframe ?? requestedTimeframe)
+        ? promptTimeframeConfig.runTimeframe
         : requestedTimeframe
     ) as PredictionTimeframe;
+    const effectivePromptTimeframes = allowPromptTimeframeOverride
+      ? promptTimeframeConfig.timeframes
+      : [requestedTimeframe];
     const effectiveDirectionPreference = parseDirectionPreference(
       selectedPromptSettings?.directionPreference
     );
@@ -3102,6 +3328,112 @@ async function generateAutoPredictionForUser(
       timeframe: effectiveTimeframe,
       signalMode
     });
+    const requestedStrategyRefForScope: PredictionStrategyRef | null =
+      selectedStrategyRef?.kind === "ai"
+        ? {
+            kind: "ai",
+            id: selectedPromptSettings?.activePromptId ?? selectedStrategyRef.id,
+            name: selectedPromptSettings?.activePromptName ?? selectedStrategyRef.name
+          }
+        : selectedStrategyRef;
+    if (existingStateId) {
+      const existingState = await db.predictionState.findUnique({
+        where: { id: existingStateId },
+        select: {
+          id: true,
+          timeframe: true,
+          signalMode: true,
+          signal: true,
+          expectedMovePct: true,
+          confidence: true,
+          explanation: true,
+          tags: true,
+          keyDrivers: true,
+          featuresSnapshot: true,
+          modelVersion: true,
+          tsUpdated: true,
+          directionPreference: true,
+          confidenceTargetPct: true
+        }
+      });
+      if (existingState) {
+        const existingSnapshot = asRecord(existingState.featuresSnapshot);
+        const existingStrategyRef = readPredictionStrategyRef(existingSnapshot);
+        const requestedStrategyKey = requestedStrategyRefForScope
+          ? `${requestedStrategyRefForScope.kind}:${requestedStrategyRefForScope.id}`
+          : null;
+        const existingStrategyKey = existingStrategyRef
+          ? `${existingStrategyRef.kind}:${existingStrategyRef.id}`
+          : null;
+        if (requestedStrategyKey !== existingStrategyKey) {
+          throw new ManualTradingError(
+            "Prediction scope already exists with a different strategy. Pause/delete existing schedule first.",
+            409,
+            "prediction_scope_exists_with_different_strategy"
+          );
+        }
+        const existingSignal: PredictionSignal =
+          existingState.signal === "up" || existingState.signal === "down" || existingState.signal === "neutral"
+            ? existingState.signal
+            : "neutral";
+        const existingExpectedMovePct = Number.isFinite(Number(existingState.expectedMovePct))
+          ? Number(clamp(Math.abs(Number(existingState.expectedMovePct)), 0, 25).toFixed(2))
+          : 0;
+        const existingConfidence = Number.isFinite(Number(existingState.confidence))
+          ? Number(clamp(Number(existingState.confidence), 0, 1).toFixed(4))
+          : 0;
+        const existingTimeframe = normalizePredictionTimeframeCandidate(existingState.timeframe)
+          ?? effectiveTimeframe;
+        const existingSignalMode = normalizePredictionSignalMode(existingState.signalMode);
+        const existingSignalSource = readSelectedSignalSource(existingSnapshot);
+        const existingAiPrediction =
+          readAiPredictionSnapshot(existingSnapshot)
+          ?? {
+            signal: existingSignal,
+            expectedMovePct: existingExpectedMovePct,
+            confidence: existingConfidence
+          };
+        const existingTags = normalizeTagList(existingState.tags);
+        const existingKeyDrivers = normalizeKeyDriverList(existingState.keyDrivers);
+        return {
+          persisted: false,
+          existing: true,
+          existingStateId: existingState.id,
+          prediction: {
+            signal: existingSignal,
+            expectedMovePct: existingExpectedMovePct,
+            confidence: existingConfidence
+          },
+          timeframe: existingTimeframe,
+          directionPreference: parseDirectionPreference(existingState.directionPreference),
+          confidenceTargetPct: Number.isFinite(Number(existingState.confidenceTargetPct))
+            ? clamp(Number(existingState.confidenceTargetPct), 0, 100)
+            : effectiveConfidenceTargetPct,
+          signalSource: existingSignalSource,
+          signalMode: existingSignalMode,
+          explanation: {
+            explanation:
+              typeof existingState.explanation === "string" && existingState.explanation.trim()
+                ? existingState.explanation
+                : "Existing prediction schedule reused for this scope.",
+            tags: existingTags,
+            keyDrivers: existingKeyDrivers,
+            aiPrediction: existingAiPrediction,
+            disclaimer: "grounded_features_only"
+          },
+          modelVersion: existingState.modelVersion,
+          predictionId: null,
+          tsCreated: existingState.tsUpdated.toISOString(),
+          aiPromptTemplateId: readAiPromptTemplateId(existingSnapshot),
+          aiPromptTemplateName: readAiPromptTemplateName(existingSnapshot),
+          localStrategyId: readLocalStrategyId(existingSnapshot),
+          localStrategyName: readLocalStrategyName(existingSnapshot),
+          compositeStrategyId: readCompositeStrategyId(existingSnapshot),
+          compositeStrategyName: readCompositeStrategyName(existingSnapshot),
+          strategyRef: existingStrategyRef
+        };
+      }
+    }
     const predictionCreateAccess = await canCreatePredictionForUser({
       userId,
       bypass: Boolean(options?.hasAdminBackendAccess || options?.isSuperadmin),
@@ -3216,7 +3548,14 @@ async function generateAutoPredictionForUser(
     inferred.featureSnapshot.autoSchedulePaused = false;
     inferred.featureSnapshot.directionPreference = effectiveDirectionPreference;
     inferred.featureSnapshot.confidenceTargetPct = effectiveConfidenceTargetPct;
-    inferred.featureSnapshot.promptTimeframe = selectedPromptSettings?.timeframe ?? null;
+    inferred.featureSnapshot.promptTimeframe =
+      selectedPromptSettings?.runTimeframe
+      ?? selectedPromptSettings?.timeframe
+      ?? null;
+    inferred.featureSnapshot.promptTimeframes = effectivePromptTimeframes;
+    inferred.featureSnapshot.promptRunTimeframe = allowPromptTimeframeOverride
+      ? effectiveTimeframe
+      : null;
     inferred.featureSnapshot.requestedTimeframe = requestedTimeframe;
     inferred.featureSnapshot.requestedLeverage = payload.leverage ?? null;
     inferred.featureSnapshot.prefillExchangeAccountId = payload.exchangeAccountId;
@@ -3244,6 +3583,24 @@ async function generateAutoPredictionForUser(
       marketType: payload.marketType,
       options: AI_HISTORY_CONTEXT_OPTIONS
     });
+    if (allowPromptTimeframeOverride && effectivePromptTimeframes.length > 0) {
+      inferred.featureSnapshot.mtf = await buildMtfFramesForPrediction({
+        adapter,
+        exchange: account.exchange,
+        accountId: payload.exchangeAccountId,
+        symbol: canonicalSymbol,
+        marketType: payload.marketType,
+        timeframes: effectivePromptTimeframes,
+        runTimeframe: effectiveTimeframe,
+        runFrame: {
+          candles: alignedCandles,
+          indicators,
+          advancedIndicators
+        }
+      });
+    } else {
+      delete inferred.featureSnapshot.mtf;
+    }
     inferred.featureSnapshot.aiPromptTemplateRequestedId = requestedPromptTemplateId;
     inferred.featureSnapshot.aiPromptTemplateId =
       selectedPromptSettings?.activePromptId ?? requestedPromptTemplateId;
@@ -6466,6 +6823,47 @@ async function refreshPredictionStateForTemplate(params: {
         strategyRunStatus = "fallback";
       }
     }
+    const shouldAttachPromptMtf =
+      !requestedStrategyRefEffective || requestedStrategyRefEffective.kind === "ai";
+    if (shouldAttachPromptMtf && runtimePromptTemplateId && !runtimePromptSettings) {
+      try {
+        runtimePromptSettings = await getAiPromptRuntimeSettingsByTemplateId({
+          templateId: runtimePromptTemplateId,
+          context: promptScopeContext
+        });
+      } catch {
+        runtimePromptSettings = null;
+      }
+    }
+    const promptMtfConfig = normalizePromptTimeframeSetForRuntime(
+      runtimePromptSettings ?? {
+        timeframes: template.featureSnapshot.promptTimeframes,
+        runTimeframe: template.featureSnapshot.promptRunTimeframe,
+        timeframe: template.featureSnapshot.promptTimeframe ?? template.timeframe
+      },
+      template.timeframe
+    );
+    if (shouldAttachPromptMtf && promptMtfConfig.timeframes.length > 0) {
+      inferred.featureSnapshot.mtf = await buildMtfFramesForPrediction({
+        adapter,
+        exchange: account.exchange,
+        accountId: template.exchangeAccountId,
+        symbol: template.symbol,
+        marketType: template.marketType,
+        timeframes: promptMtfConfig.timeframes,
+        runTimeframe: template.timeframe,
+        runFrame: {
+          candles,
+          indicators,
+          advancedIndicators
+        }
+      });
+    } else {
+      delete inferred.featureSnapshot.mtf;
+    }
+    inferred.featureSnapshot.promptTimeframe = template.timeframe;
+    inferred.featureSnapshot.promptTimeframes = promptMtfConfig.timeframes;
+    inferred.featureSnapshot.promptRunTimeframe = promptMtfConfig.runTimeframe;
     inferred.featureSnapshot.aiPromptTemplateRequestedId = requestedPromptTemplateId;
     if (runtimePromptSettings) {
       inferred.featureSnapshot.aiPromptTemplateId = runtimePromptSettings.activePromptId;
@@ -8340,6 +8738,45 @@ function normalizeAiPromptSettingsPayload(
     return parsed.toISOString();
   };
 
+  const normalizePromptTimeframe = (value: unknown): PredictionTimeframe | null => {
+    if (typeof value !== "string") return null;
+    const trimmed = value.trim() as PredictionTimeframe;
+    return PREDICTION_TIMEFRAMES.has(trimmed) ? trimmed : null;
+  };
+
+  const normalizePromptTimeframeSet = (
+    values: unknown,
+    legacyFallback: PredictionTimeframe | null
+  ): PredictionTimeframe[] => {
+    const out: PredictionTimeframe[] = [];
+    const seen = new Set<PredictionTimeframe>();
+    if (Array.isArray(values)) {
+      for (const value of values) {
+        const normalized = normalizePromptTimeframe(value);
+        if (!normalized || seen.has(normalized)) continue;
+        seen.add(normalized);
+        out.push(normalized);
+        if (out.length >= 4) break;
+      }
+    }
+    if (out.length === 0 && legacyFallback) {
+      out.push(legacyFallback);
+    }
+    return out;
+  };
+
+  const normalizePromptRunTimeframe = (
+    value: unknown,
+    timeframes: readonly PredictionTimeframe[],
+    fallback: PredictionTimeframe | null
+  ): PredictionTimeframe | null => {
+    const direct = normalizePromptTimeframe(value);
+    if (direct && timeframes.includes(direct)) return direct;
+    if (fallback && timeframes.includes(fallback)) return fallback;
+    if (timeframes.length > 0) return timeframes[0];
+    return null;
+  };
+
   const seenIds = new Set<string>();
   const prompts: AiPromptTemplate[] = [];
   for (const row of payload.prompts) {
@@ -8353,13 +8790,25 @@ function normalizeAiPromptSettingsPayload(
 
     const createdAt = parseIso(row.createdAt) ?? nowIso;
     const updatedAt = nowIso;
+    const legacyTimeframe = normalizePromptTimeframe(row.timeframe);
+    const timeframes = normalizePromptTimeframeSet(
+      (row as { timeframes?: unknown }).timeframes,
+      legacyTimeframe
+    );
+    const runTimeframe = normalizePromptRunTimeframe(
+      (row as { runTimeframe?: unknown }).runTimeframe,
+      timeframes,
+      legacyTimeframe
+    );
     prompts.push({
       id,
       name: row.name.trim(),
       promptText: row.promptText.trim(),
       indicatorKeys: normalizeIndicatorKeyList(row.indicatorKeys),
       ohlcvBars: row.ohlcvBars,
-      timeframe: row.timeframe ?? null,
+      timeframes,
+      runTimeframe,
+      timeframe: runTimeframe,
       directionPreference: row.directionPreference,
       confidenceTargetPct: row.confidenceTargetPct,
       marketAnalysisUpdateEnabled: Boolean(row.marketAnalysisUpdateEnabled),
@@ -8834,6 +9283,8 @@ app.get("/settings/ai-prompts/public", requireAuth, async (_req, res) => {
       promptText: item.promptText,
       indicatorKeys: item.indicatorKeys,
       ohlcvBars: item.ohlcvBars,
+      timeframes: item.timeframes,
+      runTimeframe: item.runTimeframe,
       timeframe: item.timeframe,
       directionPreference: item.directionPreference,
       confidenceTargetPct: item.confidenceTargetPct,
@@ -9930,44 +10381,6 @@ app.post("/api/predictions/generate", requireAuth, async (req, res) => {
     signalMode
   });
   const normalizedSymbol = normalizeSymbolInput(payload.symbol) ?? payload.symbol;
-  const exchangeAccountIdForLimit = readPrefillExchangeAccountId(inputFeatureSnapshot);
-  const exchangeForLimit =
-    typeof inputFeatureSnapshot.prefillExchange === "string"
-      ? normalizeExchangeValue(inputFeatureSnapshot.prefillExchange)
-      : null;
-  const existingStateIdForLimit =
-    exchangeAccountIdForLimit && exchangeForLimit
-      ? await findPredictionStateIdByScope({
-          userId: user.id,
-          exchange: exchangeForLimit,
-          accountId: exchangeAccountIdForLimit,
-          symbol: normalizedSymbol,
-          marketType: payload.marketType,
-          timeframe: payload.timeframe,
-          signalMode
-        })
-      : null;
-  const consumesPredictionSlot = isAutoScheduleEnabled(inputFeatureSnapshot.autoScheduleEnabled);
-  const predictionCreateAccess = await canCreatePredictionForUser({
-    userId: user.id,
-    bypass: Boolean(userCtx.hasAdminBackendAccess),
-    bucket: predictionLimitBucket,
-    existingStateId: existingStateIdForLimit,
-    consumesSlot: consumesPredictionSlot
-  });
-  if (!predictionCreateAccess.allowed) {
-    const code = predictionLimitExceededCode(predictionLimitBucket);
-    return res.status(403).json({
-      error: code,
-      code,
-      message: code,
-      details: {
-        limit: predictionCreateAccess.limit,
-        usage: predictionCreateAccess.usage,
-        remaining: predictionCreateAccess.remaining
-      }
-    });
-  }
   const selectedId =
     selectedStrategyRef?.id
     ?? (selectedKind === "ai" ? (requestedPromptTemplateId ?? "default") : null);
@@ -10033,8 +10446,63 @@ app.post("/api/predictions/generate", requireAuth, async (req, res) => {
             requirePublic: !requestIsSuperadmin
           })
         : await getAiPromptRuntimeSettings(promptScopeContext);
+  const promptTimeframeConfig = normalizePromptTimeframeSetForRuntime(
+    selectedPromptSettings,
+    payload.timeframe
+  );
+  const effectiveTimeframe =
+    selectedStrategyRef?.kind === "ai" || !selectedStrategyRef
+      ? promptTimeframeConfig.runTimeframe
+      : payload.timeframe;
+  const exchangeAccountIdForLimit = readPrefillExchangeAccountId(inputFeatureSnapshot);
+  const exchangeForLimit =
+    typeof inputFeatureSnapshot.prefillExchange === "string"
+      ? normalizeExchangeValue(inputFeatureSnapshot.prefillExchange)
+      : null;
+  const existingStateIdForLimit =
+    exchangeAccountIdForLimit && exchangeForLimit
+      ? await findPredictionStateIdByScope({
+          userId: user.id,
+          exchange: exchangeForLimit,
+          accountId: exchangeAccountIdForLimit,
+          symbol: normalizedSymbol,
+          marketType: payload.marketType,
+          timeframe: effectiveTimeframe,
+          signalMode
+        })
+      : null;
+  const consumesPredictionSlot = isAutoScheduleEnabled(inputFeatureSnapshot.autoScheduleEnabled);
+  const predictionCreateAccess = await canCreatePredictionForUser({
+    userId: user.id,
+    bypass: Boolean(userCtx.hasAdminBackendAccess),
+    bucket: predictionLimitBucket,
+    existingStateId: existingStateIdForLimit,
+    consumesSlot: consumesPredictionSlot
+  });
+  if (!predictionCreateAccess.allowed) {
+    const code = predictionLimitExceededCode(predictionLimitBucket);
+    return res.status(403).json({
+      error: code,
+      code,
+      message: code,
+      details: {
+        limit: predictionCreateAccess.limit,
+        usage: predictionCreateAccess.usage,
+        remaining: predictionCreateAccess.remaining
+      }
+    });
+  }
   const featureSnapshotWithPrompt = {
     ...inputFeatureSnapshot,
+    promptTimeframe:
+      selectedPromptSettings?.runTimeframe
+      ?? selectedPromptSettings?.timeframe
+      ?? null,
+    promptTimeframes: promptTimeframeConfig.timeframes,
+    promptRunTimeframe:
+      selectedStrategyRef?.kind === "ai" || !selectedStrategyRef
+        ? promptTimeframeConfig.runTimeframe
+        : null,
     aiPromptTemplateRequestedId: requestedPromptTemplateId,
     aiPromptTemplateId: selectedPromptSettings?.activePromptId ?? requestedPromptTemplateId,
     aiPromptTemplateName: selectedPromptSettings?.activePromptName ?? null,
@@ -10093,13 +10561,13 @@ app.post("/api/predictions/generate", requireAuth, async (req, res) => {
   );
   const tracking = derivePredictionTrackingFromSnapshot(
     featureSnapshotWithStrategy,
-    payload.timeframe
+    effectiveTimeframe
   );
 
   const created = await generateAndPersistPrediction({
     symbol: payload.symbol,
     marketType: payload.marketType,
-    timeframe: payload.timeframe,
+    timeframe: effectiveTimeframe,
     tsCreated,
       prediction: payload.prediction,
       featureSnapshot: featureSnapshotWithStrategy,
@@ -10144,7 +10612,7 @@ app.post("/api/predictions/generate", requireAuth, async (req, res) => {
       accountId: exchangeAccountId,
       symbol: normalizedSymbol,
       marketType: payload.marketType,
-      timeframe: payload.timeframe,
+      timeframe: effectiveTimeframe,
       signalMode
     });
     const statePayload = {
@@ -10153,10 +10621,10 @@ app.post("/api/predictions/generate", requireAuth, async (req, res) => {
       userId: user.id,
       symbol: normalizedSymbol,
       marketType: payload.marketType,
-      timeframe: payload.timeframe,
+      timeframe: effectiveTimeframe,
       signalMode,
       tsUpdated: tsDate,
-      tsPredictedFor: new Date(tsDate.getTime() + timeframeToIntervalMs(payload.timeframe)),
+      tsPredictedFor: new Date(tsDate.getTime() + timeframeToIntervalMs(effectiveTimeframe)),
       signal: created.prediction.signal,
       expectedMovePct: Number.isFinite(Number(created.prediction.expectedMovePct))
         ? Number(created.prediction.expectedMovePct)
@@ -10222,7 +10690,7 @@ app.post("/api/predictions/generate", requireAuth, async (req, res) => {
         : "n/a",
     symbol: payload.symbol,
     marketType: payload.marketType,
-    timeframe: payload.timeframe,
+    timeframe: effectiveTimeframe,
     signal: created.prediction.signal,
     confidence: created.prediction.confidence,
     confidenceTargetPct: readConfidenceTarget(snapshot),
@@ -10248,7 +10716,7 @@ app.post("/api/predictions/generate", requireAuth, async (req, res) => {
           : "n/a",
       symbol: payload.symbol,
       marketType: payload.marketType,
-      timeframe: payload.timeframe,
+      timeframe: effectiveTimeframe,
       signal: created.prediction.signal,
       confidence: created.prediction.confidence,
       expectedMovePct: created.prediction.expectedMovePct,
@@ -10265,7 +10733,7 @@ app.post("/api/predictions/generate", requireAuth, async (req, res) => {
     prediction: {
       symbol: payload.symbol,
       marketType: payload.marketType,
-      timeframe: payload.timeframe,
+      timeframe: effectiveTimeframe,
       tsCreated,
       ...created.prediction
     },
@@ -10301,6 +10769,8 @@ app.post("/api/predictions/generate-auto", requireAuth, async (req, res) => {
     });
     return res.status(created.persisted ? 201 : 202).json({
       persisted: created.persisted,
+      existing: created.existing ?? false,
+      existingStateId: created.existingStateId ?? null,
       prediction: {
         symbol: normalizeSymbolInput(payload.symbol),
         marketType: payload.marketType,

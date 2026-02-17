@@ -43,6 +43,8 @@ type PublicAiPromptItem = {
   id: string;
   name: string;
   indicatorKeys: string[];
+  timeframes?: PredictionTimeframe[];
+  runTimeframe?: PredictionTimeframe | null;
   timeframe: PredictionTimeframe | null;
   directionPreference: DirectionPreference;
   confidenceTargetPct: number;
@@ -1160,7 +1162,19 @@ export default function PredictionsPage() {
     [selectedStrategyKind]
   );
   const effectiveCreateSignalMode = forcedCreateSignalMode ?? predictionDefaults?.signalMode ?? "both";
-  const selectedPromptLockedTimeframe = selectedPrompt?.timeframe ?? null;
+  const selectedPromptLockedTimeframe =
+    selectedPrompt?.runTimeframe
+    ?? selectedPrompt?.timeframe
+    ?? null;
+  const selectedPromptTimeframes = useMemo(() => {
+    if (!selectedPrompt) return [] as PredictionTimeframe[];
+    const raw = Array.isArray(selectedPrompt.timeframes) ? selectedPrompt.timeframes : [];
+    const normalized = raw.filter((value): value is PredictionTimeframe =>
+      value === "5m" || value === "15m" || value === "1h" || value === "4h" || value === "1d"
+    );
+    if (normalized.length > 0) return normalized;
+    return selectedPromptLockedTimeframe ? [selectedPromptLockedTimeframe] : [];
+  }, [selectedPrompt, selectedPromptLockedTimeframe]);
   const effectiveCreateTimeframe = selectedPromptLockedTimeframe ?? newTimeframe;
   const selectedCreateLimitBucket = useMemo<StrategyLimitBucket>(
     () => strategyBucketFromKind(selectedStrategyKind),
@@ -1425,6 +1439,8 @@ export default function PredictionsPage() {
     setCreating(true);
     try {
       const response = await apiPost<{
+        existing?: boolean;
+        existingStateId?: string | null;
         prediction: {
           signal: PredictionSignal;
           confidence: number;
@@ -1459,23 +1475,37 @@ export default function PredictionsPage() {
             ? tPred("modes.aiOnly")
             : tPred("modes.both");
 
-      setNotice(
-        tPred("create.createdNotice", {
-          symbol,
-          timeframe: response.prediction.timeframe,
-          signal: response.prediction.signal,
-          confidence: fmtConfidence(response.prediction.confidence),
-          modeLabel,
-          source: response.signalSource.toUpperCase(),
-          strategy: strategyRefLabel(response.strategyRef, {
-            aiPromptTemplateName: response.aiPromptTemplateName,
-            localStrategyName: response.localStrategyName,
-            compositeStrategyName: response.compositeStrategyName
-          }),
-          direction: response.directionPreference,
-          target: response.confidenceTargetPct.toFixed(0)
-        })
-      );
+      if (response.existing) {
+        setNotice(
+          tPred("create.existingNotice", {
+            symbol,
+            timeframe: response.prediction.timeframe,
+            strategy: strategyRefLabel(response.strategyRef, {
+              aiPromptTemplateName: response.aiPromptTemplateName,
+              localStrategyName: response.localStrategyName,
+              compositeStrategyName: response.compositeStrategyName
+            })
+          })
+        );
+      } else {
+        setNotice(
+          tPred("create.createdNotice", {
+            symbol,
+            timeframe: response.prediction.timeframe,
+            signal: response.prediction.signal,
+            confidence: fmtConfidence(response.prediction.confidence),
+            modeLabel,
+            source: response.signalSource.toUpperCase(),
+            strategy: strategyRefLabel(response.strategyRef, {
+              aiPromptTemplateName: response.aiPromptTemplateName,
+              localStrategyName: response.localStrategyName,
+              compositeStrategyName: response.compositeStrategyName
+            }),
+            direction: response.directionPreference,
+            target: response.confidenceTargetPct.toFixed(0)
+          })
+        );
+      }
       await Promise.all([
         loadPredictions(),
         loadRunningPredictions(),
@@ -2031,7 +2061,14 @@ export default function PredictionsPage() {
             </div>
             <div className="predictionCreateHint predictionCreateHintCompact">
               {selectedStrategyRef?.kind === "ai"
-                ? `${tPred("create.promptLockTimeframe")}: ${selectedPromptLockedTimeframe ?? "none"}`
+                ? (
+                  selectedPromptTimeframes.length > 0
+                    ? tPred("create.promptTfSetHint", {
+                      set: selectedPromptTimeframes.join(", "),
+                      run: selectedPromptLockedTimeframe ?? "n/a"
+                    })
+                    : `${tPred("create.promptLockTimeframe")}: ${selectedPromptLockedTimeframe ?? "none"}`
+                )
                 : selectedStrategyRef?.kind === "local"
                   ? `${tPred("create.localType")}: ${selectedLocalStrategy?.strategyType ?? tPred("misc.na")}`
                   : selectedStrategyRef?.kind === "composite"

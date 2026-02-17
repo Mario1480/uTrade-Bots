@@ -38,6 +38,7 @@
     "enforced": "erzwungen",
     "previewOff": "preview/off",
     "promptLockTimeframe": "Prompt-Lock-Timeframe",
+    "promptTfSetHint": "Prompt-TF-Set: {set} (Run: {run})",
     "localType": "Lokaler Typ",
     "compositeVersion": "Composite-Version",
     "noExplicitStrategy": "Keine explizite Strategie ausgewählt (AI-System-Standard).",
@@ -73,6 +74,7 @@
     "validationSelectPair": "Bitte ein Handelspaar auswählen.",
     "validationLeverageRange": "Der Hebel muss für Futures zwischen 1 und 125 liegen.",
     "createdNotice": "Prognose erstellt für {symbol} ({timeframe}) mit Signal {signal} und Konfidenz {confidence}. Modus: {modeLabel}, aktive Quelle: {source}. Strategie: {strategy}. Richtung: {direction}, Konfidenz-Ziel: {target}%.",
+    "existingNotice": "Ein Prognose-Zeitplan für {symbol} ({timeframe}) existiert bereits. Bestehender Zeitplan wurde beibehalten. Strategie: {strategy}.",
     "eventsLoadFailed": "Events konnten nicht geladen werden."
   },
   "running": {

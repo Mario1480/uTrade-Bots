@@ -292,56 +292,139 @@ function normalizeOhlcvBarsLimit(value: unknown): number {
   return Math.max(20, Math.min(500, Math.trunc(parsed)));
 }
 
-function applyOhlcvBarsLimit(
-  snapshot: Record<string, unknown>,
+function trimSingleOhlcvSeries(
+  seriesRaw: unknown,
   maxBars: number
-): Record<string, unknown> {
-  const seriesRaw = snapshot.ohlcvSeries;
+): { next: Record<string, unknown> | null; changed: boolean } {
   if (!seriesRaw || typeof seriesRaw !== "object" || Array.isArray(seriesRaw)) {
-    return snapshot;
+    return { next: null, changed: false };
   }
   const series = seriesRaw as Record<string, unknown>;
   const bars = Array.isArray(series.bars) ? series.bars : [];
   const limit = normalizeOhlcvBarsLimit(maxBars);
   if (bars.length <= limit) {
-    if (Number(series.count) === bars.length) return snapshot;
+    if (Number(series.count) === bars.length) return { next: series, changed: false };
     return {
-      ...snapshot,
-      ohlcvSeries: {
+      next: {
         ...series,
         count: bars.length
-      }
+      },
+      changed: true
     };
   }
   const trimmedBars = bars.slice(-limit);
   return {
-    ...snapshot,
-    ohlcvSeries: {
+    next: {
       ...series,
       bars: trimmedBars,
       count: trimmedBars.length
+    },
+    changed: true
+  };
+}
+
+function applyOhlcvBarsLimit(
+  snapshot: Record<string, unknown>,
+  maxBars: number
+): Record<string, unknown> {
+  const topTrim = trimSingleOhlcvSeries(snapshot.ohlcvSeries, maxBars);
+  let nextSnapshot = topTrim.changed
+    ? {
+      ...snapshot,
+      ohlcvSeries: topTrim.next
+    }
+    : snapshot;
+
+  const mtfRaw = asObject(nextSnapshot.mtf);
+  const framesRaw = asObject(mtfRaw?.frames);
+  if (!mtfRaw || !framesRaw) return nextSnapshot;
+
+  let framesChanged = false;
+  const nextFrames: Record<string, unknown> = {};
+  for (const [timeframe, frameRaw] of Object.entries(framesRaw)) {
+    const frame = asObject(frameRaw);
+    if (!frame) {
+      nextFrames[timeframe] = frameRaw;
+      continue;
+    }
+    const frameTrim = trimSingleOhlcvSeries(frame.ohlcvSeries, maxBars);
+    if (frameTrim.changed) {
+      framesChanged = true;
+      nextFrames[timeframe] = {
+        ...frame,
+        ohlcvSeries: frameTrim.next
+      };
+    } else {
+      nextFrames[timeframe] = frame;
+    }
+  }
+  if (!framesChanged) return nextSnapshot;
+  return {
+    ...nextSnapshot,
+    mtf: {
+      ...mtfRaw,
+      frames: nextFrames
     }
   };
 }
 
-function applyHistoryContextLimit(snapshot: Record<string, unknown>): Record<string, unknown> {
-  const historyContextRaw = asObject(snapshot.historyContext);
-  if (!historyContextRaw) return snapshot;
-  if (Number(historyContextRaw.v) !== 1) return snapshot;
-  const lastBars = asObject(historyContextRaw.lastBars);
-  if (!lastBars || !Array.isArray(lastBars.ohlc)) return snapshot;
-  if (!Array.isArray(historyContextRaw.ev)) {
-    return snapshot;
-  }
-  const trimmed = trimHistoryContextForAi(historyContextRaw as unknown as HistoryContextPack, {
+function trimSingleHistoryContext(
+  historyContextRaw: unknown
+): { next: HistoryContextPack | null; changed: boolean } {
+  const parsed = asObject(historyContextRaw);
+  if (!parsed) return { next: null, changed: false };
+  if (Number(parsed.v) !== 1) return { next: null, changed: false };
+  const lastBars = asObject(parsed.lastBars);
+  if (!lastBars || !Array.isArray(lastBars.ohlc)) return { next: null, changed: false };
+  if (!Array.isArray(parsed.ev)) return { next: null, changed: false };
+  const trimmed = trimHistoryContextForAi(parsed as unknown as HistoryContextPack, {
     maxEvents: EXPLAINER_HISTORY_CONTEXT_MAX_EVENTS,
     lastBars: EXPLAINER_HISTORY_CONTEXT_LAST_BARS,
     maxBytes: EXPLAINER_HISTORY_CONTEXT_MAX_BYTES
   });
+  const changed = JSON.stringify(trimmed) !== JSON.stringify(parsed);
+  return { next: trimmed, changed };
+}
 
+function applyHistoryContextLimit(snapshot: Record<string, unknown>): Record<string, unknown> {
+  const topTrim = trimSingleHistoryContext(snapshot.historyContext);
+  let nextSnapshot = topTrim.changed
+    ? {
+      ...snapshot,
+      historyContext: topTrim.next
+    }
+    : snapshot;
+
+  const mtfRaw = asObject(nextSnapshot.mtf);
+  const framesRaw = asObject(mtfRaw?.frames);
+  if (!mtfRaw || !framesRaw) return nextSnapshot;
+
+  let framesChanged = false;
+  const nextFrames: Record<string, unknown> = {};
+  for (const [timeframe, frameRaw] of Object.entries(framesRaw)) {
+    const frame = asObject(frameRaw);
+    if (!frame) {
+      nextFrames[timeframe] = frameRaw;
+      continue;
+    }
+    const frameTrim = trimSingleHistoryContext(frame.historyContext);
+    if (frameTrim.changed) {
+      framesChanged = true;
+      nextFrames[timeframe] = {
+        ...frame,
+        historyContext: frameTrim.next
+      };
+    } else {
+      nextFrames[timeframe] = frame;
+    }
+  }
+  if (!framesChanged) return nextSnapshot;
   return {
-    ...snapshot,
-    historyContext: trimmed
+    ...nextSnapshot,
+    mtf: {
+      ...mtfRaw,
+      frames: nextFrames
+    }
   };
 }
 
@@ -744,6 +827,8 @@ function buildPromptVersion(settings: AiPromptRuntimeSettings): string {
     promptText: settings.promptText,
     indicatorKeys: settings.indicatorKeys,
     ohlcvBars: settings.ohlcvBars,
+    timeframes: settings.timeframes,
+    runTimeframe: settings.runTimeframe,
     timeframe: settings.timeframe,
     directionPreference: settings.directionPreference,
     confidenceTargetPct: settings.confidenceTargetPct,
@@ -801,7 +886,10 @@ export function buildPredictionExplainerCacheKey(params: {
 
 function buildPromptPayload(
   input: ExplainerInput,
-  settings: Pick<AiPromptRuntimeSettings, "promptText" | "indicatorKeys" | "ohlcvBars">
+  settings: Pick<
+    AiPromptRuntimeSettings,
+    "promptText" | "indicatorKeys" | "ohlcvBars" | "timeframes" | "runTimeframe"
+  >
 ) {
   return {
     symbol: input.symbol,
@@ -820,6 +908,8 @@ function buildPromptPayload(
     },
     selectedIndicatorKeys: settings.indicatorKeys,
     ohlcvBars: settings.ohlcvBars,
+    promptTimeframes: settings.timeframes,
+    promptRunTimeframe: settings.runTimeframe,
     groundingRules: [
       "Only reference values that exist in featureSnapshot",
       "Only reference stochrsi/volume/fvg when present and non-null",
