@@ -82,12 +82,12 @@ test("normalizePredictionConfidence clamps and supports 0..1 input", () => {
   assert.equal(normalizePredictionConfidence(-2), 0);
 });
 
-test("normalizePredictionExplanation truncates > 400 chars", () => {
-  const long = "x".repeat(450);
+test("normalizePredictionExplanation truncates > 1000 chars", () => {
+  const long = "x".repeat(1200);
   const normalized = normalizePredictionExplanation(long);
 
   assert.equal(normalized.truncated, true);
-  assert.equal(normalized.value?.length, 400);
+  assert.equal(normalized.value?.length, 1000);
 });
 
 test("predictionDetailDtoSchema accepts stable dto shape", () => {

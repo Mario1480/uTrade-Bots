@@ -16,7 +16,7 @@ TIMEFRAME RULE
 IMPORTANT OUTPUT CONTRACT
 Return exactly one JSON object (no markdown, no code fences, no comments) with exactly these keys:
 {
-  "explanation": "string <= 400 chars",
+  "explanation": "string <= 1000 chars",
   "tags": ["max 5 items, only from tagsAllowlist"],
   "keyDrivers": [{"name":"featureSnapshot.path","value":"matching value"}],
   "aiPrediction": {

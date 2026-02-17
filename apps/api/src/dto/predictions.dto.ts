@@ -6,6 +6,7 @@ const UUID_REGEX =
 const CUID_REGEX = /^c[a-z0-9]{24}$/;
 
 const tagAllowlist = new Set<string>(EXPLAINER_TAG_ALLOWLIST);
+const PREDICTION_EXPLANATION_MAX_CHARS = 1000;
 
 export const predictionIdParamSchema = z.object({
   id: z
@@ -136,7 +137,7 @@ export const predictionDetailDtoSchema = z.object({
     confidence: z.number().min(0).max(100)
   }),
   tags: z.array(z.string()).max(5),
-  explanation: z.string().max(400).nullable(),
+  explanation: z.string().max(PREDICTION_EXPLANATION_MAX_CHARS).nullable(),
   keyDrivers: z
     .array(
       z.object({
@@ -214,9 +215,9 @@ export function normalizePredictionExplanation(value: unknown): {
 } {
   const text = typeof value === "string" ? value.trim() : "";
   if (!text) return { value: null, truncated: false };
-  if (text.length <= 400) return { value: text, truncated: false };
+  if (text.length <= PREDICTION_EXPLANATION_MAX_CHARS) return { value: text, truncated: false };
   return {
-    value: text.slice(0, 400),
+    value: text.slice(0, PREDICTION_EXPLANATION_MAX_CHARS),
     truncated: true
   };
 }

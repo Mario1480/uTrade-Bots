@@ -19,7 +19,7 @@
 
 ## Safety Guarantees
 - Output validation uses zod with strict constraints:
-  - explanation max 400 chars
+  - explanation max 1000 chars
   - tags max 5, allowlist-only
   - keyDrivers max 5, key paths must exist in `featureSnapshot`
   - disclaimer must be `"grounded_features_only"`

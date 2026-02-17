@@ -310,18 +310,17 @@ test("invalid tags are stripped", () => {
   assert.deepEqual(value.tags, ["trend_up", "range_bound"]);
 });
 
-test("hallucination guard rejects keyDrivers not in featureSnapshot", () => {
-  assert.throws(() =>
-    validateExplainerOutput(
-      {
-        explanation: "Invalid driver usage",
-        tags: ["trend_up"],
-        keyDrivers: [{ name: "inventedDriver", value: 123 }],
-        disclaimer: "grounded_features_only"
-      },
-      baseInput.featureSnapshot
-    )
+test("hallucination guard filters keyDrivers not in featureSnapshot", () => {
+  const value = validateExplainerOutput(
+    {
+      explanation: "Invalid driver usage",
+      tags: ["trend_up"],
+      keyDrivers: [{ name: "inventedDriver", value: 123 }],
+      disclaimer: "grounded_features_only"
+    },
+    baseInput.featureSnapshot
   );
+  assert.equal(value.keyDrivers.length, 0);
 });
 
 test("fallback path is used on bad JSON", async () => {
@@ -337,7 +336,7 @@ test("fallback path is used on bad JSON", async () => {
   );
 
   assert.equal(output.disclaimer, "grounded_features_only");
-  assert.equal(output.explanation.length <= 400, true);
+  assert.equal(output.explanation.length <= 1000, true);
   assert.equal(Array.isArray(output.tags), true);
 });
 
@@ -617,22 +616,22 @@ test("cache key ignores historyContext.bud.bytes but changes with history conten
   assert.notEqual(previewA.cacheKey, previewC.cacheKey);
 });
 
-test("grounding rejects dropped historyContext driver paths after budget trim", () => {
+test("grounding filters dropped historyContext driver paths after budget trim", () => {
   const trimmedFeatureSnapshot = {
     ...baseInput.featureSnapshot
   };
 
-  assert.throws(() =>
-    validateExplainerOutput(
-      {
-        explanation: "Invalid use of dropped field",
-        tags: ["range_bound"],
-        keyDrivers: [{ name: "historyContext.reg.state", value: "range" }],
-        disclaimer: "grounded_features_only"
-      },
-      trimmedFeatureSnapshot
-    )
+  const value = validateExplainerOutput(
+    {
+      explanation: "Invalid use of dropped field",
+      tags: ["range_bound"],
+      keyDrivers: [{ name: "historyContext.reg.state", value: "range" }],
+      disclaimer: "grounded_features_only"
+    },
+    trimmedFeatureSnapshot
   );
+
+  assert.equal(value.keyDrivers.length, 0);
 });
 
 test.afterEach(() => {

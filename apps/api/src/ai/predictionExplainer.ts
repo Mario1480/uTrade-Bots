@@ -63,6 +63,7 @@ export const EXPLAINER_TAG_ALLOWLIST = [
 type ExplainerTag = (typeof EXPLAINER_TAG_ALLOWLIST)[number];
 
 const allowlist = new Set<string>(EXPLAINER_TAG_ALLOWLIST);
+const EXPLAINER_MAX_EXPLANATION_CHARS = 1000;
 
 const baseOutputSchema = z.object({
   // Keep this loose and enforce final constraints in validateExplainerOutput.
@@ -595,7 +596,7 @@ export function validateExplainerOutput(
     typeof parsed.data.explanation === "string" ? parsed.data.explanation.trim() : "";
   const explanation =
     explanationRaw.length > 0
-      ? explanationRaw.slice(0, 400)
+      ? explanationRaw.slice(0, EXPLAINER_MAX_EXPLANATION_CHARS)
       : clampText(
           `Signal ${aiPrediction.signal} with ${(aiPrediction.confidence * 100).toFixed(1)}% confidence ` +
           `and expected move ${aiPrediction.expectedMovePct.toFixed(2)}% based on provided features.`
@@ -614,8 +615,8 @@ export function validateExplainerOutput(
 }
 
 function clampText(value: string): string {
-  if (value.length <= 400) return value;
-  return value.slice(0, 399).trimEnd() + ".";
+  if (value.length <= EXPLAINER_MAX_EXPLANATION_CHARS) return value;
+  return value.slice(0, EXPLAINER_MAX_EXPLANATION_CHARS - 1).trimEnd() + ".";
 }
 
 export function fallbackExplain(input: ExplainerInput): ExplainerOutput {
@@ -926,7 +927,7 @@ function buildPromptPayload(
     featureSnapshot: input.featureSnapshot,
     tagsAllowlist: EXPLAINER_TAG_ALLOWLIST,
     outputSchema: {
-      explanation: "string <= 400 chars",
+      explanation: "string <= 1000 chars",
       tags: "string[] <= 5 items, must be from tagsAllowlist",
       keyDrivers: "{name: string, value: any}[] <= 5 items, names from featureSnapshot key paths only",
       aiPrediction: "{signal: up|down|neutral, expectedMovePct: number, confidence: number 0..1}",

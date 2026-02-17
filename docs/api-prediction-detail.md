@@ -54,7 +54,7 @@
 - `tags` are allowlisted and capped to max 5.
 - `keyDrivers` are capped to max 5.
 - `confidence` is normalized to `0..100`.
-- `explanation` is capped to max 400 chars.
+- `explanation` is capped to max 1000 chars.
 - `featureSnapshot.indicators` is normalized and numeric-safe (`null` for invalid values).
 
 ## Notes
