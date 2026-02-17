@@ -4649,7 +4649,6 @@ async function notifyMarketAnalysisUpdate(params: {
     await sendTelegramMessage({
       ...config,
       text,
-      linkButton: deskLink ? { text: "Open here", url: deskLink } : null
     });
   } catch (error) {
     // eslint-disable-next-line no-console
