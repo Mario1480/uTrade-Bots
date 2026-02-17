@@ -35,6 +35,12 @@
     "open": "Kalender öffnen",
     "todayCount": "{count} Events heute"
   },
+  "fearGreed": {
+    "title": "Crypto Fear & Greed Index",
+    "subtitle": "Täglicher Stimmungs-Snapshot von Alternative.me.",
+    "openSource": "Quelle öffnen",
+    "alt": "Aktueller Crypto Fear & Greed Index"
+  },
   "errors": {
     "load": "Ladefehler:"
   },

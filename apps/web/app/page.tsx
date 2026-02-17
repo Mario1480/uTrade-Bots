@@ -1,7 +1,8 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useMemo, useState } from "react";
+import Script from "next/script";
+import { createElement, useEffect, useMemo, useState } from "react";
 import { useLocale, useTranslations } from "next-intl";
 import ExchangeAccountOverviewCard, {
 type ExchangeAccountOverview
@@ -204,42 +205,71 @@ export default function Page() {
 
       <AlertsFeed alerts={alerts} />
 
-      <div className="card" style={{ padding: 12, marginBottom: 12 }}>
-        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8, marginBottom: 6 }}>
-          <div style={{ fontWeight: 700 }}>{t("calendar.title")}</div>
-          {accessVisibility.economicCalendar ? (
-            <Link href={withLocalePath("/calendar", locale)} className="btn">{t("calendar.open")}</Link>
-          ) : null}
-        </div>
-        {calendarLoadError ? (
-          <div style={{ fontSize: 13, color: "var(--muted)" }}>{t("calendar.unavailable")}</div>
-        ) : loading && calendarEvents.length === 0 ? (
-          <div style={{ fontSize: 13, color: "var(--muted)" }}>{t("calendar.loading")}</div>
-        ) : calendarEvents.length === 0 ? (
-          <div style={{ fontSize: 13, color: "var(--muted)" }}>{t("calendar.none")}</div>
-        ) : (
-          <div style={{ display: "grid", gap: 6 }}>
-            <div style={{ fontSize: 12, color: "var(--muted)" }}>
-              {t("calendar.todayCount", { count: calendarEvents.length })}
-            </div>
-            {calendarEvents.slice(0, 5).map((event) => (
-              <div key={event.id} style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
-                <span className={`badge ${
-                  event.impact === "high"
-                    ? "calendarImpactBadgeHigh"
-                    : event.impact === "medium"
-                      ? "calendarImpactBadgeMedium"
-                      : "calendarImpactBadgeLow"
-                }`}>
-                  {event.impact.toUpperCase()}
-                </span>
-                <span style={{ fontSize: 13, color: "var(--muted)" }}>
-                  {new Date(event.ts).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })} · {event.title}
-                </span>
-              </div>
-            ))}
+      <div className="dashboardInsightsGrid">
+        <div className="card dashboardInsightCard">
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8, marginBottom: 6 }}>
+            <div style={{ fontWeight: 700 }}>{t("calendar.title")}</div>
+            {accessVisibility.economicCalendar ? (
+              <Link href={withLocalePath("/calendar", locale)} className="btn">{t("calendar.open")}</Link>
+            ) : null}
           </div>
-        )}
+          {calendarLoadError ? (
+            <div style={{ fontSize: 13, color: "var(--muted)" }}>{t("calendar.unavailable")}</div>
+          ) : loading && calendarEvents.length === 0 ? (
+            <div style={{ fontSize: 13, color: "var(--muted)" }}>{t("calendar.loading")}</div>
+          ) : calendarEvents.length === 0 ? (
+            <div style={{ fontSize: 13, color: "var(--muted)" }}>{t("calendar.none")}</div>
+          ) : (
+            <div style={{ display: "grid", gap: 6 }}>
+              <div style={{ fontSize: 12, color: "var(--muted)" }}>
+                {t("calendar.todayCount", { count: calendarEvents.length })}
+              </div>
+              {calendarEvents.slice(0, 5).map((event) => (
+                <div key={event.id} style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+                  <span className={`badge ${
+                    event.impact === "high"
+                      ? "calendarImpactBadgeHigh"
+                      : event.impact === "medium"
+                        ? "calendarImpactBadgeMedium"
+                        : "calendarImpactBadgeLow"
+                  }`}>
+                    {event.impact.toUpperCase()}
+                  </span>
+                  <span style={{ fontSize: 13, color: "var(--muted)" }}>
+                    {new Date(event.ts).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })} · {event.title}
+                  </span>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+
+        <div className="card dashboardInsightCard dashboardFearGreedCard">
+          <img
+            src="https://alternative.me/crypto/fear-and-greed-index.png"
+            alt={t("fearGreed.alt")}
+            className="dashboardFearGreedImage"
+            loading="lazy"
+          />
+        </div>
+
+        <div className="card dashboardInsightCard dashboardUttCard">
+          <Script
+            id="coingecko-widget-script"
+            src="https://widgets.coingecko.com/gecko-coin-price-chart-widget.js"
+            strategy="afterInteractive"
+          />
+          <div className="dashboardUttWidgetHost">
+            {createElement("gecko-coin-price-chart-widget", {
+              locale: locale === "de" ? "de" : "en",
+              "dark-mode": "true",
+              "transparent-background": "true",
+              outlined: "true",
+              "coin-id": "utrade",
+              "initial-currency": "usd"
+            })}
+          </div>
+        </div>
       </div>
 
       {error ? (

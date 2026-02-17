@@ -178,6 +178,47 @@ a { color: inherit; }
   margin-bottom: 12px;
 }
 
+.dashboardInsightsGrid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+  gap: 12px;
+  margin-bottom: 12px;
+}
+
+.dashboardInsightCard {
+  padding: 12px;
+  margin: 0;
+}
+
+.dashboardFearGreedCard {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.dashboardFearGreedImage {
+  display: block;
+  width: 65%;
+  height: auto;
+  border-radius: 1px;
+  border: 1px solid var(--border);
+  background: rgba(255, 255, 255, 0.02);
+}
+
+.dashboardUttCard {
+  display: flex;
+  align-items: center;
+}
+
+.dashboardUttWidgetHost {
+  width: 100%;
+}
+
+.dashboardUttWidgetHost gecko-coin-price-chart-widget {
+  display: block;
+  width: 100%;
+}
+
 .dashboardAlertsTitle {
   font-weight: 700;
   margin-bottom: 8px;
@@ -3073,6 +3114,17 @@ a { color: inherit; }
   .dashboardAlertsCard {
     padding: 10px;
     margin-bottom: 10px;
+  }
+  .dashboardInsightsGrid {
+    grid-template-columns: 1fr;
+    gap: 10px;
+    margin-bottom: 10px;
+  }
+  .dashboardInsightCard {
+    padding: 10px;
+  }
+  .dashboardFearGreedImage {
+    width: 50%;
   }
   .dashboardAlertsTitle {
     margin-bottom: 6px;

@@ -35,6 +35,12 @@
     "open": "Open Calendar",
     "todayCount": "{count} events today"
   },
+  "fearGreed": {
+    "title": "Crypto Fear & Greed Index",
+    "subtitle": "Daily sentiment snapshot from Alternative.me.",
+    "openSource": "Open Source",
+    "alt": "Latest Crypto Fear & Greed Index"
+  },
   "errors": {
     "load": "Load error:"
   },
