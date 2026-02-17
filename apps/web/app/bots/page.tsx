@@ -4,7 +4,7 @@ import Link from "next/link";
 import { useMemo } from "react";
 import { useSearchParams } from "next/navigation";
 import { useTranslations } from "next-intl";
-import { ApiError, apiGet } from "../../lib/api";
+import { ApiError, apiDelete, apiGet } from "../../lib/api";
 import { Suspense, useEffect, useState } from "react";
 
 type BotItem = {
@@ -39,6 +39,7 @@ function BotsPageContent() {
   const [bots, setBots] = useState<BotItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [deletingId, setDeletingId] = useState<string | null>(null);
 
   const exchangeAccountId = searchParams.get("exchangeAccountId");
   const statusFilter = searchParams.get("status");
@@ -84,6 +85,21 @@ function BotsPageContent() {
     if (!exchangeAccountId) return "";
     return t("titleSuffix", { account: `${exchangeAccountId.slice(0, 8)}…` });
   }, [exchangeAccountId, t]);
+
+  async function removeBot(bot: BotItem) {
+    const ok = window.confirm(t("confirmDelete", { name: bot.name, symbol: bot.symbol }));
+    if (!ok) return;
+    setDeletingId(bot.id);
+    setError(null);
+    try {
+      await apiDelete(`/bots/${bot.id}`);
+      setBots((prev) => prev.filter((row) => row.id !== bot.id));
+    } catch (e) {
+      setError(errMsg(e));
+    } finally {
+      setDeletingId(null);
+    }
+  }
 
   return (
     <div>
@@ -145,6 +161,13 @@ function BotsPageContent() {
                     {t("actions.manualTrading")}
                   </Link>
                 ) : null}
+                <button
+                  className="btn btnStop"
+                  onClick={() => void removeBot(bot)}
+                  disabled={deletingId === bot.id}
+                >
+                  {deletingId === bot.id ? t("actions.deleting") : t("actions.delete")}
+                </button>
               </div>
             </article>
           ))

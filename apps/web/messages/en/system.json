@@ -19,8 +19,11 @@
       "newBot": "New Bot",
       "createBot": "Create Bot",
       "open": "Open",
-      "manualTrading": "Manual Trading"
-    }
+      "manualTrading": "Manual Trading",
+      "delete": "Delete",
+      "deleting": "Deleting..."
+    },
+    "confirmDelete": "Delete bot \"{name}\" ({symbol})?"
   },
   "botsNew": {
     "title": "Create Bot",

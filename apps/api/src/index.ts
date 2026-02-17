@@ -13079,6 +13079,46 @@ app.post("/bots/:id/stop", requireAuth, async (req, res) => {
   return res.json({ id: updated.id, status: updated.status });
 });
 
+app.delete("/bots/:id", requireAuth, async (req, res) => {
+  const user = getUserFromLocals(res);
+  const bot = await db.bot.findFirst({
+    where: { id: req.params.id, userId: user.id },
+    select: { id: true }
+  });
+  if (!bot) return res.status(404).json({ error: "bot_not_found" });
+
+  try {
+    await cancelBotRun(bot.id);
+  } catch {
+    // Worker loop also exits on DB status lookup, queue cleanup is best-effort only.
+  }
+
+  await db.$transaction(async (tx: any) => {
+    await tx.botMetric.deleteMany({ where: { botId: bot.id } });
+    await tx.botAlert.deleteMany({ where: { botId: bot.id } });
+    await tx.riskEvent.deleteMany({ where: { botId: bot.id } });
+    await tx.botRuntime.deleteMany({ where: { botId: bot.id } });
+    await tx.botTradeState.deleteMany({ where: { botId: bot.id } });
+    await tx.futuresBotConfig.deleteMany({ where: { botId: bot.id } });
+    await tx.marketMakingConfig.deleteMany({ where: { botId: bot.id } });
+    await tx.volumeConfig.deleteMany({ where: { botId: bot.id } });
+    await tx.riskConfig.deleteMany({ where: { botId: bot.id } });
+    await tx.botNotificationConfig.deleteMany({ where: { botId: bot.id } });
+    await tx.botPriceSupportConfig.deleteMany({ where: { botId: bot.id } });
+    await tx.botFillCursor.deleteMany({ where: { botId: bot.id } });
+    await tx.botFillSeen.deleteMany({ where: { botId: bot.id } });
+    await tx.botOrderMap.deleteMany({ where: { botId: bot.id } });
+    await tx.manualTradeLog.deleteMany({ where: { botId: bot.id } });
+    await tx.prediction.updateMany({
+      where: { botId: bot.id },
+      data: { botId: null }
+    });
+    await tx.bot.delete({ where: { id: bot.id } });
+  });
+
+  return res.json({ ok: true, deletedBotId: bot.id });
+});
+
 function wsSend(socket: WebSocket, payload: unknown) {
   if (socket.readyState !== WebSocket.OPEN) return;
   socket.send(JSON.stringify(payload));

@@ -19,8 +19,11 @@
       "newBot": "Neuer Bot",
       "createBot": "Bot erstellen",
       "open": "Öffnen",
-      "manualTrading": "Manuelles Trading"
-    }
+      "manualTrading": "Manuelles Trading",
+      "delete": "Löschen",
+      "deleting": "Löscht..."
+    },
+    "confirmDelete": "Bot \"{name}\" ({symbol}) wirklich löschen?"
   },
   "botsNew": {
     "title": "Bot erstellen",
