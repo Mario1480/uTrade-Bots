@@ -1149,6 +1149,11 @@ type PredictionStrategyRef = {
   name: string | null;
 };
 
+type PredictionStateStrategyScope = {
+  strategyKind: string;
+  strategyId: string;
+};
+
 function normalizeSnapshotPrediction(value: Record<string, unknown>): AiPredictionSnapshot | null {
   const signal =
     value.signal === "up" || value.signal === "down" || value.signal === "neutral"
@@ -1276,6 +1281,21 @@ function readPredictionStrategyRef(snapshot: Record<string, unknown>): Predictio
     };
   }
   return null;
+}
+
+function toPredictionStateStrategyScope(
+  strategyRef: PredictionStrategyRef | null | undefined
+): PredictionStateStrategyScope {
+  if (!strategyRef || !strategyRef.id?.trim()) {
+    return {
+      strategyKind: "legacy",
+      strategyId: "legacy"
+    };
+  }
+  return {
+    strategyKind: strategyRef.kind,
+    strategyId: strategyRef.id.trim()
+  };
 }
 
 function readStateSignalMode(
@@ -3319,15 +3339,6 @@ async function generateAutoPredictionForUser(
       ...promptScopeContextDraft,
       timeframe: effectiveTimeframe
     };
-    const existingStateId = await findPredictionStateIdByScope({
-      userId,
-      exchange: account.exchange,
-      accountId: payload.exchangeAccountId,
-      symbol: canonicalSymbol,
-      marketType: payload.marketType,
-      timeframe: effectiveTimeframe,
-      signalMode
-    });
     const requestedStrategyRefForScope: PredictionStrategyRef | null =
       selectedStrategyRef?.kind === "ai"
         ? {
@@ -3336,6 +3347,16 @@ async function generateAutoPredictionForUser(
             name: selectedPromptSettings?.activePromptName ?? selectedStrategyRef.name
           }
         : selectedStrategyRef;
+    const existingStateId = await findPredictionStateIdByScope({
+      userId,
+      exchange: account.exchange,
+      accountId: payload.exchangeAccountId,
+      symbol: canonicalSymbol,
+      marketType: payload.marketType,
+      timeframe: effectiveTimeframe,
+      signalMode,
+      strategyRef: requestedStrategyRefForScope
+    });
     if (existingStateId) {
       const existingState = await db.predictionState.findUnique({
         where: { id: existingStateId },
@@ -3359,19 +3380,6 @@ async function generateAutoPredictionForUser(
       if (existingState) {
         const existingSnapshot = asRecord(existingState.featuresSnapshot);
         const existingStrategyRef = readPredictionStrategyRef(existingSnapshot);
-        const requestedStrategyKey = requestedStrategyRefForScope
-          ? `${requestedStrategyRefForScope.kind}:${requestedStrategyRefForScope.id}`
-          : null;
-        const existingStrategyKey = existingStrategyRef
-          ? `${existingStrategyRef.kind}:${existingStrategyRef.id}`
-          : null;
-        if (requestedStrategyKey !== existingStrategyKey) {
-          throw new ManualTradingError(
-            "Prediction scope already exists with a different strategy. Pause/delete existing schedule first.",
-            409,
-            "prediction_scope_exists_with_different_strategy"
-          );
-        }
         const existingSignal: PredictionSignal =
           existingState.signal === "up" || existingState.signal === "down" || existingState.signal === "neutral"
             ? existingState.signal
@@ -3703,6 +3711,7 @@ async function generateAutoPredictionForUser(
     });
 
     const stateData = {
+      ...toPredictionStateStrategyScope(strategyRefForInitialSnapshot),
       exchange: account.exchange,
       accountId: payload.exchangeAccountId,
       userId,
@@ -5215,7 +5224,9 @@ async function findPredictionStateIdByScope(params: {
   marketType: PredictionMarketType;
   timeframe: PredictionTimeframe;
   signalMode: PredictionSignalMode;
+  strategyRef?: PredictionStrategyRef | null;
 }): Promise<string | null> {
+  const strategyScope = toPredictionStateStrategyScope(params.strategyRef ?? null);
   const row = await db.predictionState.findFirst({
     where: {
       userId: params.userId,
@@ -5224,7 +5235,9 @@ async function findPredictionStateIdByScope(params: {
       symbol: params.symbol,
       marketType: params.marketType,
       timeframe: params.timeframe,
-      signalMode: params.signalMode
+      signalMode: params.signalMode,
+      strategyKind: strategyScope.strategyKind,
+      strategyId: strategyScope.strategyId
     },
     select: {
       id: true
@@ -5812,6 +5825,7 @@ async function bootstrapPredictionStateFromHistory() {
         ? normalizeExchangeValue(featureSnapshot.prefillExchange)
         : "bitget";
     const signalMode = readSignalMode(featureSnapshot);
+    const strategyRef = readPredictionStrategyRef(featureSnapshot);
     const existingId = await findPredictionStateIdByScope({
       userId,
       exchange,
@@ -5819,7 +5833,8 @@ async function bootstrapPredictionStateFromHistory() {
       symbol,
       marketType,
       timeframe,
-      signalMode
+      signalMode,
+      strategyRef
     });
     const existing = existingId ? { id: existingId } : null;
     if (existing) continue;
@@ -5836,6 +5851,7 @@ async function bootstrapPredictionStateFromHistory() {
 
     await db.predictionState.create({
       data: {
+        ...toPredictionStateStrategyScope(strategyRef),
         exchange,
         accountId: exchangeAccountId,
         userId,
@@ -7001,6 +7017,7 @@ async function refreshPredictionStateForTemplate(params: {
     });
 
     const stateData = {
+      ...toPredictionStateStrategyScope(effectiveStrategyRef),
       exchange: account.exchange,
       accountId: template.exchangeAccountId,
       userId: template.userId,
@@ -10454,6 +10471,14 @@ app.post("/api/predictions/generate", requireAuth, async (req, res) => {
     selectedStrategyRef?.kind === "ai" || !selectedStrategyRef
       ? promptTimeframeConfig.runTimeframe
       : payload.timeframe;
+  const strategyRefForScope: PredictionStrategyRef | null =
+    selectedStrategyRef?.kind === "ai"
+      ? {
+          kind: "ai",
+          id: selectedPromptSettings?.activePromptId ?? selectedStrategyRef.id,
+          name: selectedPromptSettings?.activePromptName ?? selectedStrategyRef.name
+        }
+      : selectedStrategyRef;
   const exchangeAccountIdForLimit = readPrefillExchangeAccountId(inputFeatureSnapshot);
   const exchangeForLimit =
     typeof inputFeatureSnapshot.prefillExchange === "string"
@@ -10468,7 +10493,8 @@ app.post("/api/predictions/generate", requireAuth, async (req, res) => {
           symbol: normalizedSymbol,
           marketType: payload.marketType,
           timeframe: effectiveTimeframe,
-          signalMode
+          signalMode,
+          strategyRef: strategyRefForScope
         })
       : null;
   const consumesPredictionSlot = isAutoScheduleEnabled(inputFeatureSnapshot.autoScheduleEnabled);
@@ -10613,9 +10639,11 @@ app.post("/api/predictions/generate", requireAuth, async (req, res) => {
       symbol: normalizedSymbol,
       marketType: payload.marketType,
       timeframe: effectiveTimeframe,
-      signalMode
+      signalMode,
+      strategyRef: readPredictionStrategyRef(snapshot)
     });
     const statePayload = {
+      ...toPredictionStateStrategyScope(readPredictionStrategyRef(created.featureSnapshot)),
       exchange,
       accountId: exchangeAccountId,
       userId: user.id,
