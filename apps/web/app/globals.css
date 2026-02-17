@@ -731,6 +731,277 @@ a { color: inherit; }
   color: var(--muted);
 }
 
+.tradeTableWrap {
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+}
+
+.tradeDesktopOnly {
+  display: block;
+}
+
+.tradeMobileOnly {
+  display: none;
+}
+
+.tradeDataTable {
+  width: 100%;
+  min-width: 900px;
+  border-collapse: collapse;
+  font-size: 13px;
+}
+
+.tradeDataTable th,
+.tradeDataTable td {
+  white-space: nowrap;
+}
+
+.tradeRowActions {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.tradeTableInput {
+  width: 120px;
+  min-width: 90px;
+}
+
+.tradeMobileList {
+  display: grid;
+  gap: 8px;
+}
+
+.tradeMobileCard {
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-left-width: 3px;
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.02);
+  padding: 10px;
+  display: grid;
+  gap: 8px;
+}
+
+.tradeMobileCardSideLong {
+  border-left-color: #24d3a6;
+}
+
+.tradeMobileCardSideShort {
+  border-left-color: #ef4444;
+}
+
+.tradeMobileCardSideNeutral {
+  border-left-color: rgba(148, 163, 184, 0.9);
+}
+
+.tradeMobileCardSelected {
+  border-color: rgba(56, 189, 248, 0.8);
+  background: rgba(56, 189, 248, 0.08);
+}
+
+.tradeMobileHead {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.tradeMobileHeadLeft,
+.tradeMobileHeadRight {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+.tradeMobileTitle {
+  font-size: 13px;
+  font-weight: 700;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.tradeMobileChip {
+  font-size: 11px;
+  padding: 3px 7px;
+  border-radius: 999px;
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  color: var(--muted);
+  white-space: nowrap;
+}
+
+.tradeMobileChipLong {
+  border-color: rgba(36, 211, 166, 0.8);
+  color: #9ff0d8;
+}
+
+.tradeMobileChipShort {
+  border-color: rgba(239, 68, 68, 0.8);
+  color: #fecaca;
+}
+
+.tradeMobileChipNeutral {
+  border-color: rgba(148, 163, 184, 0.7);
+  color: #cbd5e1;
+}
+
+.tradeMobileChipStatusOpen {
+  border-color: rgba(59, 130, 246, 0.8);
+  color: #bfdbfe;
+}
+
+.tradeMobileChipStatusFilled {
+  border-color: rgba(36, 211, 166, 0.8);
+  color: #9ff0d8;
+}
+
+.tradeMobileChipStatusCancelled {
+  border-color: rgba(239, 68, 68, 0.8);
+  color: #fecaca;
+}
+
+.tradeMobileChipStatusOther {
+  border-color: rgba(148, 163, 184, 0.7);
+  color: #cbd5e1;
+}
+
+.tradeMobilePnl {
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.tradeMobileRows {
+  display: grid;
+  gap: 6px;
+}
+
+.tradeMobileRow {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 10px;
+  align-items: center;
+  font-size: 12px;
+}
+
+.tradeMobileRow span {
+  color: var(--muted);
+}
+
+.tradeMobileRow strong {
+  color: var(--text);
+  text-align: right;
+}
+
+.tradeMobileInlineInput {
+  width: 96px;
+  min-width: 80px;
+  padding: 6px 8px;
+  font-size: 12px;
+}
+
+.tradeMobileActions {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+}
+
+.tradeMobileActions .btn {
+  width: 100%;
+  justify-content: center;
+}
+
+.tradeMobileEmpty {
+  color: var(--muted);
+  font-size: 12px;
+  padding: 4px 2px;
+}
+
+.tradeChartMeta {
+  align-items: center;
+}
+
+.tradeChartMarkerToggles,
+.tradeChartIndicatorToggles,
+.tradeChartPresets {
+  align-items: center;
+}
+
+.tradeChartIndicatorToggles > span:first-child {
+  flex-basis: 100%;
+}
+
+.calendarPage {
+  display: grid;
+  gap: 12px;
+}
+
+.calendarFilterCard,
+.calendarSummaryCard,
+.calendarEventsCard,
+.calendarErrorCard {
+  padding: 12px;
+  margin: 0;
+}
+
+.calendarFilterGrid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: 10px;
+}
+
+.calendarFilterField {
+  display: grid;
+  gap: 4px;
+}
+
+.calendarImpactToggleRow {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+  min-height: 38px;
+  align-items: center;
+}
+
+.calendarFilterActions {
+  display: flex;
+  align-items: end;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.calendarErrorCard {
+  border-color: #ef4444;
+}
+
+.calendarEventCard {
+  margin: 0;
+  padding: 10px;
+}
+
+.calendarEventHeader {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  flex-wrap: wrap;
+  align-items: center;
+}
+
+.calendarEventMeta {
+  font-size: 12px;
+  color: var(--muted);
+  margin-top: 4px;
+}
+
+.calendarEventValues {
+  font-size: 12px;
+  color: var(--muted);
+  margin-top: 4px;
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
 .exchangeOverviewGrid {
   display: grid;
   grid-template-columns: 1fr;
@@ -2934,6 +3205,110 @@ a { color: inherit; }
     width: 100%;
     justify-content: center;
   }
+  .tradeDesktopOnly {
+    display: none;
+  }
+  .tradeMobileOnly {
+    display: block;
+  }
+  .tradeDataTable {
+    min-width: 760px;
+    font-size: 12px;
+  }
+  .tradeDataTable th,
+  .tradeDataTable td {
+    padding: 7px 5px !important;
+  }
+  .tradeRowActions {
+    display: grid;
+    grid-template-columns: 1fr;
+    width: 100%;
+    min-width: 84px;
+  }
+  .tradeRowActions .btn {
+    width: 100%;
+    justify-content: center;
+    min-height: 30px;
+    padding: 6px 8px;
+  }
+  .tradeTableInput {
+    width: 96px;
+    min-width: 80px;
+    padding: 7px 8px;
+  }
+  .tradeMobileCard {
+    padding: 9px;
+    gap: 7px;
+  }
+  .tradeMobileHead {
+    align-items: flex-start;
+    flex-wrap: wrap;
+  }
+  .tradeMobileHeadRight {
+    margin-left: auto;
+  }
+  .tradeMobileRow {
+    font-size: 11px;
+  }
+  .tradeMobileInlineInput {
+    width: 88px;
+    min-width: 72px;
+    font-size: 11px;
+    padding: 6px 7px;
+  }
+  .tradeMobileActions {
+    gap: 6px;
+  }
+  .tradeChartMeta {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 4px;
+  }
+  .tradeChartMarkerToggles,
+  .tradeChartIndicatorToggles,
+  .tradeChartPresets {
+    gap: 8px !important;
+  }
+  .tradeChartIndicatorToggles {
+    display: grid !important;
+    grid-template-columns: 1fr 1fr;
+  }
+  .tradeChartIndicatorToggles > span:first-child {
+    grid-column: 1 / -1;
+  }
+  .tradeChartIndicatorToggles label {
+    min-height: 26px;
+  }
+  .calendarFilterGrid {
+    grid-template-columns: 1fr;
+    gap: 8px;
+  }
+  .calendarFilterActions {
+    display: grid;
+    grid-template-columns: 1fr;
+  }
+  .calendarFilterActions .btn {
+    width: 100%;
+    justify-content: center;
+  }
+  .calendarImpactToggleRow {
+    gap: 8px;
+  }
+  .calendarImpactToggleRow .badge {
+    min-height: 34px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    padding: 7px 10px;
+  }
+  .calendarEventHeader {
+    align-items: flex-start;
+  }
+  .calendarEventValues {
+    display: grid;
+    grid-template-columns: 1fr;
+    gap: 4px;
+  }
   .predictionSubCard {
     margin-top: 9px;
     padding: 9px;
@@ -3159,4 +3534,88 @@ a { color: inherit; }
 
 .appFooterLinks a:hover {
   opacity: 1;
+}
+
+@media (max-width: 420px) {
+  .tradeDeskSection {
+    padding: 8px;
+  }
+  .tradeDeskSectionTitle {
+    font-size: 14px;
+  }
+  .tradeDeskSectionHint {
+    font-size: 10px;
+  }
+  .tradeDataTable {
+    min-width: 680px;
+    font-size: 11px;
+  }
+  .tradeDataTable th,
+  .tradeDataTable td {
+    padding: 6px 4px !important;
+  }
+  .tradeTableInput {
+    width: 84px;
+    min-width: 72px;
+    padding: 6px 7px;
+    font-size: 11px;
+  }
+  .tradeRowActions {
+    min-width: 72px;
+  }
+  .tradeRowActions .btn {
+    min-height: 28px;
+    padding: 5px 6px;
+    font-size: 11px;
+  }
+  .tradeMobileActions {
+    grid-template-columns: 1fr;
+  }
+  .tradeMobileTitle,
+  .tradeMobilePnl {
+    font-size: 12px;
+  }
+  .tradeMobileChip {
+    font-size: 10px;
+    padding: 3px 6px;
+  }
+  .tradeChartMarkerToggles,
+  .tradeChartPresets {
+    display: grid !important;
+    grid-template-columns: 1fr 1fr;
+  }
+  .tradeChartIndicatorToggles {
+    grid-template-columns: 1fr !important;
+  }
+  .tradeChartIndicatorToggles > span:first-child {
+    margin-bottom: 2px;
+  }
+  .tradeChartIndicatorToggles label {
+    min-height: 30px;
+  }
+  .tradeChartPresets .btn,
+  .tradeChartMarkerToggles label {
+    min-height: 34px;
+  }
+  .calendarFilterCard,
+  .calendarSummaryCard,
+  .calendarEventsCard,
+  .calendarErrorCard {
+    padding: 10px;
+  }
+  .calendarImpactToggleRow .badge {
+    min-height: 36px;
+    padding: 8px 11px;
+    font-size: 11px;
+  }
+  .calendarEventHeader {
+    gap: 6px;
+  }
+  .calendarEventHeader .badge {
+    min-height: 30px;
+  }
+  .calendarEventMeta,
+  .calendarEventValues {
+    font-size: 11px;
+  }
 }

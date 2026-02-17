@@ -1090,14 +1090,14 @@ export function LightweightChart({
 
   return (
     <div>
-      <div ref={hostRef} style={{ width: "100%", height: 520 }} />
-      <div style={{ marginTop: 8, fontSize: 12, color: "var(--muted)", display: "flex", justifyContent: "space-between", gap: 8, flexWrap: "wrap" }}>
+      <div ref={hostRef} style={{ width: "100%", height: "clamp(280px, 55vh, 520px)" }} />
+      <div className="tradeChartMeta" style={{ marginTop: 8, fontSize: 12, color: "var(--muted)", display: "flex", justifyContent: "space-between", gap: 8, flexWrap: "wrap" }}>
         <span>{t("engine")}</span>
         <span>
           {statusMessage}
         </span>
       </div>
-      <div style={{ marginTop: 8, display: "flex", gap: 14, flexWrap: "wrap", fontSize: 12 }}>
+      <div className="tradeChartMarkerToggles" style={{ marginTop: 8, display: "flex", gap: 14, flexWrap: "wrap", fontSize: 12 }}>
         <label style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
           <input
             type="checkbox"
@@ -1115,7 +1115,7 @@ export function LightweightChart({
           {t("markers.showDown")}
         </label>
       </div>
-      <div style={{ marginTop: 8, display: "flex", flexWrap: "wrap", gap: 10, fontSize: 12 }}>
+      <div className="tradeChartIndicatorToggles" style={{ marginTop: 8, display: "flex", flexWrap: "wrap", gap: 10, fontSize: 12 }}>
         <span style={{ opacity: 0.8 }}>{t("indicators.title")}</span>
         {[
           { key: "ema5", label: t("indicators.ema5") },
@@ -1145,7 +1145,7 @@ export function LightweightChart({
           </label>
         ))}
       </div>
-      <div style={{ marginTop: 8, display: "flex", flexWrap: "wrap", gap: 8, alignItems: "center" }}>
+      <div className="tradeChartPresets" style={{ marginTop: 8, display: "flex", flexWrap: "wrap", gap: 8, alignItems: "center" }}>
         <span style={{ fontSize: 12, opacity: 0.8 }}>{t("presets.title")}</span>
         {(Object.keys(INDICATOR_PRESETS) as IndicatorPresetKey[]).map((presetKey) => {
           const preset = INDICATOR_PRESETS[presetKey];

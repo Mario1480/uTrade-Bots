@@ -114,6 +114,7 @@ import {
 } from "./trading.js";
 import {
   generateAndPersistPrediction,
+  resolvePredictionTracking,
   type PredictionSignalMode,
   type PredictionSignalSource
 } from "./ai/predictionPipeline.js";
@@ -520,6 +521,7 @@ const aiPromptTemplateSchema = z.object({
   runTimeframe: z.enum(["5m", "15m", "1h", "4h", "1d"]).nullable().default(null),
   directionPreference: z.enum(["long", "short", "either"]).default("either"),
   confidenceTargetPct: z.number().min(0).max(100).default(60),
+  slTpSource: z.enum(["local", "ai", "hybrid"]).default("local"),
   marketAnalysisUpdateEnabled: z.boolean().default(false),
   isPublic: z.boolean().default(false),
   createdAt: z.string().datetime().optional(),
@@ -3561,6 +3563,7 @@ async function generateAutoPredictionForUser(
       ?? selectedPromptSettings?.timeframe
       ?? null;
     inferred.featureSnapshot.promptTimeframes = effectivePromptTimeframes;
+    inferred.featureSnapshot.promptSlTpSource = selectedPromptSettings?.slTpSource ?? "local";
     inferred.featureSnapshot.promptRunTimeframe = allowPromptTimeframeOverride
       ? effectiveTimeframe
       : null;
@@ -6876,6 +6879,7 @@ async function refreshPredictionStateForTemplate(params: {
     }
     inferred.featureSnapshot.promptTimeframe = template.timeframe;
     inferred.featureSnapshot.promptTimeframes = promptMtfConfig.timeframes;
+    inferred.featureSnapshot.promptSlTpSource = runtimePromptSettings?.slTpSource ?? "local";
     inferred.featureSnapshot.promptRunTimeframe = promptMtfConfig.runTimeframe;
     inferred.featureSnapshot.aiPromptTemplateRequestedId = requestedPromptTemplateId;
     if (runtimePromptSettings) {
@@ -7002,6 +7006,34 @@ async function refreshPredictionStateForTemplate(params: {
           : aiCalled
             ? "openai-explain-v1"
             : "openai-explain-skip-v1";
+    const resolvedTracking = resolvePredictionTracking({
+      signal: selectedPrediction.signal,
+      slTpSource: runtimePromptSettings?.slTpSource ?? "local",
+      localTracking: {
+        entryPrice: inferred.tracking.entryPrice,
+        stopLossPrice: inferred.tracking.stopLossPrice,
+        takeProfitPrice: inferred.tracking.takeProfitPrice,
+        horizonMs: inferred.tracking.horizonMs
+      },
+      aiLevels: explainer.levels
+    });
+    inferred.featureSnapshot = {
+      ...inferred.featureSnapshot,
+      ...(resolvedTracking.entryPrice !== null
+        ? { suggestedEntryPrice: resolvedTracking.entryPrice }
+        : {}),
+      ...(resolvedTracking.stopLossPrice !== null
+        ? { suggestedStopLoss: resolvedTracking.stopLossPrice }
+        : {}),
+      ...(resolvedTracking.takeProfitPrice !== null
+        ? { suggestedTakeProfit: resolvedTracking.takeProfitPrice }
+        : {}),
+      trackingConfig: {
+        slTpSourceRequested: resolvedTracking.requestedSource,
+        slTpSourceResolved: resolvedTracking.resolvedSource,
+        aiLevelsUsed: resolvedTracking.aiLevelsUsed
+      }
+    };
     const modelVersion = `${template.modelVersionBase || "baseline-v1:auto-market-v1"} + ${explainVersion}`;
     const tsUpdated = new Date(tsCreated);
     const tsPredictedFor = new Date(tsUpdated.getTime() + timeframeToIntervalMs(template.timeframe));
@@ -7132,10 +7164,10 @@ async function refreshPredictionStateForTemplate(params: {
             explanation: explainer.explanation,
             tags,
             featuresSnapshot: inferred.featureSnapshot,
-            entryPrice: inferred.tracking.entryPrice,
-            stopLossPrice: inferred.tracking.stopLossPrice,
-            takeProfitPrice: inferred.tracking.takeProfitPrice,
-            horizonMs: inferred.tracking.horizonMs,
+            entryPrice: resolvedTracking.entryPrice,
+            stopLossPrice: resolvedTracking.stopLossPrice,
+            takeProfitPrice: resolvedTracking.takeProfitPrice,
+            horizonMs: resolvedTracking.horizonMs,
             modelVersion
           },
           select: { id: true }
@@ -8825,6 +8857,7 @@ function normalizeAiPromptSettingsPayload(
       timeframe: runTimeframe,
       directionPreference: row.directionPreference,
       confidenceTargetPct: row.confidenceTargetPct,
+      slTpSource: row.slTpSource ?? "local",
       marketAnalysisUpdateEnabled: Boolean(row.marketAnalysisUpdateEnabled),
       isPublic: Boolean(row.isPublic),
       createdAt,
@@ -9302,6 +9335,7 @@ app.get("/settings/ai-prompts/public", requireAuth, async (_req, res) => {
       timeframe: item.timeframe,
       directionPreference: item.directionPreference,
       confidenceTargetPct: item.confidenceTargetPct,
+      slTpSource: item.slTpSource,
       isPublic: item.isPublic,
       updatedAt: item.updatedAt
     })),
@@ -10522,6 +10556,7 @@ app.post("/api/predictions/generate", requireAuth, async (req, res) => {
       ?? selectedPromptSettings?.timeframe
       ?? null,
     promptTimeframes: promptTimeframeConfig.timeframes,
+    promptSlTpSource: selectedPromptSettings?.slTpSource ?? "local",
     promptRunTimeframe:
       selectedStrategyRef?.kind === "ai" || !selectedStrategyRef
         ? promptTimeframeConfig.runTimeframe

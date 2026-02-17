@@ -128,6 +128,7 @@ test("ai prompt template defaults marketAnalysisUpdateEnabled to false", () => {
   });
 
   assert.equal(parsed.prompts[0]?.marketAnalysisUpdateEnabled, false);
+  assert.equal(parsed.prompts[0]?.slTpSource, "local");
   assert.deepEqual(parsed.prompts[0]?.timeframes, []);
   assert.equal(parsed.prompts[0]?.runTimeframe, null);
 });
@@ -208,4 +209,29 @@ test("invalid runTimeframe is normalized to first timeframe", () => {
   assert.deepEqual(parsed.prompts[0]?.timeframes, ["1h", "5m"]);
   assert.equal(parsed.prompts[0]?.runTimeframe, "1h");
   assert.equal(parsed.prompts[0]?.timeframe, "1h");
+});
+
+test("ai prompt template keeps configured slTpSource in runtime settings", () => {
+  const parsed = parseStoredAiPromptSettings({
+    activePromptId: "prompt_levels",
+    prompts: [
+      {
+        id: "prompt_levels",
+        name: "Levels",
+        promptText: "x",
+        indicatorKeys: ["history_context"],
+        ohlcvBars: 100,
+        timeframes: ["1h"],
+        runTimeframe: "1h",
+        directionPreference: "either",
+        confidenceTargetPct: 60,
+        slTpSource: "hybrid",
+        isPublic: false
+      }
+    ]
+  });
+
+  assert.equal(parsed.prompts[0]?.slTpSource, "hybrid");
+  const runtime = resolveAiPromptRuntimeSettingsForContext(parsed, {}, "db");
+  assert.equal(runtime.slTpSource, "hybrid");
 });

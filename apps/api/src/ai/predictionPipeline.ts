@@ -15,6 +15,7 @@ const db = prisma as any;
 
 export type PredictionSignalSource = "local" | "ai";
 export type PredictionSignalMode = "local_only" | "ai_only" | "both";
+export type PredictionSlTpSource = "local" | "ai" | "hybrid";
 
 export type PredictionRecordInput = ExplainerInput & {
   userId?: string | null;
@@ -23,6 +24,7 @@ export type PredictionRecordInput = ExplainerInput & {
   preferredSignalSource?: PredictionSignalSource;
   signalMode?: PredictionSignalMode;
   promptSettings?: AiPromptRuntimeSettings;
+  slTpSource?: PredictionSlTpSource;
   promptScopeContext?: AiPromptScopeContext;
   tracking?: {
     entryPrice?: number | null;
@@ -59,6 +61,106 @@ function normalizeSignalMode(value: unknown): PredictionSignalMode {
   return "both";
 }
 
+function normalizeSlTpSource(value: unknown): PredictionSlTpSource {
+  if (value === "ai" || value === "hybrid" || value === "local") return value;
+  return "local";
+}
+
+function normalizePrice(value: unknown): number | null {
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed) || parsed <= 0) return null;
+  return Number(parsed.toFixed(2));
+}
+
+function isDirectionalLevelValid(
+  signal: "up" | "down" | "neutral",
+  entryPrice: number | null,
+  stopLossPrice: number | null,
+  takeProfitPrice: number | null
+): { stopLossValid: boolean; takeProfitValid: boolean } {
+  if (!entryPrice || signal === "neutral") {
+    return { stopLossValid: true, takeProfitValid: true };
+  }
+  if (signal === "up") {
+    return {
+      stopLossValid: stopLossPrice === null || stopLossPrice < entryPrice,
+      takeProfitValid: takeProfitPrice === null || takeProfitPrice > entryPrice
+    };
+  }
+  return {
+    stopLossValid: stopLossPrice === null || stopLossPrice > entryPrice,
+    takeProfitValid: takeProfitPrice === null || takeProfitPrice < entryPrice
+  };
+}
+
+export function resolvePredictionTracking(input: {
+  signal: "up" | "down" | "neutral";
+  slTpSource?: PredictionSlTpSource | null;
+  localTracking: {
+    entryPrice: number | null;
+    stopLossPrice: number | null;
+    takeProfitPrice: number | null;
+    horizonMs: number | null;
+  };
+  aiLevels: ExplainerOutput["levels"] | undefined;
+}): {
+  entryPrice: number | null;
+  stopLossPrice: number | null;
+  takeProfitPrice: number | null;
+  horizonMs: number | null;
+  requestedSource: PredictionSlTpSource;
+  resolvedSource: PredictionSlTpSource;
+  aiLevelsUsed: boolean;
+} {
+  const slTpSource = normalizeSlTpSource(input.slTpSource);
+  const local = input.localTracking;
+  const ai = {
+    entryPrice: normalizePrice(input.aiLevels?.entryPrice),
+    stopLossPrice: normalizePrice(input.aiLevels?.stopLossPrice),
+    takeProfitPrice: normalizePrice(input.aiLevels?.takeProfitPrice)
+  };
+  const hasAiLevels =
+    ai.entryPrice !== null || ai.stopLossPrice !== null || ai.takeProfitPrice !== null;
+  const resolvedSource: PredictionSlTpSource =
+    slTpSource === "local" || !hasAiLevels ? "local" : slTpSource;
+
+  const entryFromSource =
+    resolvedSource === "ai"
+      ? (ai.entryPrice ?? local.entryPrice)
+      : local.entryPrice;
+  let stopLossFromSource =
+    resolvedSource === "local"
+      ? local.stopLossPrice
+      : (ai.stopLossPrice ?? local.stopLossPrice);
+  let takeProfitFromSource =
+    resolvedSource === "local"
+      ? local.takeProfitPrice
+      : (ai.takeProfitPrice ?? local.takeProfitPrice);
+
+  const directional = isDirectionalLevelValid(
+    input.signal,
+    entryFromSource,
+    stopLossFromSource,
+    takeProfitFromSource
+  );
+  if (!directional.stopLossValid) {
+    stopLossFromSource = local.stopLossPrice;
+  }
+  if (!directional.takeProfitValid) {
+    takeProfitFromSource = local.takeProfitPrice;
+  }
+
+  return {
+    entryPrice: entryFromSource,
+    stopLossPrice: stopLossFromSource,
+    takeProfitPrice: takeProfitFromSource,
+    horizonMs: local.horizonMs,
+    requestedSource: slTpSource,
+    resolvedSource,
+    aiLevelsUsed: resolvedSource !== "local" && hasAiLevels
+  };
+}
+
 function normalizePrediction(input: {
   signal: unknown;
   expectedMovePct: unknown;
@@ -86,6 +188,9 @@ export async function generateAndPersistPrediction(
   const localPrediction = normalizePrediction(input.prediction);
   const signalMode = normalizeSignalMode(input.signalMode);
   const preferredSignalSource = normalizeSignalSource(input.preferredSignalSource);
+  const slTpSource = normalizeSlTpSource(
+    input.slTpSource ?? input.promptSettings?.slTpSource
+  );
   let explanation: ExplainerOutput;
   try {
     explanation =
@@ -131,6 +236,21 @@ export async function generateAndPersistPrediction(
         ? "ai"
         : preferredSignalSource;
   const selectedPrediction = selectedSignalSource === "ai" && aiPrediction ? aiPrediction : localPrediction;
+  const localTracking = {
+    entryPrice: normalizePrice(input.tracking?.entryPrice),
+    stopLossPrice: normalizePrice(input.tracking?.stopLossPrice),
+    takeProfitPrice: normalizePrice(input.tracking?.takeProfitPrice),
+    horizonMs:
+      Number.isFinite(Number(input.tracking?.horizonMs)) && Number(input.tracking?.horizonMs) > 0
+        ? Math.trunc(Number(input.tracking?.horizonMs))
+        : null
+  };
+  const resolvedTracking = resolvePredictionTracking({
+    signal: selectedPrediction.signal,
+    slTpSource,
+    localTracking,
+    aiLevels: explanation.levels
+  });
   const featureSnapshot = {
     ...input.featureSnapshot,
     localPrediction,
@@ -143,6 +263,20 @@ export async function generateAndPersistPrediction(
           }
         }
       : { aiPrediction: null }),
+    ...(resolvedTracking.entryPrice !== null
+      ? { suggestedEntryPrice: resolvedTracking.entryPrice }
+      : {}),
+    ...(resolvedTracking.stopLossPrice !== null
+      ? { suggestedStopLoss: resolvedTracking.stopLossPrice }
+      : {}),
+    ...(resolvedTracking.takeProfitPrice !== null
+      ? { suggestedTakeProfit: resolvedTracking.takeProfitPrice }
+      : {}),
+    trackingConfig: {
+      slTpSourceRequested: resolvedTracking.requestedSource,
+      slTpSourceResolved: resolvedTracking.resolvedSource,
+      aiLevelsUsed: resolvedTracking.aiLevelsUsed
+    },
     selectedSignalSource,
     signalMode
   };
@@ -165,10 +299,10 @@ export async function generateAndPersistPrediction(
         explanation: explanation.explanation,
         tags: explanation.tags,
         featuresSnapshot: featureSnapshot,
-        entryPrice: input.tracking?.entryPrice ?? null,
-        stopLossPrice: input.tracking?.stopLossPrice ?? null,
-        takeProfitPrice: input.tracking?.takeProfitPrice ?? null,
-        horizonMs: input.tracking?.horizonMs ?? null,
+        entryPrice: resolvedTracking.entryPrice,
+        stopLossPrice: resolvedTracking.stopLossPrice,
+        takeProfitPrice: resolvedTracking.takeProfitPrice,
+        horizonMs: resolvedTracking.horizonMs,
         modelVersion
       }
     });

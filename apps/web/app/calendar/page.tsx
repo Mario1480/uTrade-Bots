@@ -133,7 +133,7 @@ export default function CalendarPage() {
   }, [events]);
 
   return (
-    <div>
+    <div className="calendarPage">
       <div className="dashboardHeader">
         <div>
           <h2 style={{ margin: 0 }}>{t("title")}</h2>
@@ -143,18 +143,18 @@ export default function CalendarPage() {
         </div>
       </div>
 
-      <div className="card" style={{ padding: 12, marginBottom: 12 }}>
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(150px,1fr))", gap: 10 }}>
-          <label>
+      <div className="card calendarFilterCard">
+        <div className="calendarFilterGrid">
+          <label className="calendarFilterField">
             <div style={{ fontSize: 12, color: "var(--muted)", marginBottom: 4 }}>{t("filters.currency")}</div>
             <select className="input" value={currency} onChange={(e) => setCurrency(e.target.value.toUpperCase())}>
               <option value="USD">USD</option>
               <option value="EUR">EUR</option>
             </select>
           </label>
-          <label>
+          <label className="calendarFilterField">
             <div style={{ fontSize: 12, color: "var(--muted)", marginBottom: 4 }}>{t("filters.impact")}</div>
-            <div style={{ display: "flex", gap: 6, flexWrap: "wrap", minHeight: 38, alignItems: "center" }}>
+            <div className="calendarImpactToggleRow">
               {IMPACT_ORDER.map((entry) => {
                 const active = impacts.includes(entry);
                 return (
@@ -175,15 +175,15 @@ export default function CalendarPage() {
               })}
             </div>
           </label>
-          <label>
+          <label className="calendarFilterField">
             <div style={{ fontSize: 12, color: "var(--muted)", marginBottom: 4 }}>{t("filters.from")}</div>
             <input className="input" type="date" value={from} onChange={(e) => setFrom(e.target.value)} />
           </label>
-          <label>
+          <label className="calendarFilterField">
             <div style={{ fontSize: 12, color: "var(--muted)", marginBottom: 4 }}>{t("filters.to")}</div>
             <input className="input" type="date" value={to} onChange={(e) => setTo(e.target.value)} />
           </label>
-          <div style={{ display: "flex", alignItems: "end", gap: 8 }}>
+          <div className="calendarFilterActions">
             <button className="btn" onClick={() => setFrom(toDateInput(new Date()))} type="button">{t("actions.today")}</button>
             <button className="btn" onClick={() => setTo(toDateInput(addDays(new Date(), 3)))} type="button">{t("actions.next3d")}</button>
             <button className="btn btnPrimary" onClick={() => void load()} type="button">{t("actions.refresh")}</button>
@@ -193,12 +193,8 @@ export default function CalendarPage() {
 
       {nextSummary ? (
         <div
-          className="card"
-          style={{
-            padding: 12,
-            marginBottom: 12,
-            borderColor: nextSummary.blackoutActive ? "#ef4444" : undefined
-          }}
+          className="card calendarSummaryCard"
+          style={{ borderColor: nextSummary.blackoutActive ? "#ef4444" : undefined }}
         >
           <div style={{ fontWeight: 700, marginBottom: 6 }}>
             {nextSummary.blackoutActive ? t("summary.blackoutActive") : t("summary.noBlackout")} ({nextSummary.currency})
@@ -219,12 +215,12 @@ export default function CalendarPage() {
       ) : null}
 
       {error ? (
-        <div className="card" style={{ padding: 12, borderColor: "#ef4444", marginBottom: 12 }}>
+        <div className="card calendarErrorCard">
           <strong>{t("loadError")}:</strong> {error}
         </div>
       ) : null}
 
-      <div className="card" style={{ padding: 12 }}>
+      <div className="card calendarEventsCard">
         <div style={{ fontWeight: 700, marginBottom: 8 }}>{t("eventsTitle")}</div>
         {loading ? (
           <div style={{ color: "var(--muted)" }}>{t("loadingEvents")}</div>
@@ -236,16 +232,18 @@ export default function CalendarPage() {
               <div style={{ fontWeight: 700, marginBottom: 8 }}>{day}</div>
               <div style={{ display: "grid", gap: 8 }}>
                 {rows.map((event) => (
-                  <div key={event.id} className="card" style={{ margin: 0, padding: 10 }}>
-                    <div style={{ display: "flex", justifyContent: "space-between", gap: 8, flexWrap: "wrap" }}>
+                  <div key={event.id} className="card calendarEventCard">
+                    <div className="calendarEventHeader">
                       <div style={{ fontWeight: 700 }}>{event.title}</div>
                       <span className={`badge ${impactClass(event.impact)}`}>{event.impact}</span>
                     </div>
-                    <div style={{ fontSize: 12, color: "var(--muted)", marginTop: 4 }}>
+                    <div className="calendarEventMeta">
                       {new Date(event.ts).toLocaleString()} · {event.country} · {event.currency}
                     </div>
-                    <div style={{ fontSize: 12, color: "var(--muted)", marginTop: 4 }}>
-                      {t("forecast")}: {fmtNumber(event.forecast)} · {t("previous")}: {fmtNumber(event.previous)} · {t("actual")}: {fmtNumber(event.actual)}
+                    <div className="calendarEventValues">
+                      <span>{t("forecast")}: {fmtNumber(event.forecast)}</span>
+                      <span>{t("previous")}: {fmtNumber(event.previous)}</span>
+                      <span>{t("actual")}: {fmtNumber(event.actual)}</span>
                     </div>
                   </div>
                 ))}

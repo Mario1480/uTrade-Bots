@@ -24,6 +24,7 @@ type PromptTemplate = {
   timeframe: "5m" | "15m" | "1h" | "4h" | "1d" | null;
   directionPreference: "long" | "short" | "either";
   confidenceTargetPct: number;
+  slTpSource: "local" | "ai" | "hybrid";
   marketAnalysisUpdateEnabled: boolean;
   isPublic: boolean;
   createdAt: string;
@@ -111,6 +112,10 @@ function clonePrompts(prompts: PromptTemplate[]): PromptTemplate[] {
     confidenceTargetPct: Number.isFinite(Number(item.confidenceTargetPct))
       ? Math.max(0, Math.min(100, Number(item.confidenceTargetPct)))
       : 60,
+    slTpSource:
+      item.slTpSource === "ai" || item.slTpSource === "hybrid"
+        ? item.slTpSource
+        : "local",
     marketAnalysisUpdateEnabled: Boolean(item.marketAnalysisUpdateEnabled),
     isPublic: item.isPublic,
     createdAt: item.createdAt,
@@ -150,6 +155,7 @@ export default function AdminAiPromptsPage() {
   const [promptRunTimeframe, setPromptRunTimeframe] = useState<"" | "5m" | "15m" | "1h" | "4h" | "1d">("");
   const [promptDirectionPreference, setPromptDirectionPreference] = useState<"long" | "short" | "either">("either");
   const [promptConfidenceTargetPct, setPromptConfidenceTargetPct] = useState("60");
+  const [promptSlTpSource, setPromptSlTpSource] = useState<"local" | "ai" | "hybrid">("local");
   const [promptMarketAnalysisUpdateEnabled, setPromptMarketAnalysisUpdateEnabled] = useState(false);
   const [promptOhlcvBars, setPromptOhlcvBars] = useState("100");
 
@@ -238,6 +244,7 @@ export default function AdminAiPromptsPage() {
     setPromptRunTimeframe("");
     setPromptDirectionPreference("either");
     setPromptConfidenceTargetPct("60");
+    setPromptSlTpSource("local");
     setPromptMarketAnalysisUpdateEnabled(false);
     setPromptOhlcvBars("100");
   }
@@ -255,6 +262,11 @@ export default function AdminAiPromptsPage() {
     setPromptRunTimeframe((prompt.runTimeframe ?? prompt.timeframe ?? "") as "" | "5m" | "15m" | "1h" | "4h" | "1d");
     setPromptDirectionPreference(prompt.directionPreference ?? "either");
     setPromptConfidenceTargetPct(String(prompt.confidenceTargetPct ?? 60));
+    setPromptSlTpSource(
+      prompt.slTpSource === "ai" || prompt.slTpSource === "hybrid"
+        ? prompt.slTpSource
+        : "local"
+    );
     setPromptMarketAnalysisUpdateEnabled(Boolean(prompt.marketAnalysisUpdateEnabled));
     setPromptOhlcvBars(String(prompt.ohlcvBars ?? 100));
   }
@@ -328,6 +340,7 @@ export default function AdminAiPromptsPage() {
       timeframe: normalizedRunTimeframe,
       directionPreference: promptDirectionPreference,
       confidenceTargetPct: Math.round(confidenceTargetPct),
+      slTpSource: promptSlTpSource,
       marketAnalysisUpdateEnabled: promptMarketAnalysisUpdateEnabled,
       isPublic: promptIsPublic,
       createdAt:
@@ -608,6 +621,25 @@ export default function AdminAiPromptsPage() {
                   />
                 </label>
                 <label className="settingsField">
+                  <span className="settingsFieldLabel">{t("slTpSource")}</span>
+                  <select
+                    className="input"
+                    value={promptSlTpSource}
+                    onChange={(e) => setPromptSlTpSource(e.target.value as "local" | "ai" | "hybrid")}
+                  >
+                    <option value="local">{t("slTpSourceLocal")}</option>
+                    <option value="ai">{t("slTpSourceAi")}</option>
+                    <option value="hybrid">{t("slTpSourceHybrid")}</option>
+                  </select>
+                  <span className="settingsMutedText">
+                    {promptSlTpSource === "ai"
+                      ? t("slTpSourceHintAi")
+                      : promptSlTpSource === "hybrid"
+                        ? t("slTpSourceHintHybrid")
+                        : t("slTpSourceHintLocal")}
+                  </span>
+                </label>
+                <label className="settingsField">
                   <span className="settingsFieldLabel">OHLCV bars for AI</span>
                   <input
                     className="input"
@@ -666,6 +698,7 @@ export default function AdminAiPromptsPage() {
                       <th>{t("runTimeframeShort")}</th>
                       <th>Dir</th>
                       <th>Conf %</th>
+                      <th>{t("slTpSourceShort")}</th>
                       <th>{t("analysisUpdate")}</th>
                       <th>OHLCV</th>
                       <th>Indicators</th>
@@ -683,6 +716,7 @@ export default function AdminAiPromptsPage() {
                         <td>{prompt.runTimeframe ?? prompt.timeframe ?? "-"}</td>
                         <td>{prompt.directionPreference ?? "either"}</td>
                         <td>{Number.isFinite(Number(prompt.confidenceTargetPct)) ? Number(prompt.confidenceTargetPct).toFixed(0) : "60"}</td>
+                        <td>{prompt.slTpSource ?? "local"}</td>
                         <td>{prompt.marketAnalysisUpdateEnabled ? t("yes") : t("no")}</td>
                         <td>{Number.isFinite(Number(prompt.ohlcvBars)) ? Math.trunc(Number(prompt.ohlcvBars)) : 100}</td>
                         <td>{prompt.indicatorKeys.length}</td>

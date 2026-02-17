@@ -1772,128 +1772,262 @@ function TradePageContent() {
               <div className="tradeDeskSectionHint">{t("positions.symbol")}: {selectedSymbol}</div>
             </div>
 
-            <div style={{ overflowX: "auto" }}>
-              <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
-                <thead>
-                  <tr style={{ textAlign: "left", color: "var(--muted)" }}>
-                    <th style={{ padding: "8px 6px" }}>{t("positions.columns.side")}</th>
-                    <th style={{ padding: "8px 6px" }}>{t("positions.columns.size")}</th>
-                    <th style={{ padding: "8px 6px" }}>{t("positions.columns.entry")}</th>
-                    <th style={{ padding: "8px 6px" }}>{t("positions.columns.mark")}</th>
-                    <th style={{ padding: "8px 6px" }}>{t("positions.columns.stopLoss")}</th>
-                    <th style={{ padding: "8px 6px" }}>{t("positions.columns.takeProfit")}</th>
-                    <th style={{ padding: "8px 6px" }}>{t("positions.columns.pnl")}</th>
-                    <th style={{ padding: "8px 6px" }}>{t("positions.columns.action")}</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {positions.length === 0 ? (
-                    <tr>
-                      <td colSpan={8} style={{ padding: 10, color: "var(--muted)" }}>{t("positions.empty")}</td>
+            <div className="tradeDesktopOnly">
+              <div className="tradeTableWrap">
+                <table className="tradeDataTable">
+                  <thead>
+                    <tr style={{ textAlign: "left", color: "var(--muted)" }}>
+                      <th style={{ padding: "8px 6px" }}>{t("positions.columns.side")}</th>
+                      <th style={{ padding: "8px 6px" }}>{t("positions.columns.size")}</th>
+                      <th style={{ padding: "8px 6px" }}>{t("positions.columns.entry")}</th>
+                      <th style={{ padding: "8px 6px" }}>{t("positions.columns.mark")}</th>
+                      <th style={{ padding: "8px 6px" }}>{t("positions.columns.stopLoss")}</th>
+                      <th style={{ padding: "8px 6px" }}>{t("positions.columns.takeProfit")}</th>
+                      <th style={{ padding: "8px 6px" }}>{t("positions.columns.pnl")}</th>
+                      <th style={{ padding: "8px 6px" }}>{t("positions.columns.action")}</th>
                     </tr>
-                  ) : (
-                    positions.map((position, index) => (
-                      <tr
-                        key={`${position.side}_${index}`}
-                        style={{
-                          borderTop: "1px solid rgba(255,255,255,.06)",
-                          background:
-                            selectedPositionKey === `${position.symbol}:${position.side}:${index}`
-                              ? "rgba(56,189,248,0.08)"
-                              : "transparent",
-                          cursor: "pointer"
-                        }}
-                        onClick={() =>
-                          setSelectedPositionKey((prev) =>
-                            prev === `${position.symbol}:${position.side}:${index}`
-                              ? null
-                              : `${position.symbol}:${position.side}:${index}`
-                          )
-                        }
+                  </thead>
+                  <tbody>
+                    {positions.length === 0 ? (
+                      <tr>
+                        <td colSpan={8} style={{ padding: 10, color: "var(--muted)" }}>{t("positions.empty")}</td>
+                      </tr>
+                    ) : (
+                      positions.map((position, index) => {
+                        const rowKey = `${position.symbol}:${position.side}:${index}`;
+                        return (
+                          <tr
+                            key={`${position.side}_${index}`}
+                            style={{
+                              borderTop: "1px solid rgba(255,255,255,.06)",
+                              background:
+                                selectedPositionKey === rowKey
+                                  ? "rgba(56,189,248,0.08)"
+                                  : "transparent",
+                              cursor: "pointer"
+                            }}
+                            onClick={() =>
+                              setSelectedPositionKey((prev) => (prev === rowKey ? null : rowKey))
+                            }
+                          >
+                            <td style={{ padding: "8px 6px", color: position.side === "long" ? "#34d399" : "#f87171" }}>{position.side.toUpperCase()}</td>
+                            <td style={{ padding: "8px 6px" }}>{fmt(position.size, 6)}</td>
+                            <td style={{ padding: "8px 6px" }}>{fmt(position.entryPrice, 4)}</td>
+                            <td style={{ padding: "8px 6px" }}>{fmt(position.markPrice, 4)}</td>
+                            <td style={{ padding: "8px 6px" }}>
+                              {positionEditDrafts[rowKey] ? (
+                                <input
+                                  className="input tradeTableInput"
+                                  value={positionEditDrafts[rowKey]?.sl ?? ""}
+                                  onChange={(event) =>
+                                    setPositionEditDrafts((prev) => ({
+                                      ...prev,
+                                      [rowKey]: {
+                                        ...(prev[rowKey] ?? { tp: "", sl: "" }),
+                                        sl: event.target.value
+                                      }
+                                    }))
+                                  }
+                                />
+                              ) : (
+                                fmt(position.stopLossPrice, 4)
+                              )}
+                            </td>
+                            <td style={{ padding: "8px 6px" }}>
+                              {positionEditDrafts[rowKey] ? (
+                                <input
+                                  className="input tradeTableInput"
+                                  value={positionEditDrafts[rowKey]?.tp ?? ""}
+                                  onChange={(event) =>
+                                    setPositionEditDrafts((prev) => ({
+                                      ...prev,
+                                      [rowKey]: {
+                                        ...(prev[rowKey] ?? { tp: "", sl: "" }),
+                                        tp: event.target.value
+                                      }
+                                    }))
+                                  }
+                                />
+                              ) : (
+                                fmt(position.takeProfitPrice, 4)
+                              )}
+                            </td>
+                            <td style={{ padding: "8px 6px", color: (position.unrealizedPnl ?? 0) >= 0 ? "#34d399" : "#f87171" }}>
+                              {fmt(position.unrealizedPnl, 2)}
+                            </td>
+                            <td style={{ padding: "8px 6px" }}>
+                              {positionEditDrafts[rowKey] ? (
+                                <div className="tradeRowActions">
+                                  <button
+                                    className="btn"
+                                    disabled={positionSavingKey === rowKey}
+                                    onClick={(event) => {
+                                      event.stopPropagation();
+                                      void savePositionTpSl(position, rowKey);
+                                    }}
+                                  >
+                                    {t("actions.save")}
+                                  </button>
+                                  <button
+                                    className="btn"
+                                    onClick={(event) => {
+                                      event.stopPropagation();
+                                      setPositionEditDrafts((prev) => {
+                                        const next = { ...prev };
+                                        delete next[rowKey];
+                                        return next;
+                                      });
+                                    }}
+                                  >
+                                    {t("actions.cancel")}
+                                  </button>
+                                </div>
+                              ) : (
+                                <div className="tradeRowActions">
+                                  <button
+                                    className="btn"
+                                    onClick={(event) => {
+                                      event.stopPropagation();
+                                      setPositionEditDrafts((prev) => ({
+                                        ...prev,
+                                        [rowKey]: {
+                                          tp:
+                                            position.takeProfitPrice !== null &&
+                                            Number.isFinite(position.takeProfitPrice)
+                                              ? String(position.takeProfitPrice)
+                                              : "",
+                                          sl:
+                                            position.stopLossPrice !== null &&
+                                            Number.isFinite(position.stopLossPrice)
+                                              ? String(position.stopLossPrice)
+                                              : ""
+                                        }
+                                      }));
+                                    }}
+                                  >
+                                    {t("actions.edit")}
+                                  </button>
+                                  <button className="btn" onClick={(event) => {
+                                    event.stopPropagation();
+                                    void closePosition(position.side);
+                                  }}>{t("actions.close")}</button>
+                                </div>
+                              )}
+                            </td>
+                          </tr>
+                        );
+                      })
+                    )}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+
+            <div className="tradeMobileOnly">
+              {positions.length === 0 ? (
+                <div className="tradeMobileEmpty">{t("positions.empty")}</div>
+              ) : (
+                <div className="tradeMobileList">
+                  {positions.map((position, index) => {
+                    const rowKey = `${position.symbol}:${position.side}:${index}`;
+                    const draft = positionEditDrafts[rowKey];
+                    const isSelected = selectedPositionKey === rowKey;
+                    const sideToneClass =
+                      position.side === "long" ? "tradeMobileCardSideLong" : "tradeMobileCardSideShort";
+                    return (
+                      <article
+                        key={`position_mobile_${position.side}_${index}`}
+                        className={`tradeMobileCard ${sideToneClass} ${isSelected ? "tradeMobileCardSelected" : ""}`}
+                        onClick={() => setSelectedPositionKey((prev) => (prev === rowKey ? null : rowKey))}
                       >
-                        <td style={{ padding: "8px 6px", color: position.side === "long" ? "#34d399" : "#f87171" }}>{position.side.toUpperCase()}</td>
-                        <td style={{ padding: "8px 6px" }}>{fmt(position.size, 6)}</td>
-                        <td style={{ padding: "8px 6px" }}>{fmt(position.entryPrice, 4)}</td>
-                        <td style={{ padding: "8px 6px" }}>{fmt(position.markPrice, 4)}</td>
-                        <td style={{ padding: "8px 6px" }}>
-                          {positionEditDrafts[`${position.symbol}:${position.side}:${index}`] ? (
-                            <input
-                              className="input"
-                              style={{ width: 120 }}
-                              value={positionEditDrafts[`${position.symbol}:${position.side}:${index}`]?.sl ?? ""}
-                              onChange={(event) =>
-                                setPositionEditDrafts((prev) => ({
-                                  ...prev,
-                                  [`${position.symbol}:${position.side}:${index}`]: {
-                                    ...(prev[`${position.symbol}:${position.side}:${index}`] ?? { tp: "", sl: "" }),
-                                    sl: event.target.value
-                                  }
-                                }))
-                              }
-                            />
-                          ) : (
-                            fmt(position.stopLossPrice, 4)
-                          )}
-                        </td>
-                        <td style={{ padding: "8px 6px" }}>
-                          {positionEditDrafts[`${position.symbol}:${position.side}:${index}`] ? (
-                            <input
-                              className="input"
-                              style={{ width: 120 }}
-                              value={positionEditDrafts[`${position.symbol}:${position.side}:${index}`]?.tp ?? ""}
-                              onChange={(event) =>
-                                setPositionEditDrafts((prev) => ({
-                                  ...prev,
-                                  [`${position.symbol}:${position.side}:${index}`]: {
-                                    ...(prev[`${position.symbol}:${position.side}:${index}`] ?? { tp: "", sl: "" }),
-                                    tp: event.target.value
-                                  }
-                                }))
-                              }
-                            />
-                          ) : (
-                            fmt(position.takeProfitPrice, 4)
-                          )}
-                        </td>
-                        <td style={{ padding: "8px 6px", color: (position.unrealizedPnl ?? 0) >= 0 ? "#34d399" : "#f87171" }}>
-                          {fmt(position.unrealizedPnl, 2)}
-                        </td>
-                        <td style={{ padding: "8px 6px" }}>
-                          {positionEditDrafts[`${position.symbol}:${position.side}:${index}`] ? (
-                            <div style={{ display: "flex", gap: 6 }}>
+                        <div className="tradeMobileHead">
+                          <div className="tradeMobileHeadLeft">
+                            <div className="tradeMobileTitle">{selectedSymbol}</div>
+                            <span
+                              className={`tradeMobileChip ${position.side === "long" ? "tradeMobileChipLong" : "tradeMobileChipShort"}`}
+                            >
+                              {position.side.toUpperCase()}
+                            </span>
+                          </div>
+                          <div
+                            className="tradeMobilePnl"
+                            style={{ color: (position.unrealizedPnl ?? 0) >= 0 ? "#34d399" : "#f87171" }}
+                          >
+                            {fmt(position.unrealizedPnl, 2)}
+                          </div>
+                        </div>
+                        <div className="tradeMobileRows">
+                          <div className="tradeMobileRow"><span>{t("positions.columns.size")}</span><strong>{fmt(position.size, 6)}</strong></div>
+                          <div className="tradeMobileRow"><span>{t("positions.columns.entry")}</span><strong>{fmt(position.entryPrice, 4)}</strong></div>
+                          <div className="tradeMobileRow"><span>{t("positions.columns.mark")}</span><strong>{fmt(position.markPrice, 4)}</strong></div>
+                          <div className="tradeMobileRow">
+                            <span>{t("positions.columns.stopLoss")}</span>
+                            {draft ? (
+                              <input
+                                className="input tradeMobileInlineInput"
+                                value={draft.sl ?? ""}
+                                onClick={(event) => event.stopPropagation()}
+                                onChange={(event) =>
+                                  setPositionEditDrafts((prev) => ({
+                                    ...prev,
+                                    [rowKey]: { ...(prev[rowKey] ?? { tp: "", sl: "" }), sl: event.target.value }
+                                  }))
+                                }
+                              />
+                            ) : (
+                              <strong>{fmt(position.stopLossPrice, 4)}</strong>
+                            )}
+                          </div>
+                          <div className="tradeMobileRow">
+                            <span>{t("positions.columns.takeProfit")}</span>
+                            {draft ? (
+                              <input
+                                className="input tradeMobileInlineInput"
+                                value={draft.tp ?? ""}
+                                onClick={(event) => event.stopPropagation()}
+                                onChange={(event) =>
+                                  setPositionEditDrafts((prev) => ({
+                                    ...prev,
+                                    [rowKey]: { ...(prev[rowKey] ?? { tp: "", sl: "" }), tp: event.target.value }
+                                  }))
+                                }
+                              />
+                            ) : (
+                              <strong>{fmt(position.takeProfitPrice, 4)}</strong>
+                            )}
+                          </div>
+                        </div>
+                        <div className="tradeMobileActions" onClick={(event) => event.stopPropagation()}>
+                          {draft ? (
+                            <>
                               <button
                                 className="btn"
-                                disabled={positionSavingKey === `${position.symbol}:${position.side}:${index}`}
-                                onClick={(event) => {
-                                  event.stopPropagation();
-                                  void savePositionTpSl(position, `${position.symbol}:${position.side}:${index}`);
-                                }}
+                                disabled={positionSavingKey === rowKey}
+                                onClick={() => void savePositionTpSl(position, rowKey)}
                               >
                                 {t("actions.save")}
                               </button>
                               <button
                                 className="btn"
-                                onClick={(event) => {
-                                  event.stopPropagation();
+                                onClick={() =>
                                   setPositionEditDrafts((prev) => {
                                     const next = { ...prev };
-                                    delete next[`${position.symbol}:${position.side}:${index}`];
+                                    delete next[rowKey];
                                     return next;
-                                  });
-                                }}
+                                  })
+                                }
                               >
                                 {t("actions.cancel")}
                               </button>
-                            </div>
+                            </>
                           ) : (
-                            <div style={{ display: "flex", gap: 6 }}>
+                            <>
                               <button
                                 className="btn"
-                                onClick={(event) => {
-                                  event.stopPropagation();
+                                onClick={() =>
                                   setPositionEditDrafts((prev) => ({
                                     ...prev,
-                                    [`${position.symbol}:${position.side}:${index}`]: {
+                                    [rowKey]: {
                                       tp:
                                         position.takeProfitPrice !== null &&
                                         Number.isFinite(position.takeProfitPrice)
@@ -1905,23 +2039,22 @@ function TradePageContent() {
                                           ? String(position.stopLossPrice)
                                           : ""
                                     }
-                                  }));
-                                }}
+                                  }))
+                                }
                               >
                                 {t("actions.edit")}
                               </button>
-                              <button className="btn" onClick={(event) => {
-                                event.stopPropagation();
-                                void closePosition(position.side);
-                              }}>{t("actions.close")}</button>
-                            </div>
+                              <button className="btn" onClick={() => void closePosition(position.side)}>
+                                {t("actions.close")}
+                              </button>
+                            </>
                           )}
-                        </td>
-                      </tr>
-                    ))
-                  )}
-                </tbody>
-              </table>
+                        </div>
+                      </article>
+                    );
+                  })}
+                </div>
+              )}
             </div>
           </section>
 
@@ -1934,121 +2067,281 @@ function TradePageContent() {
               <button className="btn" onClick={() => void cancelAll()}>{t("actions.cancelAll")}</button>
             </div>
 
-            <div style={{ overflowX: "auto" }}>
-              <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
-                <thead>
-                  <tr style={{ textAlign: "left", color: "var(--muted)" }}>
-                    <th style={{ padding: "8px 6px" }}>{t("orders.columns.orderId")}</th>
-                    <th style={{ padding: "8px 6px" }}>{t("orders.columns.side")}</th>
-                    <th style={{ padding: "8px 6px" }}>{t("orders.columns.type")}</th>
-                    <th style={{ padding: "8px 6px" }}>{t("orders.columns.limitPrice")}</th>
-                    <th style={{ padding: "8px 6px" }}>{t("orders.columns.stopLoss")}</th>
-                    <th style={{ padding: "8px 6px" }}>{t("orders.columns.takeProfit")}</th>
-                    <th style={{ padding: "8px 6px" }}>{t("orders.columns.qty")}</th>
-                    <th style={{ padding: "8px 6px" }}>{t("orders.columns.status")}</th>
-                    <th style={{ padding: "8px 6px" }}>{t("orders.columns.action")}</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {openOrders.length === 0 ? (
-                    <tr>
-                      <td colSpan={9} style={{ padding: 10, color: "var(--muted)" }}>{t("orders.empty")}</td>
+            <div className="tradeDesktopOnly">
+              <div className="tradeTableWrap">
+                <table className="tradeDataTable">
+                  <thead>
+                    <tr style={{ textAlign: "left", color: "var(--muted)" }}>
+                      <th style={{ padding: "8px 6px" }}>{t("orders.columns.orderId")}</th>
+                      <th style={{ padding: "8px 6px" }}>{t("orders.columns.side")}</th>
+                      <th style={{ padding: "8px 6px" }}>{t("orders.columns.type")}</th>
+                      <th style={{ padding: "8px 6px" }}>{t("orders.columns.limitPrice")}</th>
+                      <th style={{ padding: "8px 6px" }}>{t("orders.columns.stopLoss")}</th>
+                      <th style={{ padding: "8px 6px" }}>{t("orders.columns.takeProfit")}</th>
+                      <th style={{ padding: "8px 6px" }}>{t("orders.columns.qty")}</th>
+                      <th style={{ padding: "8px 6px" }}>{t("orders.columns.status")}</th>
+                      <th style={{ padding: "8px 6px" }}>{t("orders.columns.action")}</th>
                     </tr>
-                  ) : (
-                    openOrders.map((order) => (
-                      <tr key={order.orderId} style={{ borderTop: "1px solid rgba(255,255,255,.06)" }}>
-                        <td style={{ padding: "8px 6px" }}>{order.orderId.slice(0, 12)}...</td>
-                        <td style={{ padding: "8px 6px" }}>{order.side ?? "-"}</td>
-                        <td style={{ padding: "8px 6px" }}>{order.type ?? "-"}</td>
-                        <td style={{ padding: "8px 6px" }}>
-                          {orderEditDrafts[order.orderId] ? (
-                            <input
-                              className="input"
-                              style={{ width: 120 }}
-                              value={orderEditDrafts[order.orderId]?.price ?? ""}
-                              onChange={(event) =>
-                                setOrderEditDrafts((prev) => ({
-                                  ...prev,
-                                  [order.orderId]: {
-                                    ...(prev[order.orderId] ?? { price: "", qty: "", tp: "", sl: "" }),
-                                    price: event.target.value
+                  </thead>
+                  <tbody>
+                    {openOrders.length === 0 ? (
+                      <tr>
+                        <td colSpan={9} style={{ padding: 10, color: "var(--muted)" }}>{t("orders.empty")}</td>
+                      </tr>
+                    ) : (
+                      openOrders.map((order) => (
+                        <tr key={order.orderId} style={{ borderTop: "1px solid rgba(255,255,255,.06)" }}>
+                          <td style={{ padding: "8px 6px" }}>{order.orderId.slice(0, 12)}...</td>
+                          <td style={{ padding: "8px 6px" }}>{order.side ?? "-"}</td>
+                          <td style={{ padding: "8px 6px" }}>{order.type ?? "-"}</td>
+                          <td style={{ padding: "8px 6px" }}>
+                            {orderEditDrafts[order.orderId] ? (
+                              <input
+                                className="input tradeTableInput"
+                                value={orderEditDrafts[order.orderId]?.price ?? ""}
+                                onChange={(event) =>
+                                  setOrderEditDrafts((prev) => ({
+                                    ...prev,
+                                    [order.orderId]: {
+                                      ...(prev[order.orderId] ?? { price: "", qty: "", tp: "", sl: "" }),
+                                      price: event.target.value
+                                    }
+                                  }))
+                                }
+                              />
+                            ) : (
+                              fmt(order.price, 4)
+                            )}
+                          </td>
+                          <td style={{ padding: "8px 6px" }}>
+                            {orderEditDrafts[order.orderId] ? (
+                              <input
+                                className="input tradeTableInput"
+                                value={orderEditDrafts[order.orderId]?.sl ?? ""}
+                                onChange={(event) =>
+                                  setOrderEditDrafts((prev) => ({
+                                    ...prev,
+                                    [order.orderId]: {
+                                      ...(prev[order.orderId] ?? { price: "", qty: "", tp: "", sl: "" }),
+                                      sl: event.target.value
+                                    }
+                                  }))
+                                }
+                              />
+                            ) : (
+                              fmt(order.stopLossPrice, 4)
+                            )}
+                          </td>
+                          <td style={{ padding: "8px 6px" }}>
+                            {orderEditDrafts[order.orderId] ? (
+                              <input
+                                className="input tradeTableInput"
+                                value={orderEditDrafts[order.orderId]?.tp ?? ""}
+                                onChange={(event) =>
+                                  setOrderEditDrafts((prev) => ({
+                                    ...prev,
+                                    [order.orderId]: {
+                                      ...(prev[order.orderId] ?? { price: "", qty: "", tp: "", sl: "" }),
+                                      tp: event.target.value
+                                    }
+                                  }))
+                                }
+                              />
+                            ) : (
+                              fmt(order.takeProfitPrice, 4)
+                            )}
+                          </td>
+                          <td style={{ padding: "8px 6px" }}>
+                            {orderEditDrafts[order.orderId] ? (
+                              <input
+                                className="input tradeTableInput"
+                                value={orderEditDrafts[order.orderId]?.qty ?? ""}
+                                onChange={(event) =>
+                                  setOrderEditDrafts((prev) => ({
+                                    ...prev,
+                                    [order.orderId]: {
+                                      ...(prev[order.orderId] ?? { price: "", qty: "", tp: "", sl: "" }),
+                                      qty: event.target.value
+                                    }
+                                  }))
+                                }
+                              />
+                            ) : (
+                              fmt(order.qty, 6)
+                            )}
+                          </td>
+                          <td style={{ padding: "8px 6px" }}>{order.status ?? "-"}</td>
+                          <td style={{ padding: "8px 6px" }}>
+                            {orderEditDrafts[order.orderId] ? (
+                              <div className="tradeRowActions">
+                                <button
+                                  className="btn"
+                                  disabled={orderSavingId === order.orderId}
+                                  onClick={() => void saveOrderEdit(order)}
+                                >
+                                  {t("actions.save")}
+                                </button>
+                                <button
+                                  className="btn"
+                                  onClick={() =>
+                                    setOrderEditDrafts((prev) => {
+                                      const next = { ...prev };
+                                      delete next[order.orderId];
+                                      return next;
+                                    })
                                   }
-                                }))
-                              }
-                            />
-                          ) : (
-                            fmt(order.price, 4)
-                          )}
-                        </td>
-                        <td style={{ padding: "8px 6px" }}>
-                          {orderEditDrafts[order.orderId] ? (
-                            <input
-                              className="input"
-                              style={{ width: 120 }}
-                              value={orderEditDrafts[order.orderId]?.sl ?? ""}
-                              onChange={(event) =>
-                                setOrderEditDrafts((prev) => ({
-                                  ...prev,
-                                  [order.orderId]: {
-                                    ...(prev[order.orderId] ?? { price: "", qty: "", tp: "", sl: "" }),
-                                    sl: event.target.value
+                                >
+                                  {t("actions.cancel")}
+                                </button>
+                              </div>
+                            ) : (
+                              <div className="tradeRowActions">
+                                <button
+                                  className="btn"
+                                  onClick={() =>
+                                    setOrderEditDrafts((prev) => ({
+                                      ...prev,
+                                      [order.orderId]: {
+                                        price: order.price !== null && Number.isFinite(order.price) ? String(order.price) : "",
+                                        qty: order.qty !== null && Number.isFinite(order.qty) ? String(order.qty) : "",
+                                        tp:
+                                          order.takeProfitPrice !== null && Number.isFinite(order.takeProfitPrice)
+                                            ? String(order.takeProfitPrice)
+                                            : "",
+                                        sl:
+                                          order.stopLossPrice !== null && Number.isFinite(order.stopLossPrice)
+                                            ? String(order.stopLossPrice)
+                                            : ""
+                                      }
+                                    }))
                                   }
-                                }))
-                              }
-                            />
-                          ) : (
-                            fmt(order.stopLossPrice, 4)
-                          )}
-                        </td>
-                        <td style={{ padding: "8px 6px" }}>
-                          {orderEditDrafts[order.orderId] ? (
-                            <input
-                              className="input"
-                              style={{ width: 120 }}
-                              value={orderEditDrafts[order.orderId]?.tp ?? ""}
-                              onChange={(event) =>
-                                setOrderEditDrafts((prev) => ({
-                                  ...prev,
-                                  [order.orderId]: {
-                                    ...(prev[order.orderId] ?? { price: "", qty: "", tp: "", sl: "" }),
-                                    tp: event.target.value
-                                  }
-                                }))
-                              }
-                            />
-                          ) : (
-                            fmt(order.takeProfitPrice, 4)
-                          )}
-                        </td>
-                        <td style={{ padding: "8px 6px" }}>
-                          {orderEditDrafts[order.orderId] ? (
-                            <input
-                              className="input"
-                              style={{ width: 100 }}
-                              value={orderEditDrafts[order.orderId]?.qty ?? ""}
-                              onChange={(event) =>
-                                setOrderEditDrafts((prev) => ({
-                                  ...prev,
-                                  [order.orderId]: {
-                                    ...(prev[order.orderId] ?? { price: "", qty: "", tp: "", sl: "" }),
-                                    qty: event.target.value
-                                  }
-                                }))
-                              }
-                            />
-                          ) : (
-                            fmt(order.qty, 6)
-                          )}
-                        </td>
-                        <td style={{ padding: "8px 6px" }}>{order.status ?? "-"}</td>
-                        <td style={{ padding: "8px 6px" }}>
-                          {orderEditDrafts[order.orderId] ? (
-                            <div style={{ display: "flex", gap: 6 }}>
-                              <button
-                                className="btn"
-                                disabled={orderSavingId === order.orderId}
-                                onClick={() => void saveOrderEdit(order)}
-                              >
+                                >
+                                  {t("actions.edit")}
+                                </button>
+                                <button className="btn" onClick={() => void cancelOrder(order.orderId)}>{t("actions.cancel")}</button>
+                              </div>
+                            )}
+                          </td>
+                        </tr>
+                      ))
+                    )}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+
+            <div className="tradeMobileOnly">
+              {openOrders.length === 0 ? (
+                <div className="tradeMobileEmpty">{t("orders.empty")}</div>
+              ) : (
+                <div className="tradeMobileList">
+                  {openOrders.map((order) => {
+                    const draft = orderEditDrafts[order.orderId];
+                    const sideRaw = String(order.side ?? "").toLowerCase();
+                    const statusRaw = String(order.status ?? "").toLowerCase();
+                    const sideToneClass = sideRaw.includes("sell") || sideRaw.includes("short")
+                      ? "tradeMobileCardSideShort"
+                      : sideRaw.includes("buy") || sideRaw.includes("long")
+                        ? "tradeMobileCardSideLong"
+                        : "tradeMobileCardSideNeutral";
+                    const sideChipClass = sideToneClass === "tradeMobileCardSideLong"
+                      ? "tradeMobileChipLong"
+                      : sideToneClass === "tradeMobileCardSideShort"
+                        ? "tradeMobileChipShort"
+                        : "tradeMobileChipNeutral";
+                    const statusChipClass = statusRaw.includes("open") || statusRaw.includes("new")
+                      ? "tradeMobileChipStatusOpen"
+                      : statusRaw.includes("fill") || statusRaw.includes("done")
+                        ? "tradeMobileChipStatusFilled"
+                        : statusRaw.includes("cancel") || statusRaw.includes("reject")
+                          ? "tradeMobileChipStatusCancelled"
+                          : "tradeMobileChipStatusOther";
+                    return (
+                      <article key={`order_mobile_${order.orderId}`} className={`tradeMobileCard ${sideToneClass}`}>
+                        <div className="tradeMobileHead">
+                          <div className="tradeMobileHeadLeft">
+                            <div className="tradeMobileTitle">{order.orderId.slice(0, 12)}...</div>
+                            <span className={`tradeMobileChip ${sideChipClass}`}>{order.side ?? "-"}</span>
+                          </div>
+                          <div className="tradeMobileHeadRight">
+                            <span className={`tradeMobileChip ${statusChipClass}`}>{order.status ?? "-"}</span>
+                          </div>
+                        </div>
+                        <div className="tradeMobileRows">
+                          <div className="tradeMobileRow"><span>{t("orders.columns.type")}</span><strong>{order.type ?? "-"}</strong></div>
+                          <div className="tradeMobileRow">
+                            <span>{t("orders.columns.limitPrice")}</span>
+                            {draft ? (
+                              <input
+                                className="input tradeMobileInlineInput"
+                                value={draft.price ?? ""}
+                                onChange={(event) =>
+                                  setOrderEditDrafts((prev) => ({
+                                    ...prev,
+                                    [order.orderId]: { ...(prev[order.orderId] ?? { price: "", qty: "", tp: "", sl: "" }), price: event.target.value }
+                                  }))
+                                }
+                              />
+                            ) : (
+                              <strong>{fmt(order.price, 4)}</strong>
+                            )}
+                          </div>
+                          <div className="tradeMobileRow">
+                            <span>{t("orders.columns.stopLoss")}</span>
+                            {draft ? (
+                              <input
+                                className="input tradeMobileInlineInput"
+                                value={draft.sl ?? ""}
+                                onChange={(event) =>
+                                  setOrderEditDrafts((prev) => ({
+                                    ...prev,
+                                    [order.orderId]: { ...(prev[order.orderId] ?? { price: "", qty: "", tp: "", sl: "" }), sl: event.target.value }
+                                  }))
+                                }
+                              />
+                            ) : (
+                              <strong>{fmt(order.stopLossPrice, 4)}</strong>
+                            )}
+                          </div>
+                          <div className="tradeMobileRow">
+                            <span>{t("orders.columns.takeProfit")}</span>
+                            {draft ? (
+                              <input
+                                className="input tradeMobileInlineInput"
+                                value={draft.tp ?? ""}
+                                onChange={(event) =>
+                                  setOrderEditDrafts((prev) => ({
+                                    ...prev,
+                                    [order.orderId]: { ...(prev[order.orderId] ?? { price: "", qty: "", tp: "", sl: "" }), tp: event.target.value }
+                                  }))
+                                }
+                              />
+                            ) : (
+                              <strong>{fmt(order.takeProfitPrice, 4)}</strong>
+                            )}
+                          </div>
+                          <div className="tradeMobileRow">
+                            <span>{t("orders.columns.qty")}</span>
+                            {draft ? (
+                              <input
+                                className="input tradeMobileInlineInput"
+                                value={draft.qty ?? ""}
+                                onChange={(event) =>
+                                  setOrderEditDrafts((prev) => ({
+                                    ...prev,
+                                    [order.orderId]: { ...(prev[order.orderId] ?? { price: "", qty: "", tp: "", sl: "" }), qty: event.target.value }
+                                  }))
+                                }
+                              />
+                            ) : (
+                              <strong>{fmt(order.qty, 6)}</strong>
+                            )}
+                          </div>
+                        </div>
+                        <div className="tradeMobileActions">
+                          {draft ? (
+                            <>
+                              <button className="btn" disabled={orderSavingId === order.orderId} onClick={() => void saveOrderEdit(order)}>
                                 {t("actions.save")}
                               </button>
                               <button
@@ -2063,9 +2356,9 @@ function TradePageContent() {
                               >
                                 {t("actions.cancel")}
                               </button>
-                            </div>
+                            </>
                           ) : (
-                            <div style={{ display: "flex", gap: 6 }}>
+                            <>
                               <button
                                 className="btn"
                                 onClick={() =>
@@ -2089,14 +2382,14 @@ function TradePageContent() {
                                 {t("actions.edit")}
                               </button>
                               <button className="btn" onClick={() => void cancelOrder(order.orderId)}>{t("actions.cancel")}</button>
-                            </div>
+                            </>
                           )}
-                        </td>
-                      </tr>
-                    ))
-                  )}
-                </tbody>
-              </table>
+                        </div>
+                      </article>
+                    );
+                  })}
+                </div>
+              )}
             </div>
           </section>
         </>

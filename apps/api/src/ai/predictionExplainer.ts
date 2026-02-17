@@ -38,6 +38,11 @@ export type ExplainerOutput = {
   explanation: string;
   tags: string[];
   keyDrivers: { name: string; value: unknown }[];
+  levels?: {
+    entryPrice: number | null;
+    stopLossPrice: number | null;
+    takeProfitPrice: number | null;
+  };
   aiPrediction: {
     signal: "up" | "down" | "neutral";
     expectedMovePct: number;
@@ -81,6 +86,21 @@ const baseOutputSchema = z.object({
       signal: z.enum(["up", "down", "neutral"]),
       expectedMovePct: z.number(),
       confidence: z.number()
+    })
+    .optional(),
+  levels: z
+    .object({
+      entry_ref: z.number().optional(),
+      entryRef: z.number().optional(),
+      entry: z.number().optional(),
+      stop_loss: z.number().optional(),
+      stopLoss: z.number().optional(),
+      stopLossPrice: z.number().optional(),
+      sl: z.number().optional(),
+      take_profit: z.number().optional(),
+      takeProfit: z.number().optional(),
+      takeProfitPrice: z.number().optional(),
+      tp: z.number().optional()
     })
     .optional(),
   disclaimer: z.literal("grounded_features_only")
@@ -449,6 +469,38 @@ function normalizeAiPrediction(
   };
 }
 
+function normalizePrice(value: unknown): number | null {
+  const parsed = toNumber(value);
+  if (parsed === null || !Number.isFinite(parsed) || parsed <= 0) return null;
+  return Number(parsed.toFixed(2));
+}
+
+function normalizeAiLevels(value: unknown): {
+  entryPrice: number | null;
+  stopLossPrice: number | null;
+  takeProfitPrice: number | null;
+} | null {
+  const record = asObject(value);
+  if (!record) return null;
+  const entryPrice = normalizePrice(
+    record.entry_ref ?? record.entryRef ?? record.entry
+  );
+  const stopLossPrice = normalizePrice(
+    record.stop_loss ?? record.stopLoss ?? record.stopLossPrice ?? record.sl
+  );
+  const takeProfitPrice = normalizePrice(
+    record.take_profit ?? record.takeProfit ?? record.takeProfitPrice ?? record.tp
+  );
+  if (entryPrice === null && stopLossPrice === null && takeProfitPrice === null) {
+    return null;
+  }
+  return {
+    entryPrice,
+    stopLossPrice,
+    takeProfitPrice
+  };
+}
+
 function deriveFallbackAiPrediction(input: {
   featureSnapshot: Record<string, unknown>;
   baselinePrediction?: ExplainerInput["prediction"];
@@ -601,6 +653,7 @@ export function validateExplainerOutput(
           `Signal ${aiPrediction.signal} with ${(aiPrediction.confidence * 100).toFixed(1)}% confidence ` +
           `and expected move ${aiPrediction.expectedMovePct.toFixed(2)}% based on provided features.`
         );
+  const levels = normalizeAiLevels(parsed.data.levels);
 
   return {
     explanation,
@@ -609,6 +662,7 @@ export function validateExplainerOutput(
       name: driver.name,
       value: driver.value
     })),
+    ...(levels ? { levels } : {}),
     aiPrediction,
     disclaimer: "grounded_features_only"
   };
@@ -915,7 +969,7 @@ function buildPromptPayload(
   input: ExplainerInput,
   settings: Pick<
     AiPromptRuntimeSettings,
-    "promptText" | "indicatorKeys" | "ohlcvBars" | "timeframes" | "runTimeframe"
+    "promptText" | "indicatorKeys" | "ohlcvBars" | "timeframes" | "runTimeframe" | "slTpSource"
   >
 ) {
   return {
@@ -931,10 +985,12 @@ function buildPromptPayload(
       tags: "string[] <= 5 items, must be from tagsAllowlist",
       keyDrivers: "{name: string, value: any}[] <= 5 items, names from featureSnapshot key paths only",
       aiPrediction: "{signal: up|down|neutral, expectedMovePct: number, confidence: number 0..1}",
+      levels: "{optional: {entry_ref?: number, stop_loss?: number, take_profit?: number}}",
       disclaimer: "grounded_features_only"
     },
     selectedIndicatorKeys: settings.indicatorKeys,
     ohlcvBars: settings.ohlcvBars,
+    slTpSource: settings.slTpSource,
     promptTimeframes: settings.timeframes,
     promptRunTimeframe: settings.runTimeframe,
     groundingRules: [
@@ -944,7 +1000,8 @@ function buildPromptPayload(
       "historyContext is derived and may be referenced only when present; do not invent missing history fields",
       "Do not claim volume spikes unless rel_vol or vol_z supports it",
       "Do not claim fair value gaps unless fvg counts or distances support it",
-      "aiPrediction must be inferred from featureSnapshot and can differ from prediction"
+      "aiPrediction must be inferred from featureSnapshot and can differ from prediction",
+      "levels are optional; include only numeric entry_ref/stop_loss/take_profit when explicitly supported by featureSnapshot"
     ]
   };
 }
