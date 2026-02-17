@@ -4,7 +4,7 @@ import Link from "next/link";
 import { useMemo } from "react";
 import { useSearchParams } from "next/navigation";
 import { useTranslations } from "next-intl";
-import { ApiError, apiDelete, apiGet } from "../../lib/api";
+import { ApiError, apiGet, apiPost } from "../../lib/api";
 import { Suspense, useEffect, useState } from "react";
 
 type BotItem = {
@@ -92,7 +92,7 @@ function BotsPageContent() {
     setDeletingId(bot.id);
     setError(null);
     try {
-      await apiDelete(`/bots/${bot.id}`);
+      await apiPost(`/bots/${bot.id}/delete`);
       setBots((prev) => prev.filter((row) => row.id !== bot.id));
     } catch (e) {
       setError(errMsg(e));

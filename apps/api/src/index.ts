@@ -13079,13 +13079,14 @@ app.post("/bots/:id/stop", requireAuth, async (req, res) => {
   return res.json({ id: updated.id, status: updated.status });
 });
 
-app.delete("/bots/:id", requireAuth, async (req, res) => {
-  const user = getUserFromLocals(res);
+async function deleteBotForUser(userId: string, botId: string): Promise<{ deletedBotId: string }> {
   const bot = await db.bot.findFirst({
-    where: { id: req.params.id, userId: user.id },
+    where: { id: botId, userId },
     select: { id: true }
   });
-  if (!bot) return res.status(404).json({ error: "bot_not_found" });
+  if (!bot) {
+    throw new ManualTradingError("bot_not_found", 404, "bot_not_found");
+  }
 
   try {
     await cancelBotRun(bot.id);
@@ -13116,7 +13117,27 @@ app.delete("/bots/:id", requireAuth, async (req, res) => {
     await tx.bot.delete({ where: { id: bot.id } });
   });
 
-  return res.json({ ok: true, deletedBotId: bot.id });
+  return { deletedBotId: bot.id };
+}
+
+app.post("/bots/:id/delete", requireAuth, async (req, res) => {
+  const user = getUserFromLocals(res);
+  try {
+    const out = await deleteBotForUser(user.id, req.params.id);
+    return res.json({ ok: true, ...out });
+  } catch (error) {
+    return sendManualTradingError(res, error);
+  }
+});
+
+app.delete("/bots/:id", requireAuth, async (req, res) => {
+  const user = getUserFromLocals(res);
+  try {
+    const out = await deleteBotForUser(user.id, req.params.id);
+    return res.json({ ok: true, ...out });
+  } catch (error) {
+    return sendManualTradingError(res, error);
+  }
 });
 
 function wsSend(socket: WebSocket, payload: unknown) {

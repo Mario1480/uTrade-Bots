@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { useEffect, useState } from "react";
 import { useLocale, useTranslations } from "next-intl";
-import { ApiError, apiDelete, apiGet } from "../../../lib/api";
+import { ApiError, apiGet, apiPost } from "../../../lib/api";
 import { withLocalePath, type AppLocale } from "../../../i18n/config";
 
 type Bot = {
@@ -46,7 +46,7 @@ export default function Setup() {
     if (!ok) return;
     setDeletingId(bot.id);
     try {
-      await apiDelete(`/bots/${bot.id}`);
+      await apiPost(`/bots/${bot.id}/delete`);
       setMsg(t("deleted", { name: bot.name }));
       await loadBots();
     } catch (e: any) {
