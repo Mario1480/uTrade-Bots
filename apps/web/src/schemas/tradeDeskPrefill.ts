@@ -1,6 +1,7 @@
 import { z } from "zod";
 
 export const TRADE_DESK_PREFILL_SESSION_KEY = "tradeDeskPrefill";
+const TRADE_DESK_PREFILL_EXPLANATION_MAX_CHARS = 1000;
 
 const suggestedEntrySchema = z.object({
   type: z.enum(["market", "limit"]),
@@ -107,7 +108,7 @@ export const tradeDeskPrefillSchema = z.object({
   suggestedTakeProfit: z.number().positive().optional(),
   positionSizeHint: positionSizeHintSchema.optional(),
   tags: z.array(z.string()).max(5).optional(),
-  explanation: z.string().max(400).optional(),
+  explanation: z.string().max(TRADE_DESK_PREFILL_EXPLANATION_MAX_CHARS).optional(),
   keyDrivers: z.array(keyDriverSchema).max(5).optional(),
   indicators: indicatorsSchema
 });
