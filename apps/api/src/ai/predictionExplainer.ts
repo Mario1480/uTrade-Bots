@@ -535,15 +535,26 @@ function collectFeaturePaths(
 }
 
 function normalizeKeyDriverPath(path: string): string {
-  const trimmed = path.trim();
-  if (!trimmed) return trimmed;
-  if (trimmed.startsWith("featureSnapshot.")) {
-    return trimmed.slice("featureSnapshot.".length);
+  let normalized = path.trim();
+  if (!normalized) return normalized;
+  if (normalized.startsWith("featureSnapshot.")) {
+    normalized = normalized.slice("featureSnapshot.".length);
+  } else if (normalized.startsWith("$.featureSnapshot.")) {
+    normalized = normalized.slice("$.featureSnapshot.".length);
+  } else if (normalized.startsWith("$.") && !normalized.startsWith("$.featureSnapshot.")) {
+    normalized = normalized.slice(2);
   }
-  if (trimmed.startsWith("$.featureSnapshot.")) {
-    return trimmed.slice("$.featureSnapshot.".length);
-  }
-  return trimmed;
+
+  // Accept JSONPath-like bracket notation from model output:
+  // mtf.frames["1h"].advanced... -> mtf.frames.1h.advanced...
+  normalized = normalized.replace(/\[(?:"([^"]+)"|'([^']+)'|([^\]]+))\]/g, (_m, g1, g2, g3) => {
+    const segment = String(g1 ?? g2 ?? g3 ?? "").trim();
+    return segment ? `.${segment}` : "";
+  });
+
+  // Normalize accidental duplicate separators after replacements.
+  normalized = normalized.replace(/\.{2,}/g, ".").replace(/^\./, "");
+  return normalized;
 }
 
 export function validateExplainerOutput(
@@ -561,9 +572,14 @@ export function validateExplainerOutput(
     name: normalizeKeyDriverPath(driver.name)
   }));
   const keySet = collectFeaturePaths(featureSnapshot);
-  const invalidDriver = normalizedDrivers.find((driver) => !keySet.has(driver.name));
-  if (invalidDriver) {
-    throw new Error(`key_driver_outside_snapshot:${invalidDriver.name}`);
+  const validDrivers = normalizedDrivers.filter((driver) => keySet.has(driver.name));
+  const invalidDrivers = normalizedDrivers.filter((driver) => !keySet.has(driver.name));
+  if (invalidDrivers.length > 0) {
+    logger.warn("ai_key_drivers_filtered", {
+      reason: "outside_snapshot",
+      invalid_count: invalidDrivers.length,
+      invalid_paths: invalidDrivers.slice(0, 5).map((driver) => driver.name)
+    });
   }
 
   const tags = normalizeTags(parsed.data.tags);
@@ -578,7 +594,7 @@ export function validateExplainerOutput(
   return {
     explanation,
     tags,
-    keyDrivers: normalizedDrivers.slice(0, 5).map((driver) => ({
+    keyDrivers: validDrivers.slice(0, 5).map((driver) => ({
       name: driver.name,
       value: driver.value
     })),

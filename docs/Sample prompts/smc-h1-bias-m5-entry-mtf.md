@@ -64,6 +64,8 @@ EXPECTED MOVE
 
 GROUNDING
 - keyDrivers[].name must be a real existing featureSnapshot path.
+- Use dot-notation paths in keyDrivers.name (for example: `featureSnapshot.mtf.frames.1h.advancedIndicators.smartMoneyConcepts.internal.trend`).
+- Do not use bracket notation like `frames["1h"]` in keyDrivers.name.
 - Use 2-5 keyDrivers.
 - tags only from tagsAllowlist.
 - Do not invent fields.
