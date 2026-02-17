@@ -5,7 +5,7 @@ import type { AdvancedIndicatorsSnapshot } from "../market/indicators/advancedIn
 import { logger } from "../logger.js";
 
 export const HISTORY_CONTEXT_VERSION = 1;
-export const HISTORY_CONTEXT_HARD_CAP_BYTES = 8 * 1024;
+export const HISTORY_CONTEXT_HARD_CAP_BYTES = 16 * 1024;
 
 type RegimeState = "trend_up" | "trend_down" | "range" | "transition" | "unknown";
 

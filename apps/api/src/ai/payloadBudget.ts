@@ -59,13 +59,13 @@ function estimateTokensByBytes(bytes: number): number {
 
 function normalizeMaxPayloadBytes(value: unknown): number {
   const parsed = Number(value);
-  if (!Number.isFinite(parsed)) return 12 * 1024;
+  if (!Number.isFinite(parsed)) return 24 * 1024;
   return Math.max(512, Math.min(256 * 1024, Math.trunc(parsed)));
 }
 
 function normalizeMaxHistoryBytes(value: unknown): number {
   const parsed = Number(value);
-  if (!Number.isFinite(parsed)) return 8 * 1024;
+  if (!Number.isFinite(parsed)) return 16 * 1024;
   return Math.max(512, Math.min(128 * 1024, Math.trunc(parsed)));
 }
 

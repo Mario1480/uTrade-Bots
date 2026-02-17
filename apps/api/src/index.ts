@@ -2334,9 +2334,9 @@ function readAiHistoryContextLastBars(): number {
 }
 
 function readAiHistoryContextMaxBytes(): number {
-  const parsed = Number(process.env.AI_HISTORY_CONTEXT_MAX_BYTES ?? "8192");
-  if (!Number.isFinite(parsed)) return 8192;
-  return Math.max(4096, Math.min(8192, Math.trunc(parsed)));
+  const parsed = Number(process.env.AI_HISTORY_CONTEXT_MAX_BYTES ?? "16384");
+  if (!Number.isFinite(parsed)) return 16384;
+  return Math.max(4096, Math.min(16384, Math.trunc(parsed)));
 }
 
 function readAiHistoryContextEnabled(): boolean {
