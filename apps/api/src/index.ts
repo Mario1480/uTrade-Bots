@@ -972,6 +972,10 @@ const PREDICTION_OUTCOME_HORIZON_BARS =
 const PREDICTION_OUTCOME_EVAL_ENABLED = !["0", "false", "off", "no"].includes(
   String(process.env.PREDICTION_OUTCOME_EVAL_ENABLED ?? "1").trim().toLowerCase()
 );
+// Temporary kill switch for TP/SL outcome Telegram alerts.
+const PREDICTION_OUTCOME_TELEGRAM_ENABLED = !["0", "false", "off", "no"].includes(
+  String(process.env.PREDICTION_OUTCOME_TELEGRAM_ENABLED ?? "0").trim().toLowerCase()
+);
 const PREDICTION_OUTCOME_EVAL_POLL_MS =
   Math.max(30, Number(process.env.PREDICTION_OUTCOME_EVAL_POLL_SECONDS ?? "60")) * 1000;
 const PREDICTION_OUTCOME_EVAL_BATCH_SIZE =
@@ -5401,7 +5405,7 @@ async function runPredictionOutcomeEvalCycle() {
             data: evaluation.data
           });
 
-          if (shouldNotifyOutcome) {
+          if (shouldNotifyOutcome && PREDICTION_OUTCOME_TELEGRAM_ENABLED) {
             const outcomePnlRaw = evaluation.data.outcomePnlPct;
             const outcomePnlPct = Number.isFinite(Number(outcomePnlRaw))
               ? Number(outcomePnlRaw)
