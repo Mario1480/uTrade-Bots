@@ -11949,7 +11949,8 @@ app.get("/api/predictions/events", requireAuth, async (req, res) => {
 registerPredictionDetailRoute(app, db);
 registerEconomicCalendarRoutes(app, {
   db,
-  requireSuperadmin
+  requireSuperadmin,
+  refreshJob: economicCalendarRefreshJob
 });
 
 app.get("/api/symbols", requireAuth, async (req, res) => {

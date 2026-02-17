@@ -36,6 +36,20 @@ const configUpdateSchema = z.object({
 type RegisterEconomicCalendarRoutesDeps = {
   db: any;
   requireSuperadmin: (res: express.Response) => Promise<boolean>;
+  refreshJob?: {
+    runCycle: (reason: "startup" | "scheduled" | "manual") => Promise<void>;
+    getStatus: () => {
+      enabled: boolean;
+      running: boolean;
+      pollMs: number;
+      lastStartedAt: string | null;
+      lastFinishedAt: string | null;
+      lastError: string | null;
+      lastErrorAt: string | null;
+      lastFetchedCount: number;
+      lastUpsertedCount: number;
+    };
+  };
 };
 
 function parseImpactList(raw: string | undefined): ("low" | "medium" | "high")[] | undefined {
@@ -127,6 +141,29 @@ export function registerEconomicCalendarRoutes(
       return res.status(status).json({
         error: "economic_calendar_config_update_failed",
         reason
+      });
+    }
+  });
+
+  app.get("/economic-calendar/refresh-status", requireAuth, async (_req, res) => {
+    if (!deps.refreshJob) {
+      return res.status(404).json({ error: "economic_calendar_refresh_not_available" });
+    }
+    return res.json(deps.refreshJob.getStatus());
+  });
+
+  app.post("/economic-calendar/refresh", requireAuth, async (_req, res) => {
+    if (!(await deps.requireSuperadmin(res))) return;
+    if (!deps.refreshJob) {
+      return res.status(404).json({ error: "economic_calendar_refresh_not_available" });
+    }
+    try {
+      await deps.refreshJob.runCycle("manual");
+      return res.json({ ok: true, status: deps.refreshJob.getStatus() });
+    } catch (error) {
+      return res.status(500).json({
+        error: "economic_calendar_refresh_failed",
+        reason: String(error)
       });
     }
   });
