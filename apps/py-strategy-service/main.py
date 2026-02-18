@@ -7,7 +7,7 @@ from fastapi import Depends, FastAPI, Header, HTTPException
 
 from models import HealthResponse, StrategyRegistryResponse, StrategyRunRequest, StrategyRunResponse
 from registry import registry
-from strategies import regime_gate, signal_filter, trend_vol_gate
+from strategies import regime_gate, signal_filter, smart_money_concept, trend_vol_gate
 
 SERVICE_VERSION = "1.0.0"
 AUTH_TOKEN = os.getenv("PY_STRATEGY_AUTH_TOKEN", "").strip()
@@ -115,6 +115,37 @@ def register_strategies() -> None:
             },
         },
         handler=trend_vol_gate.run,
+    )
+
+    registry.register(
+        "smart_money_concept",
+        name="Smart Money Concept",
+        version="1.0.0",
+        default_config={
+            "requireNonNeutralSignal": True,
+            "blockOnDataGap": True,
+            "requireTrendAlignment": True,
+            "requireStructureAlignment": True,
+            "requireZoneAlignment": True,
+            "allowEquilibriumZone": True,
+            "maxEventAgeBars": 120,
+            "minPassScore": 65,
+        },
+        ui_schema={
+            "title": "Smart Money Concept",
+            "description": "Deterministic SMC gate using structure, trend and premium/discount zones.",
+            "fields": {
+                "requireNonNeutralSignal": {"type": "boolean"},
+                "blockOnDataGap": {"type": "boolean"},
+                "requireTrendAlignment": {"type": "boolean"},
+                "requireStructureAlignment": {"type": "boolean"},
+                "requireZoneAlignment": {"type": "boolean"},
+                "allowEquilibriumZone": {"type": "boolean"},
+                "maxEventAgeBars": {"type": "number", "min": 1, "max": 1000, "step": 1},
+                "minPassScore": {"type": "number", "min": 0, "max": 100, "step": 1},
+            },
+        },
+        handler=smart_money_concept.run,
     )
 
 
