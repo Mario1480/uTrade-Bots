@@ -20,6 +20,30 @@ type IndicatorSettingsConfig = {
     stochrsi: { rsiLen: number; stochLen: number; smoothK: number; smoothD: number };
     volume: { lookback: number; emaFast: number; emaSlow: number };
     fvg: { lookback: number; fillRule: "overlap" | "mid_touch" };
+    vumanchu: {
+      wtChannelLen: number;
+      wtAverageLen: number;
+      wtMaLen: number;
+      obLevel: number;
+      osLevel: number;
+      osLevel3: number;
+      wtDivObLevel: number;
+      wtDivOsLevel: number;
+      wtDivObLevelAdd: number;
+      wtDivOsLevelAdd: number;
+      rsiLen: number;
+      rsiMfiPeriod: number;
+      rsiMfiMultiplier: number;
+      rsiMfiPosY: number;
+      stochLen: number;
+      stochRsiLen: number;
+      stochKSmooth: number;
+      stochDSmooth: number;
+      useHiddenDiv: boolean;
+      useHiddenDivNoLimits: boolean;
+      goldRsiThreshold: number;
+      goldWtDiffMin: number;
+    };
   };
   advancedIndicators: {
     adrLen: number;
@@ -142,7 +166,31 @@ const FALLBACK_DEFAULTS: IndicatorSettingsConfig = {
   indicatorsV2: {
     stochrsi: { rsiLen: 14, stochLen: 14, smoothK: 3, smoothD: 3 },
     volume: { lookback: 100, emaFast: 10, emaSlow: 30 },
-    fvg: { lookback: 300, fillRule: "overlap" }
+    fvg: { lookback: 300, fillRule: "overlap" },
+    vumanchu: {
+      wtChannelLen: 9,
+      wtAverageLen: 12,
+      wtMaLen: 3,
+      obLevel: 53,
+      osLevel: -53,
+      osLevel3: -75,
+      wtDivObLevel: 45,
+      wtDivOsLevel: -65,
+      wtDivObLevelAdd: 15,
+      wtDivOsLevelAdd: -40,
+      rsiLen: 14,
+      rsiMfiPeriod: 60,
+      rsiMfiMultiplier: 150,
+      rsiMfiPosY: 2.5,
+      stochLen: 14,
+      stochRsiLen: 14,
+      stochKSmooth: 3,
+      stochDSmooth: 3,
+      useHiddenDiv: false,
+      useHiddenDivNoLimits: true,
+      goldRsiThreshold: 30,
+      goldWtDiffMin: 5
+    }
   },
   advancedIndicators: {
     adrLen: 14,
@@ -273,6 +321,23 @@ const INDICATOR_CATALOG_GROUPS: IndicatorCatalogGroup[] = [
         params: [
           "config.indicatorsV2.fvg.lookback",
           "config.indicatorsV2.fvg.fillRule"
+        ]
+      },
+      {
+        key: "vumanchu",
+        name: "VuManChu Cipher B Core",
+        live: true,
+        outputs: [
+          "indicators.vumanchu.waveTrend.*",
+          "indicators.vumanchu.divergences.*",
+          "indicators.vumanchu.signals.*"
+        ],
+        params: [
+          "config.indicatorsV2.vumanchu.wt*",
+          "config.indicatorsV2.vumanchu.rsi*",
+          "config.indicatorsV2.vumanchu.stoch*",
+          "config.indicatorsV2.vumanchu.useHiddenDiv*",
+          "config.indicatorsV2.vumanchu.gold*"
         ]
       }
     ]

@@ -294,8 +294,24 @@ const exchangeCreateSchema = z.object({
   }
 });
 
+const predictionCopierTimeframeSchema = z.enum(["5m", "15m", "1h", "4h"]);
+const predictionSignalModeSchema = z.enum(["local_only", "ai_only", "both"]);
+const predictionStrategyKindSchema = z.enum(["local", "ai", "composite"]);
+
 const predictionCopierSettingsSchema = z.object({
-  timeframe: z.enum(["5m", "15m", "1h", "4h"]).optional(),
+  sourceStateId: z.string().trim().min(1).optional(),
+  sourceSnapshot: z.object({
+    stateId: z.string().trim().min(1).optional(),
+    accountId: z.string().trim().min(1).optional(),
+    symbol: z.string().trim().min(1).optional(),
+    timeframe: predictionCopierTimeframeSchema.optional(),
+    signalMode: predictionSignalModeSchema.optional(),
+    strategyRef: z.string().trim().min(1).nullable().optional(),
+    strategyKind: predictionStrategyKindSchema.nullable().optional(),
+    strategyId: z.string().trim().min(1).nullable().optional(),
+    strategyName: z.string().trim().min(1).nullable().optional()
+  }).passthrough().optional(),
+  timeframe: predictionCopierTimeframeSchema.optional(),
   minConfidence: z.number().min(0).max(100).optional(),
   maxPredictionAgeSec: z.number().int().min(30).max(86_400).optional(),
   symbols: z.array(z.string().trim().min(1)).max(100).optional(),
@@ -351,6 +367,29 @@ const botCreateSchema = z.object({
     path: ["paramsJson"],
     message: "invalid prediction_copier configuration"
   });
+});
+
+const botUpdateSchema = z.object({
+  name: z.string().trim().min(1).optional(),
+  symbol: z.string().trim().min(1).optional(),
+  strategyKey: z.string().trim().min(1).optional(),
+  marginMode: z.enum(["isolated", "cross"]).optional(),
+  leverage: z.number().int().min(1).max(125).optional(),
+  tickMs: z.number().int().min(100).max(60_000).optional(),
+  paramsJson: z.record(z.any()).optional()
+}).superRefine((value, ctx) => {
+  if (Object.keys(value).length > 0) return;
+  ctx.addIssue({
+    code: z.ZodIssueCode.custom,
+    message: "at least one field must be provided"
+  });
+});
+
+const botPredictionSourcesQuerySchema = z.object({
+  exchangeAccountId: z.string().trim().min(1),
+  strategyKind: predictionStrategyKindSchema.optional(),
+  signalMode: predictionSignalModeSchema.optional(),
+  symbol: z.string().trim().min(1).optional()
 });
 
 const tradingSettingsSchema = z.object({
@@ -1462,6 +1501,30 @@ function toIndicatorComputeSettings(config: IndicatorSettingsConfig) {
     fvg: {
       lookback: config.indicatorsV2.fvg.lookback,
       fillRule: config.indicatorsV2.fvg.fillRule
+    },
+    vumanchu: {
+      wtChannelLen: config.indicatorsV2.vumanchu.wtChannelLen,
+      wtAverageLen: config.indicatorsV2.vumanchu.wtAverageLen,
+      wtMaLen: config.indicatorsV2.vumanchu.wtMaLen,
+      obLevel: config.indicatorsV2.vumanchu.obLevel,
+      osLevel: config.indicatorsV2.vumanchu.osLevel,
+      osLevel3: config.indicatorsV2.vumanchu.osLevel3,
+      wtDivObLevel: config.indicatorsV2.vumanchu.wtDivObLevel,
+      wtDivOsLevel: config.indicatorsV2.vumanchu.wtDivOsLevel,
+      wtDivObLevelAdd: config.indicatorsV2.vumanchu.wtDivObLevelAdd,
+      wtDivOsLevelAdd: config.indicatorsV2.vumanchu.wtDivOsLevelAdd,
+      rsiLen: config.indicatorsV2.vumanchu.rsiLen,
+      rsiMfiPeriod: config.indicatorsV2.vumanchu.rsiMfiPeriod,
+      rsiMfiMultiplier: config.indicatorsV2.vumanchu.rsiMfiMultiplier,
+      rsiMfiPosY: config.indicatorsV2.vumanchu.rsiMfiPosY,
+      stochLen: config.indicatorsV2.vumanchu.stochLen,
+      stochRsiLen: config.indicatorsV2.vumanchu.stochRsiLen,
+      stochKSmooth: config.indicatorsV2.vumanchu.stochKSmooth,
+      stochDSmooth: config.indicatorsV2.vumanchu.stochDSmooth,
+      useHiddenDiv: config.indicatorsV2.vumanchu.useHiddenDiv,
+      useHiddenDivNoLimits: config.indicatorsV2.vumanchu.useHiddenDivNoLimits,
+      goldRsiThreshold: config.indicatorsV2.vumanchu.goldRsiThreshold,
+      goldWtDiffMin: config.indicatorsV2.vumanchu.goldWtDiffMin
     }
   };
 }
@@ -4013,7 +4076,144 @@ function toAuthMePayload(
   };
 }
 
+function normalizeCopierTimeframe(value: unknown): "5m" | "15m" | "1h" | "4h" | null {
+  const raw = String(value ?? "").trim();
+  if (raw === "5m" || raw === "15m" || raw === "1h" || raw === "4h") return raw;
+  return null;
+}
+
+function readPredictionCopierRootConfig(paramsJson: unknown): { root: Record<string, unknown>; nested: boolean } {
+  const params = asRecord(paramsJson);
+  const nested = asRecord(params.predictionCopier);
+  if (Object.keys(nested).length > 0) {
+    return { root: nested, nested: true };
+  }
+  return { root: params, nested: false };
+}
+
+function writePredictionCopierRootConfig(paramsJson: unknown, root: Record<string, unknown>, forceNested = true): Record<string, unknown> {
+  const params = asRecord(paramsJson);
+  if (forceNested || Object.prototype.hasOwnProperty.call(params, "predictionCopier")) {
+    return {
+      ...params,
+      predictionCopier: root
+    };
+  }
+  return {
+    ...params,
+    ...root
+  };
+}
+
+function readPredictionCopierSettingsFromParams(paramsJson: unknown): z.infer<typeof predictionCopierSettingsSchema> | null {
+  const { root } = readPredictionCopierRootConfig(paramsJson);
+  const parsed = predictionCopierSettingsSchema.safeParse(root);
+  return parsed.success ? parsed.data : null;
+}
+
+function readPredictionSourceSnapshotFromState(state: any): Record<string, unknown> {
+  const snapshot = asRecord(state?.featuresSnapshot);
+  const signalMode = readStateSignalMode(state?.signalMode, snapshot);
+  const timeframe = normalizeCopierTimeframe(state?.timeframe);
+  const snapshotStrategyRef = readPredictionStrategyRef(snapshot);
+  const rowKind = normalizePredictionStrategyKind(state?.strategyKind);
+  const rowStrategyId = typeof state?.strategyId === "string" && state.strategyId.trim()
+    ? state.strategyId.trim()
+    : null;
+  const strategyRef = snapshotStrategyRef ?? (rowKind && rowStrategyId
+    ? { kind: rowKind, id: rowStrategyId, name: null }
+    : null);
+
+  return {
+    stateId: String(state?.id ?? ""),
+    accountId: String(state?.accountId ?? ""),
+    symbol: normalizeSymbolInput(String(state?.symbol ?? "")),
+    ...(timeframe ? { timeframe } : {}),
+    signalMode,
+    strategyRef: strategyRef ? `${strategyRef.kind}:${strategyRef.id}` : null,
+    strategyKind: strategyRef?.kind ?? null,
+    strategyId: strategyRef?.id ?? null,
+    strategyName: strategyRef?.name ?? null
+  };
+}
+
+async function findPredictionSourceStateForCopier(params: {
+  userId: string;
+  exchangeAccountId: string;
+  sourceStateId: string;
+  requireActive?: boolean;
+}) {
+  return db.predictionState.findFirst({
+    where: {
+      id: params.sourceStateId,
+      userId: params.userId,
+      accountId: params.exchangeAccountId,
+      ...(params.requireActive
+        ? {
+            autoScheduleEnabled: true,
+            autoSchedulePaused: false
+          }
+        : {})
+    },
+    select: {
+      id: true,
+      accountId: true,
+      symbol: true,
+      timeframe: true,
+      signalMode: true,
+      strategyKind: true,
+      strategyId: true,
+      featuresSnapshot: true,
+      autoScheduleEnabled: true,
+      autoSchedulePaused: true,
+      signal: true,
+      confidence: true,
+      tsUpdated: true,
+      lastChangeReason: true
+    }
+  });
+}
+
+async function findLegacyPredictionSourceForCopier(params: {
+  userId: string;
+  exchangeAccountId: string;
+  symbol: string;
+  timeframe: "5m" | "15m" | "1h" | "4h";
+}) {
+  return db.predictionState.findFirst({
+    where: {
+      userId: params.userId,
+      accountId: params.exchangeAccountId,
+      marketType: "perp",
+      symbol: normalizeSymbolInput(params.symbol),
+      timeframe: params.timeframe,
+      autoScheduleEnabled: true,
+      autoSchedulePaused: false
+    },
+    orderBy: [{ tsUpdated: "desc" }],
+    select: {
+      id: true,
+      accountId: true,
+      symbol: true,
+      timeframe: true,
+      signalMode: true,
+      strategyKind: true,
+      strategyId: true,
+      featuresSnapshot: true,
+      autoScheduleEnabled: true,
+      autoSchedulePaused: true,
+      signal: true,
+      confidence: true,
+      tsUpdated: true,
+      lastChangeReason: true
+    }
+  });
+}
+
 function toSafeBot(bot: any) {
+  const predictionCopier = bot?.futuresConfig?.strategyKey === "prediction_copier"
+    ? readPredictionCopierSettingsFromParams(bot?.futuresConfig?.paramsJson)
+    : null;
   return {
     id: bot.id,
     userId: bot.userId,
@@ -4038,7 +4238,8 @@ function toSafeBot(bot: any) {
           marginMode: bot.futuresConfig.marginMode,
           leverage: bot.futuresConfig.leverage,
           tickMs: bot.futuresConfig.tickMs,
-          paramsJson: bot.futuresConfig.paramsJson
+          paramsJson: bot.futuresConfig.paramsJson,
+          predictionCopier
         }
       : null,
     runtime: bot.runtime
@@ -13467,6 +13668,82 @@ app.get("/bots", requireAuth, async (_req, res) => {
   return res.json(bots.map(toSafeBot));
 });
 
+app.get("/bots/prediction-sources", requireAuth, async (req, res) => {
+  const user = getUserFromLocals(res);
+  const parsed = botPredictionSourcesQuerySchema.safeParse(req.query ?? {});
+  if (!parsed.success) {
+    return res.status(400).json({ error: "invalid_query", details: parsed.error.flatten() });
+  }
+
+  const account = await db.exchangeAccount.findFirst({
+    where: {
+      id: parsed.data.exchangeAccountId,
+      userId: user.id
+    },
+    select: { id: true }
+  });
+  if (!account) {
+    return res.status(400).json({ error: "exchange_account_not_found" });
+  }
+
+  const symbolFilter = parsed.data.symbol ? normalizeSymbolInput(parsed.data.symbol) : null;
+  const rows = await db.predictionState.findMany({
+    where: {
+      userId: user.id,
+      accountId: parsed.data.exchangeAccountId,
+      autoScheduleEnabled: true,
+      autoSchedulePaused: false,
+      ...(symbolFilter ? { symbol: symbolFilter } : {}),
+      ...(parsed.data.strategyKind ? { strategyKind: parsed.data.strategyKind } : {})
+    },
+    orderBy: [{ tsUpdated: "desc" }],
+    select: {
+      id: true,
+      symbol: true,
+      timeframe: true,
+      signalMode: true,
+      strategyKind: true,
+      strategyId: true,
+      signal: true,
+      confidence: true,
+      tsUpdated: true,
+      lastChangeReason: true,
+      featuresSnapshot: true
+    }
+  });
+
+  const items = rows
+    .map((row: any) => {
+      const snapshot = asRecord(row.featuresSnapshot);
+      const signalMode = readStateSignalMode(row.signalMode, snapshot);
+      if (parsed.data.signalMode && signalMode !== parsed.data.signalMode) return null;
+      const snapshotStrategyRef = readPredictionStrategyRef(snapshot);
+      const rowKind = normalizePredictionStrategyKind(row.strategyKind);
+      const rowStrategyId = typeof row.strategyId === "string" && row.strategyId.trim()
+        ? row.strategyId.trim()
+        : null;
+      const strategyRef = snapshotStrategyRef ?? (rowKind && rowStrategyId
+        ? { kind: rowKind, id: rowStrategyId, name: null }
+        : null);
+      return {
+        stateId: row.id,
+        symbol: normalizeSymbolInput(String(row.symbol ?? "")),
+        timeframe: String(row.timeframe ?? ""),
+        signalMode,
+        strategyRef: strategyRef ? `${strategyRef.kind}:${strategyRef.id}` : null,
+        strategyKind: strategyRef?.kind ?? null,
+        strategyName: strategyRef?.name ?? null,
+        lastSignal: String(row.signal ?? "neutral"),
+        confidence: Number(row.confidence ?? 0),
+        tsUpdated: row.tsUpdated,
+        lastChangeReason: row.lastChangeReason ?? null
+      };
+    })
+    .filter((item): item is NonNullable<typeof item> => Boolean(item));
+
+  return res.json({ items });
+});
+
 app.get("/bots/:id", requireAuth, async (req, res) => {
   const user = getUserFromLocals(res);
   const bot = await db.bot.findFirst({
@@ -13503,6 +13780,132 @@ app.get("/bots/:id", requireAuth, async (req, res) => {
 
   if (!bot) return res.status(404).json({ error: "bot_not_found" });
   return res.json(toSafeBot(bot));
+});
+
+app.put("/bots/:id", requireAuth, async (req, res) => {
+  const user = getUserFromLocals(res);
+  const parsed = botUpdateSchema.safeParse(req.body);
+  if (!parsed.success) {
+    return res.status(400).json({ error: "invalid_payload", details: parsed.error.flatten() });
+  }
+
+  const bot = await db.bot.findFirst({
+    where: {
+      id: req.params.id,
+      userId: user.id
+    },
+    include: {
+      futuresConfig: true,
+      exchangeAccount: {
+        select: {
+          id: true,
+          exchange: true,
+          label: true
+        }
+      },
+      runtime: {
+        select: {
+          status: true,
+          reason: true,
+          updatedAt: true,
+          workerId: true,
+          lastHeartbeatAt: true,
+          lastTickAt: true,
+          lastError: true,
+          consecutiveErrors: true,
+          errorWindowStartAt: true,
+          lastErrorAt: true,
+          lastErrorMessage: true
+        }
+      }
+    }
+  });
+
+  if (!bot) return res.status(404).json({ error: "bot_not_found" });
+  if (!bot.futuresConfig) return res.status(409).json({ error: "futures_config_missing" });
+
+  const nextStrategyKey = parsed.data.strategyKey ?? bot.futuresConfig.strategyKey;
+  const nextParamsJson = parsed.data.paramsJson ?? (bot.futuresConfig.paramsJson as Record<string, unknown> ?? {});
+  let nextSymbol = normalizeSymbolInput(parsed.data.symbol ?? bot.symbol);
+  let finalParamsJson = asRecord(nextParamsJson);
+
+  if (nextStrategyKey === "prediction_copier") {
+    const { root, nested } = readPredictionCopierRootConfig(nextParamsJson);
+    const copierParsed = predictionCopierSettingsSchema.safeParse(root);
+    if (!copierParsed.success) {
+      return res.status(400).json({ error: "invalid_payload", details: copierParsed.error.flatten() });
+    }
+
+    const copierConfig = { ...copierParsed.data };
+    const sourceStateId = typeof copierConfig.sourceStateId === "string" ? copierConfig.sourceStateId.trim() : "";
+    if (sourceStateId) {
+      const sourceState = await findPredictionSourceStateForCopier({
+        userId: user.id,
+        exchangeAccountId: bot.exchangeAccountId ?? "",
+        sourceStateId,
+        requireActive: true
+      });
+      if (!sourceState) {
+        return res.status(400).json({ error: "prediction_source_not_found" });
+      }
+      if (String(sourceState.accountId) !== String(bot.exchangeAccountId ?? "")) {
+        return res.status(400).json({ error: "prediction_source_account_mismatch" });
+      }
+      nextSymbol = normalizeSymbolInput(String(sourceState.symbol ?? nextSymbol));
+      copierConfig.sourceSnapshot = readPredictionSourceSnapshotFromState(sourceState);
+      copierConfig.timeframe = normalizeCopierTimeframe(sourceState.timeframe) ?? copierConfig.timeframe;
+    }
+    finalParamsJson = writePredictionCopierRootConfig(nextParamsJson, copierConfig, nested);
+  }
+
+  const updated = await db.bot.update({
+    where: { id: bot.id },
+    data: {
+      name: parsed.data.name ?? bot.name,
+      symbol: nextSymbol,
+      futuresConfig: {
+        update: {
+          strategyKey: nextStrategyKey,
+          marginMode: parsed.data.marginMode ?? bot.futuresConfig.marginMode,
+          leverage: parsed.data.leverage ?? bot.futuresConfig.leverage,
+          tickMs: parsed.data.tickMs ?? bot.futuresConfig.tickMs,
+          paramsJson: finalParamsJson
+        }
+      }
+    },
+    include: {
+      futuresConfig: true,
+      exchangeAccount: {
+        select: {
+          id: true,
+          exchange: true,
+          label: true
+        }
+      },
+      runtime: {
+        select: {
+          status: true,
+          reason: true,
+          updatedAt: true,
+          workerId: true,
+          lastHeartbeatAt: true,
+          lastTickAt: true,
+          lastError: true,
+          consecutiveErrors: true,
+          errorWindowStartAt: true,
+          lastErrorAt: true,
+          lastErrorMessage: true
+        }
+      }
+    }
+  });
+
+  const safe = toSafeBot(updated);
+  const restartRequired = bot.status === "running";
+  return res.json({
+    ...safe,
+    restartRequired
+  });
 });
 
 app.get("/bots/:id/runtime", requireAuth, async (req, res) => {
@@ -13565,6 +13968,34 @@ app.post("/bots", requireAuth, async (req, res) => {
   });
   if (!account) return res.status(400).json({ error: "exchange_account_not_found" });
 
+  let symbolForCreate = normalizeSymbolInput(parsed.data.symbol);
+  let paramsJsonForCreate = asRecord(parsed.data.paramsJson);
+
+  if (parsed.data.strategyKey === "prediction_copier") {
+    const { root, nested } = readPredictionCopierRootConfig(parsed.data.paramsJson);
+    const copierParsed = predictionCopierSettingsSchema.safeParse(root);
+    if (!copierParsed.success) {
+      return res.status(400).json({ error: "invalid_payload", details: copierParsed.error.flatten() });
+    }
+    const copierConfig = { ...copierParsed.data };
+    const sourceStateId = typeof copierConfig.sourceStateId === "string" ? copierConfig.sourceStateId.trim() : "";
+    if (sourceStateId) {
+      const sourceState = await findPredictionSourceStateForCopier({
+        userId: user.id,
+        exchangeAccountId: account.id,
+        sourceStateId,
+        requireActive: true
+      });
+      if (!sourceState) {
+        return res.status(400).json({ error: "prediction_source_not_found" });
+      }
+      symbolForCreate = normalizeSymbolInput(String(sourceState.symbol ?? symbolForCreate));
+      copierConfig.sourceSnapshot = readPredictionSourceSnapshotFromState(sourceState);
+      copierConfig.timeframe = normalizeCopierTimeframe(sourceState.timeframe) ?? copierConfig.timeframe;
+    }
+    paramsJsonForCreate = writePredictionCopierRootConfig(parsed.data.paramsJson, copierConfig, nested);
+  }
+
   const bypass = await evaluateAccessSectionBypassForUser(user);
   const botCreateAccess = await canCreateBotForUser({
     userId: user.id,
@@ -13588,7 +14019,7 @@ app.post("/bots", requireAuth, async (req, res) => {
       userId: user.id,
       exchangeAccountId: account.id,
       name: parsed.data.name,
-      symbol: parsed.data.symbol,
+      symbol: symbolForCreate,
       exchange: account.exchange,
       status: "stopped",
       lastError: null,
@@ -13598,7 +14029,7 @@ app.post("/bots", requireAuth, async (req, res) => {
           marginMode: parsed.data.marginMode,
           leverage: parsed.data.leverage,
           tickMs: parsed.data.tickMs,
-          paramsJson: parsed.data.paramsJson
+          paramsJson: paramsJsonForCreate
         }
       }
     },
@@ -13619,12 +14050,91 @@ app.post("/bots", requireAuth, async (req, res) => {
 
 app.post("/bots/:id/start", requireAuth, async (req, res) => {
   const user = getUserFromLocals(res);
-  const bot = await db.bot.findFirst({
+  let bot = await db.bot.findFirst({
     where: { id: req.params.id, userId: user.id },
     include: { futuresConfig: true }
   });
   if (!bot) return res.status(404).json({ error: "bot_not_found" });
   if (!bot.futuresConfig) return res.status(409).json({ error: "futures_config_missing" });
+  if (!bot.exchangeAccountId) return res.status(409).json({ error: "exchange_account_missing" });
+
+  if (bot.futuresConfig.strategyKey === "prediction_copier") {
+    const { root, nested } = readPredictionCopierRootConfig(bot.futuresConfig.paramsJson);
+    const copierParsed = predictionCopierSettingsSchema.safeParse(root);
+    if (!copierParsed.success) {
+      return res.status(409).json({ error: "prediction_copier_config_invalid" });
+    }
+
+    const copierConfig = { ...copierParsed.data };
+    let sourceStateId = typeof copierConfig.sourceStateId === "string" ? copierConfig.sourceStateId.trim() : "";
+    let sourceState: any | null = null;
+    let usedLegacyFallback = false;
+
+    if (sourceStateId) {
+      sourceState = await findPredictionSourceStateForCopier({
+        userId: user.id,
+        exchangeAccountId: bot.exchangeAccountId,
+        sourceStateId,
+        requireActive: true
+      });
+    } else {
+      const timeframe = normalizeCopierTimeframe(copierConfig.timeframe) ?? "15m";
+      sourceState = await findLegacyPredictionSourceForCopier({
+        userId: user.id,
+        exchangeAccountId: bot.exchangeAccountId,
+        symbol: bot.symbol,
+        timeframe
+      });
+      if (sourceState) {
+        sourceStateId = sourceState.id;
+        usedLegacyFallback = true;
+      }
+    }
+
+    if (!sourceState || !sourceStateId) {
+      return res.status(409).json({ error: "prediction_source_required" });
+    }
+
+    const sourceSymbol = normalizeSymbolInput(String(sourceState.symbol ?? bot.symbol));
+    const snapshot = readPredictionSourceSnapshotFromState(sourceState);
+    copierConfig.sourceStateId = sourceStateId;
+    copierConfig.sourceSnapshot = snapshot;
+    copierConfig.timeframe = normalizeCopierTimeframe(sourceState.timeframe) ?? copierConfig.timeframe;
+
+    const paramsJson = writePredictionCopierRootConfig(bot.futuresConfig.paramsJson, copierConfig, nested);
+    const needsBotUpdate =
+      bot.symbol !== sourceSymbol
+      || JSON.stringify(paramsJson) !== JSON.stringify(bot.futuresConfig.paramsJson);
+
+    if (needsBotUpdate) {
+      bot = await db.bot.update({
+        where: { id: bot.id },
+        data: {
+          symbol: sourceSymbol,
+          futuresConfig: {
+            update: {
+              paramsJson
+            }
+          }
+        },
+        include: { futuresConfig: true }
+      });
+    }
+
+    if (usedLegacyFallback) {
+      await ignoreMissingTable(() => db.riskEvent.create({
+        data: {
+          botId: bot.id,
+          type: "legacy_source_fallback",
+          message: "sourceStateId auto-migrated on bot start",
+          meta: {
+            sourceStateId,
+            symbol: sourceSymbol
+          }
+        }
+      }));
+    }
+  }
 
   const [totalBots, runningBots] = await Promise.all([
     db.bot.count({ where: { userId: user.id } }),

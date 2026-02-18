@@ -113,6 +113,16 @@ export const predictionIndicatorsSchema = z.object({
         })
         .optional()
     })
+    .optional(),
+  vumanchu: z
+    .object({
+      waveTrend: z.record(z.unknown()).optional(),
+      rsiMfi: z.record(z.unknown()).optional(),
+      divergences: z.record(z.unknown()).optional(),
+      signals: z.record(z.unknown()).optional(),
+      levels: z.record(z.unknown()).optional(),
+      dataGap: z.boolean().optional()
+    })
     .optional()
 });
 
@@ -232,6 +242,7 @@ export function normalizePredictionIndicators(value: unknown): PredictionIndicat
   const nearestBear = asRecord(fvg?.nearest_bearish_gap);
   const lastCreated = asRecord(fvg?.last_created);
   const lastFilled = asRecord(fvg?.last_filled);
+  const vumanchu = asRecord(record.vumanchu);
   return {
     rsi_14: toFiniteOrNull(record.rsi_14),
     macd: {
@@ -308,7 +319,15 @@ export function normalizePredictionIndicators(value: unknown): PredictionIndicat
           : null,
         age_bars: toFiniteOrNull(lastFilled?.age_bars)
       }
-    }
+    },
+    vumanchu: vumanchu ? {
+      waveTrend: asRecord(vumanchu.waveTrend) ?? undefined,
+      rsiMfi: asRecord(vumanchu.rsiMfi) ?? undefined,
+      divergences: asRecord(vumanchu.divergences) ?? undefined,
+      signals: asRecord(vumanchu.signals) ?? undefined,
+      levels: asRecord(vumanchu.levels) ?? undefined,
+      dataGap: typeof vumanchu.dataGap === "boolean" ? vumanchu.dataGap : undefined
+    } : undefined
   };
 }
 

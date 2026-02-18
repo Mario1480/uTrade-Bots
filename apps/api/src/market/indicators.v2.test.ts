@@ -65,7 +65,11 @@ test("computeIndicators v2 emits finite nested values", () => {
     indicators.volume.vol_ema_slow,
     indicators.volume.vol_trend,
     indicators.fvg.nearest_bullish_gap.dist_pct,
-    indicators.fvg.nearest_bearish_gap.dist_pct
+    indicators.fvg.nearest_bearish_gap.dist_pct,
+    indicators.vumanchu.waveTrend.wt1,
+    indicators.vumanchu.waveTrend.wt2,
+    indicators.vumanchu.waveTrend.wtVwap,
+    indicators.vumanchu.rsiMfi.value
   ];
   for (const value of values) {
     assert.ok(value === null || Number.isFinite(value));

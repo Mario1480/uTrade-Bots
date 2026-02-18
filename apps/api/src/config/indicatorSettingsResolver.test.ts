@@ -34,7 +34,10 @@ test("resolveIndicatorSettings applies precedence global->account->symbol->symbo
           scopeType: "account",
           accountId: "acc_1",
           configJson: {
-            indicatorsV2: { volume: { lookback: 150 } }
+            indicatorsV2: {
+              volume: { lookback: 150 },
+              vumanchu: { wtChannelLen: 11 }
+            }
           }
         }),
         row({
@@ -68,6 +71,7 @@ test("resolveIndicatorSettings applies precedence global->account->symbol->symbo
   });
 
   assert.equal(resolved.config.indicatorsV2.volume.lookback, 150);
+  assert.equal(resolved.config.indicatorsV2.vumanchu.wtChannelLen, 11);
   assert.equal(resolved.config.indicatorsV2.fvg.lookback, 500);
   assert.equal(resolved.config.enabledPacks.advancedIndicators, false);
   assert.equal(resolved.breakdown.length, 4);

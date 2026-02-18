@@ -20,6 +20,10 @@ import {
 } from "./indicators/settings.js";
 import { round, toFinite } from "./indicators/shared.js";
 import { computeStochRsi } from "./indicators/stochrsi.js";
+import {
+  computeVuManChuCipher,
+  emptyVuManChuSnapshot
+} from "./indicators/vumanchuCipher.js";
 import { computeVolumeFeatures } from "./indicators/volume.js";
 import type {
   Candle,
@@ -81,6 +85,7 @@ function emptyIndicators(
       last_created: { type: null, age_bars: null },
       last_filled: { type: null, age_bars: null }
     },
+    vumanchu: emptyVuManChuSnapshot(settings.vumanchu, dataGap),
     atr_pct: null,
     dataGap
   };
@@ -150,6 +155,9 @@ export function computeIndicators(
         lookbackBars: settings.fvg.lookback,
         fillRule: settings.fvg.fillRule
       });
+  const vumanchu = settings.enabledV2
+    ? computeVuManChuCipher(bucketedCandles, settings.vumanchu)
+    : emptyVuManChuSnapshot(settings.vumanchu, false);
 
   let vwapValue: number | null = null;
   let vwapDistPct: number | null = null;
@@ -218,8 +226,9 @@ export function computeIndicators(
       vol_trend: round(toFinite(volumeFeatures.vol_trend), 6)
     },
     fvg,
+    vumanchu,
     atr_pct: round(atrPct, 6),
-    dataGap: bucketedMeta.candleBucketed || vwapDataGap
+    dataGap: bucketedMeta.candleBucketed || vwapDataGap || vumanchu.dataGap
   };
 
   const hasInvalid = [
@@ -240,6 +249,10 @@ export function computeIndicators(
     result.volume.vol_ema_fast,
     result.volume.vol_ema_slow,
     result.volume.vol_trend,
+    result.vumanchu.waveTrend.wt1,
+    result.vumanchu.waveTrend.wt2,
+    result.vumanchu.waveTrend.wtVwap,
+    result.vumanchu.rsiMfi.value,
     result.atr_pct
   ].some((value) => value === null);
 

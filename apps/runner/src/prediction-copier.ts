@@ -7,6 +7,7 @@ import {
   getBotDailyTradeCount,
   loadBotTradeState,
   loadLatestPredictionStateForGate,
+  loadPredictionStateByIdForGate,
   upsertBotTradeState,
   writeRiskEvent
 } from "./db.js";
@@ -20,6 +21,14 @@ export type PredictionCopierConfig = {
   botType: "prediction_copier";
   exchange: "bitget" | "paper";
   accountId: string;
+  sourceStateId: string | null;
+  sourceSnapshot: {
+    stateId?: string;
+    symbol?: string;
+    timeframe?: string;
+    signalMode?: string;
+    strategyRef?: string | null;
+  } | null;
   marketType: "perp";
   symbols: string[];
   timeframe: PredictionCopierTimeframe;
@@ -208,6 +217,14 @@ export function readPredictionCopierConfig(bot: ActiveFuturesBot): PredictionCop
     botType: "prediction_copier",
     exchange: normalizeExecutionExchange(root.exchange ?? bot.exchange),
     accountId: bot.exchangeAccountId,
+    sourceStateId:
+      typeof root.sourceStateId === "string" && root.sourceStateId.trim().length > 0
+        ? root.sourceStateId.trim()
+        : null,
+    sourceSnapshot:
+      root.sourceSnapshot && typeof root.sourceSnapshot === "object" && !Array.isArray(root.sourceSnapshot)
+        ? (root.sourceSnapshot as PredictionCopierConfig["sourceSnapshot"])
+        : null,
     marketType: "perp",
     symbols: symbols.length > 0 ? symbols : [normalizeSymbol(bot.symbol)],
     timeframe: normalizeTimeframe(root.timeframe),
@@ -558,17 +575,86 @@ export async function runPredictionCopierTick(
   const adapter = getOrCreateAdapter(bot);
   await adapter.contractCache.refresh(false);
 
-  const [prediction, tradeState] = await Promise.all([
-    loadLatestPredictionStateForGate({
-      userId: bot.userId,
-      exchange: bot.exchange,
-      exchangeAccountId: bot.exchangeAccountId,
-      symbol,
-      marketType: "perp",
-      timeframe: config.timeframe
-    }),
-    loadBotTradeState({ botId: bot.id, symbol, now })
-  ]);
+  const tradeState = await loadBotTradeState({ botId: bot.id, symbol, now });
+  const sourceMode: "source_state_id" | "legacy_fallback" =
+    config.sourceStateId ? "source_state_id" : "legacy_fallback";
+  const prediction = config.sourceStateId
+    ? await loadPredictionStateByIdForGate({
+        userId: bot.userId,
+        exchangeAccountId: bot.exchangeAccountId,
+        stateId: config.sourceStateId
+      })
+    : await loadLatestPredictionStateForGate({
+        userId: bot.userId,
+        exchange: bot.exchange,
+        exchangeAccountId: bot.exchangeAccountId,
+        symbol,
+        marketType: "perp",
+        timeframe: config.timeframe
+      });
+
+  if (config.sourceStateId && !prediction) {
+    await writeRiskEvent({
+      botId: bot.id,
+      type: "prediction_source_missing",
+      message: "sourceStateId not found or not accessible",
+      meta: {
+        sourceStateId: config.sourceStateId
+      }
+    });
+    return {
+      outcome: "blocked",
+      intent: { type: "none" },
+      reason: "prediction_source_missing",
+      gate: {
+        applied: true,
+        allow: false,
+        reason: "prediction_source_missing",
+        sizeMultiplier: 1,
+        timeframe: config.timeframe
+      }
+    };
+  }
+
+  if (prediction && normalizeSymbol(prediction.symbol) !== symbol) {
+    await writeRiskEvent({
+      botId: bot.id,
+      type: "prediction_source_missing",
+      message: "prediction source symbol mismatch",
+      meta: {
+        sourceStateId: config.sourceStateId,
+        botSymbol: symbol,
+        sourceSymbol: normalizeSymbol(prediction.symbol)
+      }
+    });
+    return {
+      outcome: "blocked",
+      intent: { type: "none" },
+      reason: "prediction_source_symbol_mismatch",
+      gate: {
+        applied: true,
+        allow: false,
+        reason: "prediction_source_symbol_mismatch",
+        sizeMultiplier: 1,
+        timeframe: config.timeframe
+      }
+    };
+  }
+
+  if (prediction && prediction.timeframe !== config.timeframe) {
+    return {
+      outcome: "blocked",
+      intent: { type: "none" },
+      reason: "prediction_source_timeframe_mismatch",
+      gate: {
+        applied: true,
+        allow: false,
+        reason: "prediction_source_timeframe_mismatch",
+        sizeMultiplier: 1,
+        timeframe: config.timeframe
+      }
+    };
+  }
 
   let accountState: { equity: number };
   let positions: Array<{
@@ -627,6 +713,21 @@ export async function runPredictionCopierTick(
   }
 
   const predictionHash = prediction ? buildPredictionHash(prediction) : null;
+  if (prediction && predictionHash && predictionHash !== tradeState.lastPredictionHash) {
+    const sourceEventType = config.sourceStateId ? "prediction_source_resolved" : "legacy_source_fallback";
+    await writeRiskEvent({
+      botId: bot.id,
+      type: sourceEventType,
+      message: sourceMode,
+      meta: {
+        sourceStateId: config.sourceStateId,
+        predictionStateId: prediction.id,
+        predictionHash,
+        timeframe: prediction.timeframe,
+        symbol: prediction.symbol
+      }
+    });
+  }
 
   const normalizedPositions: NormalizedPosition[] = positions.map((row) => ({
     symbol: normalizeSymbol(row.symbol),
@@ -699,6 +800,9 @@ export async function runPredictionCopierTick(
       tags: prediction?.tags ?? [],
       predictionUpdatedAt: prediction?.tsUpdated?.toISOString?.() ?? null,
       predictionHash,
+      sourceMode,
+      sourceStateId: config.sourceStateId ?? null,
+      predictionStateId: prediction?.id ?? null,
       dailyTradeCount,
       openPositionsCount: positionSummary.openPositionsCount,
       totalNotionalUsd: Number(positionSummary.totalNotionalUsd.toFixed(4))

@@ -53,7 +53,8 @@ test("normalizePredictionIndicators converts invalid numbers to null", () => {
     macd: { line: 0.1, signal: "bad", hist: 0.02 },
     bb: { width_pct: "1.25", pos: "oops" },
     vwap: { value: 100, dist_pct: "0.12", mode: "session_utc" },
-    adx: { adx_14: "20", plus_di_14: 15.2, minus_di_14: "nan" }
+    adx: { adx_14: "20", plus_di_14: 15.2, minus_di_14: "nan" },
+    vumanchu: { waveTrend: { wt1: 1.2 }, dataGap: false }
   });
 
   assert.ok(indicators);
@@ -62,6 +63,7 @@ test("normalizePredictionIndicators converts invalid numbers to null", () => {
   assert.equal(indicators?.bb?.width_pct, 1.25);
   assert.equal(indicators?.bb?.pos, null);
   assert.equal(indicators?.adx?.minus_di_14, null);
+  assert.equal((indicators as any)?.vumanchu?.dataGap, false);
 });
 
 test("normalizePredictionFeatureSnapshot keeps root keys and normalized indicators", () => {

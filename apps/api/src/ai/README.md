@@ -44,6 +44,10 @@ Predictions enrich `featureSnapshot.indicators` with deterministic OHLCV-based v
   - open bullish / bearish counts
   - nearest bullish / bearish gap (zone + distance + age)
   - last created / last filled gap metadata
+- `vumanchu` (VuManChu Cipher B core):
+  - WaveTrend (`wt1/wt2/wtVwap`, cross/OB/OS state)
+  - confirmed WT/RSI/Stoch divergences (regular + optional hidden)
+  - core strategy markers (`buy/sell`, `buyDiv/sellDiv`, `goldNoBuyLong`) + signal ages
 - `vwap`:
   - intraday timeframes (`5m`,`15m`,`1h`,`4h`): `session_utc` VWAP reset daily at **UTC 00:00**
   - daily (`1d`): `rolling_20` VWAP

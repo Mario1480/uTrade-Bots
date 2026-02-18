@@ -4,6 +4,77 @@ export type { Candle, Timeframe } from "../timeframe.js";
 
 type NullableNumber = number | null;
 
+export type VumanchuSnapshot = {
+  waveTrend: {
+    wt1: NullableNumber;
+    wt2: NullableNumber;
+    wtVwap: NullableNumber;
+    cross: boolean;
+    crossUp: boolean;
+    crossDown: boolean;
+    oversold: boolean;
+    overbought: boolean;
+  };
+  rsiMfi: {
+    value: NullableNumber;
+    period: number;
+    multiplier: number;
+    yPos: number;
+  };
+  divergences: {
+    wt: {
+      bullish: boolean;
+      bearish: boolean;
+      bullishHidden: boolean;
+      bearishHidden: boolean;
+      bullishAdd: boolean;
+      bearishAdd: boolean;
+      lastBullishAgeBars: NullableNumber;
+      lastBearishAgeBars: NullableNumber;
+    };
+    rsi: {
+      bullish: boolean;
+      bearish: boolean;
+      bullishHidden: boolean;
+      bearishHidden: boolean;
+      lastBullishAgeBars: NullableNumber;
+      lastBearishAgeBars: NullableNumber;
+    };
+    stoch: {
+      bullish: boolean;
+      bearish: boolean;
+      bullishHidden: boolean;
+      bearishHidden: boolean;
+      lastBullishAgeBars: NullableNumber;
+      lastBearishAgeBars: NullableNumber;
+    };
+  };
+  signals: {
+    buy: boolean;
+    sell: boolean;
+    buyDiv: boolean;
+    sellDiv: boolean;
+    goldNoBuyLong: boolean;
+    ages: {
+      buy: NullableNumber;
+      sell: NullableNumber;
+      buyDiv: NullableNumber;
+      sellDiv: NullableNumber;
+      goldNoBuyLong: NullableNumber;
+    };
+  };
+  levels: {
+    obLevel: number;
+    osLevel: number;
+    osLevel3: number;
+    wtDivObLevel: number;
+    wtDivOsLevel: number;
+    wtDivObLevelAdd: number;
+    wtDivOsLevelAdd: number;
+  };
+  dataGap: boolean;
+};
+
 export type IndicatorsSnapshot = {
   rsi_14: NullableNumber;
   macd: {
@@ -47,6 +118,7 @@ export type IndicatorsSnapshot = {
     vol_trend: NullableNumber;
   };
   fvg: FvgSummary;
+  vumanchu: VumanchuSnapshot;
   atr_pct: NullableNumber;
   dataGap: boolean;
 };
@@ -70,5 +142,29 @@ export type IndicatorsComputeSettings = {
   fvg?: {
     lookback?: number;
     fillRule?: FvgFillRule;
+  };
+  vumanchu?: {
+    wtChannelLen?: number;
+    wtAverageLen?: number;
+    wtMaLen?: number;
+    obLevel?: number;
+    osLevel?: number;
+    osLevel3?: number;
+    wtDivObLevel?: number;
+    wtDivOsLevel?: number;
+    wtDivObLevelAdd?: number;
+    wtDivOsLevelAdd?: number;
+    rsiLen?: number;
+    rsiMfiPeriod?: number;
+    rsiMfiMultiplier?: number;
+    rsiMfiPosY?: number;
+    stochLen?: number;
+    stochRsiLen?: number;
+    stochKSmooth?: number;
+    stochDSmooth?: number;
+    useHiddenDiv?: boolean;
+    useHiddenDivNoLimits?: boolean;
+    goldRsiThreshold?: number;
+    goldWtDiffMin?: number;
   };
 };

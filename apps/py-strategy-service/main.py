@@ -7,7 +7,14 @@ from fastapi import Depends, FastAPI, Header, HTTPException
 
 from models import HealthResponse, StrategyRegistryResponse, StrategyRunRequest, StrategyRunResponse
 from registry import registry
-from strategies import regime_gate, signal_filter, smart_money_concept, trend_vol_gate
+from strategies import (
+    regime_gate,
+    signal_filter,
+    smart_money_concept,
+    trend_vol_gate,
+    vmc_cipher_gate,
+    vmc_divergence_reversal,
+)
 
 SERVICE_VERSION = "1.0.0"
 AUTH_TOKEN = os.getenv("PY_STRATEGY_AUTH_TOKEN", "").strip()
@@ -146,6 +153,62 @@ def register_strategies() -> None:
             },
         },
         handler=smart_money_concept.run,
+    )
+
+    registry.register(
+        "vmc_cipher_gate",
+        name="VMC Cipher Gate",
+        version="1.0.0",
+        default_config={
+            "requireNonNeutralSignal": True,
+            "blockOnDataGap": True,
+            "maxSignalAgeBars": 4,
+            "allowDivSignalAsPrimary": True,
+            "minPassScore": 60,
+        },
+        ui_schema={
+            "title": "VMC Cipher Gate",
+            "description": "Deterministic gate using VuManChu Cipher signals with gold-dot long block.",
+            "fields": {
+                "requireNonNeutralSignal": {"type": "boolean"},
+                "blockOnDataGap": {"type": "boolean"},
+                "maxSignalAgeBars": {"type": "number", "min": 1, "max": 100, "step": 1},
+                "allowDivSignalAsPrimary": {"type": "boolean"},
+                "minPassScore": {"type": "number", "min": 0, "max": 100, "step": 1},
+            },
+        },
+        handler=vmc_cipher_gate.run,
+    )
+
+    registry.register(
+        "vmc_divergence_reversal",
+        name="VMC Divergence Reversal",
+        version="1.0.0",
+        default_config={
+            "requireNonNeutralSignal": True,
+            "blockOnDataGap": True,
+            "requireRegularDiv": True,
+            "allowHiddenDiv": False,
+            "requireCrossAlignment": True,
+            "requireExtremeZone": True,
+            "maxDivergenceAgeBars": 8,
+            "minPassScore": 65,
+        },
+        ui_schema={
+            "title": "VMC Divergence Reversal",
+            "description": "Deterministic divergence reversal gate using VuManChu divergence/cross/zone context.",
+            "fields": {
+                "requireNonNeutralSignal": {"type": "boolean"},
+                "blockOnDataGap": {"type": "boolean"},
+                "requireRegularDiv": {"type": "boolean"},
+                "allowHiddenDiv": {"type": "boolean"},
+                "requireCrossAlignment": {"type": "boolean"},
+                "requireExtremeZone": {"type": "boolean"},
+                "maxDivergenceAgeBars": {"type": "number", "min": 1, "max": 100, "step": 1},
+                "minPassScore": {"type": "number", "min": 0, "max": 100, "step": 1},
+            },
+        },
+        handler=vmc_divergence_reversal.run,
     )
 
 

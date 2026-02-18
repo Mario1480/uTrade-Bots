@@ -15,11 +15,15 @@ Deterministic local strategies can be registered and executed through `apps/api/
 - `signal_filter`: blocks based on tags / volatility / range state.
 - `trend_vol_gate` (python): deterministic trend + volatility gate based on `historyContext.reg/ema/vol`.
 - `smart_money_concept` (python): deterministic SMC gate based on structure + premium/discount zones.
+- `vmc_cipher_gate` (python): deterministic VuManChu signal gate with gold-dot long block.
+- `vmc_divergence_reversal` (python): deterministic VuManChu divergence reversal gate.
 
 Strategy docs:
 
 - `docs/strategies/trend-vol-gate.md`
 - `docs/strategies/smart-money-concept.md`
+- `docs/strategies/vmc-cipher-gate.md`
+- `docs/strategies/vmc-divergence-reversal.md`
 
 ## Runner behavior
 

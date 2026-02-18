@@ -80,6 +80,8 @@ function makeConfig(overrides: Partial<PredictionCopierConfig> = {}): Prediction
     botType: "prediction_copier",
     exchange: "bitget",
     accountId: "acc_1",
+    sourceStateId: null,
+    sourceSnapshot: null,
     marketType: "perp",
     symbols: ["BTCUSDT"],
     timeframe: "15m",
@@ -133,6 +135,25 @@ test("readPredictionCopierConfig supports paper execution exchange", () => {
     })
   );
   assert.equal(cfg.exchange, "paper");
+});
+
+test("readPredictionCopierConfig keeps sourceStateId and sourceSnapshot", () => {
+  const cfg = readPredictionCopierConfig(
+    makeBot({
+      paramsJson: {
+        predictionCopier: {
+          sourceStateId: "state_123",
+          sourceSnapshot: {
+            symbol: "BTCUSDT",
+            timeframe: "15m",
+            strategyRef: "local:baseline-v1"
+          }
+        }
+      }
+    })
+  );
+  assert.equal(cfg.sourceStateId, "state_123");
+  assert.equal(cfg.sourceSnapshot?.symbol, "BTCUSDT");
 });
 
 test("buildPredictionHash is deterministic", () => {

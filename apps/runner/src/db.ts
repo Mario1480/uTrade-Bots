@@ -81,7 +81,10 @@ export type RiskEventType =
   | "PREDICTION_GATE_ALLOW"
   | "PREDICTION_GATE_FAIL_OPEN"
   | "PREDICTION_COPIER_DECISION"
-  | "PREDICTION_COPIER_TRADE";
+  | "PREDICTION_COPIER_TRADE"
+  | "prediction_source_resolved"
+  | "prediction_source_missing"
+  | "legacy_source_fallback";
 
 function normalizeSymbol(value: string): string {
   return String(value ?? "").replace(/[^A-Za-z0-9]/g, "").toUpperCase();
@@ -373,6 +376,10 @@ export async function loadLatestPredictionStateForGate(params: {
     }
   });
 
+  return mapPredictionStateRowToGateState(row);
+}
+
+function mapPredictionStateRowToGateState(row: any): PredictionGateState | null {
   if (!row) return null;
   const signalRaw = String(row.signal ?? "").trim().toLowerCase();
   const signal: PredictionGateState["signal"] =
@@ -405,6 +412,37 @@ export async function loadLatestPredictionStateForGate(params: {
     tags: normalizeStringArray(row.tags, 10),
     tsUpdated: row.tsUpdated
   };
+}
+
+export async function loadPredictionStateByIdForGate(params: {
+  userId: string;
+  exchangeAccountId: string;
+  stateId: string;
+}): Promise<PredictionGateState | null> {
+  const stateId = String(params.stateId ?? "").trim();
+  if (!stateId) return null;
+  const row = await db.predictionState.findFirst({
+    where: {
+      id: stateId,
+      userId: params.userId,
+      accountId: params.exchangeAccountId
+    },
+    select: {
+      id: true,
+      exchange: true,
+      accountId: true,
+      userId: true,
+      symbol: true,
+      marketType: true,
+      timeframe: true,
+      signal: true,
+      expectedMovePct: true,
+      confidence: true,
+      tags: true,
+      tsUpdated: true
+    }
+  });
+  return mapPredictionStateRowToGateState(row);
 }
 
 function mapBotTradeStateRow(row: any): BotTradeState {

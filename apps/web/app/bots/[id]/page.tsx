@@ -23,6 +23,14 @@ type BotDetail = {
     leverage: number;
     tickMs: number;
     testnet: boolean;
+    predictionCopier?: {
+      sourceStateId?: string | null;
+      sourceSnapshot?: {
+        symbol?: string;
+        timeframe?: string;
+        strategyRef?: string | null;
+      } | null;
+    } | null;
   } | null;
   runtime?: {
     status: string;
@@ -114,6 +122,7 @@ export default function BotDetailsPage() {
 
         <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
           <Link href="/" className="btn">{t("actions.back")}</Link>
+          <Link href={`/bots/${id}/settings`} className="btn">{t("actions.settings")}</Link>
           <button className="btn btnPrimary" onClick={startBot} disabled={busy === "start" || bot.status === "running"}>
             {busy === "start" ? t("actions.starting") : t("actions.start")}
           </button>
@@ -147,6 +156,14 @@ export default function BotDetailsPage() {
           <InfoRow label={t("fields.leverage")} value={bot.futuresConfig?.leverage ?? "-"} />
           <InfoRow label={t("fields.tickInterval")} value={bot.futuresConfig?.tickMs ? `${bot.futuresConfig.tickMs} ms` : "-"} />
           <InfoRow label={t("fields.testnet")} value={String(bot.futuresConfig?.testnet ?? false)} />
+          {bot.futuresConfig?.strategyKey === "prediction_copier" ? (
+            <InfoRow
+              label={t("fields.predictionSource")}
+              value={bot.futuresConfig?.predictionCopier?.sourceSnapshot?.symbol
+                ? `${bot.futuresConfig.predictionCopier.sourceSnapshot.symbol} · ${bot.futuresConfig.predictionCopier.sourceSnapshot.timeframe ?? "-"}`
+                : (bot.futuresConfig?.predictionCopier?.sourceStateId ?? "-")}
+            />
+          ) : null}
         </div>
       </div>
     </div>

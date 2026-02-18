@@ -25,6 +25,31 @@ const fvgSchema = z.object({
   fillRule: z.enum(["overlap", "mid_touch"]).default("overlap")
 });
 
+const vumanchuSchema = z.object({
+  wtChannelLen: positiveInt(2, 100).default(9),
+  wtAverageLen: positiveInt(2, 200).default(12),
+  wtMaLen: positiveInt(1, 50).default(3),
+  obLevel: positiveInt(1, 150).default(53),
+  osLevel: z.number().int().min(-150).max(-1).default(-53),
+  osLevel3: z.number().int().min(-200).max(-1).default(-75),
+  wtDivObLevel: positiveInt(1, 150).default(45),
+  wtDivOsLevel: z.number().int().min(-200).max(-1).default(-65),
+  wtDivObLevelAdd: positiveInt(1, 150).default(15),
+  wtDivOsLevelAdd: z.number().int().min(-200).max(-1).default(-40),
+  rsiLen: positiveInt(2, 200).default(14),
+  rsiMfiPeriod: positiveInt(2, 500).default(60),
+  rsiMfiMultiplier: z.number().min(1).max(500).default(150),
+  rsiMfiPosY: z.number().min(-20).max(20).default(2.5),
+  stochLen: positiveInt(2, 200).default(14),
+  stochRsiLen: positiveInt(2, 200).default(14),
+  stochKSmooth: positiveInt(1, 50).default(3),
+  stochDSmooth: positiveInt(1, 50).default(3),
+  useHiddenDiv: z.boolean().default(false),
+  useHiddenDivNoLimits: z.boolean().default(true),
+  goldRsiThreshold: positiveInt(1, 100).default(30),
+  goldWtDiffMin: z.number().min(1).max(30).default(5)
+});
+
 const advancedIndicatorsSchema = z.object({
   adrLen: positiveInt(1, 365).default(14),
   awrLen: positiveInt(1, 52).default(4),
@@ -84,7 +109,8 @@ export const indicatorSettingsConfigSchema = z.object({
   indicatorsV2: z.object({
     stochrsi: stochrsiSchema,
     volume: volumeSchema,
-    fvg: fvgSchema
+    fvg: fvgSchema,
+    vumanchu: vumanchuSchema
   }),
   advancedIndicators: advancedIndicatorsSchema,
   liquiditySweeps: liquiditySweepsSchema,
@@ -179,6 +205,30 @@ export const DEFAULT_INDICATOR_SETTINGS: IndicatorSettingsConfig = {
     fvg: {
       lookback: 300,
       fillRule: "overlap"
+    },
+    vumanchu: {
+      wtChannelLen: 9,
+      wtAverageLen: 12,
+      wtMaLen: 3,
+      obLevel: 53,
+      osLevel: -53,
+      osLevel3: -75,
+      wtDivObLevel: 45,
+      wtDivOsLevel: -65,
+      wtDivObLevelAdd: 15,
+      wtDivOsLevelAdd: -40,
+      rsiLen: 14,
+      rsiMfiPeriod: 60,
+      rsiMfiMultiplier: 150,
+      rsiMfiPosY: 2.5,
+      stochLen: 14,
+      stochRsiLen: 14,
+      stochKSmooth: 3,
+      stochDSmooth: 3,
+      useHiddenDiv: false,
+      useHiddenDivNoLimits: true,
+      goldRsiThreshold: 30,
+      goldWtDiffMin: 5
     }
   },
   advancedIndicators: {
@@ -324,6 +374,74 @@ export function mergeIndicatorSettings(
       fvg: {
         lookback: patch.indicatorsV2?.fvg?.lookback ?? base.indicatorsV2.fvg.lookback,
         fillRule: patch.indicatorsV2?.fvg?.fillRule ?? base.indicatorsV2.fvg.fillRule
+      },
+      vumanchu: {
+        wtChannelLen:
+          patch.indicatorsV2?.vumanchu?.wtChannelLen
+          ?? base.indicatorsV2.vumanchu.wtChannelLen,
+        wtAverageLen:
+          patch.indicatorsV2?.vumanchu?.wtAverageLen
+          ?? base.indicatorsV2.vumanchu.wtAverageLen,
+        wtMaLen:
+          patch.indicatorsV2?.vumanchu?.wtMaLen
+          ?? base.indicatorsV2.vumanchu.wtMaLen,
+        obLevel:
+          patch.indicatorsV2?.vumanchu?.obLevel
+          ?? base.indicatorsV2.vumanchu.obLevel,
+        osLevel:
+          patch.indicatorsV2?.vumanchu?.osLevel
+          ?? base.indicatorsV2.vumanchu.osLevel,
+        osLevel3:
+          patch.indicatorsV2?.vumanchu?.osLevel3
+          ?? base.indicatorsV2.vumanchu.osLevel3,
+        wtDivObLevel:
+          patch.indicatorsV2?.vumanchu?.wtDivObLevel
+          ?? base.indicatorsV2.vumanchu.wtDivObLevel,
+        wtDivOsLevel:
+          patch.indicatorsV2?.vumanchu?.wtDivOsLevel
+          ?? base.indicatorsV2.vumanchu.wtDivOsLevel,
+        wtDivObLevelAdd:
+          patch.indicatorsV2?.vumanchu?.wtDivObLevelAdd
+          ?? base.indicatorsV2.vumanchu.wtDivObLevelAdd,
+        wtDivOsLevelAdd:
+          patch.indicatorsV2?.vumanchu?.wtDivOsLevelAdd
+          ?? base.indicatorsV2.vumanchu.wtDivOsLevelAdd,
+        rsiLen:
+          patch.indicatorsV2?.vumanchu?.rsiLen
+          ?? base.indicatorsV2.vumanchu.rsiLen,
+        rsiMfiPeriod:
+          patch.indicatorsV2?.vumanchu?.rsiMfiPeriod
+          ?? base.indicatorsV2.vumanchu.rsiMfiPeriod,
+        rsiMfiMultiplier:
+          patch.indicatorsV2?.vumanchu?.rsiMfiMultiplier
+          ?? base.indicatorsV2.vumanchu.rsiMfiMultiplier,
+        rsiMfiPosY:
+          patch.indicatorsV2?.vumanchu?.rsiMfiPosY
+          ?? base.indicatorsV2.vumanchu.rsiMfiPosY,
+        stochLen:
+          patch.indicatorsV2?.vumanchu?.stochLen
+          ?? base.indicatorsV2.vumanchu.stochLen,
+        stochRsiLen:
+          patch.indicatorsV2?.vumanchu?.stochRsiLen
+          ?? base.indicatorsV2.vumanchu.stochRsiLen,
+        stochKSmooth:
+          patch.indicatorsV2?.vumanchu?.stochKSmooth
+          ?? base.indicatorsV2.vumanchu.stochKSmooth,
+        stochDSmooth:
+          patch.indicatorsV2?.vumanchu?.stochDSmooth
+          ?? base.indicatorsV2.vumanchu.stochDSmooth,
+        useHiddenDiv:
+          patch.indicatorsV2?.vumanchu?.useHiddenDiv
+          ?? base.indicatorsV2.vumanchu.useHiddenDiv,
+        useHiddenDivNoLimits:
+          patch.indicatorsV2?.vumanchu?.useHiddenDivNoLimits
+          ?? base.indicatorsV2.vumanchu.useHiddenDivNoLimits,
+        goldRsiThreshold:
+          patch.indicatorsV2?.vumanchu?.goldRsiThreshold
+          ?? base.indicatorsV2.vumanchu.goldRsiThreshold,
+        goldWtDiffMin:
+          patch.indicatorsV2?.vumanchu?.goldWtDiffMin
+          ?? base.indicatorsV2.vumanchu.goldWtDiffMin
       }
     },
     advancedIndicators: {
