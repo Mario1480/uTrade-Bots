@@ -10,6 +10,7 @@
     "typecheck": "next typegen && tsc --noEmit --incremental false -p tsconfig.json",
     "test:prefill": "tsx --test src/schemas/tradeDeskPrefill.test.ts",
     "test:predictions-ui": "tsx --test src/predictions/refreshUi.test.ts",
+    "test:bots-ui": "tsx --test src/bots/controls.test.ts",
     "test:i18n-routing": "tsx --test src/i18n/localeRouting.test.ts",
     "i18n:check": "tsx src/i18n/integrity.ts"
   },

@@ -1371,6 +1371,104 @@ a { color: inherit; }
   gap: 12px;
 }
 
+.botCardActions {
+  margin-top: 12px;
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.botMiniMetrics {
+  margin-top: 12px;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.botMiniMetric {
+  border: 1px solid rgba(255, 193, 7, 0.24);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.02);
+  padding: 8px;
+  display: grid;
+  gap: 4px;
+}
+
+.botMiniMetricLabel {
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.botMiniMetricValue {
+  font-size: 13px;
+}
+
+.botPnlPositive {
+  color: #22c55e;
+  font-weight: 700;
+}
+
+.botPnlNegative {
+  color: #ef4444;
+  font-weight: 700;
+}
+
+.botReasonText {
+  overflow-wrap: anywhere;
+  word-break: break-word;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.botDetailGrid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.botOpsGrid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 10px;
+}
+
+.botEventList {
+  display: grid;
+  gap: 8px;
+}
+
+.botEventItem {
+  border: 1px solid rgba(255, 193, 7, 0.24);
+  border-radius: 8px;
+  padding: 8px;
+  background: rgba(255, 255, 255, 0.02);
+}
+
+.botEventHead {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 6px;
+}
+
+.botEventTime {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.botEventMessage {
+  font-size: 12px;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
 .overviewGrid {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
@@ -1395,6 +1493,23 @@ a { color: inherit; }
 
 @media (max-width: 900px) {
   .overviewGrid {
+    grid-template-columns: 1fr;
+  }
+  .botMiniMetrics {
+    grid-template-columns: 1fr;
+  }
+  .botCardActions {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+  .botCardActions .btn {
+    width: 100%;
+    justify-content: center;
+  }
+  .botDetailGrid {
+    grid-template-columns: 1fr;
+  }
+  .botOpsGrid {
     grid-template-columns: 1fr;
   }
 }

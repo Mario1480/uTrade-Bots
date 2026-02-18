@@ -1,29 +1,46 @@
 "use client";
 
 import Link from "next/link";
-import { useMemo } from "react";
 import { useSearchParams } from "next/navigation";
 import { useTranslations } from "next-intl";
 import { ApiError, apiGet, apiPost } from "../../lib/api";
-import { Suspense, useEffect, useState } from "react";
+import { Suspense, useEffect, useMemo, useState } from "react";
+import { getBotStartStopUi } from "../../src/bots/controls";
 
-type BotItem = {
+type BotOverviewItem = {
   id: string;
   name: string;
   symbol: string;
   exchange: string;
   exchangeAccountId?: string | null;
   status: "running" | "stopped" | "error" | string;
-  lastError?: string | null;
+  stoppedWhy?: string | null;
   exchangeAccount?: {
     id: string;
     exchange: string;
     label: string;
   } | null;
   runtime?: {
-    lastHeartbeatAt?: string | null;
-    lastError?: string | null;
+    status?: string | null;
+    updatedAt?: string | null;
     reason?: string | null;
+    lastError?: string | null;
+    lastErrorAt?: string | null;
+    mid?: number | null;
+    bid?: number | null;
+    ask?: number | null;
+  } | null;
+  trade?: {
+    openSide?: string | null;
+    openQty?: number | null;
+    openEntryPrice?: number | null;
+    openPnlUsd?: number | null;
+    realizedPnlTodayUsd?: number | null;
+    openTs?: string | null;
+    dailyTradeCount?: number | null;
+    lastTradeTs?: string | null;
+    lastSignal?: string | null;
+    lastSignalTs?: string | null;
   } | null;
 };
 
@@ -33,63 +50,103 @@ function errMsg(e: unknown): string {
   return String(e);
 }
 
+function formatDateTime(value: string | null | undefined): string {
+  if (!value) return "n/a";
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) return "n/a";
+  return parsed.toLocaleString();
+}
+
+function formatPnl(value: number | null | undefined): string {
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed)) return "n/a";
+  const sign = parsed > 0 ? "+" : "";
+  return `${sign}${parsed.toFixed(2)} USDT`;
+}
+
 function BotsPageContent() {
   const t = useTranslations("system.botsList");
   const searchParams = useSearchParams();
-  const [bots, setBots] = useState<BotItem[]>([]);
+  const [bots, setBots] = useState<BotOverviewItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [deletingId, setDeletingId] = useState<string | null>(null);
+  const [actionBusy, setActionBusy] = useState<Record<string, "start" | "stop" | "delete" | null>>({});
 
   const exchangeAccountId = searchParams.get("exchangeAccountId");
   const statusFilter = searchParams.get("status");
 
+  async function load() {
+    setLoading(true);
+    setError(null);
+    try {
+      const query = new URLSearchParams();
+      if (exchangeAccountId) query.set("exchangeAccountId", exchangeAccountId);
+      if (statusFilter) query.set("status", statusFilter);
+      const path = query.toString() ? `/bots/overview?${query.toString()}` : "/bots/overview";
+      const data = await apiGet<BotOverviewItem[]>(path);
+      setBots(Array.isArray(data) ? data : []);
+    } catch (e) {
+      setError(errMsg(e));
+    } finally {
+      setLoading(false);
+    }
+  }
+
   useEffect(() => {
     let mounted = true;
 
-    async function load() {
-      setLoading(true);
-      setError(null);
-      try {
-        const data = await apiGet<BotItem[]>("/bots");
-        if (!mounted) return;
-        setBots(Array.isArray(data) ? data : []);
-      } catch (e) {
-        if (!mounted) return;
-        setError(errMsg(e));
-      } finally {
-        if (mounted) setLoading(false);
-      }
-    }
-
-    void load();
+    void load().catch(() => undefined);
     const timer = setInterval(() => {
-      void load();
+      if (!mounted) return;
+      void load().catch(() => undefined);
     }, 6000);
 
     return () => {
       mounted = false;
       clearInterval(timer);
     };
-  }, []);
-
-  const visibleBots = useMemo(() => {
-    return bots.filter((bot) => {
-      if (exchangeAccountId && bot.exchangeAccountId !== exchangeAccountId) return false;
-      if (statusFilter && bot.status !== statusFilter) return false;
-      return true;
-    });
-  }, [bots, exchangeAccountId, statusFilter]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [exchangeAccountId, statusFilter]);
 
   const titleSuffix = useMemo(() => {
     if (!exchangeAccountId) return "";
     return t("titleSuffix", { account: `${exchangeAccountId.slice(0, 8)}…` });
   }, [exchangeAccountId, t]);
 
-  async function removeBot(bot: BotItem) {
+  function setBusy(id: string, action: "start" | "stop" | "delete" | null) {
+    setActionBusy((prev) => ({ ...prev, [id]: action }));
+  }
+
+  async function startBot(bot: BotOverviewItem) {
+    setBusy(bot.id, "start");
+    setError(null);
+    try {
+      await apiPost(`/bots/${bot.id}/start`, {});
+      await load();
+    } catch (e) {
+      setError(errMsg(e));
+    } finally {
+      setBusy(bot.id, null);
+    }
+  }
+
+  async function stopBot(bot: BotOverviewItem) {
+    setBusy(bot.id, "stop");
+    setError(null);
+    try {
+      await apiPost(`/bots/${bot.id}/stop`, {});
+      await load();
+    } catch (e) {
+      setError(errMsg(e));
+    } finally {
+      setBusy(bot.id, null);
+    }
+  }
+
+  async function removeBot(bot: BotOverviewItem) {
     const ok = window.confirm(t("confirmDelete", { name: bot.name, symbol: bot.symbol }));
     if (!ok) return;
-    setDeletingId(bot.id);
+    setBusy(bot.id, "delete");
     setError(null);
     try {
       await apiPost(`/bots/${bot.id}/delete`);
@@ -97,7 +154,7 @@ function BotsPageContent() {
     } catch (e) {
       setError(errMsg(e));
     } finally {
-      setDeletingId(null);
+      setBusy(bot.id, null);
     }
   }
 
@@ -125,7 +182,7 @@ function BotsPageContent() {
       <div className="botGrid">
         {loading ? (
           <div className="card" style={{ padding: 16 }}>{t("loading")}</div>
-        ) : visibleBots.length === 0 ? (
+        ) : bots.length === 0 ? (
           <div className="card" style={{ padding: 16 }}>
             <div style={{ fontWeight: 700, marginBottom: 6 }}>{t("emptyTitle")}</div>
             <div style={{ fontSize: 13, color: "var(--muted)", marginBottom: 10 }}>
@@ -134,7 +191,18 @@ function BotsPageContent() {
             <Link href="/bots/new" className="btn btnPrimary">{t("actions.createBot")}</Link>
           </div>
         ) : (
-          visibleBots.map((bot) => (
+          bots.map((bot) => {
+            const openPosition = bot.trade?.openSide && Number(bot.trade?.openQty ?? 0) > 0
+              ? `${bot.trade.openSide} ${bot.trade.openQty} @ ${bot.trade.openEntryPrice ?? "n/a"}`
+              : t("metrics.none");
+            const busy = actionBusy[bot.id];
+            const startStopUi = getBotStartStopUi(bot.status, busy, {
+              start: t("actions.start"),
+              starting: t("actions.starting"),
+              stop: t("actions.stop"),
+              stopping: t("actions.stopping")
+            });
+            return (
             <article key={bot.id} className="card botCard">
               <div className="botCardHeader">
                 <div>
@@ -148,29 +216,82 @@ function BotsPageContent() {
                 </span>
               </div>
 
-              {bot.lastError || bot.runtime?.lastError ? (
-                <div style={{ marginTop: 10, fontSize: 12, color: "#fecaca" }}>
-                  {bot.lastError ?? bot.runtime?.lastError}
+              <div className="botMiniMetrics">
+                <div className="botMiniMetric">
+                  <span className="botMiniMetricLabel">{t("metrics.openPosition")}</span>
+                  <span className="botMiniMetricValue">{openPosition}</span>
                 </div>
-              ) : null}
+                <div className="botMiniMetric">
+                  <span className="botMiniMetricLabel">{t("metrics.tradesToday")}</span>
+                  <span className="botMiniMetricValue">{bot.trade?.dailyTradeCount ?? 0}</span>
+                </div>
+                <div className="botMiniMetric">
+                  <span className="botMiniMetricLabel">{t("metrics.openPnlUsdt")}</span>
+                  <span
+                    className={`botMiniMetricValue ${
+                      Number(bot.trade?.openPnlUsd ?? 0) > 0
+                        ? "botPnlPositive"
+                        : Number(bot.trade?.openPnlUsd ?? 0) < 0
+                          ? "botPnlNegative"
+                          : ""
+                    }`}
+                  >
+                    {formatPnl(bot.trade?.openPnlUsd)}
+                  </span>
+                </div>
+                <div className="botMiniMetric">
+                  <span className="botMiniMetricLabel">{t("metrics.realizedPnlTodayUsdt")}</span>
+                  <span
+                    className={`botMiniMetricValue ${
+                      Number(bot.trade?.realizedPnlTodayUsd ?? 0) > 0
+                        ? "botPnlPositive"
+                        : Number(bot.trade?.realizedPnlTodayUsd ?? 0) < 0
+                          ? "botPnlNegative"
+                          : ""
+                    }`}
+                  >
+                    {formatPnl(bot.trade?.realizedPnlTodayUsd)}
+                  </span>
+                </div>
+                <div className="botMiniMetric">
+                  <span className="botMiniMetricLabel">{t("metrics.lastTrade")}</span>
+                  <span className="botMiniMetricValue">{formatDateTime(bot.trade?.lastTradeTs)}</span>
+                </div>
+                <div className="botMiniMetric">
+                  <span className="botMiniMetricLabel">{t("metrics.reason")}</span>
+                  <span className="botMiniMetricValue botReasonText">
+                    {bot.stoppedWhy ?? bot.runtime?.reason ?? bot.runtime?.lastError ?? t("metrics.none")}
+                  </span>
+                </div>
+              </div>
 
-              <div style={{ marginTop: 12, display: "flex", gap: 8, flexWrap: "wrap" }}>
+              <div className="botCardActions">
                 <Link href={`/bots/${bot.id}`} className="btn">{t("actions.open")}</Link>
-                {bot.exchangeAccountId ? (
-                  <Link href={`/trade?exchangeAccountId=${encodeURIComponent(bot.exchangeAccountId)}`} className="btn">
-                    {t("actions.manualTrading")}
-                  </Link>
-                ) : null}
+                <button
+                  className={startStopUi.startClassName}
+                  onClick={() => void startBot(bot)}
+                  disabled={startStopUi.startDisabled}
+                >
+                  {startStopUi.startLabel}
+                </button>
+                <button
+                  className={startStopUi.stopClassName}
+                  onClick={() => void stopBot(bot)}
+                  disabled={startStopUi.stopDisabled}
+                >
+                  {startStopUi.stopLabel}
+                </button>
                 <button
                   className="btn btnStop"
                   onClick={() => void removeBot(bot)}
-                  disabled={deletingId === bot.id}
+                  disabled={busy !== null}
                 >
-                  {deletingId === bot.id ? t("actions.deleting") : t("actions.delete")}
+                  {busy === "delete" ? t("actions.deleting") : t("actions.delete")}
                 </button>
               </div>
             </article>
-          ))
+          );
+        })
         )}
       </div>
     </div>

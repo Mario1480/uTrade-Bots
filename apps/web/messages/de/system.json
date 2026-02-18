@@ -19,9 +19,21 @@
       "newBot": "Neuer Bot",
       "createBot": "Bot erstellen",
       "open": "Öffnen",
-      "manualTrading": "Manuelles Trading",
+      "start": "Start",
+      "starting": "Startet...",
+      "stop": "Stopp",
+      "stopping": "Stoppt...",
       "delete": "Löschen",
       "deleting": "Löscht..."
+    },
+    "metrics": {
+      "openPosition": "Offene Position",
+      "tradesToday": "Trades heute",
+      "openPnlUsdt": "Open PnL (USDT)",
+      "realizedPnlTodayUsdt": "Realized PnL heute (USDT)",
+      "lastTrade": "Letzter Trade",
+      "reason": "Grund",
+      "none": "k. A."
     },
     "confirmDelete": "Bot \"{name}\" ({symbol}) wirklich löschen?"
   },
@@ -122,12 +134,34 @@
       "runnerStatus": "Runner-Status",
       "runtimeReason": "Runtime-Grund",
       "runtimeUpdated": "Runtime aktualisiert",
+      "runtimeLastError": "Letzter Runtime-Fehler",
       "strategy": "Strategie",
       "predictionSource": "Prediction-Quelle",
       "marginMode": "Margin-Modus",
       "leverage": "Leverage",
       "tickInterval": "Tick-Intervall",
       "testnet": "Testnet"
+    },
+    "sections": {
+      "opsMetrics": "Ops-Metriken",
+      "recentEvents": "Letzte Events",
+      "noEvents": "Keine aktuellen Events vorhanden.",
+      "whyStopped": "Warum gestoppt",
+      "noStoppedReason": "Kein Stop-Grund vorhanden."
+    },
+    "metrics": {
+      "openPosition": "Offene Position",
+      "isOpen": "Position offen",
+      "yes": "ja",
+      "no": "nein",
+      "openNotionalApprox": "Open-Notional (ca.)",
+      "openPnlUsdt": "Open PnL (USDT)",
+      "realizedPnlTodayUsdt": "Realized PnL heute (USDT)",
+      "dailyTradeCount": "Trades heute",
+      "lastTradeTs": "Letzter Trade",
+      "lastSignal": "Letztes Signal",
+      "lastSignalTs": "Zeit letztes Signal",
+      "lastPredictionConfidence": "Letzte Prediction-Confidence (%)"
     }
   },
   "botsPriceSupport": {

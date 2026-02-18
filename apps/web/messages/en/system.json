@@ -19,9 +19,21 @@
       "newBot": "New Bot",
       "createBot": "Create Bot",
       "open": "Open",
-      "manualTrading": "Manual Trading",
+      "start": "Start",
+      "starting": "Starting...",
+      "stop": "Stop",
+      "stopping": "Stopping...",
       "delete": "Delete",
       "deleting": "Deleting..."
+    },
+    "metrics": {
+      "openPosition": "Open position",
+      "tradesToday": "Trades today",
+      "openPnlUsdt": "Open PnL (USDT)",
+      "realizedPnlTodayUsdt": "Realized PnL today (USDT)",
+      "lastTrade": "Last trade",
+      "reason": "Reason",
+      "none": "n/a"
     },
     "confirmDelete": "Delete bot \"{name}\" ({symbol})?"
   },
@@ -122,12 +134,34 @@
       "runnerStatus": "Runner status",
       "runtimeReason": "Runtime reason",
       "runtimeUpdated": "Runtime updated",
+      "runtimeLastError": "Runtime last error",
       "strategy": "Strategy",
       "predictionSource": "Prediction source",
       "marginMode": "Margin mode",
       "leverage": "Leverage",
       "tickInterval": "Tick interval",
       "testnet": "Testnet"
+    },
+    "sections": {
+      "opsMetrics": "Ops Metrics",
+      "recentEvents": "Recent Events",
+      "noEvents": "No recent events recorded.",
+      "whyStopped": "Why stopped",
+      "noStoppedReason": "No stop reason available."
+    },
+    "metrics": {
+      "openPosition": "Open position",
+      "isOpen": "Position open",
+      "yes": "yes",
+      "no": "no",
+      "openNotionalApprox": "Open notional (approx)",
+      "openPnlUsdt": "Open PnL (USDT)",
+      "realizedPnlTodayUsdt": "Realized PnL today (USDT)",
+      "dailyTradeCount": "Trades today",
+      "lastTradeTs": "Last trade",
+      "lastSignal": "Last signal",
+      "lastSignalTs": "Last signal time",
+      "lastPredictionConfidence": "Last prediction confidence (%)"
     }
   },
   "botsPriceSupport": {

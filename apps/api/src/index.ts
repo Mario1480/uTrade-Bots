@@ -113,6 +113,15 @@ import {
   setPaperMarketDataAccountId
 } from "./trading.js";
 import {
+  computeOpenPnlUsd,
+  computeRuntimeMarkPrice,
+  deriveStoppedWhy,
+  extractLastDecisionConfidence,
+  readBotPrimaryTradeState,
+  sumRealizedPnlUsdFromTradeEvents,
+  type BotTradeStateOverviewRow
+} from "./bots/overview.js";
+import {
   generateAndPersistPrediction,
   resolvePredictionTracking,
   type PredictionSignalMode,
@@ -392,6 +401,19 @@ const botPredictionSourcesQuerySchema = z.object({
   strategyKind: predictionStrategyKindSchema.optional(),
   signalMode: predictionSignalModeSchema.optional(),
   symbol: z.string().trim().min(1).optional()
+});
+
+const botOverviewListQuerySchema = z.object({
+  exchangeAccountId: z.string().trim().min(1).optional(),
+  status: z.enum(["running", "stopped", "error"]).optional()
+});
+
+const botOverviewDetailQuerySchema = z.object({
+  limit: z.coerce.number().int().min(1).max(100).default(10)
+});
+
+const botRiskEventsQuerySchema = z.object({
+  limit: z.coerce.number().int().min(1).max(100).default(100)
 });
 
 const tradingSettingsSchema = z.object({
@@ -11919,8 +11941,11 @@ app.get("/api/predictions/metrics", requireAuth, async (req, res) => {
           : null;
     const absError = Number(metrics.absError);
     const sqError = Number(metrics.sqError);
+    const normalizedConfidence = normalizeConfidencePct(Number(row.confidence));
+    if (normalizedConfidence === null) continue;
+
     samples.push({
-      confidence: normalizeConfidencePct(Number(row.confidence)),
+      confidence: normalizedConfidence,
       signal,
       expectedMovePct: Number.isFinite(Number(row.expectedMovePct)) ? Number(row.expectedMovePct) : null,
       realizedReturnPct: realized.realizedReturnPct,
@@ -14000,6 +14025,154 @@ app.get("/bots/prediction-sources", requireAuth, async (req, res) => {
   return res.json({ items });
 });
 
+app.get("/bots/overview", requireAuth, async (req, res) => {
+  const user = getUserFromLocals(res);
+  const parsed = botOverviewListQuerySchema.safeParse(req.query ?? {});
+  if (!parsed.success) {
+    return res.status(400).json({ error: "invalid_query", details: parsed.error.flatten() });
+  }
+
+  const bots = await db.bot.findMany({
+    where: {
+      userId: user.id,
+      ...(parsed.data.exchangeAccountId ? { exchangeAccountId: parsed.data.exchangeAccountId } : {}),
+      ...(parsed.data.status ? { status: parsed.data.status } : {})
+    },
+    orderBy: [{ updatedAt: "desc" }],
+    include: {
+      exchangeAccount: {
+        select: {
+          id: true,
+          exchange: true,
+          label: true
+        }
+      },
+      runtime: {
+        select: {
+          status: true,
+          reason: true,
+          updatedAt: true,
+          lastError: true,
+          lastErrorAt: true,
+          mid: true,
+          bid: true,
+          ask: true
+        }
+      }
+    }
+  });
+
+  const botIds = bots.map((bot) => bot.id);
+  const dayStartUtc = new Date();
+  dayStartUtc.setUTCHours(0, 0, 0, 0);
+
+  const tradeRowsRaw = botIds.length
+    ? await ignoreMissingTable(() => db.botTradeState.findMany({
+      where: { botId: { in: botIds } },
+      select: {
+        botId: true,
+        symbol: true,
+        lastSignal: true,
+        lastSignalTs: true,
+        lastTradeTs: true,
+        dailyTradeCount: true,
+        openSide: true,
+        openQty: true,
+        openEntryPrice: true,
+        openTs: true
+      }
+    }))
+    : null;
+  const tradeRows: BotTradeStateOverviewRow[] = Array.isArray(tradeRowsRaw)
+    ? tradeRowsRaw as BotTradeStateOverviewRow[]
+    : [];
+  const realizedEventsRaw = botIds.length
+    ? await ignoreMissingTable(() => db.riskEvent.findMany({
+      where: {
+        botId: { in: botIds },
+        type: "PREDICTION_COPIER_TRADE",
+        createdAt: { gte: dayStartUtc }
+      },
+      select: {
+        botId: true,
+        message: true,
+        meta: true
+      }
+    }))
+    : null;
+  const realizedEvents = Array.isArray(realizedEventsRaw) ? realizedEventsRaw : [];
+  const realizedByBot = new Map<string, number>();
+  for (const event of realizedEvents) {
+    const next = sumRealizedPnlUsdFromTradeEvents([{ message: event.message, meta: event.meta }]);
+    if (!next) continue;
+    const current = realizedByBot.get(event.botId) ?? 0;
+    realizedByBot.set(event.botId, Number((current + next).toFixed(4)));
+  }
+
+  const items = bots.map((bot) => {
+    const trade = readBotPrimaryTradeState(tradeRows, bot.id, bot.symbol);
+    const markPrice = computeRuntimeMarkPrice({
+      mid: bot.runtime?.mid ?? null,
+      bid: bot.runtime?.bid ?? null,
+      ask: bot.runtime?.ask ?? null
+    });
+    const openPnlUsd = computeOpenPnlUsd({
+      side: trade?.openSide ?? null,
+      qty: trade?.openQty ?? null,
+      entryPrice: trade?.openEntryPrice ?? null,
+      markPrice
+    });
+    const realizedPnlTodayUsd = realizedByBot.get(bot.id) ?? 0;
+    const stoppedWhy = deriveStoppedWhy({
+      botStatus: bot.status,
+      runtimeReason: bot.runtime?.reason,
+      runtimeLastError: bot.runtime?.lastError,
+      botLastError: bot.lastError
+    });
+
+    return {
+      id: bot.id,
+      name: bot.name,
+      symbol: bot.symbol,
+      exchange: bot.exchange,
+      exchangeAccountId: bot.exchangeAccountId ?? null,
+      status: bot.status,
+      exchangeAccount: bot.exchangeAccount
+        ? {
+            id: bot.exchangeAccount.id,
+            exchange: bot.exchangeAccount.exchange,
+            label: bot.exchangeAccount.label
+          }
+        : null,
+      runtime: {
+        status: bot.runtime?.status ?? null,
+        reason: bot.runtime?.reason ?? null,
+        updatedAt: bot.runtime?.updatedAt ?? null,
+        lastError: bot.runtime?.lastError ?? bot.lastError ?? null,
+        lastErrorAt: bot.runtime?.lastErrorAt ?? null,
+        mid: bot.runtime?.mid ?? null,
+        bid: bot.runtime?.bid ?? null,
+        ask: bot.runtime?.ask ?? null
+      },
+      trade: {
+        openSide: trade?.openSide ?? null,
+        openQty: trade?.openQty ?? null,
+        openEntryPrice: trade?.openEntryPrice ?? null,
+        openPnlUsd,
+        realizedPnlTodayUsd,
+        openTs: trade?.openTs ?? null,
+        dailyTradeCount: trade?.dailyTradeCount ?? 0,
+        lastTradeTs: trade?.lastTradeTs ?? null,
+        lastSignal: trade?.lastSignal ?? null,
+        lastSignalTs: trade?.lastSignalTs ?? null
+      },
+      stoppedWhy
+    };
+  });
+
+  return res.json(items);
+});
+
 app.get("/bots/:id", requireAuth, async (req, res) => {
   const user = getUserFromLocals(res);
   const bot = await db.bot.findFirst({
@@ -14036,6 +14209,178 @@ app.get("/bots/:id", requireAuth, async (req, res) => {
 
   if (!bot) return res.status(404).json({ error: "bot_not_found" });
   return res.json(toSafeBot(bot));
+});
+
+app.get("/bots/:id/overview", requireAuth, async (req, res) => {
+  const user = getUserFromLocals(res);
+  const queryParsed = botOverviewDetailQuerySchema.safeParse(req.query ?? {});
+  if (!queryParsed.success) {
+    return res.status(400).json({ error: "invalid_query", details: queryParsed.error.flatten() });
+  }
+
+  const bot = await db.bot.findFirst({
+    where: {
+      id: req.params.id,
+      userId: user.id
+    },
+    select: {
+      id: true,
+      name: true,
+      symbol: true,
+      exchange: true,
+      exchangeAccountId: true,
+      status: true,
+      lastError: true,
+      exchangeAccount: {
+        select: {
+          id: true,
+          exchange: true,
+          label: true
+        }
+      },
+      runtime: {
+        select: {
+          status: true,
+          reason: true,
+          updatedAt: true,
+          lastError: true,
+          lastErrorAt: true,
+          mid: true,
+          bid: true,
+          ask: true
+        }
+      }
+    }
+  });
+  if (!bot) return res.status(404).json({ error: "bot_not_found" });
+
+  const tradeRowsRaw = await ignoreMissingTable(() => db.botTradeState.findMany({
+    where: { botId: bot.id },
+    select: {
+      botId: true,
+      symbol: true,
+      lastSignal: true,
+      lastSignalTs: true,
+      lastTradeTs: true,
+      dailyTradeCount: true,
+      openSide: true,
+      openQty: true,
+      openEntryPrice: true,
+      openTs: true
+    }
+  }));
+  const tradeRows: BotTradeStateOverviewRow[] = Array.isArray(tradeRowsRaw)
+    ? tradeRowsRaw as BotTradeStateOverviewRow[]
+    : [];
+  const trade = readBotPrimaryTradeState(tradeRows, bot.id, bot.symbol);
+
+  const recentEventsRaw = await ignoreMissingTable(() => db.riskEvent.findMany({
+    where: { botId: bot.id },
+    orderBy: { createdAt: "desc" },
+    take: queryParsed.data.limit
+  }));
+  const recentEvents = Array.isArray(recentEventsRaw) ? recentEventsRaw : [];
+  const lastPredictionConfidence = extractLastDecisionConfidence(
+    recentEvents.map((event) => ({ type: event.type, meta: event.meta }))
+  );
+  const dayStartUtc = new Date();
+  dayStartUtc.setUTCHours(0, 0, 0, 0);
+  const realizedEventsRaw = await ignoreMissingTable(() => db.riskEvent.findMany({
+    where: {
+      botId: bot.id,
+      type: "PREDICTION_COPIER_TRADE",
+      createdAt: { gte: dayStartUtc }
+    },
+    select: {
+      message: true,
+      meta: true
+    }
+  }));
+  const realizedEvents = Array.isArray(realizedEventsRaw) ? realizedEventsRaw : [];
+  const realizedPnlTodayUsd = sumRealizedPnlUsdFromTradeEvents(
+    realizedEvents.map((event) => ({ message: event.message, meta: event.meta }))
+  );
+  const markPrice = computeRuntimeMarkPrice({
+    mid: bot.runtime?.mid ?? null,
+    bid: bot.runtime?.bid ?? null,
+    ask: bot.runtime?.ask ?? null
+  });
+  const openPnlUsd = computeOpenPnlUsd({
+    side: trade?.openSide ?? null,
+    qty: trade?.openQty ?? null,
+    entryPrice: trade?.openEntryPrice ?? null,
+    markPrice
+  });
+
+  const hasOpenQty = Number.isFinite(Number(trade?.openQty ?? NaN)) && Number(trade?.openQty ?? 0) > 0;
+  const hasEntryPrice =
+    Number.isFinite(Number(trade?.openEntryPrice ?? NaN)) && Number(trade?.openEntryPrice ?? 0) > 0;
+  const openNotionalApprox = hasOpenQty && hasEntryPrice
+    ? Number((Number(trade?.openQty) * Number(trade?.openEntryPrice)).toFixed(4))
+    : null;
+  const stoppedWhy = deriveStoppedWhy({
+    botStatus: bot.status,
+    runtimeReason: bot.runtime?.reason,
+    runtimeLastError: bot.runtime?.lastError,
+    botLastError: bot.lastError
+  });
+
+  return res.json({
+    id: bot.id,
+    name: bot.name,
+    symbol: bot.symbol,
+    exchange: bot.exchange,
+    exchangeAccountId: bot.exchangeAccountId ?? null,
+    status: bot.status,
+    exchangeAccount: bot.exchangeAccount
+      ? {
+          id: bot.exchangeAccount.id,
+          exchange: bot.exchangeAccount.exchange,
+          label: bot.exchangeAccount.label
+        }
+      : null,
+    runtime: {
+      status: bot.runtime?.status ?? null,
+      reason: bot.runtime?.reason ?? null,
+      updatedAt: bot.runtime?.updatedAt ?? null,
+      lastError: bot.runtime?.lastError ?? bot.lastError ?? null,
+      lastErrorAt: bot.runtime?.lastErrorAt ?? null,
+      mid: bot.runtime?.mid ?? null,
+      bid: bot.runtime?.bid ?? null,
+      ask: bot.runtime?.ask ?? null
+    },
+    trade: {
+      openSide: trade?.openSide ?? null,
+      openQty: trade?.openQty ?? null,
+      openEntryPrice: trade?.openEntryPrice ?? null,
+      openPnlUsd,
+      realizedPnlTodayUsd,
+      openTs: trade?.openTs ?? null,
+      dailyTradeCount: trade?.dailyTradeCount ?? 0,
+      lastTradeTs: trade?.lastTradeTs ?? null,
+      lastSignal: trade?.lastSignal ?? null,
+      lastSignalTs: trade?.lastSignalTs ?? null
+    },
+    stoppedWhy,
+    opsMetrics: {
+      isOpen: Boolean(trade?.openSide && hasOpenQty),
+      openNotionalApprox,
+      openPnlUsd,
+      realizedPnlTodayUsd,
+      dailyTradeCount: trade?.dailyTradeCount ?? 0,
+      lastTradeTs: trade?.lastTradeTs ?? null,
+      lastSignal: trade?.lastSignal ?? null,
+      lastSignalTs: trade?.lastSignalTs ?? null,
+      lastPredictionConfidence
+    },
+    recentEvents: recentEvents.map((event) => ({
+      id: event.id,
+      type: event.type,
+      message: event.message ?? null,
+      createdAt: event.createdAt,
+      meta: event.meta ?? null
+    }))
+  });
 });
 
 app.put("/bots/:id", requireAuth, async (req, res) => {
@@ -14195,6 +14540,10 @@ app.get("/bots/:id/runtime", requireAuth, async (req, res) => {
 
 app.get("/bots/:id/risk-events", requireAuth, async (req, res) => {
   const user = getUserFromLocals(res);
+  const queryParsed = botRiskEventsQuerySchema.safeParse(req.query ?? {});
+  if (!queryParsed.success) {
+    return res.status(400).json({ error: "invalid_query", details: queryParsed.error.flatten() });
+  }
   const bot = await db.bot.findFirst({
     where: { id: req.params.id, userId: user.id },
     select: { id: true }
@@ -14204,7 +14553,7 @@ app.get("/bots/:id/risk-events", requireAuth, async (req, res) => {
   const items = await db.riskEvent.findMany({
     where: { botId: bot.id },
     orderBy: { createdAt: "desc" },
-    take: 100
+    take: queryParsed.data.limit
   });
   return res.json({ items });
 });

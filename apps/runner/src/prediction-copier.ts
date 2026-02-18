@@ -862,6 +862,28 @@ export async function runPredictionCopierTick(
     }
 
     const orderSide = openPosition.side === "long" ? "sell" : "buy";
+    const entryPriceForPnl =
+      Number.isFinite(Number(tradeState.openEntryPrice))
+        ? Number(tradeState.openEntryPrice)
+        : Number.isFinite(Number(openPosition.entryPrice))
+          ? Number(openPosition.entryPrice)
+          : null;
+    const exitPriceForPnl =
+      Number.isFinite(Number(markPrice))
+        ? Number(markPrice)
+        : Number.isFinite(Number(openPosition.markPrice))
+          ? Number(openPosition.markPrice)
+          : Number.isFinite(Number(openPosition.entryPrice))
+            ? Number(openPosition.entryPrice)
+            : null;
+    const realizedPnlUsd =
+      entryPriceForPnl && exitPriceForPnl
+        ? Number((
+            openPosition.side === "long"
+              ? (exitPriceForPnl - entryPriceForPnl) * openPosition.size
+              : (entryPriceForPnl - exitPriceForPnl) * openPosition.size
+          ).toFixed(4))
+        : null;
     const placed = executionExchange === "paper"
       ? { orderId: toPaperOrderId(bot.id) }
       : await adapter.placeOrder({
@@ -896,6 +918,9 @@ export async function runPredictionCopierTick(
         symbol,
         side: openPosition.side,
         qty: openPosition.size,
+        entryPrice: entryPriceForPnl,
+        exitPrice: exitPriceForPnl,
+        realizedPnlUsd,
         reason: decision.reason
       }
     });
