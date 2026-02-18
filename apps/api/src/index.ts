@@ -4086,6 +4086,9 @@ function computeConnectionStatus(
   if (!lastSyncAt) return hasBotActivity ? "disconnected" : "degraded";
   const ageMs = Date.now() - lastSyncAt.getTime();
   if (ageMs <= DASHBOARD_CONNECTED_WINDOW_MS) return "connected";
+  // Passive accounts (no running/error bot activity) should not be shown as disconnected
+  // only because the last sync is old.
+  if (!hasBotActivity) return "degraded";
   if (ageMs <= DASHBOARD_DEGRADED_WINDOW_MS) return "degraded";
   return "disconnected";
 }
@@ -13252,8 +13255,10 @@ app.get("/dashboard/overview", requireAuth, async (_req, res) => {
       ?? account.lastUsedAt
       ?? null;
     const hasBotActivity =
-      ((row?.running ?? 0) + (row?.stopped ?? 0) + (row?.error ?? 0)) > 0;
-    const status = computeConnectionStatus(lastSyncAt, hasBotActivity);
+      ((row?.running ?? 0) + (row?.error ?? 0)) > 0;
+    const status = isPaper
+      ? "connected"
+      : computeConnectionStatus(lastSyncAt, hasBotActivity);
 
     return {
       exchangeAccountId: account.id,
@@ -13503,8 +13508,10 @@ app.get("/dashboard/alerts", requireAuth, async (req, res) => {
       ?? linkedMarketDataAccount?.lastUsedAt
       ?? account.lastUsedAt
       ?? null;
-    const hasBotActivity = ((row?.running ?? 0) + (row?.stopped ?? 0) + (row?.error ?? 0)) > 0;
-    const status = computeConnectionStatus(lastSyncAt, hasBotActivity);
+    const hasBotActivity = ((row?.running ?? 0) + (row?.error ?? 0)) > 0;
+    const status = isPaper
+      ? "connected"
+      : computeConnectionStatus(lastSyncAt, hasBotActivity);
 
     if (status === "disconnected") {
       const ts = lastSyncAt ?? new Date(now);
@@ -13519,7 +13526,7 @@ app.get("/dashboard/alerts", requireAuth, async (req, res) => {
         ts: ts.toISOString(),
         link: `/settings/exchange-accounts`
       });
-    } else if (lastSyncAt && now - lastSyncAt.getTime() > DASHBOARD_ALERT_STALE_SYNC_MS) {
+    } else if (hasBotActivity && lastSyncAt && now - lastSyncAt.getTime() > DASHBOARD_ALERT_STALE_SYNC_MS) {
       alerts.push({
         id: createDashboardAlertId(["SYNC_FAIL", account.id, String(lastSyncAt.getTime())]),
         severity: "warning",
