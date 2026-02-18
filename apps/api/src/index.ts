@@ -4947,7 +4947,7 @@ async function notifyTradablePrediction(params: {
     "🆕 SIGNAL ALERT",
     `${params.symbol} (${params.marketType}, ${params.timeframe})`,
     `Signal: ${signalLabel}`,
-    `Signal source: ${params.signalSource}${promptName ? ` (prompt: ${promptName})` : ""}`,
+    `Source: ${params.signalSource}${promptName ? ` (Strategy: ${promptName})` : ""}`,
     `Confidence: ${confidencePct.toFixed(1)}% (target ${params.confidenceTargetPct.toFixed(0)}%)`,
     `Expected move: ${params.expectedMovePct.toFixed(2)}%`,
     `Exchange: ${params.exchangeAccountLabel}`,
@@ -4958,7 +4958,7 @@ async function notifyTradablePrediction(params: {
     await sendTelegramMessage({
       ...config,
       text,
-      linkButton: deskLink ? { text: "Open here", url: deskLink } : null
+      linkButton: deskLink ? { text: "Open Trading Desk", url: deskLink } : null
     });
   } catch (error) {
     // eslint-disable-next-line no-console
@@ -4999,8 +4999,8 @@ async function notifyMarketAnalysisUpdate(params: {
   const text = buildTelegramText([
     "📊 MARKET ANALYSIS UPDATE",
     `${params.symbol} (${params.marketType}, ${params.timeframe})`,
-    `Signal source: ${params.signalSource}`,
-    `Prompt: ${promptName ?? "n/a"}`,
+    `Source: ${params.signalSource}`,
+    `Strategy: ${promptName ?? "n/a"}`,
     explanation ? `Analysis: ${explanation}` : null
   ]);
 
