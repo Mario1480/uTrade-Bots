@@ -163,6 +163,7 @@ import {
 import { createEconomicCalendarRefreshJob } from "./jobs/economicCalendarRefreshJob.js";
 import { registerPredictionDetailRoute } from "./routes/predictions.js";
 import { registerEconomicCalendarRoutes } from "./routes/economic-calendar.js";
+import { registerNewsRoutes } from "./routes/news.js";
 import {
   buildEventDelta,
   buildPredictionChangeHash,
@@ -479,7 +480,8 @@ const accessSectionVisibilitySchema = z.object({
   tradingDesk: z.boolean().default(true),
   bots: z.boolean().default(true),
   predictionsDashboard: z.boolean().default(true),
-  economicCalendar: z.boolean().default(true)
+  economicCalendar: z.boolean().default(true),
+  news: z.boolean().default(true)
 });
 
 const accessSectionLimitsSchema = z.object({
@@ -492,6 +494,10 @@ const accessSectionLimitsSchema = z.object({
 const adminAccessSectionSettingsSchema = z.object({
   visibility: accessSectionVisibilitySchema.default({}),
   limits: accessSectionLimitsSchema.default({})
+});
+
+const adminServerInfoSchema = z.object({
+  serverIpAddress: z.string().trim().max(255).nullable().optional()
 });
 
 const adminAiTraceSettingsSchema = z.object({
@@ -872,6 +878,7 @@ type AccessSectionVisibility = {
   bots: boolean;
   predictionsDashboard: boolean;
   economicCalendar: boolean;
+  news: boolean;
 };
 type AccessSectionLimits = {
   bots: number | null;
@@ -888,6 +895,9 @@ type AccessSectionUsage = {
   predictionsLocal: number;
   predictionsAi: number;
   predictionsComposite: number;
+};
+type StoredServerInfoSettings = {
+  serverIpAddress: string | null;
 };
 
 const PREDICTION_TIMEFRAMES = new Set<PredictionTimeframe>(["5m", "15m", "1h", "4h", "1d"]);
@@ -989,6 +999,10 @@ const PREDICTION_EVALUATOR_BATCH_SIZE =
   Math.max(10, Number(process.env.PREDICTION_EVALUATOR_BATCH_SIZE ?? "100"));
 const PREDICTION_EVALUATOR_SAFETY_LAG_MS =
   Math.max(0, Number(process.env.PREDICTION_EVALUATOR_SAFETY_LAG_SECONDS ?? "120")) * 1000;
+const SETTINGS_SERVER_IP_ADDRESS =
+  (typeof process.env.SERVER_PUBLIC_IP === "string" ? process.env.SERVER_PUBLIC_IP : null) ??
+  (typeof process.env.PANEL_SERVER_IP === "string" ? process.env.PANEL_SERVER_IP : null) ??
+  null;
 const DASHBOARD_ALERT_STALE_SYNC_MS =
   Math.max(5 * 60, Number(process.env.DASHBOARD_ALERT_STALE_SYNC_SECONDS ?? "1800")) * 1000;
 const DASHBOARD_MARGIN_WARN_RATIO =
@@ -1072,11 +1086,13 @@ const FEATURE_THRESHOLDS_MARKET_TYPES = String(
 const GLOBAL_SETTING_EXCHANGES_KEY = "admin.exchanges";
 const GLOBAL_SETTING_SMTP_KEY = "admin.smtp";
 const GLOBAL_SETTING_SECURITY_KEY = "settings.security";
+const GLOBAL_SETTING_SECURITY_USER_OVERRIDES_KEY = "settings.securityUserOverrides.v1";
 const GLOBAL_SETTING_API_KEYS_KEY = "admin.apiKeys";
 const GLOBAL_SETTING_PREDICTION_REFRESH_KEY = "admin.predictionRefresh";
 const GLOBAL_SETTING_PREDICTION_DEFAULTS_KEY = "admin.predictionDefaults";
 const GLOBAL_SETTING_ADMIN_BACKEND_ACCESS_KEY = "admin.backendAccess";
 const GLOBAL_SETTING_ACCESS_SECTION_KEY = "admin.accessSection.v1";
+const GLOBAL_SETTING_SERVER_INFO_KEY = "admin.serverInfo.v1";
 const GLOBAL_SETTING_AI_PROMPTS_KEY = AI_PROMPT_SETTINGS_GLOBAL_SETTING_KEY;
 const GLOBAL_SETTING_AI_TRACE_KEY = AI_TRACE_SETTINGS_GLOBAL_SETTING_KEY;
 const GLOBAL_SETTING_PREDICTION_PERFORMANCE_RESET_KEY = "predictions.performanceResetByUser.v1";
@@ -1088,7 +1104,8 @@ const DEFAULT_ACCESS_SECTION_SETTINGS: StoredAccessSectionSettings = {
     tradingDesk: true,
     bots: true,
     predictionsDashboard: true,
-    economicCalendar: true
+    economicCalendar: true,
+    news: true
   },
   limits: {
     bots: null,
@@ -1525,6 +1542,20 @@ function parsePredictionPerformanceResetMap(value: unknown): { byUserId: Record<
   return { byUserId };
 }
 
+function normalizeServerIpAddress(value: unknown): string | null {
+  if (typeof value !== "string") return null;
+  const trimmed = value.trim();
+  if (!trimmed) return null;
+  return trimmed.slice(0, 255);
+}
+
+function parseStoredServerInfoSettings(value: unknown): StoredServerInfoSettings {
+  const record = parseJsonObject(value);
+  return {
+    serverIpAddress: normalizeServerIpAddress(record.serverIpAddress)
+  };
+}
+
 function normalizeAccessSectionLimit(value: unknown): number | null {
   if (value === null || value === undefined || value === "") return null;
   const parsed = Number(value);
@@ -1553,6 +1584,10 @@ function parseStoredAccessSectionSettings(value: unknown): StoredAccessSectionSe
       economicCalendar: asBoolean(
         visibilityRaw.economicCalendar,
         DEFAULT_ACCESS_SECTION_SETTINGS.visibility.economicCalendar
+      ),
+      news: asBoolean(
+        visibilityRaw.news,
+        DEFAULT_ACCESS_SECTION_SETTINGS.visibility.news
       )
     },
     limits: {
@@ -1573,7 +1608,8 @@ function toEffectiveAccessSectionSettings(
       tradingDesk: Boolean(stored.visibility?.tradingDesk),
       bots: Boolean(stored.visibility?.bots),
       predictionsDashboard: Boolean(stored.visibility?.predictionsDashboard),
-      economicCalendar: Boolean(stored.visibility?.economicCalendar)
+      economicCalendar: Boolean(stored.visibility?.economicCalendar),
+      news: Boolean(stored.visibility?.news)
     },
     limits: {
       bots: normalizeAccessSectionLimit(stored.limits?.bots),
@@ -1763,6 +1799,32 @@ async function setGlobalSettingValue(key: string, value: unknown) {
   });
 }
 
+async function getServerInfoSettings(): Promise<{
+  serverIpAddress: string | null;
+  updatedAt: string | null;
+  source: "db" | "env" | "none";
+  defaults: { serverIpAddress: string | null };
+}> {
+  const row = await db.globalSetting.findUnique({
+    where: { key: GLOBAL_SETTING_SERVER_INFO_KEY },
+    select: { value: true, updatedAt: true }
+  });
+  const stored = parseStoredServerInfoSettings(row?.value);
+  const envDefault = normalizeServerIpAddress(SETTINGS_SERVER_IP_ADDRESS);
+  const effective = stored.serverIpAddress ?? envDefault;
+  const source: "db" | "env" | "none" = stored.serverIpAddress
+    ? "db"
+    : envDefault
+      ? "env"
+      : "none";
+  return {
+    serverIpAddress: effective,
+    updatedAt: row?.updatedAt ? new Date(row.updatedAt).toISOString() : null,
+    source,
+    defaults: { serverIpAddress: envDefault }
+  };
+}
+
 async function getAllowedExchangeValues(): Promise<string[]> {
   const configured = asStringArray(await getGlobalSettingValue(GLOBAL_SETTING_EXCHANGES_KEY))
     .map(normalizeExchangeValue)
@@ -1793,6 +1855,36 @@ async function setSecurityGlobalSettings(next: { reauthOtpEnabled: boolean }) {
   });
 }
 
+function parseStoredSecurityUserOverrides(value: unknown): StoredSecurityUserOverrides {
+  const record = parseJsonObject(value);
+  const rawByUserId = parseJsonObject(record.reauthOtpEnabledByUserId);
+  const reauthOtpEnabledByUserId: Record<string, boolean> = {};
+  for (const [userId, rawValue] of Object.entries(rawByUserId)) {
+    if (typeof userId !== "string" || !userId.trim()) continue;
+    if (typeof rawValue !== "boolean") continue;
+    reauthOtpEnabledByUserId[userId] = rawValue;
+  }
+  return { reauthOtpEnabledByUserId };
+}
+
+async function getSecurityUserReauthOverride(userId: string): Promise<boolean | null> {
+  const stored = parseStoredSecurityUserOverrides(
+    await getGlobalSettingValue(GLOBAL_SETTING_SECURITY_USER_OVERRIDES_KEY)
+  );
+  if (Object.prototype.hasOwnProperty.call(stored.reauthOtpEnabledByUserId, userId)) {
+    return stored.reauthOtpEnabledByUserId[userId];
+  }
+  return null;
+}
+
+async function setSecurityUserReauthOverride(userId: string, enabled: boolean): Promise<void> {
+  const stored = parseStoredSecurityUserOverrides(
+    await getGlobalSettingValue(GLOBAL_SETTING_SECURITY_USER_OVERRIDES_KEY)
+  );
+  stored.reauthOtpEnabledByUserId[userId] = Boolean(enabled);
+  await setGlobalSettingValue(GLOBAL_SETTING_SECURITY_USER_OVERRIDES_KEY, stored);
+}
+
 type StoredSmtpSettings = {
   host: string | null;
   port: number | null;
@@ -1800,6 +1892,10 @@ type StoredSmtpSettings = {
   from: string | null;
   secure: boolean | null;
   passEnc: string | null;
+};
+
+type StoredSecurityUserOverrides = {
+  reauthOtpEnabledByUserId: Record<string, boolean>;
 };
 
 type StoredApiKeysSettings = {
@@ -7790,7 +7886,7 @@ app.post("/auth/password-reset/confirm", async (req, res) => {
 
 app.get("/settings/security", requireAuth, async (_req, res) => {
   const user = getUserFromLocals(res);
-  const [row, global, ctx] = await Promise.all([
+  const [row, global, ctx, userOverride] = await Promise.all([
     db.user.findUnique({
       where: { id: user.id },
       select: {
@@ -7799,13 +7895,17 @@ app.get("/settings/security", requireAuth, async (_req, res) => {
       }
     }),
     getSecurityGlobalSettings(),
-    resolveUserContext(user)
+    resolveUserContext(user),
+    getSecurityUserReauthOverride(user.id)
   ]);
+
+  const effectiveReauthOtpEnabled =
+    userOverride === null ? global.reauthOtpEnabled : userOverride;
 
   return res.json({
     autoLogoutEnabled: row?.autoLogoutEnabled ?? true,
     autoLogoutMinutes: row?.autoLogoutMinutes ?? 60,
-    reauthOtpEnabled: global.reauthOtpEnabled,
+    reauthOtpEnabled: effectiveReauthOtpEnabled,
     isSuperadmin: ctx.isSuperadmin
   });
 });
@@ -7833,12 +7933,17 @@ app.put("/settings/security", requireAuth, async (req, res) => {
   }
 
   const global = await getSecurityGlobalSettings();
-  const nextReauthEnabled =
-    ctx.isSuperadmin && typeof parsed.data.reauthOtpEnabled === "boolean"
-      ? parsed.data.reauthOtpEnabled
-      : global.reauthOtpEnabled;
-  if (ctx.isSuperadmin && typeof parsed.data.reauthOtpEnabled === "boolean") {
-    await setSecurityGlobalSettings({ reauthOtpEnabled: parsed.data.reauthOtpEnabled });
+  let nextReauthEnabled = global.reauthOtpEnabled;
+  if (typeof parsed.data.reauthOtpEnabled === "boolean") {
+    nextReauthEnabled = parsed.data.reauthOtpEnabled;
+    if (ctx.isSuperadmin) {
+      await setSecurityGlobalSettings({ reauthOtpEnabled: parsed.data.reauthOtpEnabled });
+    } else {
+      await setSecurityUserReauthOverride(user.id, parsed.data.reauthOtpEnabled);
+    }
+  } else {
+    const userOverride = await getSecurityUserReauthOverride(user.id);
+    nextReauthEnabled = userOverride === null ? global.reauthOtpEnabled : userOverride;
   }
 
   const updated = await db.user.findUnique({
@@ -7862,6 +7967,13 @@ app.get("/settings/exchange-options", requireAuth, async (_req, res) => {
   return res.json({
     allowed,
     options: getExchangeOptionsResponse(allowed)
+  });
+});
+
+app.get("/settings/server-info", requireAuth, async (_req, res) => {
+  const settings = await getServerInfoSettings();
+  return res.json({
+    serverIpAddress: settings.serverIpAddress
   });
 });
 
@@ -8723,6 +8835,26 @@ app.put("/admin/settings/access-section", requireAuth, async (req, res) => {
     source: "db",
     defaults: DEFAULT_ACCESS_SECTION_SETTINGS
   });
+});
+
+app.get("/admin/settings/server-info", requireAuth, async (_req, res) => {
+  if (!(await requireSuperadmin(res))) return;
+  const settings = await getServerInfoSettings();
+  return res.json(settings);
+});
+
+app.put("/admin/settings/server-info", requireAuth, async (req, res) => {
+  if (!(await requireSuperadmin(res))) return;
+  const parsed = adminServerInfoSchema.safeParse(req.body ?? {});
+  if (!parsed.success) {
+    return res.status(400).json({ error: "invalid_payload", details: parsed.error.flatten() });
+  }
+  const normalized = normalizeServerIpAddress(parsed.data.serverIpAddress);
+  await setGlobalSettingValue(GLOBAL_SETTING_SERVER_INFO_KEY, {
+    serverIpAddress: normalized
+  });
+  const settings = await getServerInfoSettings();
+  return res.json(settings);
 });
 
 app.get("/settings/access-section", requireAuth, async (_req, res) => {
@@ -11991,6 +12123,7 @@ registerEconomicCalendarRoutes(app, {
   requireSuperadmin,
   refreshJob: economicCalendarRefreshJob
 });
+registerNewsRoutes(app, { db });
 
 app.get("/api/symbols", requireAuth, async (req, res) => {
   const user = getUserFromLocals(res);

@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { usePathname, useSearchParams } from "next/navigation";
+import { usePathname } from "next/navigation";
 import { useLocale, useTranslations } from "next-intl";
 import { useEffect, useState } from "react";
 import {
@@ -21,7 +21,6 @@ export default function AppHeader() {
   const tCommon = useTranslations("common");
   const locale = useLocale() as AppLocale;
   const pathname = usePathname();
-  const searchParams = useSearchParams();
   const [menuOpen, setMenuOpen] = useState(false);
   const [visibility, setVisibility] = useState<AccessSectionVisibility>(
     DEFAULT_ACCESS_SECTION_VISIBILITY
@@ -34,23 +33,8 @@ export default function AppHeader() {
     || pathnameWithoutLocale === "/register"
     || pathnameWithoutLocale === "/reset-password";
 
-  const query = searchParams.toString();
-
   function hrefFor(path: string) {
     return withLocalePath(path, locale);
-  }
-
-  function switchLocalePath(targetLocale: AppLocale): string {
-    const targetPath = withLocalePath(pathname, targetLocale);
-    if (!query) return targetPath;
-    return `${targetPath}?${query}`;
-  }
-
-  function handleLocaleSwitch(targetLocale: AppLocale) {
-    if (targetLocale === locale) return;
-    const targetPath = switchLocalePath(targetLocale);
-    document.cookie = `utrade_locale=${targetLocale}; path=/; max-age=31536000`;
-    window.location.assign(targetPath);
   }
 
   useEffect(() => {
@@ -65,7 +49,8 @@ export default function AppHeader() {
             tradingDesk: payload.visibility.tradingDesk !== false,
             bots: payload.visibility.bots !== false,
             predictionsDashboard: payload.visibility.predictionsDashboard !== false,
-            economicCalendar: payload.visibility.economicCalendar !== false
+            economicCalendar: payload.visibility.economicCalendar !== false,
+            news: payload.visibility.news !== false
           });
         }
       } catch {
@@ -78,6 +63,10 @@ export default function AppHeader() {
       mounted = false;
     };
   }, [hideHeader]);
+
+  useEffect(() => {
+    setMenuOpen(false);
+  }, [pathname]);
 
   if (hideHeader) return null;
 
@@ -116,22 +105,11 @@ export default function AppHeader() {
           {visibility.economicCalendar ? (
             <Link href={hrefFor("/calendar")} className="btn">{tNav("calendar")}</Link>
           ) : null}
+          {visibility.news ? (
+            <Link href={hrefFor("/news")} className="btn">{tNav("news")}</Link>
+          ) : null}
           <Link href={hrefFor("/settings")} className="btn">{tNav("settings")}</Link>
           <Link href={hrefFor("/help")} className="btn">{tNav("help")}</Link>
-          <button
-            type="button"
-            className={`btn ${locale === "en" ? "btnPrimary" : ""}`}
-            onClick={() => handleLocaleSwitch("en")}
-          >
-            EN
-          </button>
-          <button
-            type="button"
-            className={`btn ${locale === "de" ? "btnPrimary" : ""}`}
-            onClick={() => handleLocaleSwitch("de")}
-          >
-            DE
-          </button>
           <LogoutButton />
         </nav>
       </div>

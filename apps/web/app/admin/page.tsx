@@ -38,6 +38,11 @@ const ADMIN_LINKS: AdminLinkItem[] = [
     category: "Access"
   },
   {
+    href: "/admin/server-info",
+    i18nKey: "serverInfo",
+    category: "Access"
+  },
+  {
     href: "/admin/telegram",
     i18nKey: "telegram",
     category: "Integrations"

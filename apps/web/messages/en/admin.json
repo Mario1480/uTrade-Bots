@@ -67,7 +67,8 @@
       "tradingDesk": "Trading Desk",
       "bots": "Bots",
       "predictionsDashboard": "Predictions Dashboard",
-      "economicCalendar": "Economic Calendar"
+      "economicCalendar": "Economic Calendar",
+      "news": "News"
     },
     "limits": {
       "bots": "Bots",
@@ -82,6 +83,28 @@
       "accessRequired": "Admin backend access required.",
       "defaultsLoaded": "Default values loaded into form (not saved yet).",
       "saved": "Access section settings saved."
+    }
+  },
+  "serverInfo": {
+    "title": "Admin · Server IP",
+    "subtitle": "Set the public server IP shown to users in exchange account settings.",
+    "loading": "Loading...",
+    "sectionTitle": "Server IP Settings",
+    "sourceLabel": "Source",
+    "lastUpdatedLabel": "Last updated",
+    "never": "never",
+    "fieldLabel": "Server IP Address",
+    "placeholder": "e.g. 203.0.113.10",
+    "hint": "Users can use this IP for CEX API whitelist if required.",
+    "defaultLabel": "ENV default",
+    "notConfigured": "Not configured",
+    "loadDefault": "Load ENV default",
+    "save": "Save server IP",
+    "saving": "Saving...",
+    "messages": {
+      "accessRequired": "Admin backend access required.",
+      "defaultLoaded": "ENV default loaded into form (not saved yet).",
+      "saved": "Server IP settings saved."
     }
   },
   "predictionRefresh": {
@@ -533,6 +556,10 @@
     "users": {
       "title": "Users",
       "description": "Search, create, update password and delete users."
+    },
+    "serverInfo": {
+      "title": "Server IP",
+      "description": "Set the server IP shown to users for CEX API whitelist setup."
     },
     "telegram": {
       "title": "Global Telegram",

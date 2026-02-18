@@ -1,7 +1,7 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
-import { useTranslations } from "next-intl";
+import { useEffect, useMemo, useState, type CSSProperties } from "react";
+import { useLocale, useTranslations } from "next-intl";
 import { ApiError, apiGet } from "../../lib/api";
 
 type CalendarImpact = "low" | "medium" | "high";
@@ -54,14 +54,73 @@ function addDays(value: Date, days: number): Date {
   return new Date(value.getTime() + days * 24 * 60 * 60 * 1000);
 }
 
+function fmtDateTimeEu(value: string, locale: string): string {
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) return value;
+  return parsed.toLocaleString(locale, {
+    day: "2-digit",
+    month: "2-digit",
+    year: "numeric",
+    hour: "2-digit",
+    minute: "2-digit"
+  });
+}
+
+function fmtDayEu(isoDay: string, locale: string): string {
+  const parsed = new Date(`${isoDay}T00:00:00Z`);
+  if (Number.isNaN(parsed.getTime())) return isoDay;
+  return parsed.toLocaleDateString(locale, {
+    day: "2-digit",
+    month: "2-digit",
+    year: "numeric",
+    timeZone: "UTC"
+  });
+}
+
 function impactClass(impact: CalendarImpact): string {
   if (impact === "high") return "calendarImpactBadgeHigh";
   if (impact === "medium") return "calendarImpactBadgeMedium";
   return "calendarImpactBadgeLow";
 }
 
+function impactEventCardClass(impact: CalendarImpact): string {
+  if (impact === "high") return "calendarEventCardHigh";
+  if (impact === "medium") return "calendarEventCardMedium";
+  return "calendarEventCardLow";
+}
+
+function impactEventCardStyle(impact: CalendarImpact): CSSProperties {
+  if (impact === "high") {
+    return {
+      borderLeft: "7px solid #ef4444",
+      borderColor: "rgba(239, 68, 68, 0.55)",
+      boxShadow: "inset 0 0 0 1px rgba(239, 68, 68, 0.18)",
+      background:
+        "linear-gradient(90deg, rgba(239, 68, 68, 0.18) 0%, rgba(239, 68, 68, 0.06) 16%, rgba(239, 68, 68, 0) 38%)"
+    };
+  }
+  if (impact === "medium") {
+    return {
+      borderLeft: "7px solid #f59e0b",
+      borderColor: "rgba(245, 158, 11, 0.5)",
+      boxShadow: "inset 0 0 0 1px rgba(245, 158, 11, 0.16)",
+      background:
+        "linear-gradient(90deg, rgba(245, 158, 11, 0.18) 0%, rgba(245, 158, 11, 0.06) 16%, rgba(245, 158, 11, 0) 38%)"
+    };
+  }
+  return {
+    borderLeft: "7px solid #22c55e",
+    borderColor: "rgba(34, 197, 94, 0.45)",
+    boxShadow: "inset 0 0 0 1px rgba(34, 197, 94, 0.14)",
+    background:
+      "linear-gradient(90deg, rgba(34, 197, 94, 0.16) 0%, rgba(34, 197, 94, 0.05) 16%, rgba(34, 197, 94, 0) 38%)"
+  };
+}
+
 export default function CalendarPage() {
   const t = useTranslations("system.calendar");
+  const locale = useLocale();
+  const dateLocale = locale === "de" ? "de-DE" : "en-GB";
   const [currency, setCurrency] = useState("USD");
   const [impacts, setImpacts] = useState<CalendarImpact[]>(["high"]);
   const [from, setFrom] = useState(() => toDateInput(new Date()));
@@ -175,13 +234,25 @@ export default function CalendarPage() {
               })}
             </div>
           </label>
-          <label className="calendarFilterField">
+          <label className="calendarFilterField calendarFilterFieldDate">
             <div style={{ fontSize: 12, color: "var(--muted)", marginBottom: 4 }}>{t("filters.from")}</div>
-            <input className="input" type="date" value={from} onChange={(e) => setFrom(e.target.value)} />
+            <input
+              className="input calendarDateInput"
+              type="date"
+              lang={dateLocale}
+              value={from}
+              onChange={(e) => setFrom(e.target.value)}
+            />
           </label>
-          <label className="calendarFilterField">
+          <label className="calendarFilterField calendarFilterFieldDate">
             <div style={{ fontSize: 12, color: "var(--muted)", marginBottom: 4 }}>{t("filters.to")}</div>
-            <input className="input" type="date" value={to} onChange={(e) => setTo(e.target.value)} />
+            <input
+              className="input calendarDateInput"
+              type="date"
+              lang={dateLocale}
+              value={to}
+              onChange={(e) => setTo(e.target.value)}
+            />
           </label>
           <div className="calendarFilterActions">
             <button className="btn" onClick={() => setFrom(toDateInput(new Date()))} type="button">{t("actions.today")}</button>
@@ -201,12 +272,12 @@ export default function CalendarPage() {
           </div>
           {nextSummary.blackoutActive && nextSummary.activeWindow ? (
             <div style={{ color: "var(--muted)", fontSize: 13 }}>
-              {t("summary.until")} {new Date(nextSummary.activeWindow.to).toLocaleString()} · {nextSummary.activeWindow.event.title}
+              {t("summary.until")} {fmtDateTimeEu(nextSummary.activeWindow.to, dateLocale)} · {nextSummary.activeWindow.event.title}
             </div>
           ) : nextSummary.nextEvent ? (
             <div style={{ color: "var(--muted)", fontSize: 13 }}>
               {t("summary.nextEvent", { impact: nextSummary.impactMin })}: {nextSummary.nextEvent.title} {t("summary.at")}{" "}
-              {new Date(nextSummary.nextEvent.ts).toLocaleString()}
+              {fmtDateTimeEu(nextSummary.nextEvent.ts, dateLocale)}
             </div>
           ) : (
             <div style={{ color: "var(--muted)", fontSize: 13 }}>{t("summary.noUpcoming")}</div>
@@ -229,16 +300,20 @@ export default function CalendarPage() {
         ) : (
           grouped.map(([day, rows]) => (
             <div key={day} style={{ marginBottom: 14 }}>
-              <div style={{ fontWeight: 700, marginBottom: 8 }}>{day}</div>
+              <div style={{ fontWeight: 700, marginBottom: 8 }}>{fmtDayEu(day, dateLocale)}</div>
               <div style={{ display: "grid", gap: 8 }}>
                 {rows.map((event) => (
-                  <div key={event.id} className="card calendarEventCard">
+                  <div
+                    key={event.id}
+                    className={`card calendarEventCard ${impactEventCardClass(event.impact)}`}
+                    style={impactEventCardStyle(event.impact)}
+                  >
                     <div className="calendarEventHeader">
                       <div style={{ fontWeight: 700 }}>{event.title}</div>
                       <span className={`badge ${impactClass(event.impact)}`}>{event.impact}</span>
                     </div>
                     <div className="calendarEventMeta">
-                      {new Date(event.ts).toLocaleString()} · {event.country} · {event.currency}
+                      {fmtDateTimeEu(event.ts, dateLocale)} · {event.country} · {event.currency}
                     </div>
                     <div className="calendarEventValues">
                       <span>{t("forecast")}: {fmtNumber(event.forecast)}</span>

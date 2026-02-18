@@ -4,6 +4,7 @@
   "actions": {
     "predictions": "Prognosen",
     "calendar": "Kalender",
+    "news": "News",
     "manualTrading": "Manuelles Trading",
     "newFuturesBot": "Neuer Futures Bot"
   },

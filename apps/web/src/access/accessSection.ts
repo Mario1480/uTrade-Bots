@@ -3,6 +3,7 @@ export type AccessSectionVisibility = {
   bots: boolean;
   predictionsDashboard: boolean;
   economicCalendar: boolean;
+  news: boolean;
 };
 
 export type AccessSectionLimits = {
@@ -47,7 +48,8 @@ export const DEFAULT_ACCESS_SECTION_VISIBILITY: AccessSectionVisibility = {
   tradingDesk: true,
   bots: true,
   predictionsDashboard: true,
-  economicCalendar: true
+  economicCalendar: true,
+  news: true
 };
 
 export const DEFAULT_ACCESS_SECTION_LIMITS: AccessSectionLimits = {

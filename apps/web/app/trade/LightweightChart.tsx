@@ -23,6 +23,7 @@ import {
 import { useTranslations } from "next-intl";
 import { apiGet, ApiError } from "../../lib/api";
 import type { TradeDeskPrefillPayload } from "../../src/schemas/tradeDeskPrefill";
+import { getPvsraCandleColor } from "../../src/trade/pvsraColor";
 
 type CandleApiItem = {
   ts: number | null;
@@ -227,31 +228,6 @@ function applyLatestViewport(
   chart.timeScale().setVisibleLogicalRange({ from, to });
 }
 
-function classifyPvsraColor(
-  items: Array<CandleApiItem & { ts: number }>,
-  index: number
-): string | null {
-  const row = items[index];
-  const lookback = 10;
-  if (index < lookback) return null;
-  const prev = items.slice(index - lookback, index);
-  const avgVol = prev.reduce((sum, item) => sum + Math.max(0, Number(item.volume ?? 0)), 0) / lookback;
-  const avgSpread = prev.reduce((sum, item) => sum + Math.max(0, item.high - item.low), 0) / lookback;
-  if (!Number.isFinite(avgVol) || avgVol <= 0 || !Number.isFinite(avgSpread) || avgSpread <= 0) {
-    return null;
-  }
-  const vol = Math.max(0, Number(row.volume ?? 0));
-  const spread = Math.max(0, row.high - row.low);
-  const volRatio = vol / avgVol;
-  const spreadRatio = spread / avgSpread;
-  const isBull = row.close >= row.open;
-
-  if (volRatio >= 2.2 && spreadRatio >= 1.8) return isBull ? "#34d399" : "#f87171";
-  if (volRatio >= 1.6) return isBull ? "#10b981" : "#ef4444";
-  if (spreadRatio >= 1.5) return isBull ? "#22c55e" : "#fb7185";
-  return null;
-}
-
 function toChartData(items: CandleApiItem[], usePvsraVector: boolean): CandlestickData[] {
   const normalized = normalizeCandles(items);
   const out: CandlestickData[] = [];
@@ -265,12 +241,10 @@ function toChartData(items: CandleApiItem[], usePvsraVector: boolean): Candlesti
       close: row.close
     };
     if (usePvsraVector) {
-      const pvsraColor = classifyPvsraColor(normalized, index);
-      if (pvsraColor) {
-        base.color = pvsraColor;
-        base.borderColor = pvsraColor;
-        base.wickColor = pvsraColor;
-      }
+      const pvsraColor = getPvsraCandleColor(normalized, index);
+      base.color = pvsraColor;
+      base.borderColor = pvsraColor;
+      base.wickColor = pvsraColor;
     }
     out.push(base);
   }

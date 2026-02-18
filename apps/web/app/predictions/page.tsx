@@ -2624,7 +2624,10 @@ export default function PredictionsPage() {
                               <span key={`${row.id}_${tag}`} className="badge">{tag}</span>
                             ))}
                           </div>
-                          <div className="predictionExplanationClamp">
+                          <div
+                            className="predictionExplanationClamp"
+                            title={row.explanation || "-"}
+                          >
                             {row.explanation || "-"}
                           </div>
                         </td>
@@ -2782,7 +2785,10 @@ export default function PredictionsPage() {
                     {manualReason.shortReason}
                   </div>
 
-                  <div className="predictionRowCardText">
+                  <div
+                    className="predictionRowCardText predictionRowCardExplanation"
+                    title={row.explanation || "-"}
+                  >
                     {row.explanation || "-"}
                   </div>
 

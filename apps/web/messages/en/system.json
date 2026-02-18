@@ -142,6 +142,43 @@
     "previous": "Previous",
     "actual": "Actual"
   },
+  "news": {
+    "title": "News",
+    "subtitle": "FMP crypto and general news feed.",
+    "tabs": {
+      "all": "All",
+      "crypto": "Crypto",
+      "general": "General"
+    },
+    "filters": {
+      "limit": "Items",
+      "page": "Page",
+      "search": "Search",
+      "searchPlaceholder": "bitcoin, ethereum, solana",
+      "symbols": "Symbols (csv)",
+      "symbolsPlaceholder": "BTC,ETH,SOL",
+      "from": "From",
+      "to": "To"
+    },
+    "actions": {
+      "refresh": "Refresh"
+    },
+    "meta": {
+      "mode": "Mode",
+      "cache": "Cache",
+      "search": "Search",
+      "searchFallback": "Search fallback active",
+      "fetchedAt": "Fetched",
+      "partial": "Partial feed (one source unavailable)"
+    },
+    "feed": {
+      "crypto": "Crypto",
+      "general": "General"
+    },
+    "loadError": "Load error",
+    "loading": "Loading news...",
+    "empty": "No news found for the selected filters."
+  },
   "settingsMain": {
     "title": "Settings",
     "subtitle": "User self-service and exchange account management.",
@@ -168,11 +205,20 @@
     },
     "sections": {
       "accountSettings": "Account Settings",
+      "cexTradingSettings": "CEX/Trading Settings",
+      "accountSecurityTools": "Security / Notifications / License",
       "integrationsSecurity": "Integrations / Security",
       "exchangeSettings": "Exchange Settings",
+      "language": "Language",
       "security": "Security",
       "notifications": "Notifications",
       "licenseManagement": "License Management"
+    },
+    "language": {
+      "description": "Set your interface language here to keep the header cleaner on mobile.",
+      "current": "Current language",
+      "english": "English",
+      "german": "Deutsch"
     },
     "exchange": {
       "addTitle": "Add Exchange Account",
@@ -181,12 +227,15 @@
       "fields": {
         "exchange": "Exchange",
         "label": "Label",
+        "serverIpAddress": "Server IP Address",
         "marketDataAccount": "Market data account (required)",
         "apiKey": "API Key",
         "apiSecret": "API Secret",
         "passphraseRequired": "Passphrase (required for Bitget)",
         "passphraseOptional": "Passphrase (optional)"
       },
+      "serverIpHint": "Use this IP for CEX API whitelist if required.",
+      "serverIpNotConfigured": "Not configured",
       "selectLiveCex": "Select live CEX account",
       "createLiveFirst": "Create a live exchange account first.",
       "addAccount": "Add account",
@@ -383,7 +432,7 @@
         "dailyOpen": "Daily Open",
         "smcStructure": "SMC Structure (BOS/CHoCH)",
         "volumeOverlay": "Volume Overlay",
-        "pvsraVector": "PVSRA Vector Candles"
+        "pvsraVector": "PVSRA Vector Candles (regular = gray)"
       },
       "presets": {
         "title": "Presets:",

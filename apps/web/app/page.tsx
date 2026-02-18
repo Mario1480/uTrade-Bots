@@ -125,7 +125,8 @@ export default function Page() {
             tradingDesk: accessResult.value.visibility.tradingDesk !== false,
             bots: accessResult.value.visibility.bots !== false,
             predictionsDashboard: accessResult.value.visibility.predictionsDashboard !== false,
-            economicCalendar: accessResult.value.visibility.economicCalendar !== false
+            economicCalendar: accessResult.value.visibility.economicCalendar !== false,
+            news: accessResult.value.visibility.news !== false
           });
         } else {
           setAccessVisibility(DEFAULT_ACCESS_SECTION_VISIBILITY);
@@ -176,6 +177,9 @@ export default function Page() {
           ) : null}
           {accessVisibility.economicCalendar ? (
             <Link href={withLocalePath("/calendar", locale)} className="btn">{t("actions.calendar")}</Link>
+          ) : null}
+          {accessVisibility.news ? (
+            <Link href={withLocalePath("/news", locale)} className="btn">{t("actions.news")}</Link>
           ) : null}
           {accessVisibility.tradingDesk ? (
             <Link href={withLocalePath("/trade", locale)} className="btn">{t("actions.manualTrading")}</Link>

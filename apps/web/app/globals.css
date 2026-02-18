@@ -975,6 +975,9 @@ a { color: inherit; }
 .calendarPage {
   display: grid;
   gap: 12px;
+  width: 100%;
+  max-width: 1180px;
+  margin: 0 auto;
 }
 
 .calendarFilterCard,
@@ -994,6 +997,10 @@ a { color: inherit; }
 .calendarFilterField {
   display: grid;
   gap: 4px;
+}
+
+.calendarDateInput {
+  min-height: 40px;
 }
 
 .calendarImpactToggleRow {
@@ -1018,6 +1025,27 @@ a { color: inherit; }
 .calendarEventCard {
   margin: 0;
   padding: 10px;
+  border-left-width: 6px;
+  border-left-style: solid;
+  transition: border-color 0.2s ease, box-shadow 0.2s ease;
+}
+
+.calendarEventCardHigh {
+  border-color: rgba(239, 68, 68, 0.55);
+  border-left-color: rgba(239, 68, 68, 0.95);
+  box-shadow: inset 0 0 0 1px rgba(239, 68, 68, 0.15);
+}
+
+.calendarEventCardMedium {
+  border-color: rgba(245, 158, 11, 0.5);
+  border-left-color: rgba(245, 158, 11, 0.9);
+  box-shadow: inset 0 0 0 1px rgba(245, 158, 11, 0.14);
+}
+
+.calendarEventCardLow {
+  border-color: rgba(34, 197, 94, 0.45);
+  border-left-color: rgba(34, 197, 94, 0.85);
+  box-shadow: inset 0 0 0 1px rgba(34, 197, 94, 0.12);
 }
 
 .calendarEventHeader {
@@ -1041,6 +1069,142 @@ a { color: inherit; }
   display: flex;
   gap: 10px;
   flex-wrap: wrap;
+}
+
+.newsPage {
+  display: grid;
+  gap: 12px;
+  width: 100%;
+  max-width: 1180px;
+  margin: 0 auto;
+}
+
+.newsFilterCard,
+.newsMetaCard,
+.newsListCard,
+.newsErrorCard {
+  padding: 12px;
+  margin: 0;
+}
+
+.newsTabRow {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-bottom: 10px;
+}
+
+.newsFilterGrid {
+  display: grid;
+  gap: 10px;
+  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+}
+
+.newsFilterField {
+  display: grid;
+  gap: 4px;
+}
+
+.newsFilterLabel {
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.newsFilterActions {
+  display: flex;
+  align-items: end;
+}
+
+.newsMetaCard {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.newsErrorCard {
+  border-color: #ef4444;
+}
+
+.newsEmptyText {
+  font-size: 13px;
+  color: var(--muted);
+}
+
+.newsList {
+  display: grid;
+  gap: 8px;
+}
+
+.newsItemCard {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 12px;
+  align-items: start;
+  padding: 10px;
+  margin: 0;
+}
+
+.newsItemContent {
+  min-width: 0;
+}
+
+.newsItemHeader {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.newsItemTime {
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.newsItemTitle {
+  display: inline-block;
+  color: var(--text);
+  font-weight: 700;
+  margin-top: 6px;
+  text-decoration: none;
+}
+
+.newsItemTitle:hover {
+  text-decoration: underline;
+}
+
+.newsItemSite {
+  margin-top: 4px;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.newsItemText {
+  margin: 6px 0 0;
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.4;
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.newsItemImage {
+  width: 120px;
+  height: 72px;
+  object-fit: cover;
+  border-radius: 10px;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+.newsBadgeCrypto {
+  border-color: rgba(34, 197, 94, 0.7);
+  color: #bbf7d0;
+}
+
+.newsBadgeGeneral {
+  border-color: rgba(96, 165, 250, 0.7);
+  color: #bfdbfe;
 }
 
 .exchangeOverviewGrid {
@@ -2469,6 +2633,12 @@ a { color: inherit; }
   line-height: 1.35;
 }
 
+.predictionRowCardExplanation {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+
 .predictionRowCardAuto {
   margin-top: 6px;
   display: flex;
@@ -3335,6 +3505,13 @@ a { color: inherit; }
     grid-template-columns: 1fr;
     gap: 8px;
   }
+  .calendarFilterFieldDate {
+    width: 100%;
+  }
+  .calendarDateInput {
+    min-height: 42px;
+    font-size: 16px;
+  }
   .calendarFilterActions {
     display: grid;
     grid-template-columns: 1fr;
@@ -3360,6 +3537,25 @@ a { color: inherit; }
     display: grid;
     grid-template-columns: 1fr;
     gap: 4px;
+  }
+  .newsFilterGrid {
+    grid-template-columns: 1fr;
+    gap: 8px;
+  }
+  .newsFilterActions {
+    width: 100%;
+  }
+  .newsFilterActions .btn {
+    width: 100%;
+    justify-content: center;
+  }
+  .newsItemCard {
+    grid-template-columns: 1fr;
+    padding: 9px;
+  }
+  .newsItemImage {
+    width: 100%;
+    height: 160px;
   }
   .predictionSubCard {
     margin-top: 9px;
@@ -3652,7 +3848,11 @@ a { color: inherit; }
   .calendarFilterCard,
   .calendarSummaryCard,
   .calendarEventsCard,
-  .calendarErrorCard {
+  .calendarErrorCard,
+  .newsFilterCard,
+  .newsMetaCard,
+  .newsListCard,
+  .newsErrorCard {
     padding: 10px;
   }
   .calendarImpactToggleRow .badge {

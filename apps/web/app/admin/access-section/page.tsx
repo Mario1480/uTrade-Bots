@@ -195,6 +195,16 @@ export default function AdminAccessSectionPage() {
               />
               <span>{t("visibility.economicCalendar")}</span>
             </label>
+            <label style={{ display: "flex", gap: 8, alignItems: "center" }}>
+              <input
+                type="checkbox"
+                checked={visibility.news}
+                onChange={(event) =>
+                  setVisibility((prev) => ({ ...prev, news: event.target.checked }))
+                }
+              />
+              <span>{t("visibility.news")}</span>
+            </label>
           </div>
 
           <div style={{ display: "grid", gap: 10, marginTop: 14 }}>

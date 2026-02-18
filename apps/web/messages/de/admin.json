@@ -67,7 +67,8 @@
       "tradingDesk": "Trading Desk",
       "bots": "Bots",
       "predictionsDashboard": "Predictions Dashboard",
-      "economicCalendar": "Wirtschaftskalender"
+      "economicCalendar": "Wirtschaftskalender",
+      "news": "News"
     },
     "limits": {
       "bots": "Bots",
@@ -82,6 +83,28 @@
       "accessRequired": "Admin-Backend-Zugriff erforderlich.",
       "defaultsLoaded": "Default-Werte ins Formular geladen (noch nicht gespeichert).",
       "saved": "Access-Section-Einstellungen gespeichert."
+    }
+  },
+  "serverInfo": {
+    "title": "Admin · Server-IP",
+    "subtitle": "Oeffentliche Server-IP festlegen, die User in den Exchange-Einstellungen sehen.",
+    "loading": "Laedt...",
+    "sectionTitle": "Server-IP-Einstellungen",
+    "sourceLabel": "Quelle",
+    "lastUpdatedLabel": "Zuletzt aktualisiert",
+    "never": "nie",
+    "fieldLabel": "Server-IP-Adresse",
+    "placeholder": "z. B. 203.0.113.10",
+    "hint": "Diese IP kann fuer CEX-API-Whitelists genutzt werden.",
+    "defaultLabel": "ENV-Standard",
+    "notConfigured": "Nicht konfiguriert",
+    "loadDefault": "ENV-Standard laden",
+    "save": "Server-IP speichern",
+    "saving": "Speichern...",
+    "messages": {
+      "accessRequired": "Admin-Backend-Zugriff erforderlich.",
+      "defaultLoaded": "ENV-Standard ins Formular geladen (noch nicht gespeichert).",
+      "saved": "Server-IP-Einstellungen gespeichert."
     }
   },
   "predictionRefresh": {
@@ -533,6 +556,10 @@
     "users": {
       "title": "Benutzer",
       "description": "Benutzer suchen, erstellen, Passwörter ändern und löschen."
+    },
+    "serverInfo": {
+      "title": "Server-IP",
+      "description": "Server-IP setzen, die User fuer CEX-Whitelist-Setup sehen."
     },
     "telegram": {
       "title": "Globales Telegram",
