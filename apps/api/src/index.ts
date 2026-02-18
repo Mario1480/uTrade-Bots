@@ -4858,13 +4858,10 @@ function parseTelegramConfigValue(value: unknown): string | null {
   return trimmed.length > 0 ? trimmed : null;
 }
 
-async function resolveTelegramConfig(): Promise<TelegramConfig | null> {
+async function resolveTelegramConfig(userId?: string | null): Promise<TelegramConfig | null> {
   const envToken = parseTelegramConfigValue(process.env.TELEGRAM_BOT_TOKEN);
   const envChatId = parseTelegramConfigValue(process.env.TELEGRAM_CHAT_ID);
-  if (envToken && envChatId) {
-    return { botToken: envToken, chatId: envChatId };
-  }
-
+  const envOverrideEnabled = Boolean(envToken && envChatId);
   const config = await db.alertConfig.findUnique({
     where: { key: "default" },
     select: {
@@ -4873,8 +4870,25 @@ async function resolveTelegramConfig(): Promise<TelegramConfig | null> {
     }
   });
 
-  const botToken = parseTelegramConfigValue(config?.telegramBotToken);
-  const chatId = parseTelegramConfigValue(config?.telegramChatId);
+  const botToken = envOverrideEnabled
+    ? envToken
+    : parseTelegramConfigValue(config?.telegramBotToken);
+  let chatId: string | null = null;
+  if (userId) {
+    const userSettings = await db.user.findUnique({
+      where: { id: userId },
+      select: {
+        telegramChatId: true
+      }
+    });
+    chatId = parseTelegramConfigValue(userSettings?.telegramChatId);
+  }
+  if (!chatId) {
+    chatId = envOverrideEnabled
+      ? envChatId
+      : parseTelegramConfigValue(config?.telegramChatId);
+  }
+
   if (!botToken || !chatId) return null;
 
   return { botToken, chatId };
@@ -4954,7 +4968,7 @@ async function notifyTradablePrediction(params: {
     return;
   }
 
-  const config = await resolveTelegramConfig();
+  const config = await resolveTelegramConfig(params.userId);
   if (!config) {
     return;
   }
@@ -5011,7 +5025,7 @@ async function notifyMarketAnalysisUpdate(params: {
   signalSource: PredictionSignalSource;
   aiPromptTemplateName?: string | null;
 }): Promise<void> {
-  const config = await resolveTelegramConfig();
+  const config = await resolveTelegramConfig(params.userId);
   if (!config) return;
 
   const promptName =
@@ -5055,7 +5069,7 @@ async function notifyPredictionOutcome(params: {
   outcomeResult: "tp_hit" | "sl_hit";
   outcomePnlPct: number | null;
 }): Promise<boolean> {
-  const config = await resolveTelegramConfig();
+  const config = await resolveTelegramConfig(params.userId);
   if (!config) {
     return false;
   }
@@ -8393,18 +8407,27 @@ app.get("/settings/server-info", requireAuth, async (_req, res) => {
 app.get("/settings/alerts", requireAuth, async (_req, res) => {
   const user = getUserFromLocals(res);
   const isSuperadmin = isSuperadminEmail(user.email);
-  const config = await db.alertConfig.findUnique({
-    where: { key: "default" },
-    select: {
-      telegramBotToken: true,
-      telegramChatId: true
-    }
-  });
+  const [config, userSettings] = await Promise.all([
+    db.alertConfig.findUnique({
+      where: { key: "default" },
+      select: {
+        telegramBotToken: true
+      }
+    }),
+    db.user.findUnique({
+      where: { id: user.id },
+      select: {
+        telegramChatId: true
+      }
+    })
+  ]);
+  const envToken = parseTelegramConfigValue(process.env.TELEGRAM_BOT_TOKEN);
+  const dbToken = parseTelegramConfigValue(config?.telegramBotToken);
 
   return res.json({
-    telegramBotToken: isSuperadmin ? config?.telegramBotToken ?? null : null,
-    telegramBotConfigured: Boolean(config?.telegramBotToken),
-    telegramChatId: config?.telegramChatId ?? null
+    telegramBotToken: isSuperadmin ? dbToken : null,
+    telegramBotConfigured: Boolean(envToken ?? dbToken),
+    telegramChatId: userSettings?.telegramChatId ?? null
   });
 });
 
@@ -8416,48 +8439,59 @@ app.put("/settings/alerts", requireAuth, async (req, res) => {
     return res.status(400).json({ error: "invalid_payload", details: parsed.error.flatten() });
   }
 
-  const existing = await db.alertConfig.findUnique({
-    where: { key: "default" },
-    select: {
-      telegramBotToken: true,
-      telegramChatId: true
-    }
-  });
-
   const requestedToken = parseTelegramConfigValue(parsed.data.telegramBotToken);
   const requestedChatId = parseTelegramConfigValue(parsed.data.telegramChatId);
-  const token = isSuperadmin
-    ? requestedToken ?? parseTelegramConfigValue(existing?.telegramBotToken)
-    : parseTelegramConfigValue(existing?.telegramBotToken);
-  const chatId = requestedChatId ?? parseTelegramConfigValue(existing?.telegramChatId);
+  const hasTokenUpdate = Object.prototype.hasOwnProperty.call(parsed.data, "telegramBotToken");
+  const [existingConfig, updatedUser] = await Promise.all([
+    db.alertConfig.findUnique({
+      where: { key: "default" },
+      select: {
+        telegramBotToken: true,
+        telegramChatId: true
+      }
+    }),
+    db.user.update({
+      where: { id: user.id },
+      data: {
+        telegramChatId: requestedChatId
+      },
+      select: {
+        telegramChatId: true
+      }
+    })
+  ]);
 
-  const updated = await db.alertConfig.upsert({
-    where: { key: "default" },
-    create: {
-      key: "default",
-      telegramBotToken: token,
-      telegramChatId: chatId
-    },
-    update: {
-      telegramBotToken: token,
-      telegramChatId: chatId
-    },
-    select: {
-      telegramBotToken: true,
-      telegramChatId: true
-    }
-  });
+  let token = parseTelegramConfigValue(existingConfig?.telegramBotToken);
+  if (isSuperadmin && hasTokenUpdate) {
+    const updatedConfig = await db.alertConfig.upsert({
+      where: { key: "default" },
+      create: {
+        key: "default",
+        telegramBotToken: requestedToken,
+        telegramChatId: parseTelegramConfigValue(existingConfig?.telegramChatId)
+      },
+      update: {
+        telegramBotToken: requestedToken
+      },
+      select: {
+        telegramBotToken: true
+      }
+    });
+    token = parseTelegramConfigValue(updatedConfig.telegramBotToken);
+  }
+
+  const envToken = parseTelegramConfigValue(process.env.TELEGRAM_BOT_TOKEN);
 
   return res.json({
-    telegramBotToken: isSuperadmin ? updated.telegramBotToken ?? null : null,
-    telegramBotConfigured: Boolean(updated.telegramBotToken),
-    telegramChatId: updated.telegramChatId ?? null
+    telegramBotToken: isSuperadmin ? token : null,
+    telegramBotConfigured: Boolean(envToken ?? token),
+    telegramChatId: updatedUser.telegramChatId ?? null
   });
 });
 
 app.post("/alerts/test", requireAuth, async (_req, res) => {
   const user = getUserFromLocals(res);
-  const config = await resolveTelegramConfig();
+  const config = await resolveTelegramConfig(user.id);
   if (!config) {
     return res.status(400).json({
       error: "telegram_not_configured",
