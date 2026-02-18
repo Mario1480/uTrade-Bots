@@ -68,6 +68,13 @@ export const AI_PROMPT_INDICATOR_OPTIONS = [
     paths: ["indicators.fvg"]
   },
   {
+    key: "vumanchu",
+    label: "VuManChu Cipher",
+    group: "Core",
+    description: "WaveTrend, divergences and entry-state markers.",
+    paths: ["indicators.vumanchu"]
+  },
+  {
     key: "history_context",
     label: "History Context Pack",
     group: "Context",
@@ -251,6 +258,7 @@ const defaultIndicatorKeys = AI_PROMPT_INDICATOR_OPTIONS.map(
 const DEFAULT_PROMPT_OHLCV_BARS = 100;
 const MIN_PROMPT_OHLCV_BARS = 20;
 const MAX_PROMPT_OHLCV_BARS = 500;
+const MAX_PROMPT_TEXT_CHARS = 8000;
 const MAX_PROMPT_TIMEFRAMES = 4;
 const DEFAULT_PROMPT_DIRECTION_PREFERENCE: AiPromptDirectionPreference = "either";
 const DEFAULT_PROMPT_CONFIDENCE_TARGET_PCT = 60;
@@ -300,8 +308,8 @@ function asObject(value: unknown): Record<string, unknown> | null {
 function sanitizePromptText(value: unknown): string {
   if (typeof value !== "string") return "";
   const trimmed = value.trim();
-  if (trimmed.length <= 4000) return trimmed;
-  return trimmed.slice(0, 4000).trimEnd();
+  if (trimmed.length <= MAX_PROMPT_TEXT_CHARS) return trimmed;
+  return trimmed.slice(0, MAX_PROMPT_TEXT_CHARS).trimEnd();
 }
 
 function sanitizeName(value: unknown, fallback: string): string {
