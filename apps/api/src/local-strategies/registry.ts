@@ -547,16 +547,193 @@ export function getBuiltinLocalStrategyTemplates(): Array<{
   }));
 }
 
+type PythonRegistryItem = {
+  type: string;
+  name: string;
+  version: string;
+  defaultConfig: Record<string, unknown>;
+  uiSchema: Record<string, unknown>;
+};
+
+const FALLBACK_PYTHON_STRATEGIES: PythonRegistryItem[] = [
+  {
+    type: "regime_gate",
+    name: "Regime Gate",
+    version: "1.0.0",
+    defaultConfig: {
+      allowStates: ["trend_up", "trend_down", "transition"],
+      minRegimeConfidencePct: 45,
+      requireStackAlignment: true,
+      allowUnknownRegime: false
+    },
+    uiSchema: {
+      title: "Regime Gate",
+      description: "Uses historyContext.reg and historyContext.ema.stk to allow/block deterministic setups.",
+      fields: {
+        allowStates: { type: "multiselect", options: ["trend_up", "trend_down", "range", "transition", "unknown"] },
+        minRegimeConfidencePct: { type: "number", min: 0, max: 100, step: 1 },
+        requireStackAlignment: { type: "boolean" },
+        allowUnknownRegime: { type: "boolean" }
+      }
+    }
+  },
+  {
+    type: "signal_filter",
+    name: "Signal Filter",
+    version: "1.0.0",
+    defaultConfig: {
+      blockedTags: ["data_gap", "news_risk"],
+      requiredTags: [],
+      maxVolZ: 2.5,
+      blockRangeStates: ["range"],
+      allowRangeWhenTrendTag: false
+    },
+    uiSchema: {
+      title: "Signal Filter",
+      description: "Blocks setups by tags, volatility pressure, and range-state constraints.",
+      fields: {
+        blockedTags: { type: "string_array" },
+        requiredTags: { type: "string_array" },
+        maxVolZ: { type: "number", min: 0, max: 10, step: 0.1 },
+        blockRangeStates: { type: "multiselect", options: ["range", "transition", "unknown"] },
+        allowRangeWhenTrendTag: { type: "boolean" }
+      }
+    }
+  },
+  {
+    type: "trend_vol_gate",
+    name: "Trend+Vol Gate",
+    version: "1.0.0",
+    defaultConfig: {
+      allowedStates: ["trend_up", "trend_down"],
+      minRegimeConf: 55,
+      requireStackAlignment: true,
+      requireSlopeAlignment: true,
+      minAbsD50Pct: 0.12,
+      minAbsD200Pct: 0.2,
+      maxVolZ: 2.5,
+      maxRelVol: 1.8,
+      minVolZ: -1.2,
+      minRelVol: 0.6,
+      minPassScore: 70,
+      allowNeutralSignal: false
+    },
+    uiSchema: {
+      title: "Trend+Vol Gate",
+      description: "Deterministic gate on regime, EMA alignment, distance and volume pressure.",
+      fields: {
+        allowedStates: { type: "multiselect", options: ["trend_up", "trend_down", "range", "transition", "unknown"] },
+        minRegimeConf: { type: "number", min: 0, max: 100, step: 1 },
+        requireStackAlignment: { type: "boolean" },
+        requireSlopeAlignment: { type: "boolean" },
+        minAbsD50Pct: { type: "number", min: 0, max: 5, step: 0.01 },
+        minAbsD200Pct: { type: "number", min: 0, max: 5, step: 0.01 },
+        maxVolZ: { type: "number", min: 0, max: 10, step: 0.1 },
+        maxRelVol: { type: "number", min: 0, max: 5, step: 0.1 },
+        minVolZ: { type: "number", min: -10, max: 0, step: 0.1 },
+        minRelVol: { type: "number", min: 0, max: 2, step: 0.1 },
+        minPassScore: { type: "number", min: 0, max: 100, step: 1 },
+        allowNeutralSignal: { type: "boolean" }
+      }
+    }
+  },
+  {
+    type: "smart_money_concept",
+    name: "Smart Money Concept",
+    version: "1.0.0",
+    defaultConfig: {
+      requireNonNeutralSignal: true,
+      blockOnDataGap: true,
+      requireTrendAlignment: true,
+      requireStructureAlignment: true,
+      requireZoneAlignment: true,
+      allowEquilibriumZone: true,
+      maxEventAgeBars: 120,
+      minPassScore: 65
+    },
+    uiSchema: {
+      title: "Smart Money Concept",
+      description: "Deterministic SMC gate using structure, trend and premium/discount zones.",
+      fields: {
+        requireNonNeutralSignal: { type: "boolean" },
+        blockOnDataGap: { type: "boolean" },
+        requireTrendAlignment: { type: "boolean" },
+        requireStructureAlignment: { type: "boolean" },
+        requireZoneAlignment: { type: "boolean" },
+        allowEquilibriumZone: { type: "boolean" },
+        maxEventAgeBars: { type: "number", min: 1, max: 1000, step: 1 },
+        minPassScore: { type: "number", min: 0, max: 100, step: 1 }
+      }
+    }
+  },
+  {
+    type: "vmc_cipher_gate",
+    name: "VMC Cipher Gate",
+    version: "1.0.0",
+    defaultConfig: {
+      requireNonNeutralSignal: true,
+      blockOnDataGap: true,
+      maxSignalAgeBars: 4,
+      allowDivSignalAsPrimary: true,
+      minPassScore: 60
+    },
+    uiSchema: {
+      title: "VMC Cipher Gate",
+      description: "Deterministic gate using VuManChu Cipher signals with gold-dot long block.",
+      fields: {
+        requireNonNeutralSignal: { type: "boolean" },
+        blockOnDataGap: { type: "boolean" },
+        maxSignalAgeBars: { type: "number", min: 1, max: 100, step: 1 },
+        allowDivSignalAsPrimary: { type: "boolean" },
+        minPassScore: { type: "number", min: 0, max: 100, step: 1 }
+      }
+    }
+  },
+  {
+    type: "vmc_divergence_reversal",
+    name: "VMC Divergence Reversal",
+    version: "1.0.0",
+    defaultConfig: {
+      requireNonNeutralSignal: true,
+      blockOnDataGap: true,
+      requireRegularDiv: true,
+      allowHiddenDiv: false,
+      requireCrossAlignment: true,
+      requireExtremeZone: true,
+      maxDivergenceAgeBars: 8,
+      minPassScore: 65
+    },
+    uiSchema: {
+      title: "VMC Divergence Reversal",
+      description: "Deterministic divergence reversal gate using VuManChu divergence/cross/zone context.",
+      fields: {
+        requireNonNeutralSignal: { type: "boolean" },
+        blockOnDataGap: { type: "boolean" },
+        requireRegularDiv: { type: "boolean" },
+        allowHiddenDiv: { type: "boolean" },
+        requireCrossAlignment: { type: "boolean" },
+        requireExtremeZone: { type: "boolean" },
+        maxDivergenceAgeBars: { type: "number", min: 1, max: 100, step: 1 },
+        minPassScore: { type: "number", min: 0, max: 100, step: 1 }
+      }
+    }
+  }
+];
+
+function getFallbackPythonStrategies(): PythonRegistryItem[] {
+  return FALLBACK_PYTHON_STRATEGIES.map((item) => ({
+    type: item.type,
+    name: item.name,
+    version: item.version,
+    defaultConfig: safeObject(item.defaultConfig),
+    uiSchema: safeObject(item.uiSchema)
+  }));
+}
+
 export async function listPythonStrategyRegistry(): Promise<{
   enabled: boolean;
   health: { status: string; version: string } | null;
-  items: Array<{
-    type: string;
-    name: string;
-    version: string;
-    defaultConfig: Record<string, unknown>;
-    uiSchema: Record<string, unknown>;
-  }>;
+  items: PythonRegistryItem[];
   metrics: {
     calls: number;
     failures: number;
@@ -572,7 +749,7 @@ export async function listPythonStrategyRegistry(): Promise<{
     return {
       enabled,
       health: null,
-      items: [],
+      items: getFallbackPythonStrategies(),
       metrics: getPythonRunnerMetrics()
     };
   }
@@ -584,7 +761,7 @@ export async function listPythonStrategyRegistry(): Promise<{
     return {
       enabled,
       health,
-      items,
+      items: items.length > 0 ? items : getFallbackPythonStrategies(),
       metrics: getPythonRunnerMetrics()
     };
   } catch (error) {
@@ -594,7 +771,7 @@ export async function listPythonStrategyRegistry(): Promise<{
     return {
       enabled,
       health: null,
-      items: [],
+      items: getFallbackPythonStrategies(),
       metrics: getPythonRunnerMetrics()
     };
   }

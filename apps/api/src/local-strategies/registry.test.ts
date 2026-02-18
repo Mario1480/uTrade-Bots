@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
+  listPythonStrategyRegistry,
   listRegisteredLocalStrategies,
   runLocalStrategy,
   type LocalStrategyDefinitionRecord
@@ -57,6 +58,21 @@ function hasInvalidNumber(value: unknown): boolean {
 test("builtin strategy registry contains regime_gate and signal_filter", () => {
   const types = listRegisteredLocalStrategies().map((item) => item.type).sort();
   assert.deepEqual(types, ["regime_gate", "signal_filter"]);
+});
+
+test("python registry exposes fallback catalog when sidecar is disabled", async () => {
+  const prev = process.env.PY_STRATEGY_ENABLED;
+  process.env.PY_STRATEGY_ENABLED = "false";
+  try {
+    const registry = await listPythonStrategyRegistry();
+    const types = registry.items.map((item) => item.type).sort();
+    assert.equal(registry.enabled, false);
+    assert.equal(types.includes("vmc_cipher_gate"), true);
+    assert.equal(types.includes("vmc_divergence_reversal"), true);
+  } finally {
+    if (prev === undefined) delete process.env.PY_STRATEGY_ENABLED;
+    else process.env.PY_STRATEGY_ENABLED = prev;
+  }
 });
 
 test("runLocalStrategy is deterministic for same snapshot/config", async () => {
