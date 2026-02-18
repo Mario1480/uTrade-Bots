@@ -12,6 +12,14 @@ type RegistryItem = {
   uiSchema: Record<string, unknown>;
 };
 
+type PythonRegistryItem = {
+  type: string;
+  name: string;
+  version: string;
+  defaultConfig: Record<string, unknown>;
+  uiSchema: Record<string, unknown>;
+};
+
 type LocalStrategyItem = {
   id: string;
   strategyType: string;
@@ -42,13 +50,7 @@ type LocalStrategiesResponse = {
   pythonRegistry?: {
     enabled: boolean;
     health: { status: string; version: string } | null;
-    items: Array<{
-      type: string;
-      name: string;
-      version: string;
-      defaultConfig: Record<string, unknown>;
-      uiSchema: Record<string, unknown>;
-    }>;
+    items: PythonRegistryItem[];
     metrics?: {
       calls: number;
       failures: number;
@@ -108,6 +110,15 @@ function copyItems<T>(items: T[]): T[] {
   return items.map((item) => ({ ...(item as any) }));
 }
 
+const FALLBACK_PYTHON_REGISTRY_ITEMS: PythonRegistryItem[] = [
+  { type: "regime_gate", name: "Regime Gate", version: "1.0.0", defaultConfig: {}, uiSchema: {} },
+  { type: "signal_filter", name: "Signal Filter", version: "1.0.0", defaultConfig: {}, uiSchema: {} },
+  { type: "trend_vol_gate", name: "Trend+Vol Gate", version: "1.0.0", defaultConfig: {}, uiSchema: {} },
+  { type: "smart_money_concept", name: "Smart Money Concept", version: "1.0.0", defaultConfig: {}, uiSchema: {} },
+  { type: "vmc_cipher_gate", name: "VMC Cipher Gate", version: "1.0.0", defaultConfig: {}, uiSchema: {} },
+  { type: "vmc_divergence_reversal", name: "VMC Divergence Reversal", version: "1.0.0", defaultConfig: {}, uiSchema: {} }
+];
+
 export default function AdminLocalStrategiesPage() {
   const t = useTranslations("admin.localStrategies");
   const tCommon = useTranslations("admin.common");
@@ -163,12 +174,17 @@ export default function AdminLocalStrategiesPage() {
   );
   const [runOutput, setRunOutput] = useState<string>("");
 
+  const pythonStrategyOptions = useMemo<PythonRegistryItem[]>(
+    () => (pythonRegistry.items.length > 0 ? pythonRegistry.items : FALLBACK_PYTHON_REGISTRY_ITEMS),
+    [pythonRegistry.items]
+  );
+
   const selectedRegistry = useMemo(
     () =>
       (engine === "python"
-        ? pythonRegistry.items.find((entry) => entry.type === strategyType)
+        ? pythonStrategyOptions.find((entry) => entry.type === strategyType)
         : registry.find((entry) => entry.type === strategyType)) ?? null,
-    [engine, pythonRegistry.items, registry, strategyType]
+    [engine, pythonStrategyOptions, registry, strategyType]
   );
 
   async function loadAll() {
@@ -203,6 +219,17 @@ export default function AdminLocalStrategiesPage() {
   useEffect(() => {
     void loadAll();
   }, []);
+
+  useEffect(() => {
+    if (engine !== "python") return;
+    if (strategyType.trim()) return;
+    const first = pythonStrategyOptions[0];
+    if (!first) return;
+    setStrategyType(first.type);
+    setRemoteStrategyType(first.type);
+    setFallbackStrategyType(first.type);
+    setConfigJsonText(pretty(first.defaultConfig ?? {}));
+  }, [engine, pythonStrategyOptions, strategyType]);
 
   function resetForm() {
     const first = registry[0];
@@ -349,7 +376,7 @@ export default function AdminLocalStrategiesPage() {
     setStrategyType(type);
     const match =
       engine === "python"
-        ? pythonRegistry.items.find((item) => item.type === type) ?? registry.find((item) => item.type === type)
+        ? pythonStrategyOptions.find((item) => item.type === type) ?? registry.find((item) => item.type === type)
         : registry.find((item) => item.type === type);
     if (match) {
       setConfigJsonText(pretty(match.defaultConfig ?? {}));
@@ -408,11 +435,11 @@ export default function AdminLocalStrategiesPage() {
                   disabled={Boolean(editingId) && engine === "ts"}
                 >
                   <option value="">Select type...</option>
-                  {(engine === "python" ? pythonRegistry.items : registry).map((item) => (
+                  {(engine === "python" ? pythonStrategyOptions : registry).map((item) => (
                     <option key={item.type} value={item.type}>{item.type}</option>
                   ))}
                   {strategyType
-                    && !(engine === "python" ? pythonRegistry.items : registry).some((item) => item.type === strategyType)
+                    && !(engine === "python" ? pythonStrategyOptions : registry).some((item) => item.type === strategyType)
                     ? <option value={strategyType}>{strategyType}</option>
                     : null}
                 </select>

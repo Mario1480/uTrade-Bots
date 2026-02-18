@@ -730,6 +730,32 @@ function getFallbackPythonStrategies(): PythonRegistryItem[] {
   }));
 }
 
+function mergePythonRegistryItems(remoteItems: PythonRegistryItem[]): PythonRegistryItem[] {
+  const out: PythonRegistryItem[] = [];
+  const seen = new Set<string>();
+
+  for (const item of remoteItems) {
+    const type = typeof item?.type === "string" ? item.type.trim() : "";
+    if (!type || seen.has(type)) continue;
+    seen.add(type);
+    out.push({
+      type,
+      name: typeof item.name === "string" && item.name.trim() ? item.name.trim() : type,
+      version: typeof item.version === "string" && item.version.trim() ? item.version.trim() : "1.0.0",
+      defaultConfig: safeObject(item.defaultConfig),
+      uiSchema: safeObject(item.uiSchema)
+    });
+  }
+
+  for (const item of getFallbackPythonStrategies()) {
+    if (seen.has(item.type)) continue;
+    seen.add(item.type);
+    out.push(item);
+  }
+
+  return out;
+}
+
 export async function listPythonStrategyRegistry(): Promise<{
   enabled: boolean;
   health: { status: string; version: string } | null;
@@ -761,7 +787,7 @@ export async function listPythonStrategyRegistry(): Promise<{
     return {
       enabled,
       health,
-      items: items.length > 0 ? items : getFallbackPythonStrategies(),
+      items: mergePythonRegistryItems(items),
       metrics: getPythonRunnerMetrics()
     };
   } catch (error) {

@@ -1,4 +1,6 @@
 import assert from "node:assert/strict";
+import { createServer } from "node:http";
+import type { AddressInfo } from "node:net";
 import test from "node:test";
 import {
   listPythonStrategyRegistry,
@@ -72,6 +74,62 @@ test("python registry exposes fallback catalog when sidecar is disabled", async 
   } finally {
     if (prev === undefined) delete process.env.PY_STRATEGY_ENABLED;
     else process.env.PY_STRATEGY_ENABLED = prev;
+  }
+});
+
+test("python registry merges fallback catalog when sidecar list is partial", async () => {
+  const server = createServer((req, res) => {
+    const url = req.url ?? "";
+    if (url === "/health") {
+      res.writeHead(200, { "content-type": "application/json" });
+      res.end(JSON.stringify({ status: "ok", version: "1.0.0" }));
+      return;
+    }
+    if (url === "/v1/strategies") {
+      res.writeHead(200, { "content-type": "application/json" });
+      res.end(JSON.stringify({
+        items: [
+          {
+            type: "regime_gate",
+            name: "Regime Gate",
+            version: "1.0.0",
+            defaultConfig: {},
+            uiSchema: {}
+          }
+        ]
+      }));
+      return;
+    }
+    res.writeHead(404, { "content-type": "application/json" });
+    res.end(JSON.stringify({ error: "not_found" }));
+  });
+
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", () => resolve()));
+  const address = server.address() as AddressInfo;
+  const baseUrl = `http://127.0.0.1:${address.port}`;
+
+  const prevEnabled = process.env.PY_STRATEGY_ENABLED;
+  const prevUrl = process.env.PY_STRATEGY_URL;
+  const prevToken = process.env.PY_STRATEGY_AUTH_TOKEN;
+  process.env.PY_STRATEGY_ENABLED = "true";
+  process.env.PY_STRATEGY_URL = baseUrl;
+  delete process.env.PY_STRATEGY_AUTH_TOKEN;
+
+  try {
+    const registry = await listPythonStrategyRegistry();
+    const types = registry.items.map((item) => item.type);
+    assert.equal(registry.enabled, true);
+    assert.equal(types.includes("regime_gate"), true);
+    assert.equal(types.includes("vmc_cipher_gate"), true);
+    assert.equal(types.includes("vmc_divergence_reversal"), true);
+  } finally {
+    await new Promise<void>((resolve, reject) => server.close((err) => (err ? reject(err) : resolve())));
+    if (prevEnabled === undefined) delete process.env.PY_STRATEGY_ENABLED;
+    else process.env.PY_STRATEGY_ENABLED = prevEnabled;
+    if (prevUrl === undefined) delete process.env.PY_STRATEGY_URL;
+    else process.env.PY_STRATEGY_URL = prevUrl;
+    if (prevToken === undefined) delete process.env.PY_STRATEGY_AUTH_TOKEN;
+    else process.env.PY_STRATEGY_AUTH_TOKEN = prevToken;
   }
 });
 
