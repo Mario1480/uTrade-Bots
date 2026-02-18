@@ -59,6 +59,7 @@ type CompositeItem = {
   name: string;
   description: string | null;
   version: string;
+  newsRiskMode: "off" | "block";
   nodesJson: CompositeNode[];
   edgesJson: CompositeEdge[];
   combineMode: "pipeline" | "vote";
@@ -215,6 +216,7 @@ export default function AdminStrategiesBuilderPage() {
   const [name, setName] = useState("");
   const [description, setDescription] = useState("");
   const [version, setVersion] = useState("1.0.0");
+  const [newsRiskMode, setNewsRiskMode] = useState<"off" | "block">("off");
   const [isEnabled, setIsEnabled] = useState(true);
   const [combineMode, setCombineMode] = useState<"pipeline" | "vote">("pipeline");
   const [outputPolicy, setOutputPolicy] = useState<"first_non_neutral" | "override_by_confidence" | "local_signal_ai_explain">("local_signal_ai_explain");
@@ -284,6 +286,7 @@ export default function AdminStrategiesBuilderPage() {
     setName("");
     setDescription("");
     setVersion("1.0.0");
+    setNewsRiskMode("off");
     setIsEnabled(true);
     setCombineMode("pipeline");
     setOutputPolicy("local_signal_ai_explain");
@@ -393,6 +396,7 @@ export default function AdminStrategiesBuilderPage() {
         name: name.trim(),
         description: description.trim() || null,
         version: version.trim(),
+        newsRiskMode,
         nodesJson: graphPayload.nodesJson,
         edgesJson: graphPayload.edgesJson,
         combineMode,
@@ -430,6 +434,7 @@ export default function AdminStrategiesBuilderPage() {
     setName(item.name);
     setDescription(item.description ?? "");
     setVersion(item.version);
+    setNewsRiskMode(item.newsRiskMode === "block" ? "block" : "off");
     setIsEnabled(item.isEnabled);
     setCombineMode(item.combineMode === "vote" ? "vote" : "pipeline");
     setOutputPolicy(item.outputPolicy);
@@ -565,6 +570,21 @@ export default function AdminStrategiesBuilderPage() {
                   <option value="local_signal_ai_explain">local_signal_ai_explain</option>
                 </select>
               </label>
+            </div>
+
+            <div className="settingsTwoColGrid" style={{ marginBottom: 10 }}>
+              <label className="settingsField">
+                <span className="settingsFieldLabel">{t("newsRiskMode")}</span>
+                <select
+                  className="input"
+                  value={newsRiskMode}
+                  onChange={(e) => setNewsRiskMode(e.target.value === "block" ? "block" : "off")}
+                >
+                  <option value="off">{t("newsRiskModeOff")}</option>
+                  <option value="block">{t("newsRiskModeBlock")}</option>
+                </select>
+              </label>
+              <div />
             </div>
 
             <label className="settingsField" style={{ marginBottom: 10 }}>
@@ -804,6 +824,7 @@ export default function AdminStrategiesBuilderPage() {
                       <th align="left">Version</th>
                       <th align="left">Mode</th>
                       <th align="left">Policy</th>
+                      <th align="left">{t("newsRiskMode")}</th>
                       <th align="left">Status</th>
                       <th align="left">Updated</th>
                       <th align="left">Actions</th>
@@ -816,6 +837,7 @@ export default function AdminStrategiesBuilderPage() {
                         <td>{item.version}</td>
                         <td>{item.combineMode}</td>
                         <td><code>{item.outputPolicy}</code></td>
+                        <td>{item.newsRiskMode === "block" ? t("newsRiskModeBlock") : t("newsRiskModeOff")}</td>
                         <td>{item.isEnabled ? "enabled" : "disabled"}</td>
                         <td>{item.updatedAt ? new Date(item.updatedAt).toLocaleString() : "-"}</td>
                         <td style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>

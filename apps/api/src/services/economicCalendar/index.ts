@@ -152,6 +152,7 @@ function normalizeConfigRow(row: any): EconomicCalendarConfigSnapshot {
   return {
     key: String(row?.key ?? DEFAULT_CONFIG_KEY),
     enabled: typeof row?.enabled === "boolean" ? row.enabled : true,
+    enforceNewsRiskBlock: row?.enforceNewsRiskBlock === true,
     impactMin: normalizeImpact(row?.impactMin ?? DEFAULT_IMPACT),
     currencies: normalizeCurrenciesCsv(row?.currencies ?? DEFAULT_CURRENCIES),
     preMinutes: Math.max(0, Math.trunc(Number(row?.preMinutes ?? DEFAULT_PRE_MINUTES))),
@@ -237,6 +238,7 @@ export async function getEconomicCalendarConfig(db: AnyDb): Promise<EconomicCale
     return {
       key: DEFAULT_CONFIG_KEY,
       enabled: true,
+      enforceNewsRiskBlock: false,
       impactMin: DEFAULT_IMPACT,
       currencies: DEFAULT_CURRENCIES,
       preMinutes: DEFAULT_PRE_MINUTES,
@@ -252,6 +254,7 @@ export async function getEconomicCalendarConfig(db: AnyDb): Promise<EconomicCale
     create: {
       key: DEFAULT_CONFIG_KEY,
       enabled: true,
+      enforceNewsRiskBlock: false,
       impactMin: DEFAULT_IMPACT,
       currencies: DEFAULT_CURRENCIES,
       preMinutes: DEFAULT_PRE_MINUTES,
@@ -272,6 +275,10 @@ export async function updateEconomicCalendarConfig(
   const current = await getEconomicCalendarConfig(db);
   const next = {
     enabled: typeof patch.enabled === "boolean" ? patch.enabled : current.enabled,
+    enforceNewsRiskBlock:
+      typeof patch.enforceNewsRiskBlock === "boolean"
+        ? patch.enforceNewsRiskBlock
+        : current.enforceNewsRiskBlock,
     impactMin: normalizeImpact(patch.impactMin ?? current.impactMin),
     currencies: normalizeCurrenciesCsv(patch.currencies ?? current.currencies),
     preMinutes:

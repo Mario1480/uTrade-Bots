@@ -146,6 +146,7 @@ export type AiPromptIndicatorOptionPublic = {
 export type AiPromptTimeframe = "5m" | "15m" | "1h" | "4h" | "1d";
 export type AiPromptDirectionPreference = "long" | "short" | "either";
 export type AiPromptSlTpSource = "local" | "ai" | "hybrid";
+export type AiPromptNewsRiskMode = "off" | "block";
 
 export type AiPromptTemplate = {
   id: string;
@@ -159,6 +160,7 @@ export type AiPromptTemplate = {
   directionPreference: AiPromptDirectionPreference;
   confidenceTargetPct: number;
   slTpSource: AiPromptSlTpSource;
+  newsRiskMode: AiPromptNewsRiskMode;
   marketAnalysisUpdateEnabled: boolean;
   isPublic: boolean;
   createdAt: string;
@@ -187,6 +189,7 @@ export type AiPromptRuntimeSettings = {
   directionPreference: AiPromptDirectionPreference;
   confidenceTargetPct: number;
   slTpSource: AiPromptSlTpSource;
+  newsRiskMode: AiPromptNewsRiskMode;
   marketAnalysisUpdateEnabled: boolean;
   source: "default" | "db";
   activePromptId: string | null;
@@ -263,6 +266,7 @@ const MAX_PROMPT_TIMEFRAMES = 4;
 const DEFAULT_PROMPT_DIRECTION_PREFERENCE: AiPromptDirectionPreference = "either";
 const DEFAULT_PROMPT_CONFIDENCE_TARGET_PCT = 60;
 const DEFAULT_PROMPT_SL_TP_SOURCE: AiPromptSlTpSource = "local";
+const DEFAULT_PROMPT_NEWS_RISK_MODE: AiPromptNewsRiskMode = "off";
 
 const cacheTtlMs =
   Math.max(5, Number(process.env.AI_PROMPT_SETTINGS_CACHE_TTL_SEC ?? "30")) *
@@ -283,6 +287,7 @@ export const DEFAULT_AI_PROMPT_SETTINGS: AiPromptSettingsStored = {
       directionPreference: DEFAULT_PROMPT_DIRECTION_PREFERENCE,
       confidenceTargetPct: DEFAULT_PROMPT_CONFIDENCE_TARGET_PCT,
       slTpSource: DEFAULT_PROMPT_SL_TP_SOURCE,
+      newsRiskMode: DEFAULT_PROMPT_NEWS_RISK_MODE,
       marketAnalysisUpdateEnabled: false,
       isPublic: false,
       createdAt: new Date(0).toISOString(),
@@ -417,6 +422,13 @@ function normalizeSlTpSource(
   return fallback;
 }
 
+function normalizeNewsRiskMode(
+  value: unknown,
+  fallback: AiPromptNewsRiskMode
+): AiPromptNewsRiskMode {
+  return value === "block" ? "block" : fallback;
+}
+
 function normalizeOhlcvBars(value: unknown, fallback: number): number {
   const parsed = Number(value);
   if (!Number.isFinite(parsed)) return fallback;
@@ -459,6 +471,10 @@ function parseTemplate(value: unknown, index: number): AiPromptTemplate | null {
       objectValue.slTpSource,
       DEFAULT_PROMPT_SL_TP_SOURCE
     ),
+    newsRiskMode: normalizeNewsRiskMode(
+      objectValue.newsRiskMode,
+      DEFAULT_PROMPT_NEWS_RISK_MODE
+    ),
     marketAnalysisUpdateEnabled: normalizeBool(
       objectValue.marketAnalysisUpdateEnabled,
       false
@@ -495,6 +511,7 @@ function cloneStoredSettings(value: AiPromptSettingsStored): AiPromptSettingsSto
       directionPreference: item.directionPreference,
       confidenceTargetPct: item.confidenceTargetPct,
       slTpSource: item.slTpSource,
+      newsRiskMode: item.newsRiskMode,
       marketAnalysisUpdateEnabled: item.marketAnalysisUpdateEnabled,
       isPublic: item.isPublic,
       createdAt: item.createdAt,
@@ -614,6 +631,7 @@ export function resolveAiPromptRuntimeSettingsForContext(
     directionPreference: active.directionPreference,
     confidenceTargetPct: active.confidenceTargetPct,
     slTpSource: active.slTpSource,
+    newsRiskMode: active.newsRiskMode,
     marketAnalysisUpdateEnabled: active.marketAnalysisUpdateEnabled,
     source,
     activePromptId: active.id,
@@ -638,6 +656,7 @@ function toRuntimeFromTemplate(
     directionPreference: template.directionPreference,
     confidenceTargetPct: template.confidenceTargetPct,
     slTpSource: template.slTpSource,
+    newsRiskMode: template.newsRiskMode,
     marketAnalysisUpdateEnabled: template.marketAnalysisUpdateEnabled,
     source,
     activePromptId: template.id,
@@ -678,6 +697,7 @@ export function getAiPromptTemplateByIdFromSettings(
     directionPreference: found.directionPreference,
     confidenceTargetPct: found.confidenceTargetPct,
     slTpSource: found.slTpSource,
+    newsRiskMode: found.newsRiskMode,
     marketAnalysisUpdateEnabled: found.marketAnalysisUpdateEnabled,
     isPublic: found.isPublic,
     createdAt: found.createdAt,
@@ -769,6 +789,7 @@ export function getPublicAiPromptTemplates(
       directionPreference: item.directionPreference,
       confidenceTargetPct: item.confidenceTargetPct,
       slTpSource: item.slTpSource,
+      newsRiskMode: item.newsRiskMode,
       marketAnalysisUpdateEnabled: item.marketAnalysisUpdateEnabled,
       isPublic: item.isPublic,
       createdAt: item.createdAt,
@@ -816,6 +837,10 @@ export function parseStoredAiPromptSettings(value: unknown): AiPromptSettingsSto
       slTpSource: normalizeSlTpSource(
         objectValue.slTpSource,
         DEFAULT_PROMPT_SL_TP_SOURCE
+      ),
+      newsRiskMode: normalizeNewsRiskMode(
+        objectValue.newsRiskMode,
+        DEFAULT_PROMPT_NEWS_RISK_MODE
       ),
       marketAnalysisUpdateEnabled: normalizeBool(
         objectValue.marketAnalysisUpdateEnabled,
@@ -868,6 +893,10 @@ export function parseStoredAiPromptSettings(value: unknown): AiPromptSettingsSto
         slTpSource: normalizeSlTpSource(
           raw.slTpSource,
           DEFAULT_PROMPT_SL_TP_SOURCE
+        ),
+        newsRiskMode: normalizeNewsRiskMode(
+          raw.newsRiskMode,
+          DEFAULT_PROMPT_NEWS_RISK_MODE
         ),
         marketAnalysisUpdateEnabled: normalizeBool(
           raw.marketAnalysisUpdateEnabled,

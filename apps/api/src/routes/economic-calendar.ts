@@ -26,6 +26,7 @@ const nextQuerySchema = z.object({
 
 const configUpdateSchema = z.object({
   enabled: z.boolean().optional(),
+  enforceNewsRiskBlock: z.boolean().optional(),
   impactMin: impactSchema.optional(),
   currencies: z.string().trim().max(128).nullable().optional(),
   preMinutes: z.number().int().min(0).max(240).optional(),

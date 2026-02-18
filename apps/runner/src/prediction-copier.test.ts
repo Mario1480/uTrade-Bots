@@ -104,7 +104,8 @@ function makeConfig(overrides: Partial<PredictionCopierConfig> = {}): Prediction
       timeStopMin: null
     },
     filters: {
-      blockTags: ["news_risk", "data_gap", "low_liquidity"],
+      blockTags: ["data_gap", "low_liquidity"],
+      newsRiskBlockEnabled: false,
       requireTags: null,
       allowSignals: ["up", "down"],
       minExpectedMovePct: null
@@ -259,7 +260,7 @@ test("decision blocks cooldown after recent trade", () => {
 
 test("decision blocks blocked tags", () => {
   const now = new Date("2026-02-12T12:01:00.000Z");
-  const prediction = makePrediction({ tags: ["news_risk"] });
+  const prediction = makePrediction({ tags: ["data_gap"] });
 
   const decision = evaluatePredictionCopierDecision({
     config: makeConfig(),
@@ -276,5 +277,32 @@ test("decision blocks blocked tags", () => {
   });
 
   assert.equal(decision.action, "skip");
-  assert.equal(decision.reason, "blocked_tag:news_risk");
+  assert.equal(decision.reason, "blocked_tag:data_gap");
+});
+
+test("decision blocks news_risk only when newsRiskBlockEnabled is true", () => {
+  const now = new Date("2026-02-12T12:01:00.000Z");
+  const prediction = makePrediction({ tags: ["news_risk"] });
+
+  const blocked = evaluatePredictionCopierDecision({
+    config: makeConfig({
+      filters: {
+        ...makeConfig().filters,
+        blockTags: ["news_risk", "data_gap"],
+        newsRiskBlockEnabled: true
+      }
+    }),
+    now,
+    prediction,
+    predictionHash: buildPredictionHash(prediction),
+    state: makeState(),
+    openPosition: null,
+    openPositionsCount: 0,
+    totalNotionalUsd: 0,
+    symbolNotionalUsd: 0,
+    candidateNotionalUsd: 100,
+    dailyTradeCount: 0
+  });
+  assert.equal(blocked.action, "skip");
+  assert.equal(blocked.reason, "blocked_tag:news_risk");
 });

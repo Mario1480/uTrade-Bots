@@ -52,6 +52,7 @@ export type PredictionCopierConfig = {
   };
   filters: {
     blockTags: string[];
+    newsRiskBlockEnabled: boolean;
     requireTags: string[] | null;
     allowSignals: PredictionCopierSignal[];
     minExpectedMovePct: number | null;
@@ -249,7 +250,8 @@ export function readPredictionCopierConfig(bot: ActiveFuturesBot): PredictionCop
     filters: {
       blockTags: normalizeStringArray(filtersRaw.blockTags, 20).length > 0
         ? normalizeStringArray(filtersRaw.blockTags, 20)
-        : ["news_risk", "data_gap", "low_liquidity"],
+        : ["data_gap", "low_liquidity"],
+      newsRiskBlockEnabled: toBoolean(filtersRaw.newsRiskBlockEnabled, false),
       requireTags: normalizeStringArray(filtersRaw.requireTags, 20).length > 0
         ? normalizeStringArray(filtersRaw.requireTags, 20)
         : null,
@@ -293,7 +295,10 @@ export function buildPredictionHash(prediction: PredictionGateState): string {
 
 function evaluateTagFilters(config: PredictionCopierConfig, prediction: PredictionGateState): string | null {
   const tags = normalizeStringArray(prediction.tags, 20);
-  const blocked = config.filters.blockTags.find((tag) => tags.includes(tag));
+  const blocked = config.filters.blockTags.find((tag) => {
+    if (tag === "news_risk" && !config.filters.newsRiskBlockEnabled) return false;
+    return tags.includes(tag);
+  });
   if (blocked) return `blocked_tag:${blocked}`;
 
   if (config.filters.requireTags && config.filters.requireTags.length > 0) {

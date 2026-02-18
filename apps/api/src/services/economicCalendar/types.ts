@@ -17,6 +17,7 @@ export type EconomicEventNormalized = {
 export type EconomicCalendarConfigSnapshot = {
   key: string;
   enabled: boolean;
+  enforceNewsRiskBlock: boolean;
   impactMin: EconomicImpact;
   currencies: string | null;
   preMinutes: number;
@@ -29,7 +30,13 @@ export type EconomicCalendarConfigSnapshot = {
 export type EconomicCalendarConfigUpdate = Partial<
   Pick<
     EconomicCalendarConfigSnapshot,
-    "enabled" | "impactMin" | "currencies" | "preMinutes" | "postMinutes" | "provider"
+    | "enabled"
+    | "enforceNewsRiskBlock"
+    | "impactMin"
+    | "currencies"
+    | "preMinutes"
+    | "postMinutes"
+    | "provider"
   >
 >;
 

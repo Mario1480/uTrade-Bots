@@ -82,7 +82,8 @@ export default function NewBotPage() {
   const [riskTakeProfitPct, setRiskTakeProfitPct] = useState("");
   const [riskTimeStopMin, setRiskTimeStopMin] = useState("");
 
-  const [filtersBlockTags, setFiltersBlockTags] = useState("news_risk,data_gap,low_liquidity");
+  const [filtersBlockTags, setFiltersBlockTags] = useState("data_gap,low_liquidity");
+  const [filtersNewsRiskBlockEnabled, setFiltersNewsRiskBlockEnabled] = useState(false);
   const [filtersRequireTags, setFiltersRequireTags] = useState("");
   const [filtersMinExpectedMove, setFiltersMinExpectedMove] = useState("");
   const [allowSignalUp, setAllowSignalUp] = useState(true);
@@ -258,6 +259,7 @@ export default function NewBotPage() {
               },
               filters: {
                 blockTags: toCsvArray(filtersBlockTags),
+                newsRiskBlockEnabled: filtersNewsRiskBlockEnabled,
                 requireTags: toCsvArray(filtersRequireTags).length > 0 ? toCsvArray(filtersRequireTags) : null,
                 allowSignals,
                 minExpectedMovePct: filtersMinExpectedMove.trim() ? Number(filtersMinExpectedMove) : null
@@ -500,6 +502,10 @@ export default function NewBotPage() {
                     <label style={{ display: "grid", gap: 6 }}>
                       <span style={{ fontSize: 12, color: "var(--muted)" }}>{t("copier.fields.minExpectedMove")}</span>
                       <input className="input" type="number" min={0} step="0.01" value={filtersMinExpectedMove} onChange={(e) => setFiltersMinExpectedMove(e.target.value)} />
+                    </label>
+                    <label style={{ display: "grid", gap: 6 }}>
+                      <span style={{ fontSize: 12, color: "var(--muted)" }}>{t("copier.fields.newsRiskBlockEnabled")}</span>
+                      <input type="checkbox" checked={filtersNewsRiskBlockEnabled} onChange={(e) => setFiltersNewsRiskBlockEnabled(e.target.checked)} />
                     </label>
                     <label style={{ display: "grid", gap: 6 }}>
                       <span style={{ fontSize: 12, color: "var(--muted)" }}>{t("copier.fields.reduceOnlyOnExit")}</span>

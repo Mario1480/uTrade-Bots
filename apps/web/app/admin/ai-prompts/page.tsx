@@ -25,6 +25,7 @@ type PromptTemplate = {
   directionPreference: "long" | "short" | "either";
   confidenceTargetPct: number;
   slTpSource: "local" | "ai" | "hybrid";
+  newsRiskMode: "off" | "block";
   marketAnalysisUpdateEnabled: boolean;
   isPublic: boolean;
   createdAt: string;
@@ -64,6 +65,7 @@ type PreviewResponse = {
       timeframe: "5m" | "15m" | "1h" | "4h" | "1d" | null;
       directionPreference: "long" | "short" | "either";
       confidenceTargetPct: number;
+      newsRiskMode: "off" | "block";
       marketAnalysisUpdateEnabled: boolean;
       source: "default" | "db";
       activePromptId: string | null;
@@ -116,6 +118,7 @@ function clonePrompts(prompts: PromptTemplate[]): PromptTemplate[] {
       item.slTpSource === "ai" || item.slTpSource === "hybrid"
         ? item.slTpSource
         : "local",
+    newsRiskMode: item.newsRiskMode === "block" ? "block" : "off",
     marketAnalysisUpdateEnabled: Boolean(item.marketAnalysisUpdateEnabled),
     isPublic: item.isPublic,
     createdAt: item.createdAt,
@@ -156,6 +159,7 @@ export default function AdminAiPromptsPage() {
   const [promptDirectionPreference, setPromptDirectionPreference] = useState<"long" | "short" | "either">("either");
   const [promptConfidenceTargetPct, setPromptConfidenceTargetPct] = useState("60");
   const [promptSlTpSource, setPromptSlTpSource] = useState<"local" | "ai" | "hybrid">("local");
+  const [promptNewsRiskMode, setPromptNewsRiskMode] = useState<"off" | "block">("off");
   const [promptMarketAnalysisUpdateEnabled, setPromptMarketAnalysisUpdateEnabled] = useState(false);
   const [promptOhlcvBars, setPromptOhlcvBars] = useState("100");
 
@@ -245,6 +249,7 @@ export default function AdminAiPromptsPage() {
     setPromptDirectionPreference("either");
     setPromptConfidenceTargetPct("60");
     setPromptSlTpSource("local");
+    setPromptNewsRiskMode("off");
     setPromptMarketAnalysisUpdateEnabled(false);
     setPromptOhlcvBars("100");
   }
@@ -267,6 +272,7 @@ export default function AdminAiPromptsPage() {
         ? prompt.slTpSource
         : "local"
     );
+    setPromptNewsRiskMode(prompt.newsRiskMode === "block" ? "block" : "off");
     setPromptMarketAnalysisUpdateEnabled(Boolean(prompt.marketAnalysisUpdateEnabled));
     setPromptOhlcvBars(String(prompt.ohlcvBars ?? 100));
   }
@@ -341,6 +347,7 @@ export default function AdminAiPromptsPage() {
       directionPreference: promptDirectionPreference,
       confidenceTargetPct: Math.round(confidenceTargetPct),
       slTpSource: promptSlTpSource,
+      newsRiskMode: promptNewsRiskMode,
       marketAnalysisUpdateEnabled: promptMarketAnalysisUpdateEnabled,
       isPublic: promptIsPublic,
       createdAt:
@@ -636,8 +643,19 @@ export default function AdminAiPromptsPage() {
                       ? t("slTpSourceHintAi")
                       : promptSlTpSource === "hybrid"
                         ? t("slTpSourceHintHybrid")
-                        : t("slTpSourceHintLocal")}
+                      : t("slTpSourceHintLocal")}
                   </span>
+                </label>
+                <label className="settingsField">
+                  <span className="settingsFieldLabel">{t("newsRiskMode")}</span>
+                  <select
+                    className="input"
+                    value={promptNewsRiskMode}
+                    onChange={(e) => setPromptNewsRiskMode(e.target.value as "off" | "block")}
+                  >
+                    <option value="off">{t("newsRiskModeOff")}</option>
+                    <option value="block">{t("newsRiskModeBlock")}</option>
+                  </select>
                 </label>
                 <label className="settingsField">
                   <span className="settingsFieldLabel">OHLCV bars for AI</span>
@@ -699,6 +717,7 @@ export default function AdminAiPromptsPage() {
                       <th>Dir</th>
                       <th>Conf %</th>
                       <th>{t("slTpSourceShort")}</th>
+                      <th>{t("newsRiskMode")}</th>
                       <th>{t("analysisUpdate")}</th>
                       <th>OHLCV</th>
                       <th>Indicators</th>
@@ -717,6 +736,7 @@ export default function AdminAiPromptsPage() {
                         <td>{prompt.directionPreference ?? "either"}</td>
                         <td>{Number.isFinite(Number(prompt.confidenceTargetPct)) ? Number(prompt.confidenceTargetPct).toFixed(0) : "60"}</td>
                         <td>{prompt.slTpSource ?? "local"}</td>
+                        <td>{prompt.newsRiskMode === "block" ? t("newsRiskModeBlock") : t("newsRiskModeOff")}</td>
                         <td>{prompt.marketAnalysisUpdateEnabled ? t("yes") : t("no")}</td>
                         <td>{Number.isFinite(Number(prompt.ohlcvBars)) ? Math.trunc(Number(prompt.ohlcvBars)) : 100}</td>
                         <td>{prompt.indicatorKeys.length}</td>

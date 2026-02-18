@@ -115,7 +115,8 @@ export default function BotSettingsPage() {
   const [riskTakeProfitPct, setRiskTakeProfitPct] = useState("");
   const [riskTimeStopMin, setRiskTimeStopMin] = useState("");
 
-  const [filtersBlockTags, setFiltersBlockTags] = useState("news_risk,data_gap,low_liquidity");
+  const [filtersBlockTags, setFiltersBlockTags] = useState("data_gap,low_liquidity");
+  const [filtersNewsRiskBlockEnabled, setFiltersNewsRiskBlockEnabled] = useState(false);
   const [filtersRequireTags, setFiltersRequireTags] = useState("");
   const [filtersMinExpectedMove, setFiltersMinExpectedMove] = useState("");
   const [allowSignalUp, setAllowSignalUp] = useState(true);
@@ -167,7 +168,8 @@ export default function BotSettingsPage() {
         setRiskTakeProfitPct(root.risk?.takeProfitPct == null ? "" : String(root.risk.takeProfitPct));
         setRiskTimeStopMin(root.risk?.timeStopMin == null ? "" : String(root.risk.timeStopMin));
 
-        setFiltersBlockTags(Array.isArray(root.filters?.blockTags) ? root.filters.blockTags.join(",") : "news_risk,data_gap,low_liquidity");
+        setFiltersBlockTags(Array.isArray(root.filters?.blockTags) ? root.filters.blockTags.join(",") : "data_gap,low_liquidity");
+        setFiltersNewsRiskBlockEnabled(Boolean(root.filters?.newsRiskBlockEnabled ?? false));
         setFiltersRequireTags(Array.isArray(root.filters?.requireTags) ? root.filters.requireTags.join(",") : "");
         setFiltersMinExpectedMove(root.filters?.minExpectedMovePct == null ? "" : String(root.filters.minExpectedMovePct));
 
@@ -303,6 +305,7 @@ export default function BotSettingsPage() {
                 },
                 filters: {
                   blockTags: toCsvArray(filtersBlockTags),
+                  newsRiskBlockEnabled: filtersNewsRiskBlockEnabled,
                   requireTags: toCsvArray(filtersRequireTags).length > 0 ? toCsvArray(filtersRequireTags) : null,
                   allowSignals,
                   minExpectedMovePct: filtersMinExpectedMove.trim() ? Number(filtersMinExpectedMove) : null
@@ -446,6 +449,7 @@ export default function BotSettingsPage() {
                 <label style={{ display: "grid", gap: 6 }}><span style={{ fontSize: 12, color: "var(--muted)" }}>{t("fields.minConfidence")}</span><input className="input" type="number" min={0} max={100} value={copierMinConfidence} onChange={(e) => setCopierMinConfidence(Number(e.target.value || 0))} /></label>
                 <label style={{ display: "grid", gap: 6 }}><span style={{ fontSize: 12, color: "var(--muted)" }}>{t("fields.maxPredictionAge")}</span><input className="input" type="number" min={30} max={86400} value={copierMaxPredictionAgeSec} onChange={(e) => setCopierMaxPredictionAgeSec(Number(e.target.value || 600))} /></label>
                 <label style={{ display: "grid", gap: 6 }}><span style={{ fontSize: 12, color: "var(--muted)" }}>{t("fields.limitOffsetBps")}</span><input className="input" type="number" min={0} max={500} value={executionLimitOffsetBps} onChange={(e) => setExecutionLimitOffsetBps(Number(e.target.value || 0))} /></label>
+                <label style={{ display: "grid", gap: 6 }}><span style={{ fontSize: 12, color: "var(--muted)" }}>{t("fields.newsRiskBlockEnabled")}</span><input type="checkbox" checked={filtersNewsRiskBlockEnabled} onChange={(e) => setFiltersNewsRiskBlockEnabled(e.target.checked)} /></label>
                 <label style={{ display: "grid", gap: 6 }}><span style={{ fontSize: 12, color: "var(--muted)" }}>{t("fields.reduceOnlyOnExit")}</span><input type="checkbox" checked={executionReduceOnlyOnExit} onChange={(e) => setExecutionReduceOnlyOnExit(e.target.checked)} /></label>
               </div>
 

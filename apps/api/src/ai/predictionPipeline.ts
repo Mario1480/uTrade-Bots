@@ -32,6 +32,10 @@ export type PredictionRecordInput = ExplainerInput & {
     takeProfitPrice?: number | null;
     horizonMs?: number | null;
   };
+  newsRiskBlocked?: {
+    reasonCode?: string;
+    strategyMode?: "off" | "block";
+  } | null;
 };
 
 export type PredictionRecordResult = {
@@ -191,51 +195,76 @@ export async function generateAndPersistPrediction(
   const slTpSource = normalizeSlTpSource(
     input.slTpSource ?? input.promptSettings?.slTpSource
   );
+  const newsRiskBlocked = Boolean(input.newsRiskBlocked);
   let explanation: ExplainerOutput;
-  try {
-    explanation =
-      signalMode === "local_only"
-        ? fallbackExplain({
-            symbol: input.symbol,
-            marketType: input.marketType,
-            timeframe: input.timeframe,
-            tsCreated: input.tsCreated,
-            prediction: localPrediction,
-            featureSnapshot: input.featureSnapshot
-          })
-        : await generatePredictionExplanation({
-            ...input,
-            prediction: localPrediction
-          }, {
-            promptSettings: input.promptSettings,
-            promptScopeContext: input.promptScopeContext,
-            requireSuccessfulAi: signalMode === "ai_only"
-          });
-  } catch (error) {
-    if (signalMode === "ai_only") {
-      const reason =
-        error instanceof Error && typeof error.message === "string" && error.message.trim()
-          ? error.message.trim()
-          : String(error);
-      const wrapped = Object.assign(
-        new Error(`AI signal required (ai_only), but AI response was unavailable (${reason}).`),
-        { status: 503, code: "ai_only_requires_ai_success", reason }
-      );
-      throw wrapped;
+  if (newsRiskBlocked) {
+    explanation = {
+      explanation: "News blackout active; setup suspended.",
+      tags: ["news_risk"],
+      keyDrivers: [
+        { name: "featureSnapshot.newsRisk", value: true },
+        { name: "policy.reasonCode", value: input.newsRiskBlocked?.reasonCode ?? "news_risk_blocked" },
+        { name: "policy.newsRiskMode", value: input.newsRiskBlocked?.strategyMode ?? "block" }
+      ],
+      aiPrediction: {
+        signal: "neutral",
+        expectedMovePct: 0,
+        confidence: 0
+      },
+      disclaimer: "grounded_features_only"
+    };
+  } else {
+    try {
+      explanation =
+        signalMode === "local_only"
+          ? fallbackExplain({
+              symbol: input.symbol,
+              marketType: input.marketType,
+              timeframe: input.timeframe,
+              tsCreated: input.tsCreated,
+              prediction: localPrediction,
+              featureSnapshot: input.featureSnapshot
+            })
+          : await generatePredictionExplanation({
+              ...input,
+              prediction: localPrediction
+            }, {
+              promptSettings: input.promptSettings,
+              promptScopeContext: input.promptScopeContext,
+              requireSuccessfulAi: signalMode === "ai_only"
+            });
+    } catch (error) {
+      if (signalMode === "ai_only") {
+        const reason =
+          error instanceof Error && typeof error.message === "string" && error.message.trim()
+            ? error.message.trim()
+            : String(error);
+        const wrapped = Object.assign(
+          new Error(`AI signal required (ai_only), but AI response was unavailable (${reason}).`),
+          { status: 503, code: "ai_only_requires_ai_success", reason }
+        );
+        throw wrapped;
+      }
+      throw error;
     }
-    throw error;
   }
+  const forcedNeutralPrediction = newsRiskBlocked
+    ? { signal: "neutral" as const, expectedMovePct: 0, confidence: 0 }
+    : null;
   const aiPrediction =
     signalMode === "local_only"
       ? null
-      : normalizePrediction(explanation.aiPrediction);
+      : (forcedNeutralPrediction ?? normalizePrediction(explanation.aiPrediction));
   const selectedSignalSource: PredictionSignalSource =
     signalMode === "local_only"
       ? "local"
       : signalMode === "ai_only"
         ? "ai"
         : preferredSignalSource;
-  const selectedPrediction = selectedSignalSource === "ai" && aiPrediction ? aiPrediction : localPrediction;
+  const selectedPrediction =
+    forcedNeutralPrediction
+      ? forcedNeutralPrediction
+      : (selectedSignalSource === "ai" && aiPrediction ? aiPrediction : localPrediction);
   const localTracking = {
     entryPrice: normalizePrice(input.tracking?.entryPrice),
     stopLossPrice: normalizePrice(input.tracking?.stopLossPrice),
@@ -281,7 +310,9 @@ export async function generateAndPersistPrediction(
     signalMode
   };
   const modelVersion = `${input.modelVersionBase ?? "baseline-v1"} + ${
-    signalMode === "local_only" ? "local-explain-v1" : "openai-explain-v1"
+    newsRiskBlocked
+      ? "news-risk-block-v1"
+      : (signalMode === "local_only" ? "local-explain-v1" : "openai-explain-v1")
   }`;
 
   try {

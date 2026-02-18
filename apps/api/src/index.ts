@@ -194,7 +194,8 @@ import { runCompositeStrategy } from "./composite-strategies/runner.js";
 import { shouldRefreshTF, type TriggerDebounceState } from "./predictions/refreshTriggers.js";
 import {
   applyNewsRiskToFeatureSnapshot,
-  evaluateNewsRiskForSymbol
+  evaluateNewsRiskForSymbol,
+  getEconomicCalendarConfig
 } from "./services/economicCalendar/index.js";
 import { fetchFmpEconomicEvents } from "./services/economicCalendar/providers/fmp.js";
 
@@ -332,6 +333,7 @@ const predictionCopierSettingsSchema = z.object({
   }).optional(),
   filters: z.object({
     blockTags: z.array(z.string().trim().min(1)).max(50).optional(),
+    newsRiskBlockEnabled: z.boolean().optional(),
     requireTags: z.array(z.string().trim().min(1)).max(50).nullable().optional(),
     allowSignals: z.array(z.enum(["up", "down", "neutral"])).max(3).optional(),
     minExpectedMovePct: z.number().nonnegative().nullable().optional()
@@ -567,6 +569,7 @@ const aiPromptTemplateSchema = z.object({
   directionPreference: z.enum(["long", "short", "either"]).default("either"),
   confidenceTargetPct: z.number().min(0).max(100).default(60),
   slTpSource: z.enum(["local", "ai", "hybrid"]).default("local"),
+  newsRiskMode: z.enum(["off", "block"]).default("off"),
   marketAnalysisUpdateEnabled: z.boolean().default(false),
   isPublic: z.boolean().default(false),
   createdAt: z.string().datetime().optional(),
@@ -623,6 +626,7 @@ const localStrategyDefinitionSchema = z.object({
   remoteStrategyType: z.string().trim().min(1).max(128).nullable().optional(),
   fallbackStrategyType: z.string().trim().min(1).max(128).nullable().optional(),
   timeoutMs: z.number().int().min(200).max(10000).nullable().optional(),
+  newsRiskMode: z.enum(["off", "block"]).default("off"),
   name: z.string().trim().min(1).max(120),
   description: z.string().trim().max(2000).nullable().optional(),
   version: z.string().trim().min(1).max(64).default("1.0.0"),
@@ -638,6 +642,7 @@ const localStrategyDefinitionUpdateSchema = z.object({
   remoteStrategyType: z.string().trim().min(1).max(128).nullable().optional(),
   fallbackStrategyType: z.string().trim().min(1).max(128).nullable().optional(),
   timeoutMs: z.number().int().min(200).max(10000).nullable().optional(),
+  newsRiskMode: z.enum(["off", "block"]).optional(),
   name: z.string().trim().min(1).max(120).optional(),
   description: z.string().trim().max(2000).nullable().optional(),
   version: z.string().trim().min(1).max(64).optional(),
@@ -691,6 +696,7 @@ const compositeStrategyCreateSchema = z.object({
   edgesJson: z.array(compositeEdgeSchema).max(120).default([]),
   combineMode: z.enum(["pipeline", "vote"]).default("pipeline"),
   outputPolicy: z.enum(["first_non_neutral", "override_by_confidence", "local_signal_ai_explain"]).default("local_signal_ai_explain"),
+  newsRiskMode: z.enum(["off", "block"]).default("off"),
   isEnabled: z.boolean().default(true)
 });
 
@@ -702,6 +708,7 @@ const compositeStrategyUpdateSchema = z.object({
   edgesJson: z.array(compositeEdgeSchema).max(120).optional(),
   combineMode: z.enum(["pipeline", "vote"]).optional(),
   outputPolicy: z.enum(["first_non_neutral", "override_by_confidence", "local_signal_ai_explain"]).optional(),
+  newsRiskMode: z.enum(["off", "block"]).optional(),
   isEnabled: z.boolean().optional()
 }).refine(
   (value) => Object.values(value).some((entry) => entry !== undefined),
@@ -3836,6 +3843,48 @@ async function generateAutoPredictionForUser(
       inferred.featureSnapshot,
       newsBlackout
     );
+    const globalNewsRiskBlockEnabled = await readGlobalNewsRiskEnforcement();
+    const strategyNewsRiskMode = resolveStrategyNewsRiskMode({
+      strategyRef: strategyRefForInitialSnapshot,
+      promptSettings: selectedPromptSettings,
+      localStrategy: selectedLocalStrategy,
+      compositeStrategy: selectedCompositeStrategy
+    });
+    const newsRiskBlocked = shouldBlockByNewsRisk({
+      featureSnapshot: inferred.featureSnapshot,
+      globalEnabled: globalNewsRiskBlockEnabled,
+      strategyMode: strategyNewsRiskMode
+    });
+    if (newsRiskBlocked) {
+      inferred.featureSnapshot = withStrategyRunSnapshot(
+        inferred.featureSnapshot,
+        {
+          strategyRef: strategyRefForInitialSnapshot,
+          status: "fallback",
+          signal: "neutral",
+          expectedMovePct: 0,
+          confidence: 0,
+          source: resolvePreferredSignalSourceForMode(
+            signalMode,
+            PREDICTION_PRIMARY_SIGNAL_SOURCE
+          ),
+          aiCalled: false,
+          explanation: "News blackout active; setup suspended.",
+          tags: ["news_risk"],
+          keyDrivers: [
+            { name: "featureSnapshot.newsRisk", value: true },
+            { name: "policy.reasonCode", value: "news_risk_blocked" }
+          ],
+          ts: new Date().toISOString()
+        },
+        {
+          phase: "initial_generate",
+          strategyRef: strategyRefForInitialSnapshot,
+          reasonCode: "news_risk_blocked",
+          strategyNewsRiskMode
+        }
+      );
+    }
 
     const tsCreated = new Date().toISOString();
     const selectedSignalSource = resolvePreferredSignalSourceForMode(
@@ -3856,7 +3905,13 @@ async function generateAutoPredictionForUser(
       botId: null,
       modelVersionBase: payload.modelVersionBase ?? "baseline-v1:auto-market-v1",
       promptSettings: selectedPromptSettings ?? undefined,
-      promptScopeContext
+      promptScopeContext,
+      newsRiskBlocked: newsRiskBlocked
+        ? {
+            reasonCode: "news_risk_blocked",
+            strategyMode: strategyNewsRiskMode
+          }
+        : null
     });
     const featureSnapshotForState = created.featureSnapshot;
 
@@ -5293,6 +5348,86 @@ function enforceNewsRiskTag(tags: unknown, featureSnapshot: unknown): string[] {
   return normalized.slice(0, 5);
 }
 
+type NewsRiskMode = "off" | "block";
+
+function normalizeNewsRiskMode(value: unknown): NewsRiskMode {
+  return value === "block" ? "block" : "off";
+}
+
+function readSnapshotNewsRiskFlag(featureSnapshot: unknown): boolean {
+  const snapshot = asRecord(featureSnapshot);
+  return asBoolean(snapshot.newsRisk, false) || asBoolean(snapshot.news_risk, false);
+}
+
+let cachedNewsRiskBlockGlobal: { value: boolean; expiresAt: number } | null = null;
+
+async function readGlobalNewsRiskEnforcement(): Promise<boolean> {
+  const now = Date.now();
+  if (cachedNewsRiskBlockGlobal && now < cachedNewsRiskBlockGlobal.expiresAt) {
+    return cachedNewsRiskBlockGlobal.value;
+  }
+  try {
+    const config = await getEconomicCalendarConfig(db);
+    const value = config.enforceNewsRiskBlock === true;
+    cachedNewsRiskBlockGlobal = { value, expiresAt: now + 15_000 };
+    return value;
+  } catch {
+    cachedNewsRiskBlockGlobal = { value: false, expiresAt: now + 5_000 };
+    return false;
+  }
+}
+
+function shouldBlockByNewsRisk(params: {
+  featureSnapshot: unknown;
+  globalEnabled: boolean;
+  strategyMode: NewsRiskMode;
+}): boolean {
+  return Boolean(
+    params.globalEnabled
+    && params.strategyMode === "block"
+    && readSnapshotNewsRiskFlag(params.featureSnapshot)
+  );
+}
+
+function resolveStrategyNewsRiskMode(params: {
+  strategyRef: PredictionStrategyRef | null;
+  promptSettings?: { newsRiskMode?: unknown } | null;
+  localStrategy?: { newsRiskMode?: unknown } | null;
+  compositeStrategy?: { newsRiskMode?: unknown } | null;
+}): NewsRiskMode {
+  if (!params.strategyRef) return "off";
+  if (params.strategyRef.kind === "ai") {
+    return normalizeNewsRiskMode(params.promptSettings?.newsRiskMode);
+  }
+  if (params.strategyRef.kind === "local") {
+    return normalizeNewsRiskMode(params.localStrategy?.newsRiskMode);
+  }
+  if (params.strategyRef.kind === "composite") {
+    return normalizeNewsRiskMode(params.compositeStrategy?.newsRiskMode);
+  }
+  return "off";
+}
+
+function createNewsRiskBlockedExplanation(
+  strategyMode: NewsRiskMode
+): ExplainerOutput {
+  return {
+    explanation: "News blackout active; setup suspended.",
+    tags: ["news_risk"],
+    keyDrivers: [
+      { name: "featureSnapshot.newsRisk", value: true },
+      { name: "policy.newsRiskMode", value: strategyMode },
+      { name: "policy.reasonCode", value: "news_risk_blocked" }
+    ],
+    aiPrediction: {
+      signal: "neutral",
+      expectedMovePct: 0,
+      confidence: 0
+    },
+    disclaimer: "grounded_features_only"
+  };
+}
+
 function normalizeKeyDriverList(
   value: unknown
 ): Array<{ name: string; value: unknown }> {
@@ -6597,6 +6732,26 @@ async function refreshPredictionStateForTemplate(params: {
           ? countCompositeStrategyNodes(selectedCompositeStrategy)
           : null
     });
+    const requestedPromptTemplateIdForNewsRisk =
+      requestedStrategyRefEffective?.kind === "ai"
+        ? requestedStrategyRefEffective.id
+        : (template.aiPromptTemplateId ?? readAiPromptTemplateId(template.featureSnapshot));
+    const promptTemplateForNewsRisk =
+      requestedPromptTemplateIdForNewsRisk
+        ? await getAiPromptTemplateById(requestedPromptTemplateIdForNewsRisk)
+        : null;
+    const strategyNewsRiskMode = resolveStrategyNewsRiskMode({
+      strategyRef: requestedStrategyRefEffective,
+      promptSettings: promptTemplateForNewsRisk,
+      localStrategy: selectedLocalStrategy,
+      compositeStrategy: selectedCompositeStrategy
+    });
+    const globalNewsRiskBlockEnabled = await readGlobalNewsRiskEnforcement();
+    const newsRiskBlocked = shouldBlockByNewsRisk({
+      featureSnapshot: inferred.featureSnapshot,
+      globalEnabled: globalNewsRiskBlockEnabled,
+      strategyMode: strategyNewsRiskMode
+    });
 
     const baselineTags = enforceNewsRiskTag(
       inferred.featureSnapshot.tags,
@@ -6648,7 +6803,7 @@ async function refreshPredictionStateForTemplate(params: {
       useLegacySignalFlow = true;
     }
     let aiGateStateForPersist = aiGateDecision.state;
-    if (useLegacySignalFlow && !aiDecision.shouldCallAi) {
+    if (useLegacySignalFlow && !aiDecision.shouldCallAi && !newsRiskBlocked) {
       console.info("[ai_quality_gate_blocked_refresh]", {
         gate_allow: false,
         gate_reasons: aiGateDecision.reasonCodes,
@@ -6666,6 +6821,7 @@ async function refreshPredictionStateForTemplate(params: {
       && requestedStrategyRefEffective?.kind !== "local"
       && requestedStrategyRefEffective?.kind !== "composite"
       && !aiDecision.shouldCallAi
+      && !newsRiskBlocked
     ) {
       return {
         refreshed: false,
@@ -6677,6 +6833,7 @@ async function refreshPredictionStateForTemplate(params: {
       signalMode === "ai_only"
       && requestedStrategyKindForAccess === "ai"
       && !strategyAccess.allowed
+      && !newsRiskBlocked
     ) {
       return {
         refreshed: false,
@@ -6765,6 +6922,34 @@ async function refreshPredictionStateForTemplate(params: {
       aiPrediction: localPrediction,
       disclaimer: "grounded_features_only"
     };
+    if (newsRiskBlocked) {
+      useLegacySignalFlow = false;
+      strategyRunStatus = "fallback";
+      strategyRunDebug = {
+        requestedStrategyRef: requestedStrategyRefEffective,
+        reasonCode: "news_risk_blocked",
+        strategyNewsRiskMode
+      };
+      const blockedSource = resolvePreferredSignalSourceForMode(
+        signalMode,
+        PREDICTION_PRIMARY_SIGNAL_SOURCE
+      );
+      selectedPrediction = {
+        signal: "neutral",
+        expectedMovePct: 0,
+        confidence: 0,
+        source: blockedSource
+      };
+      aiPrediction =
+        signalMode === "local_only"
+          ? null
+          : {
+              signal: "neutral",
+              expectedMovePct: 0,
+              confidence: 0
+            };
+      explainer = createNewsRiskBlockedExplanation(strategyNewsRiskMode);
+    }
 
     if (requestedCompositeStrategyId && !selectedCompositeStrategy) {
       // eslint-disable-next-line no-console
@@ -6778,7 +6963,7 @@ async function refreshPredictionStateForTemplate(params: {
       useLegacySignalFlow = true;
     }
 
-    if (requestedLocalStrategyId && !selectedLocalStrategy) {
+    if (!newsRiskBlocked && requestedLocalStrategyId && !selectedLocalStrategy) {
       // eslint-disable-next-line no-console
       console.warn("[predictions:refresh] local strategy unavailable, fallback to legacy flow", {
         stateId: template.stateId,
@@ -6791,7 +6976,8 @@ async function refreshPredictionStateForTemplate(params: {
     }
 
     if (
-      strategyAccess.allowed
+      !newsRiskBlocked
+      && strategyAccess.allowed
       && requestedStrategyRefEffective?.kind === "local"
       && selectedLocalStrategy
     ) {
@@ -6859,7 +7045,8 @@ async function refreshPredictionStateForTemplate(params: {
     }
 
     if (
-      strategyAccess.allowed
+      !newsRiskBlocked
+      && strategyAccess.allowed
       && requestedStrategyRefEffective?.kind === "composite"
       && selectedCompositeStrategy
     ) {
@@ -6982,7 +7169,7 @@ async function refreshPredictionStateForTemplate(params: {
       }
     }
 
-    if (useLegacySignalFlow) {
+    if (!newsRiskBlocked && useLegacySignalFlow) {
       const aiAllowedByStrategyEntitlements =
         strategyAccess.allowed || requestedStrategyKindForAccess !== "ai";
       if (signalMode !== "local_only" && aiDecision.shouldCallAi && aiAllowedByStrategyEntitlements) {
@@ -9195,6 +9382,7 @@ function normalizeAiPromptSettingsPayload(
       directionPreference: row.directionPreference,
       confidenceTargetPct: row.confidenceTargetPct,
       slTpSource: row.slTpSource ?? "local",
+      newsRiskMode: row.newsRiskMode === "block" ? "block" : "off",
       marketAnalysisUpdateEnabled: Boolean(row.marketAnalysisUpdateEnabled),
       isPublic: Boolean(row.isPublic),
       createdAt,
@@ -9323,6 +9511,7 @@ function mapLocalStrategyDefinitionPublic(row: any) {
     strategyType: row.strategyType,
     engine: row.engine === "python" ? "python" : "ts",
     shadowMode: row.shadowMode === true,
+    newsRiskMode: row.newsRiskMode === "block" ? "block" : "off",
     remoteStrategyType:
       typeof row.remoteStrategyType === "string" && row.remoteStrategyType.trim()
         ? row.remoteStrategyType.trim()
@@ -9419,6 +9608,7 @@ function mapCompositeStrategyPublic(row: any) {
     name: row.name,
     description: row.description ?? null,
     version: row.version,
+    newsRiskMode: row.newsRiskMode === "block" ? "block" : "off",
     nodesJson: graph.nodes,
     edgesJson: graph.edges,
     combineMode: graph.combineMode,
@@ -9436,6 +9626,7 @@ async function getEnabledCompositeStrategyById(id: string | null): Promise<{
   edgesJson: unknown;
   combineMode: unknown;
   outputPolicy: unknown;
+  newsRiskMode: "off" | "block";
 } | null> {
   if (!id || !compositeStrategiesStoreReady()) return null;
   const row = await db.compositeStrategy.findUnique({
@@ -9447,6 +9638,7 @@ async function getEnabledCompositeStrategyById(id: string | null): Promise<{
       edgesJson: true,
       combineMode: true,
       outputPolicy: true,
+      newsRiskMode: true,
       isEnabled: true
     }
   });
@@ -9457,7 +9649,8 @@ async function getEnabledCompositeStrategyById(id: string | null): Promise<{
     nodesJson: row.nodesJson,
     edgesJson: row.edgesJson,
     combineMode: row.combineMode,
-    outputPolicy: row.outputPolicy
+    outputPolicy: row.outputPolicy,
+    newsRiskMode: row.newsRiskMode === "block" ? "block" : "off"
   };
 }
 
@@ -9486,6 +9679,7 @@ async function getEnabledLocalStrategyById(id: string | null): Promise<{
   name: string;
   strategyType: string;
   version: string;
+  newsRiskMode: "off" | "block";
 } | null> {
   if (!id || !localStrategiesStoreReady()) return null;
   const row = await db.localStrategyDefinition.findUnique({
@@ -9495,6 +9689,7 @@ async function getEnabledLocalStrategyById(id: string | null): Promise<{
       name: true,
       strategyType: true,
       version: true,
+      newsRiskMode: true,
       isEnabled: true
     }
   });
@@ -9503,7 +9698,8 @@ async function getEnabledLocalStrategyById(id: string | null): Promise<{
     id: row.id,
     name: row.name,
     strategyType: row.strategyType,
-    version: row.version
+    version: row.version,
+    newsRiskMode: row.newsRiskMode === "block" ? "block" : "off"
   };
 }
 
@@ -9673,6 +9869,7 @@ app.get("/settings/ai-prompts/public", requireAuth, async (_req, res) => {
       directionPreference: item.directionPreference,
       confidenceTargetPct: item.confidenceTargetPct,
       slTpSource: item.slTpSource,
+      newsRiskMode: item.newsRiskMode,
       isPublic: item.isPublic,
       updatedAt: item.updatedAt
     })),
@@ -9798,6 +9995,7 @@ app.post("/admin/local-strategies", requireAuth, async (req, res) => {
           )
           : null,
       timeoutMs: parsed.data.engine === "python" ? (parsed.data.timeoutMs ?? null) : null,
+      newsRiskMode: parsed.data.newsRiskMode,
       name: parsed.data.name.trim(),
       description:
         typeof parsed.data.description === "string" && parsed.data.description.trim()
@@ -9874,6 +10072,7 @@ app.put("/admin/local-strategies/:id", requireAuth, async (req, res) => {
   if (parsed.data.remoteStrategyType !== undefined) data.remoteStrategyType = parsed.data.remoteStrategyType;
   if (parsed.data.fallbackStrategyType !== undefined) data.fallbackStrategyType = parsed.data.fallbackStrategyType;
   if (parsed.data.timeoutMs !== undefined) data.timeoutMs = parsed.data.timeoutMs;
+  if (parsed.data.newsRiskMode !== undefined) data.newsRiskMode = parsed.data.newsRiskMode;
   if (parsed.data.name !== undefined) data.name = parsed.data.name.trim();
   if (parsed.data.description !== undefined) {
     data.description =
@@ -10145,6 +10344,7 @@ app.post("/admin/composite-strategies", requireAuth, async (req, res) => {
       edgesJson: validation.graph.edges,
       combineMode: validation.graph.combineMode,
       outputPolicy: validation.graph.outputPolicy,
+      newsRiskMode: parsed.data.newsRiskMode,
       isEnabled: parsed.data.isEnabled
     }
   });
@@ -10219,6 +10419,7 @@ app.put("/admin/composite-strategies/:id", requireAuth, async (req, res) => {
         : null;
   }
   if (parsed.data.version !== undefined) updateData.version = parsed.data.version.trim();
+  if (parsed.data.newsRiskMode !== undefined) updateData.newsRiskMode = parsed.data.newsRiskMode;
   if (parsed.data.isEnabled !== undefined) updateData.isEnabled = parsed.data.isEnabled;
 
   const updated = await db.compositeStrategy.update({
@@ -10954,8 +11155,50 @@ app.post("/api/predictions/generate", requireAuth, async (req, res) => {
       strategyRef: selectedStrategyRef
     }
   );
+  const strategyNewsRiskMode = resolveStrategyNewsRiskMode({
+    strategyRef: strategyRefForScope,
+    promptSettings: selectedPromptSettings,
+    localStrategy: selectedLocalStrategy,
+    compositeStrategy: selectedCompositeStrategy
+  });
+  const globalNewsRiskBlockEnabled = await readGlobalNewsRiskEnforcement();
+  const newsRiskBlocked = shouldBlockByNewsRisk({
+    featureSnapshot: featureSnapshotWithStrategy,
+    globalEnabled: globalNewsRiskBlockEnabled,
+    strategyMode: strategyNewsRiskMode
+  });
+  const featureSnapshotForGenerate = newsRiskBlocked
+    ? withStrategyRunSnapshot(
+        featureSnapshotWithStrategy,
+        {
+          strategyRef: strategyRefForScope,
+          status: "fallback",
+          signal: "neutral",
+          expectedMovePct: 0,
+          confidence: 0,
+          source: resolvePreferredSignalSourceForMode(
+            signalMode,
+            PREDICTION_PRIMARY_SIGNAL_SOURCE
+          ),
+          aiCalled: false,
+          explanation: "News blackout active; setup suspended.",
+          tags: ["news_risk"],
+          keyDrivers: [
+            { name: "featureSnapshot.newsRisk", value: true },
+            { name: "policy.reasonCode", value: "news_risk_blocked" }
+          ],
+          ts: tsCreated
+        },
+        {
+          phase: "manual_generate",
+          strategyRef: strategyRefForScope,
+          reasonCode: "news_risk_blocked",
+          strategyNewsRiskMode
+        }
+      )
+    : featureSnapshotWithStrategy;
   const tracking = derivePredictionTrackingFromSnapshot(
-    featureSnapshotWithStrategy,
+    featureSnapshotForGenerate,
     effectiveTimeframe
   );
 
@@ -10965,7 +11208,7 @@ app.post("/api/predictions/generate", requireAuth, async (req, res) => {
     timeframe: effectiveTimeframe,
     tsCreated,
       prediction: payload.prediction,
-      featureSnapshot: featureSnapshotWithStrategy,
+      featureSnapshot: featureSnapshotForGenerate,
     signalMode,
     preferredSignalSource: resolvePreferredSignalSourceForMode(
       signalMode,
@@ -10976,7 +11219,13 @@ app.post("/api/predictions/generate", requireAuth, async (req, res) => {
     botId: payload.botId ?? null,
     modelVersionBase: payload.modelVersionBase,
     promptSettings: selectedPromptSettings ?? undefined,
-    promptScopeContext
+    promptScopeContext,
+    newsRiskBlocked: newsRiskBlocked
+      ? {
+          reasonCode: "news_risk_blocked",
+          strategyMode: strategyNewsRiskMode
+        }
+      : null
   });
 
   const snapshot = asRecord(created.featureSnapshot);

@@ -17,6 +17,7 @@ type LocalStrategyItem = {
   strategyType: string;
   engine: "ts" | "python";
   shadowMode: boolean;
+  newsRiskMode: "off" | "block";
   remoteStrategyType: string | null;
   fallbackStrategyType: string | null;
   timeoutMs: number | null;
@@ -129,6 +130,7 @@ export default function AdminLocalStrategiesPage() {
   const [editingId, setEditingId] = useState<string | null>(null);
   const [engine, setEngine] = useState<"ts" | "python">("ts");
   const [shadowMode, setShadowMode] = useState(false);
+  const [newsRiskMode, setNewsRiskMode] = useState<"off" | "block">("off");
   const [strategyType, setStrategyType] = useState("");
   const [remoteStrategyType, setRemoteStrategyType] = useState("");
   const [fallbackStrategyType, setFallbackStrategyType] = useState("");
@@ -207,6 +209,7 @@ export default function AdminLocalStrategiesPage() {
     setEditingId(null);
     setEngine("ts");
     setShadowMode(false);
+    setNewsRiskMode("off");
     setStrategyType(first?.type ?? "");
     setRemoteStrategyType("");
     setFallbackStrategyType(first?.type ?? "");
@@ -225,6 +228,7 @@ export default function AdminLocalStrategiesPage() {
     setEditingId(item.id);
     setEngine(item.engine === "python" ? "python" : "ts");
     setShadowMode(item.shadowMode === true);
+    setNewsRiskMode(item.newsRiskMode === "block" ? "block" : "off");
     setStrategyType(item.strategyType);
     setRemoteStrategyType(item.remoteStrategyType ?? item.strategyType);
     setFallbackStrategyType(item.fallbackStrategyType ?? item.strategyType);
@@ -261,6 +265,7 @@ export default function AdminLocalStrategiesPage() {
         strategyType: strategyType.trim(),
         engine,
         shadowMode: engine === "python" ? shadowMode : false,
+        newsRiskMode,
         remoteStrategyType: engine === "python" ? (remoteStrategyType.trim() || strategyType.trim()) : null,
         fallbackStrategyType: engine === "python" ? (fallbackStrategyType.trim() || strategyType.trim()) : null,
         timeoutMs:
@@ -476,6 +481,21 @@ export default function AdminLocalStrategiesPage() {
 
             <div className="settingsTwoColGrid" style={{ marginBottom: 10 }}>
               <label className="settingsField">
+                <span className="settingsFieldLabel">{t("newsRiskMode")}</span>
+                <select
+                  className="input"
+                  value={newsRiskMode}
+                  onChange={(e) => setNewsRiskMode(e.target.value === "block" ? "block" : "off")}
+                >
+                  <option value="off">{t("newsRiskModeOff")}</option>
+                  <option value="block">{t("newsRiskModeBlock")}</option>
+                </select>
+              </label>
+              <div />
+            </div>
+
+            <div className="settingsTwoColGrid" style={{ marginBottom: 10 }}>
+              <label className="settingsField">
                 <span className="settingsFieldLabel">Name</span>
                 <input className="input" value={name} onChange={(e) => setName(e.target.value)} placeholder="Regime Gate BTC" />
               </label>
@@ -545,6 +565,7 @@ export default function AdminLocalStrategiesPage() {
                       <th align="left">Type</th>
                       <th align="left">Engine</th>
                       <th align="left">Shadow</th>
+                      <th align="left">{t("newsRiskMode")}</th>
                       <th align="left">Version</th>
                       <th align="left">Status</th>
                       <th align="left">Updated</th>
@@ -558,6 +579,7 @@ export default function AdminLocalStrategiesPage() {
                         <td><code>{item.strategyType}</code></td>
                         <td><code>{item.engine}</code></td>
                         <td>{item.shadowMode ? "on" : "off"}</td>
+                        <td>{item.newsRiskMode === "block" ? t("newsRiskModeBlock") : t("newsRiskModeOff")}</td>
                         <td>{item.version}</td>
                         <td>{item.isEnabled ? "enabled" : "disabled"}</td>
                         <td>{item.updatedAt ? new Date(item.updatedAt).toLocaleString() : "-"}</td>

@@ -67,6 +67,7 @@
         "sizingValue": "Sizing-Wert",
         "limitOffsetBps": "Limit-Offset (bps)",
         "blockTags": "Block-Tags (kommagetrennt)",
+        "newsRiskBlockEnabled": "Bei aktivem News-Risiko blockieren",
         "requireTags": "Pflicht-Tags (kommagetrennt)",
         "minExpectedMove": "Min. erwarteter Move (%)",
         "allowSignals": "Erlaubte Signale",
@@ -81,7 +82,7 @@
         "takeProfitPct": "Take-Profit (%)",
         "timeStopMin": "Time-Stop (Min)"
       },
-      "blockTagsPlaceholder": "news_risk,data_gap,low_liquidity",
+      "blockTagsPlaceholder": "data_gap,low_liquidity",
       "requireTagsPlaceholder": "trend_up,high_vol",
       "sourceMeta": {
         "symbol": "Symbol",
@@ -166,6 +167,7 @@
       "sizingValue": "Sizing-Wert",
       "limitOffsetBps": "Limit-Offset (bps)",
       "blockTags": "Block-Tags (csv)",
+      "newsRiskBlockEnabled": "Bei aktivem News-Risiko blockieren",
       "requireTags": "Pflicht-Tags (csv)",
       "allowSignals": "Erlaubte Signale",
       "minExpectedMove": "Min. erwarteter Move (%)",

@@ -629,6 +629,7 @@ model MarketContextSnapshot {
 model EconomicCalendarConfig {
   key         String   @id @default("default")
   enabled     Boolean  @default(true)
+  enforceNewsRiskBlock Boolean @default(false) @map("enforce_news_risk_block")
   impactMin   String   @default("high") @map("impact_min")
   currencies  String?
   preMinutes  Int      @default(30) @map("pre_minutes")
@@ -750,6 +751,7 @@ model LocalStrategyDefinition {
   strategyType String   @map("strategy_type")
   engine       String   @default("ts")
   shadowMode   Boolean  @default(false) @map("shadow_mode")
+  newsRiskMode String   @default("off") @map("news_risk_mode")
   remoteStrategyType String? @map("remote_strategy_type")
   fallbackStrategyType String? @map("fallback_strategy_type")
   timeoutMs    Int?     @map("timeout_ms")
@@ -772,6 +774,7 @@ model CompositeStrategy {
   name         String
   description  String?
   version      String
+  newsRiskMode String   @default("off") @map("news_risk_mode")
   nodesJson    Json     @map("nodes_json")
   edgesJson    Json     @map("edges_json")
   combineMode  String   @default("pipeline") @map("combine_mode")
