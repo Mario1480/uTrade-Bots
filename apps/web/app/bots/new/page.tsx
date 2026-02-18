@@ -47,6 +47,16 @@ function toCsvArray(value: string): string[] {
     .filter(Boolean);
 }
 
+function formatPredictionSourceStrategy(source: PredictionSource): string {
+  const byName = typeof source.strategyName === "string" ? source.strategyName.trim() : "";
+  if (byName) return byName;
+  const byRef = typeof source.strategyRef === "string" ? source.strategyRef.trim() : "";
+  if (byRef) return byRef;
+  const byKind = typeof source.strategyKind === "string" ? source.strategyKind.trim() : "";
+  if (byKind) return byKind;
+  return "legacy";
+}
+
 export default function NewBotPage() {
   const t = useTranslations("system.botsNew");
   const locale = useLocale() as AppLocale;
@@ -411,7 +421,7 @@ export default function NewBotPage() {
                       ) : null}
                       {sources.map((source) => (
                         <option key={source.stateId} value={source.stateId}>
-                          {source.symbol} · {source.timeframe} · {source.strategyKind ?? "legacy"} · {source.lastSignal}
+                          {formatPredictionSourceStrategy(source)} · {source.symbol} · {source.timeframe} · {source.lastSignal}
                         </option>
                       ))}
                     </select>
