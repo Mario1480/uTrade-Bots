@@ -235,3 +235,24 @@ test("ai prompt template keeps configured slTpSource in runtime settings", () =>
   const runtime = resolveAiPromptRuntimeSettingsForContext(parsed, {}, "db");
   assert.equal(runtime.slTpSource, "hybrid");
 });
+
+test("ai prompt template keeps up to 8000 chars and trims beyond", () => {
+  const overLimit = "x".repeat(8500);
+  const parsed = parseStoredAiPromptSettings({
+    activePromptId: "prompt_long",
+    prompts: [
+      {
+        id: "prompt_long",
+        name: "Long",
+        promptText: overLimit,
+        indicatorKeys: ["rsi"],
+        ohlcvBars: 100,
+        directionPreference: "either",
+        confidenceTargetPct: 60,
+        isPublic: false
+      }
+    ]
+  });
+
+  assert.equal(parsed.prompts[0]?.promptText.length, 8000);
+});
