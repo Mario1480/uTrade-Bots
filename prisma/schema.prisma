@@ -62,6 +62,7 @@ model Bot {
   manualTrades       ManualTradeLog[]
   metrics            BotMetric[]
   tradeStates        BotTradeState[]
+  tradeHistory       BotTradeHistory[]
 }
 
 model FuturesBotConfig {
@@ -233,6 +234,47 @@ model BotTradeState {
   @@index([botId])
   @@index([botId, dailyResetUtc])
   @@map("bot_trade_state")
+}
+
+model BotTradeHistory {
+  id                   String   @id @default(cuid())
+  botId                String   @map("bot_id")
+  userId               String   @map("user_id")
+  exchangeAccountId    String   @map("exchange_account_id")
+  symbol               String
+  marketType           String   @default("perp") @map("market_type")
+  side                 String
+  status               String   @default("open")
+  entryTs              DateTime @map("entry_ts")
+  entryPrice           Float    @map("entry_price")
+  entryQty             Float    @map("entry_qty")
+  entryNotionalUsd     Float    @map("entry_notional_usd")
+  tpPrice              Float?   @map("tp_price")
+  slPrice              Float?   @map("sl_price")
+  exitTs               DateTime? @map("exit_ts")
+  exitPrice            Float?   @map("exit_price")
+  exitNotionalUsd      Float?   @map("exit_notional_usd")
+  realizedPnlUsd       Float?   @map("realized_pnl_usd")
+  realizedPnlPct       Float?   @map("realized_pnl_pct")
+  outcome              String?  @map("outcome")
+  exitReason           String?  @map("exit_reason")
+  entryOrderId         String?  @map("entry_order_id")
+  exitOrderId          String?  @map("exit_order_id")
+  predictionStateId    String?  @map("prediction_state_id")
+  predictionHash       String?  @map("prediction_hash")
+  predictionSignal     String?  @map("prediction_signal")
+  predictionConfidence Float?   @map("prediction_confidence")
+  predictionTagsJson   Json?    @map("prediction_tags_json")
+  createdAt            DateTime @default(now()) @map("created_at")
+  updatedAt            DateTime @updatedAt @map("updated_at")
+
+  bot Bot @relation(fields: [botId], references: [id], onDelete: Cascade)
+
+  @@index([botId, entryTs(sort: Desc)])
+  @@index([botId, status])
+  @@index([userId, entryTs(sort: Desc)])
+  @@index([botId, symbol, status])
+  @@map("bot_trade_history")
 }
 
 model RiskEvent {

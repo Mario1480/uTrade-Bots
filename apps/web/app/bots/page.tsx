@@ -36,6 +36,8 @@ type BotOverviewItem = {
     openEntryPrice?: number | null;
     openPnlUsd?: number | null;
     realizedPnlTodayUsd?: number | null;
+    realizedPnlTotalUsd?: number | null;
+    openTradesCount?: number | null;
     openTs?: string | null;
     dailyTradeCount?: number | null;
     lastTradeTs?: string | null;
@@ -254,6 +256,24 @@ function BotsPageContent() {
                   </span>
                 </div>
                 <div className="botMiniMetric">
+                  <span className="botMiniMetricLabel">{t("metrics.realizedPnlTotalUsdt")}</span>
+                  <span
+                    className={`botMiniMetricValue ${
+                      Number(bot.trade?.realizedPnlTotalUsd ?? 0) > 0
+                        ? "botPnlPositive"
+                        : Number(bot.trade?.realizedPnlTotalUsd ?? 0) < 0
+                          ? "botPnlNegative"
+                          : ""
+                    }`}
+                  >
+                    {formatPnl(bot.trade?.realizedPnlTotalUsd)}
+                  </span>
+                </div>
+                <div className="botMiniMetric">
+                  <span className="botMiniMetricLabel">{t("metrics.openTrades")}</span>
+                  <span className="botMiniMetricValue">{bot.trade?.openTradesCount ?? 0}</span>
+                </div>
+                <div className="botMiniMetric">
                   <span className="botMiniMetricLabel">{t("metrics.lastTrade")}</span>
                   <span className="botMiniMetricValue">{formatDateTime(bot.trade?.lastTradeTs)}</span>
                 </div>
@@ -284,7 +304,7 @@ function BotsPageContent() {
                 <button
                   className="btn btnStop"
                   onClick={() => void removeBot(bot)}
-                  disabled={busy !== null}
+                  disabled={busy != null}
                 >
                   {busy === "delete" ? t("actions.deleting") : t("actions.delete")}
                 </button>

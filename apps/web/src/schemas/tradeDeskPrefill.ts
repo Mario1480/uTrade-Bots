@@ -130,6 +130,8 @@ export type PredictionPrefillSource = {
   suggestedEntry?: { type: "market" | "limit"; price?: number } | null;
   suggestedStopLoss?: number | null;
   suggestedTakeProfit?: number | null;
+  stopLossPrice?: number | null;
+  takeProfitPrice?: number | null;
   positionSizeHint?: { mode: "percent_balance" | "fixed_quote"; value: number } | null;
   tags?: string[] | null;
   explanation?: string | null;
@@ -203,6 +205,14 @@ function round(value: unknown, decimals: number): number | undefined {
   const parsed = Number(value);
   if (!Number.isFinite(parsed)) return undefined;
   return Number(parsed.toFixed(decimals));
+}
+
+function pickPositiveNumber(...values: unknown[]): number | undefined {
+  for (const value of values) {
+    const parsed = Number(value);
+    if (Number.isFinite(parsed) && parsed > 0) return parsed;
+  }
+  return undefined;
 }
 
 function normalizeIndicators(source: PredictionPrefillSource["indicators"]) {
@@ -345,6 +355,8 @@ export function buildTradeDeskPrefillPayload(
   source: PredictionPrefillSource
 ): { payload: TradeDeskPrefillPayload; info?: string } {
   const sideMapped = mapSignalToSide(source.signal, source.marketType);
+  const suggestedStopLoss = pickPositiveNumber(source.suggestedStopLoss, source.stopLossPrice);
+  const suggestedTakeProfit = pickPositiveNumber(source.suggestedTakeProfit, source.takeProfitPrice);
 
   const candidate: TradeDeskPrefillPayload = {
     exchange: source.exchange,
@@ -363,8 +375,8 @@ export function buildTradeDeskPrefillPayload(
     leverage: source.leverage ?? undefined,
     side: sideMapped.side,
     suggestedEntry: source.suggestedEntry ?? undefined,
-    suggestedStopLoss: source.suggestedStopLoss ?? undefined,
-    suggestedTakeProfit: source.suggestedTakeProfit ?? undefined,
+    suggestedStopLoss,
+    suggestedTakeProfit,
     positionSizeHint: source.positionSizeHint ?? undefined,
     tags: source.tags?.slice(0, 5) ?? undefined,
     explanation: source.explanation ?? undefined,

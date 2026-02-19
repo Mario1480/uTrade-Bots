@@ -284,3 +284,94 @@ test("returns state dto when id belongs to predictions_state and can include eve
   assert.equal(Array.isArray((result.body as any).events), true);
   assert.equal(((result.body as any).events as any[]).length, 1);
 });
+
+test("prediction detail falls back to stored stopLossPrice/takeProfitPrice for suggested levels", async () => {
+  const db = makeDb({
+    predictions: [
+      makePrediction({
+        id: "cmf9999999999999999999999",
+        symbol: "BTCUSDT",
+        marketType: "perp",
+        timeframe: "15m",
+        featuresSnapshot: {},
+        stopLossPrice: 101234.5,
+        takeProfitPrice: 98765.4
+      })
+    ],
+    bots: [],
+    exchangeAccounts: [
+      { id: "acc_1", userId: "user_1", exchange: "bitget", updatedAt: new Date("2026-02-11T12:01:00.000Z") }
+    ]
+  });
+
+  const result = await getPredictionDetailController({
+    db: db as any,
+    predictionId: "cmf9999999999999999999999",
+    userId: "user_1"
+  });
+
+  assert.equal(result.status, 200);
+  if (result.status !== 200) return;
+  assert.equal(result.body.suggestedStopLoss, 101234.5);
+  assert.equal(result.body.suggestedTakeProfit, 98765.4);
+});
+
+test("prediction state detail resolves nested tracking stop/take profit fields", async () => {
+  const now = new Date("2026-02-11T12:00:00.000Z");
+  const db = makeDb({
+    predictions: [],
+    predictionStates: [
+      {
+        id: "22222222-2222-4222-8222-222222222222",
+        userId: "user_1",
+        exchange: "bitget",
+        accountId: "acc_1",
+        symbol: "ETHUSDT",
+        marketType: "perp",
+        timeframe: "15m",
+        tsUpdated: now,
+        tsPredictedFor: new Date(now.getTime() + 15 * 60 * 1000),
+        signal: "down",
+        expectedMovePct: 1.4,
+        confidence: 0.73,
+        tags: ["trend_down"],
+        explanation: "State explanation.",
+        keyDrivers: [{ name: "indicators.rsi_14", value: 41.2 }],
+        featuresSnapshot: {
+          tracking: {
+            stopLossPrice: 3540.2,
+            takeProfitPrice: 3312.8
+          },
+          prefillExchangeAccountId: "acc_1"
+        },
+        modelVersion: "baseline-v1 + local-strategy-v1",
+        lastAiExplainedAt: now,
+        lastChangeHash: "xyz",
+        lastChangeReason: "signal_flip",
+        autoScheduleEnabled: true,
+        autoSchedulePaused: false,
+        directionPreference: "either",
+        confidenceTargetPct: 60,
+        leverage: 10,
+        createdAt: now,
+        updatedAt: now
+      }
+    ],
+    predictionEvents: [],
+    bots: [],
+    exchangeAccounts: [
+      { id: "acc_1", userId: "user_1", exchange: "bitget", updatedAt: now }
+    ]
+  });
+
+  const result = await getPredictionDetailController({
+    db: db as any,
+    predictionId: "22222222-2222-4222-8222-222222222222",
+    userId: "user_1"
+  });
+
+  assert.equal(result.status, 200);
+  if (result.status !== 200) return;
+  assert.equal(result.body.suggestedStopLoss, 3540.2);
+  assert.equal(result.body.suggestedTakeProfit, 3312.8);
+});

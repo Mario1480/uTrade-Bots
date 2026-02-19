@@ -31,6 +31,8 @@
       "tradesToday": "Trades heute",
       "openPnlUsdt": "Open PnL (USDT)",
       "realizedPnlTodayUsdt": "Realized PnL heute (USDT)",
+      "realizedPnlTotalUsdt": "Realized PnL gesamt (USDT)",
+      "openTrades": "Offene Trades",
       "lastTrade": "Letzter Trade",
       "reason": "Grund",
       "none": "k. A."
@@ -123,11 +125,13 @@
     "actions": {
       "back": "Zurück",
       "settings": "Einstellungen",
-      "start": "Start",
-      "starting": "Startet...",
-      "stop": "Stopp",
-      "stopping": "Stoppt..."
-    },
+    "start": "Start",
+    "starting": "Startet...",
+    "stop": "Stopp",
+    "stopping": "Stoppt...",
+    "stopAndClose": "Stopp + Trade schließen",
+    "stoppingAndClosing": "Stoppt + schließt..."
+  },
     "fields": {
       "botStatus": "Bot-Status",
       "exchangeAccount": "Exchange-Konto",
@@ -143,7 +147,10 @@
       "testnet": "Testnet"
     },
     "sections": {
+      "overview": "Übersicht",
       "opsMetrics": "Ops-Metriken",
+      "openTrades": "Offene Trades",
+      "tradeHistory": "Trade-Historie",
       "recentEvents": "Letzte Events",
       "noEvents": "Keine aktuellen Events vorhanden.",
       "whyStopped": "Warum gestoppt",
@@ -157,11 +164,89 @@
       "openNotionalApprox": "Open-Notional (ca.)",
       "openPnlUsdt": "Open PnL (USDT)",
       "realizedPnlTodayUsdt": "Realized PnL heute (USDT)",
+      "realizedPnlTotalUsdt": "Realized PnL gesamt (USDT)",
+      "openTradesCount": "Offene Trades",
       "dailyTradeCount": "Trades heute",
       "lastTradeTs": "Letzter Trade",
       "lastSignal": "Letztes Signal",
       "lastSignalTs": "Zeit letztes Signal",
-      "lastPredictionConfidence": "Letzte Prediction-Confidence (%)"
+      "lastPredictionConfidence": "Letzte Prediction-Confidence (%)",
+      "winRatePct": "Trefferquote (%)",
+      "avgWinUsd": "Durchschnitt Gewinn (USDT)",
+      "avgLossUsd": "Durchschnitt Verlust (USDT)",
+      "profitFactor": "Profit-Faktor",
+      "netPnlUsd": "Netto-PnL (USDT)",
+      "maxDrawdownUsd": "Max. Drawdown (USDT)",
+      "avgHoldMinutes": "Durchschnitt Haltedauer (Min)"
+    },
+  "openTrades": {
+    "consistencyLabel": "Konsistenz",
+    "updated": "Aktualisiert",
+    "closeAction": "Trade schließen",
+    "closingAction": "Schließe...",
+    "closeMissingAccount": "Kein Exchange-Konto für diesen Bot verfügbar.",
+    "exchangeError": "Exchange-Sync-Warnung",
+    "empty": "Keine offenen Trades.",
+      "consistency": {
+        "matched": "stimmig",
+        "mismatch": "abweichend",
+        "missing_live": "Live-Position fehlt",
+        "live_only": "nur live",
+        "none": "keine"
+      },
+      "columns": {
+        "side": "Richtung",
+        "size": "Größe",
+        "entry": "Einstieg",
+        "mark": "Mark",
+        "tp": "TP",
+      "sl": "SL",
+      "unrealized": "Unrealisierter PnL",
+      "openTs": "Geöffnet",
+      "action": "Aktion"
+    }
+  },
+    "history": {
+      "loading": "Wird geladen...",
+      "empty": "Keine Trades für diesen Filter gefunden.",
+      "actions": {
+        "refresh": "Aktualisieren",
+        "loadMore": "Mehr laden"
+      },
+      "filters": {
+        "from": "Von",
+        "to": "Bis",
+        "outcome": "Outcome"
+      },
+      "summary": {
+        "count": "Geschlossene Trades",
+        "wins": "Gewinne",
+        "losses": "Verluste",
+        "netPnl": "Netto-PnL"
+      },
+      "outcomes": {
+        "all": "Alle",
+        "tp_hit": "TP erreicht",
+        "sl_hit": "SL erreicht",
+        "signal_exit": "Signal-Exit",
+        "manual_exit": "Manueller Exit",
+        "time_stop": "Time-Stop",
+        "unknown": "Unbekannt"
+      },
+      "columns": {
+        "entryTs": "Einstiegszeit",
+        "entryPrice": "Einstieg",
+        "exitTs": "Ausstiegszeit",
+        "exitPrice": "Ausstieg",
+        "tp": "TP",
+        "sl": "SL",
+        "side": "Richtung",
+        "qty": "Menge",
+        "outcome": "Outcome",
+        "exitReason": "Exit-Grund",
+        "realizedPnlUsd": "Realized PnL (USDT)",
+        "realizedPnlPct": "Realized PnL (%)"
+      }
     }
   },
   "botsPriceSupport": {

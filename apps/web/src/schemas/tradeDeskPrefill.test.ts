@@ -84,3 +84,24 @@ test("build payload normalizes confidence 0..1 to percent", () => {
   assert.equal(built.payload.indicators?.vwap?.dist_pct, 0.46);
   assert.equal(built.payload.indicators?.adx?.adx_14, 24.9);
 });
+
+test("build payload falls back to stopLossPrice/takeProfitPrice when suggested levels are missing", () => {
+  const built = buildTradeDeskPrefillPayload({
+    predictionId: "pred_3",
+    exchange: "bitget",
+    accountId: "acc_3",
+    symbol: "BTCUSDT",
+    marketType: "perp",
+    timeframe: "15m",
+    tsCreated: "2026-02-09T12:00:00.000Z",
+    signal: "down",
+    confidence: 82,
+    suggestedStopLoss: null,
+    suggestedTakeProfit: null,
+    stopLossPrice: 102345.5,
+    takeProfitPrice: 98456.7
+  });
+
+  assert.equal(built.payload.suggestedStopLoss, 102345.5);
+  assert.equal(built.payload.suggestedTakeProfit, 98456.7);
+});

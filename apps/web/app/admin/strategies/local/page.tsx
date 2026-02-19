@@ -178,6 +178,14 @@ export default function AdminLocalStrategiesPage() {
     () => (pythonRegistry.items.length > 0 ? pythonRegistry.items : FALLBACK_PYTHON_REGISTRY_ITEMS),
     [pythonRegistry.items]
   );
+  const fallbackStrategyOptions = useMemo<string[]>(
+    () => registry.map((entry) => entry.type).filter((type) => Boolean(type)),
+    [registry]
+  );
+  const defaultFallbackStrategyType = useMemo<string>(
+    () => (fallbackStrategyOptions.includes("signal_filter") ? "signal_filter" : (fallbackStrategyOptions[0] ?? "")),
+    [fallbackStrategyOptions]
+  );
 
   const selectedRegistry = useMemo(
     () =>
@@ -227,9 +235,16 @@ export default function AdminLocalStrategiesPage() {
     if (!first) return;
     setStrategyType(first.type);
     setRemoteStrategyType(first.type);
-    setFallbackStrategyType(first.type);
+    setFallbackStrategyType(defaultFallbackStrategyType);
     setConfigJsonText(pretty(first.defaultConfig ?? {}));
-  }, [engine, pythonStrategyOptions, strategyType]);
+  }, [defaultFallbackStrategyType, engine, pythonStrategyOptions, strategyType]);
+
+  useEffect(() => {
+    if (engine !== "python") return;
+    const normalized = fallbackStrategyType.trim();
+    if (normalized && fallbackStrategyOptions.includes(normalized)) return;
+    setFallbackStrategyType(defaultFallbackStrategyType);
+  }, [defaultFallbackStrategyType, engine, fallbackStrategyOptions, fallbackStrategyType]);
 
   function resetForm() {
     const first = registry[0];
@@ -258,7 +273,7 @@ export default function AdminLocalStrategiesPage() {
     setNewsRiskMode(item.newsRiskMode === "block" ? "block" : "off");
     setStrategyType(item.strategyType);
     setRemoteStrategyType(item.remoteStrategyType ?? item.strategyType);
-    setFallbackStrategyType(item.fallbackStrategyType ?? item.strategyType);
+    setFallbackStrategyType(item.fallbackStrategyType ?? defaultFallbackStrategyType);
     setTimeoutMs(item.timeoutMs !== null && Number.isFinite(item.timeoutMs) ? String(item.timeoutMs) : "1200");
     setName(item.name);
     setDescription(item.description ?? "");
@@ -287,6 +302,14 @@ export default function AdminLocalStrategiesPage() {
       if (!parsedConfig.ok) {
         throw new Error("message" in parsedConfig ? parsedConfig.message : "Config invalid.");
       }
+      const normalizedFallbackStrategyType =
+        engine === "python"
+          ? (() => {
+            const raw = fallbackStrategyType.trim();
+            if (raw && fallbackStrategyOptions.includes(raw)) return raw;
+            return defaultFallbackStrategyType || null;
+          })()
+          : null;
 
       const payload = {
         strategyType: strategyType.trim(),
@@ -294,7 +317,7 @@ export default function AdminLocalStrategiesPage() {
         shadowMode: engine === "python" ? shadowMode : false,
         newsRiskMode,
         remoteStrategyType: engine === "python" ? (remoteStrategyType.trim() || strategyType.trim()) : null,
-        fallbackStrategyType: engine === "python" ? (fallbackStrategyType.trim() || strategyType.trim()) : null,
+        fallbackStrategyType: normalizedFallbackStrategyType,
         timeoutMs:
           engine === "python"
             ? (() => {
@@ -383,7 +406,7 @@ export default function AdminLocalStrategiesPage() {
     }
     if (engine === "python") {
       setRemoteStrategyType(type);
-      setFallbackStrategyType(type);
+      setFallbackStrategyType(defaultFallbackStrategyType);
     }
   }
 
@@ -460,12 +483,19 @@ export default function AdminLocalStrategiesPage() {
 
                 <label className="settingsField">
                   <span className="settingsFieldLabel">Fallback strategy type (TS)</span>
-                  <input
+                  <select
                     className="input"
                     value={fallbackStrategyType}
                     onChange={(e) => setFallbackStrategyType(e.target.value)}
-                    placeholder={strategyType || "regime_gate"}
-                  />
+                  >
+                    {fallbackStrategyOptions.map((itemType) => (
+                      <option key={itemType} value={itemType}>{itemType}</option>
+                    ))}
+                    {fallbackStrategyType
+                      && !fallbackStrategyOptions.includes(fallbackStrategyType)
+                      ? <option value={fallbackStrategyType}>{fallbackStrategyType}</option>
+                      : null}
+                  </select>
                 </label>
               </div>
             ) : null}

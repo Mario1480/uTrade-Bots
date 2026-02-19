@@ -14,3 +14,20 @@ Erledigt - Manual Trading Button in Bots löschen dafür Start/Stop einbauen
 
 Erledigt - Bots Übersicht mit laufenden Trades, kleines Metrix Set, UI Mobil anpassen, Fehlermeldungen/Logs warum z.B. Bot gestoppt hat.
 
+- Überprüfen des Wirtschaftskalender 
+
+- News Page beginnt mit Seite 0 anstelle 1
+
+Erledigt - Es lässt sich keine Lokale Strategie mehr erstellen
+
+Erledigt - flasche Strategie Name in der Telegram Nachricht.
+
+Erledigt - Bot Trades werden jeweils beim öffnen und schließen gezählt
+
+Erledigt - TP + SL fehlen. Wenn TP & SL leer sind beim Bott erstellen soll es diese aus der Logik nehmen wenn man diese an das Trading Desk schickt.
+
+Erledigt - Bot Trade wird nach kurzer Zeit wieder automatisch geschlossen
+
+Erledigt - Die Cards im Bot mit Akkodenonsections versehen und "Last Events" und "Futures-Konfikuration" default geschlossen.
+
+- Total Today PnL (USDT) im Dashboard zeigt nichts an. Muss noch mit den Bots verdratet werden

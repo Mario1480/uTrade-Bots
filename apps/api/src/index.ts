@@ -122,6 +122,14 @@ import {
   type BotTradeStateOverviewRow
 } from "./bots/overview.js";
 import {
+  classifyOutcomeFromClose,
+  computeCoreMetricsFromClosedTrades,
+  computeRealizedPnlPct,
+  decodeTradeHistoryCursor,
+  encodeTradeHistoryCursor,
+  type BotTradeHistoryOutcome
+} from "./bots/tradeHistory.js";
+import {
   generateAndPersistPrediction,
   resolvePredictionTracking,
   type PredictionSignalMode,
@@ -396,6 +404,10 @@ const botUpdateSchema = z.object({
   });
 });
 
+const botStopSchema = z.object({
+  closeOpenPosition: z.boolean().optional()
+});
+
 const botPredictionSourcesQuerySchema = z.object({
   exchangeAccountId: z.string().trim().min(1),
   strategyKind: predictionStrategyKindSchema.optional(),
@@ -414,6 +426,23 @@ const botOverviewDetailQuerySchema = z.object({
 
 const botRiskEventsQuerySchema = z.object({
   limit: z.coerce.number().int().min(1).max(100).default(100)
+});
+
+const botTradeHistoryOutcomeSchema = z.enum([
+  "tp_hit",
+  "sl_hit",
+  "signal_exit",
+  "manual_exit",
+  "time_stop",
+  "unknown"
+]);
+
+const botTradeHistoryQuerySchema = z.object({
+  limit: z.coerce.number().int().min(1).max(200).default(50),
+  cursor: z.string().trim().min(1).optional(),
+  from: z.string().trim().datetime().optional(),
+  to: z.string().trim().datetime().optional(),
+  outcome: botTradeHistoryOutcomeSchema.optional()
 });
 
 const tradingSettingsSchema = z.object({
@@ -1370,6 +1399,41 @@ function readPredictionStrategyRef(snapshot: Record<string, unknown>): Predictio
       id: aiId,
       name: readAiPromptTemplateName(snapshot)
     };
+  }
+  return null;
+}
+
+function resolveNotificationStrategyName(params: {
+  signalSource: PredictionSignalSource;
+  snapshot?: Record<string, unknown> | null;
+  strategyRef?: PredictionStrategyRef | null;
+  aiPromptTemplateName?: string | null;
+}): string | null {
+  const snapshot = params.snapshot ?? null;
+  const strategyRef = params.strategyRef ?? (snapshot ? readPredictionStrategyRef(snapshot) : null);
+  const strategyName =
+    typeof strategyRef?.name === "string" && strategyRef.name.trim()
+      ? strategyRef.name.trim()
+      : null;
+
+  if (params.signalSource === "local") {
+    if (strategyRef?.kind === "local" || strategyRef?.kind === "composite") {
+      return strategyName;
+    }
+    if (snapshot) {
+      return readLocalStrategyName(snapshot) ?? readCompositeStrategyName(snapshot);
+    }
+    return null;
+  }
+
+  if (strategyRef?.kind === "ai" && strategyName) {
+    return strategyName;
+  }
+  if (typeof params.aiPromptTemplateName === "string" && params.aiPromptTemplateName.trim()) {
+    return params.aiPromptTemplateName.trim();
+  }
+  if (snapshot) {
+    return readAiPromptTemplateName(snapshot);
   }
   return null;
 }
@@ -3986,16 +4050,19 @@ async function generateAutoPredictionForUser(
       leverage: payload.leverage ?? null
     };
 
-    const stateRow = existingStateId
-      ? await db.predictionState.update({
-          where: { id: existingStateId },
-          data: stateData,
-          select: { id: true }
-        })
-      : await db.predictionState.create({
-          data: stateData,
-          select: { id: true }
-        });
+    const stateRow = await persistPredictionState({
+      existingStateId,
+      stateData,
+      scope: {
+        userId,
+        exchange: account.exchange,
+        accountId: payload.exchangeAccountId,
+        symbol: canonicalSymbol,
+        marketType: payload.marketType,
+        timeframe: effectiveTimeframe,
+        signalMode
+      }
+    });
 
     await db.predictionEvent.create({
       data: {
@@ -4032,7 +4099,12 @@ async function generateAutoPredictionForUser(
       explanation: created.explanation.explanation,
       source: "auto",
       signalSource: created.signalSource,
-      aiPromptTemplateName: selectedPromptSettings?.activePromptName ?? null
+      aiPromptTemplateName: resolveNotificationStrategyName({
+        signalSource: created.signalSource,
+        snapshot: featureSnapshotForState,
+        strategyRef: strategyRefForInitialSnapshot,
+        aiPromptTemplateName: selectedPromptSettings?.activePromptName ?? null
+      })
     });
     if (readAiPromptMarketAnalysisUpdateEnabled(featureSnapshotForState)) {
       await notifyMarketAnalysisUpdate({
@@ -4049,7 +4121,12 @@ async function generateAutoPredictionForUser(
         explanation: created.explanation.explanation,
         source: "auto",
         signalSource: created.signalSource,
-        aiPromptTemplateName: selectedPromptSettings?.activePromptName ?? null
+        aiPromptTemplateName: resolveNotificationStrategyName({
+          signalSource: created.signalSource,
+          snapshot: featureSnapshotForState,
+          strategyRef: strategyRefForInitialSnapshot,
+          aiPromptTemplateName: selectedPromptSettings?.activePromptName ?? null
+        })
       });
     }
 
@@ -4902,32 +4979,52 @@ async function sendTelegramMessage(params: TelegramConfig & {
   const timeout = setTimeout(() => controller.abort(), 10_000);
 
   try {
-    const response = await fetch(`https://api.telegram.org/bot${params.botToken}/sendMessage`, {
-      method: "POST",
-      headers: {
-        "content-type": "application/json"
-      },
-      body: JSON.stringify({
-        chat_id: params.chatId,
-        text: params.text,
-        disable_web_page_preview: true,
-        ...(params.linkButton
-          ? {
-              reply_markup: {
-                inline_keyboard: [[{
-                  text: params.linkButton.text,
-                  url: params.linkButton.url
-                }]]
+    const sendPayload = async (withLinkButton: boolean): Promise<Response> => fetch(
+      `https://api.telegram.org/bot${params.botToken}/sendMessage`,
+      {
+        method: "POST",
+        headers: {
+          "content-type": "application/json"
+        },
+        body: JSON.stringify({
+          chat_id: params.chatId,
+          text: params.text,
+          disable_web_page_preview: true,
+          ...(withLinkButton && params.linkButton
+            ? {
+                reply_markup: {
+                  inline_keyboard: [[{
+                    text: params.linkButton.text,
+                    url: params.linkButton.url
+                  }]]
+                }
               }
-            }
-          : {})
-      }),
-      signal: controller.signal
-    });
+            : {})
+        }),
+        signal: controller.signal
+      }
+    );
 
-    const payload = (await response.json().catch(() => ({}))) as { ok?: boolean };
+    let response = await sendPayload(Boolean(params.linkButton));
+    let responseBody = await response.text();
+    if (!response.ok && params.linkButton && response.status === 400) {
+      const lower = responseBody.toLowerCase();
+      const mayBeInvalidButtonUrl = lower.includes("button") && lower.includes("url");
+      if (mayBeInvalidButtonUrl) {
+        response = await sendPayload(false);
+        responseBody = await response.text();
+      }
+    }
+
+    let payload: { ok?: boolean; description?: string } = {};
+    try {
+      payload = JSON.parse(responseBody) as { ok?: boolean; description?: string };
+    } catch {
+      payload = {};
+    }
     if (!response.ok || payload.ok === false) {
-      throw new Error(`telegram_api_failed:${response.status}`);
+      const details = typeof payload.description === "string" ? payload.description : responseBody;
+      throw new Error(`telegram_api_failed:${response.status}:${details}`);
     }
   } finally {
     clearTimeout(timeout);
@@ -5721,6 +5818,79 @@ async function findPredictionStateIdByScope(params: {
   return row ? String(row.id) : null;
 }
 
+async function findPredictionStateIdByLegacyScope(params: {
+  userId: string;
+  exchange: string;
+  accountId: string;
+  symbol: string;
+  marketType: PredictionMarketType;
+  timeframe: PredictionTimeframe;
+  signalMode: PredictionSignalMode;
+}): Promise<string | null> {
+  const row = await db.predictionState.findFirst({
+    where: {
+      userId: params.userId,
+      exchange: params.exchange,
+      accountId: params.accountId,
+      symbol: params.symbol,
+      marketType: params.marketType,
+      timeframe: params.timeframe,
+      signalMode: params.signalMode
+    },
+    select: { id: true }
+  });
+  return row ? String(row.id) : null;
+}
+
+async function persistPredictionState(params: {
+  existingStateId: string | null;
+  stateData: Record<string, unknown>;
+  scope: {
+    userId: string;
+    exchange: string;
+    accountId: string;
+    symbol: string;
+    marketType: PredictionMarketType;
+    timeframe: PredictionTimeframe;
+    signalMode: PredictionSignalMode;
+  };
+}): Promise<{ id: string }> {
+  if (params.existingStateId) {
+    try {
+      return await db.predictionState.update({
+        where: { id: params.existingStateId },
+        data: params.stateData,
+        select: { id: true }
+      });
+    } catch (error) {
+      if ((error as any)?.code !== "P2025") {
+        throw error;
+      }
+    }
+  }
+
+  try {
+    return await db.predictionState.create({
+      data: params.stateData,
+      select: { id: true }
+    });
+  } catch (error) {
+    if ((error as any)?.code !== "P2002") {
+      throw error;
+    }
+
+    const legacyStateId = await findPredictionStateIdByLegacyScope(params.scope);
+    if (!legacyStateId) {
+      throw error;
+    }
+    return await db.predictionState.update({
+      where: { id: legacyStateId },
+      data: params.stateData,
+      select: { id: true }
+    });
+  }
+}
+
 let predictionAutoTimer: NodeJS.Timeout | null = null;
 let predictionAutoRunning = false;
 const predictionTriggerDebounceState = new Map<string, TriggerDebounceState>();
@@ -6324,8 +6494,9 @@ async function bootstrapPredictionStateFromHistory() {
       featureSnapshot
     });
 
-    await db.predictionState.create({
-      data: {
+    await persistPredictionState({
+      existingStateId: existingId,
+      stateData: {
         ...toPredictionStateStrategyScope(strategyRef),
         exchange,
         accountId: exchangeAccountId,
@@ -6359,6 +6530,15 @@ async function bootstrapPredictionStateFromHistory() {
         directionPreference: parseDirectionPreference(featureSnapshot.directionPreference),
         confidenceTargetPct: readConfidenceTarget(featureSnapshot),
         leverage: readRequestedLeverage(featureSnapshot)
+      },
+      scope: {
+        userId,
+        exchange,
+        accountId: exchangeAccountId,
+        symbol,
+        marketType,
+        timeframe,
+        signalMode
       }
     });
   }
@@ -7620,19 +7800,20 @@ async function refreshPredictionStateForTemplate(params: {
       leverage: template.leverage ?? null
     };
 
-    let stateId = template.stateId;
-    if (prevStateRow) {
-      await db.predictionState.update({
-        where: { id: template.stateId },
-        data: stateData
-      });
-    } else {
-      const createdState = await db.predictionState.create({
-        data: stateData,
-        select: { id: true }
-      });
-      stateId = createdState.id;
-    }
+    const stateRow = await persistPredictionState({
+      existingStateId: prevStateRow ? template.stateId : null,
+      stateData,
+      scope: {
+        userId: template.userId,
+        exchange: account.exchange,
+        accountId: template.exchangeAccountId,
+        symbol: template.symbol,
+        marketType: template.marketType,
+        timeframe: template.timeframe,
+        signalMode
+      }
+    });
+    const stateId = stateRow.id;
 
     if (significant.significant) {
       const prevMinimal = prevState
@@ -7728,7 +7909,11 @@ async function refreshPredictionStateForTemplate(params: {
           explanation: explainer.explanation,
           source: "auto",
           signalSource: selectedPrediction.source,
-          aiPromptTemplateName: readAiPromptTemplateName(inferred.featureSnapshot)
+          aiPromptTemplateName: resolveNotificationStrategyName({
+            signalSource: selectedPrediction.source,
+            snapshot: inferred.featureSnapshot,
+            strategyRef: effectiveStrategyRef
+          })
         });
         if (readAiPromptMarketAnalysisUpdateEnabled(inferred.featureSnapshot)) {
           await notifyMarketAnalysisUpdate({
@@ -7745,7 +7930,11 @@ async function refreshPredictionStateForTemplate(params: {
             explanation: explainer.explanation,
             source: "auto",
             signalSource: selectedPrediction.source,
-            aiPromptTemplateName: readAiPromptTemplateName(inferred.featureSnapshot)
+            aiPromptTemplateName: resolveNotificationStrategyName({
+              signalSource: selectedPrediction.source,
+              snapshot: inferred.featureSnapshot,
+              strategyRef: effectiveStrategyRef
+            })
           });
         }
       }
@@ -8693,6 +8882,7 @@ app.delete("/admin/users/:id", requireAuth, async (req, res) => {
       await ignoreMissingTable(() => tx.botAlert.deleteMany({ where: { botId: { in: botIds } } }));
       await ignoreMissingTable(() => tx.riskEvent.deleteMany({ where: { botId: { in: botIds } } }));
       await ignoreMissingTable(() => tx.botRuntime.deleteMany({ where: { botId: { in: botIds } } }));
+      await ignoreMissingTable(() => tx.botTradeHistory.deleteMany({ where: { botId: { in: botIds } } }));
       await ignoreMissingTable(() => tx.futuresBotConfig.deleteMany({ where: { botId: { in: botIds } } }));
       await ignoreMissingTable(() => tx.marketMakingConfig.deleteMany({ where: { botId: { in: botIds } } }));
       await ignoreMissingTable(() => tx.volumeConfig.deleteMany({ where: { botId: { in: botIds } } }));
@@ -9560,6 +9750,45 @@ function listLocalStrategyRegistryPublic() {
   }));
 }
 
+function listLocalFallbackStrategyTypes(): string[] {
+  return listRegisteredLocalStrategies().map((entry) => entry.type);
+}
+
+function resolvePythonFallbackStrategyType(params: {
+  requestedFallbackStrategyType: string | null | undefined;
+  strategyType: string;
+  remoteStrategyType: string;
+  availableTypes: string[];
+}): { value: string | null; invalidValue: string | null } {
+  const defaultType =
+    params.availableTypes.includes("signal_filter")
+      ? "signal_filter"
+      : (params.availableTypes[0] ?? null);
+  const strategyTypeFallback = params.availableTypes.includes(params.strategyType)
+    ? params.strategyType
+    : defaultType;
+
+  if (params.requestedFallbackStrategyType === null) {
+    return { value: null, invalidValue: null };
+  }
+
+  if (params.requestedFallbackStrategyType === undefined) {
+    return { value: strategyTypeFallback, invalidValue: null };
+  }
+
+  const requested = params.requestedFallbackStrategyType.trim();
+  if (!requested) {
+    return { value: strategyTypeFallback, invalidValue: null };
+  }
+  if (params.availableTypes.includes(requested)) {
+    return { value: requested, invalidValue: null };
+  }
+  if (requested === params.remoteStrategyType || requested === params.strategyType) {
+    return { value: defaultType, invalidValue: null };
+  }
+  return { value: null, invalidValue: requested };
+}
+
 function mapLocalStrategyDefinitionPublic(row: any) {
   const registration =
     typeof row?.strategyType === "string"
@@ -10017,14 +10246,24 @@ app.post("/admin/local-strategies", requireAuth, async (req, res) => {
       availableTypes: listRegisteredLocalStrategies().map((entry) => entry.type)
     });
   }
-  if (
+  const fallbackTypes = listLocalFallbackStrategyTypes();
+  const remoteStrategyType =
     parsed.data.engine === "python"
-    && typeof parsed.data.fallbackStrategyType === "string"
-    && !getRegisteredLocalStrategy(parsed.data.fallbackStrategyType)
-  ) {
+      ? (parsed.data.remoteStrategyType?.trim() || parsed.data.strategyType)
+      : null;
+  const fallbackResolution =
+    parsed.data.engine === "python"
+      ? resolvePythonFallbackStrategyType({
+        requestedFallbackStrategyType: parsed.data.fallbackStrategyType,
+        strategyType: parsed.data.strategyType,
+        remoteStrategyType: remoteStrategyType ?? parsed.data.strategyType,
+        availableTypes: fallbackTypes
+      })
+      : { value: null, invalidValue: null as string | null };
+  if (fallbackResolution.invalidValue) {
     return res.status(400).json({
       error: "unknown_fallback_strategy_type",
-      availableTypes: listRegisteredLocalStrategies().map((entry) => entry.type)
+      availableTypes: fallbackTypes
     });
   }
 
@@ -10042,17 +10281,8 @@ app.post("/admin/local-strategies", requireAuth, async (req, res) => {
       strategyType: parsed.data.strategyType,
       engine: parsed.data.engine,
       shadowMode: parsed.data.engine === "python" ? parsed.data.shadowMode : false,
-      remoteStrategyType:
-        parsed.data.engine === "python"
-          ? (parsed.data.remoteStrategyType?.trim() || parsed.data.strategyType)
-          : null,
-      fallbackStrategyType:
-        parsed.data.engine === "python"
-          ? (
-            parsed.data.fallbackStrategyType?.trim()
-            || (registration ? parsed.data.strategyType : null)
-          )
-          : null,
+      remoteStrategyType,
+      fallbackStrategyType: parsed.data.engine === "python" ? fallbackResolution.value : null,
       timeoutMs: parsed.data.engine === "python" ? (parsed.data.timeoutMs ?? null) : null,
       newsRiskMode: parsed.data.newsRiskMode,
       name: parsed.data.name.trim(),
@@ -10091,7 +10321,13 @@ app.put("/admin/local-strategies/:id", requireAuth, async (req, res) => {
 
   const existing = await db.localStrategyDefinition.findUnique({
     where: { id: params.data.id },
-    select: { id: true, strategyType: true, engine: true, shadowMode: true }
+    select: {
+      id: true,
+      strategyType: true,
+      engine: true,
+      shadowMode: true,
+      remoteStrategyType: true
+    }
   });
   if (!existing) {
     return res.status(404).json({ error: "not_found" });
@@ -10106,6 +10342,16 @@ app.put("/admin/local-strategies/:id", requireAuth, async (req, res) => {
       ? parsed.data.strategyType
       : existing.strategyType;
 
+  const fallbackTypes = listLocalFallbackStrategyTypes();
+  const effectiveRemoteStrategyType =
+    typeof parsed.data.remoteStrategyType === "string" && parsed.data.remoteStrategyType.trim()
+      ? parsed.data.remoteStrategyType.trim()
+      : (
+        typeof existing.remoteStrategyType === "string" && existing.remoteStrategyType.trim()
+          ? existing.remoteStrategyType.trim()
+          : effectiveStrategyType
+      );
+
   if (effectiveEngine === "ts") {
     const registration = getRegisteredLocalStrategy(effectiveStrategyType);
     if (!registration) {
@@ -10114,14 +10360,19 @@ app.put("/admin/local-strategies/:id", requireAuth, async (req, res) => {
         availableTypes: listRegisteredLocalStrategies().map((entry) => entry.type)
       });
     }
-  } else if (
-    typeof parsed.data.fallbackStrategyType === "string"
-    && !getRegisteredLocalStrategy(parsed.data.fallbackStrategyType)
-  ) {
-    return res.status(400).json({
-      error: "unknown_fallback_strategy_type",
-      availableTypes: listRegisteredLocalStrategies().map((entry) => entry.type)
+  } else if (parsed.data.fallbackStrategyType !== undefined) {
+    const fallbackResolution = resolvePythonFallbackStrategyType({
+      requestedFallbackStrategyType: parsed.data.fallbackStrategyType,
+      strategyType: effectiveStrategyType,
+      remoteStrategyType: effectiveRemoteStrategyType,
+      availableTypes: fallbackTypes
     });
+    if (fallbackResolution.invalidValue) {
+      return res.status(400).json({
+        error: "unknown_fallback_strategy_type",
+        availableTypes: fallbackTypes
+      });
+    }
   }
 
   const data: Record<string, unknown> = {};
@@ -10129,7 +10380,6 @@ app.put("/admin/local-strategies/:id", requireAuth, async (req, res) => {
   if (parsed.data.engine !== undefined) data.engine = parsed.data.engine;
   if (parsed.data.shadowMode !== undefined) data.shadowMode = parsed.data.shadowMode;
   if (parsed.data.remoteStrategyType !== undefined) data.remoteStrategyType = parsed.data.remoteStrategyType;
-  if (parsed.data.fallbackStrategyType !== undefined) data.fallbackStrategyType = parsed.data.fallbackStrategyType;
   if (parsed.data.timeoutMs !== undefined) data.timeoutMs = parsed.data.timeoutMs;
   if (parsed.data.newsRiskMode !== undefined) data.newsRiskMode = parsed.data.newsRiskMode;
   if (parsed.data.name !== undefined) data.name = parsed.data.name.trim();
@@ -10145,11 +10395,24 @@ app.put("/admin/local-strategies/:id", requireAuth, async (req, res) => {
     if (parsed.data.fallbackStrategyType === undefined) data.fallbackStrategyType = null;
     if (parsed.data.timeoutMs === undefined) data.timeoutMs = null;
   } else {
+    if (parsed.data.fallbackStrategyType !== undefined) {
+      data.fallbackStrategyType = resolvePythonFallbackStrategyType({
+        requestedFallbackStrategyType: parsed.data.fallbackStrategyType,
+        strategyType: effectiveStrategyType,
+        remoteStrategyType: effectiveRemoteStrategyType,
+        availableTypes: fallbackTypes
+      }).value;
+    }
     if (parsed.data.remoteStrategyType === undefined && existing.engine !== "python") {
       data.remoteStrategyType = effectiveStrategyType;
     }
     if (parsed.data.fallbackStrategyType === undefined && existing.engine !== "python") {
-      data.fallbackStrategyType = effectiveStrategyType;
+      data.fallbackStrategyType = resolvePythonFallbackStrategyType({
+        requestedFallbackStrategyType: undefined,
+        strategyType: effectiveStrategyType,
+        remoteStrategyType: effectiveRemoteStrategyType,
+        availableTypes: fallbackTypes
+      }).value;
     }
   }
   if (parsed.data.version !== undefined) data.version = parsed.data.version.trim();
@@ -11351,16 +11614,19 @@ app.post("/api/predictions/generate", requireAuth, async (req, res) => {
       confidenceTargetPct: readConfidenceTarget(snapshot),
       leverage: readRequestedLeverage(snapshot)
     };
-    const stateRow = existingStateId
-      ? await db.predictionState.update({
-          where: { id: existingStateId },
-          data: statePayload,
-          select: { id: true }
-        })
-      : await db.predictionState.create({
-          data: statePayload,
-          select: { id: true }
-        });
+    const stateRow = await persistPredictionState({
+      existingStateId,
+      stateData: statePayload,
+      scope: {
+        userId: user.id,
+        exchange,
+        accountId: exchangeAccountId,
+        symbol: normalizedSymbol,
+        marketType: payload.marketType,
+        timeframe: effectiveTimeframe,
+        signalMode
+      }
+    });
 
     await db.predictionEvent.create({
       data: {
@@ -11404,7 +11670,11 @@ app.post("/api/predictions/generate", requireAuth, async (req, res) => {
     explanation: created.explanation.explanation,
     source: "manual",
     signalSource: created.signalSource,
-    aiPromptTemplateName: readAiPromptTemplateName(snapshot)
+    aiPromptTemplateName: resolveNotificationStrategyName({
+      signalSource: created.signalSource,
+      snapshot,
+      strategyRef: readPredictionStrategyRef(snapshot)
+    })
   });
   if (readAiPromptMarketAnalysisUpdateEnabled(snapshot)) {
     await notifyMarketAnalysisUpdate({
@@ -11429,7 +11699,11 @@ app.post("/api/predictions/generate", requireAuth, async (req, res) => {
       explanation: created.explanation.explanation,
       source: "manual",
       signalSource: created.signalSource,
-      aiPromptTemplateName: readAiPromptTemplateName(snapshot)
+      aiPromptTemplateName: resolveNotificationStrategyName({
+        signalSource: created.signalSource,
+        snapshot,
+        strategyRef: readPredictionStrategyRef(snapshot)
+      })
     });
   }
 
@@ -13098,10 +13372,112 @@ app.post("/api/positions/close", requireAuth, async (req, res) => {
       const orderIds = isPaperTradingAccount(resolved.selectedAccount)
         ? await closePaperPosition(resolved.selectedAccount, adapter, symbol, parsed.data.side)
         : await closePositionsMarket(adapter, symbol, parsed.data.side);
+      const stateSync: {
+        hasRemainingLivePosition: boolean;
+        syncedTradeStates: number;
+        closedHistoryRows: number;
+        error?: string;
+      } = {
+        hasRemainingLivePosition: false,
+        syncedTradeStates: 0,
+        closedHistoryRows: 0
+      };
+      try {
+        const liveRows = isPaperTradingAccount(resolved.selectedAccount)
+          ? await listPaperPositions(resolved.selectedAccount, adapter, symbol)
+          : await listPositions(adapter, symbol);
+        stateSync.hasRemainingLivePosition = liveRows.some((row) => {
+          if (normalizeSymbolInput(row.symbol) !== symbol) return false;
+          if (!(Number.isFinite(Number(row.size)) && Number(row.size) > 0)) return false;
+          if (parsed.data.side && row.side !== parsed.data.side) return false;
+          return true;
+        });
+
+        if (!stateSync.hasRemainingLivePosition || orderIds.length > 0) {
+          const accountIds = Array.from(
+            new Set(
+              [resolved.selectedAccount.id, parsed.data.exchangeAccountId]
+                .filter((value): value is string => typeof value === "string" && value.trim().length > 0)
+            )
+          );
+          const botRows = await db.bot.findMany({
+            where: {
+              userId: user.id,
+              exchangeAccountId: { in: accountIds }
+            },
+            select: { id: true, symbol: true }
+          });
+          const botIds = botRows
+            .filter((row: any) => normalizeSymbolInput(row.symbol) === symbol)
+            .map((row: any) => String(row.id))
+            .filter((id: string) => id.length > 0);
+
+          if (botIds.length > 0) {
+            const stateRowsRaw = await ignoreMissingTable(() => db.botTradeState.findMany({
+              where: {
+                botId: { in: botIds },
+                ...(parsed.data.side ? { openSide: parsed.data.side } : {})
+              },
+              select: { id: true, symbol: true }
+            }));
+            const stateRows = Array.isArray(stateRowsRaw) ? stateRowsRaw : [];
+            const stateIds = stateRows
+              .filter((row: any) => normalizeSymbolInput(row.symbol) === symbol)
+              .map((row: any) => String(row.id))
+              .filter((id: string) => id.length > 0);
+            if (stateIds.length > 0) {
+              const clearedState = await ignoreMissingTable(() => db.botTradeState.updateMany({
+                where: {
+                  id: { in: stateIds }
+                },
+                data: {
+                  openSide: null,
+                  openQty: null,
+                  openEntryPrice: null,
+                  openTs: null,
+                  lastTradeTs: new Date()
+                }
+              }));
+              stateSync.syncedTradeStates = Number((clearedState as any)?.count ?? 0);
+            }
+
+            const openHistoryRowsRaw = await ignoreMissingTable(() => db.botTradeHistory.findMany({
+              where: {
+                botId: { in: botIds },
+                status: "open",
+                ...(parsed.data.side ? { side: parsed.data.side } : {})
+              },
+              select: { id: true, symbol: true }
+            }));
+            const openHistoryRows = Array.isArray(openHistoryRowsRaw) ? openHistoryRowsRaw : [];
+            const historyIds = openHistoryRows
+              .filter((row: any) => normalizeSymbolInput(row.symbol) === symbol)
+              .map((row: any) => String(row.id))
+              .filter((id: string) => id.length > 0);
+            if (historyIds.length > 0) {
+              const closedHistory = await ignoreMissingTable(() => db.botTradeHistory.updateMany({
+                where: {
+                  id: { in: historyIds }
+                },
+                data: {
+                  status: "closed",
+                  outcome: "manual_exit",
+                  exitReason: "manual_close",
+                  exitTs: new Date()
+                }
+              }));
+              stateSync.closedHistoryRows = Number((closedHistory as any)?.count ?? 0);
+            }
+          }
+        }
+      } catch (error) {
+        stateSync.error = error instanceof Error ? error.message : String(error);
+      }
       return res.json({
         exchangeAccountId: resolved.selectedAccount.id,
         closedCount: orderIds.length,
-        orderIds
+        orderIds,
+        stateSync
       });
     } finally {
       await adapter.close();
@@ -14120,6 +14496,31 @@ app.get("/bots/overview", requireAuth, async (req, res) => {
   const tradeRows: BotTradeStateOverviewRow[] = Array.isArray(tradeRowsRaw)
     ? tradeRowsRaw as BotTradeStateOverviewRow[]
     : [];
+  const historyRowsRaw = botIds.length
+    ? await ignoreMissingTable(() => db.botTradeHistory.findMany({
+      where: { botId: { in: botIds } },
+      select: {
+        botId: true,
+        status: true,
+        realizedPnlUsd: true
+      }
+    }))
+    : null;
+  const historyRows = Array.isArray(historyRowsRaw) ? historyRowsRaw : [];
+  const historyByBot = new Map<string, { realizedPnlTotalUsd: number; openTradesCount: number }>();
+  for (const row of historyRows) {
+    const current = historyByBot.get(row.botId) ?? { realizedPnlTotalUsd: 0, openTradesCount: 0 };
+    const status = String(row.status ?? "").trim().toLowerCase();
+    if (status === "open") {
+      current.openTradesCount += 1;
+    } else if (status === "closed") {
+      const realized = Number(row.realizedPnlUsd ?? 0);
+      if (Number.isFinite(realized)) {
+        current.realizedPnlTotalUsd = Number((current.realizedPnlTotalUsd + realized).toFixed(4));
+      }
+    }
+    historyByBot.set(row.botId, current);
+  }
   const realizedEventsRaw = botIds.length
     ? await ignoreMissingTable(() => db.riskEvent.findMany({
       where: {
@@ -14156,6 +14557,7 @@ app.get("/bots/overview", requireAuth, async (req, res) => {
       entryPrice: trade?.openEntryPrice ?? null,
       markPrice
     });
+    const historyAggregate = historyByBot.get(bot.id) ?? { realizedPnlTotalUsd: 0, openTradesCount: 0 };
     const realizedPnlTodayUsd = realizedByBot.get(bot.id) ?? 0;
     const stoppedWhy = deriveStoppedWhy({
       botStatus: bot.status,
@@ -14194,6 +14596,8 @@ app.get("/bots/overview", requireAuth, async (req, res) => {
         openEntryPrice: trade?.openEntryPrice ?? null,
         openPnlUsd,
         realizedPnlTodayUsd,
+        realizedPnlTotalUsd: historyAggregate.realizedPnlTotalUsd,
+        openTradesCount: historyAggregate.openTradesCount,
         openTs: trade?.openTs ?? null,
         dailyTradeCount: trade?.dailyTradeCount ?? 0,
         lastTradeTs: trade?.lastTradeTs ?? null,
@@ -14307,6 +14711,42 @@ app.get("/bots/:id/overview", requireAuth, async (req, res) => {
     ? tradeRowsRaw as BotTradeStateOverviewRow[]
     : [];
   const trade = readBotPrimaryTradeState(tradeRows, bot.id, bot.symbol);
+  const historyRowsRaw = await ignoreMissingTable(() => db.botTradeHistory.findMany({
+    where: {
+      botId: bot.id
+    },
+    select: {
+      id: true,
+      side: true,
+      entryTs: true,
+      exitTs: true,
+      entryPrice: true,
+      exitPrice: true,
+      realizedPnlUsd: true,
+      status: true
+    }
+  }));
+  const historyRows = Array.isArray(historyRowsRaw) ? historyRowsRaw : [];
+  const closedHistoryRows = historyRows.filter((row: any) => String(row.status ?? "").toLowerCase() === "closed");
+  const openTradesCount = historyRows.filter((row: any) => String(row.status ?? "").toLowerCase() === "open").length;
+  const realizedPnlTotalUsd = Number(
+    closedHistoryRows.reduce((acc: number, row: any) => {
+      const realized = Number(row.realizedPnlUsd ?? 0);
+      if (!Number.isFinite(realized)) return acc;
+      return acc + realized;
+    }, 0).toFixed(4)
+  );
+  const coreMetrics = computeCoreMetricsFromClosedTrades(
+    closedHistoryRows.map((row: any) => ({
+      id: String(row.id),
+      side: typeof row.side === "string" ? row.side : null,
+      entryTs: row.entryTs instanceof Date ? row.entryTs : null,
+      exitTs: row.exitTs instanceof Date ? row.exitTs : null,
+      entryPrice: Number.isFinite(Number(row.entryPrice)) ? Number(row.entryPrice) : null,
+      exitPrice: Number.isFinite(Number(row.exitPrice)) ? Number(row.exitPrice) : null,
+      realizedPnlUsd: Number.isFinite(Number(row.realizedPnlUsd)) ? Number(row.realizedPnlUsd) : null
+    }))
+  );
 
   const recentEventsRaw = await ignoreMissingTable(() => db.riskEvent.findMany({
     where: { botId: bot.id },
@@ -14389,6 +14829,8 @@ app.get("/bots/:id/overview", requireAuth, async (req, res) => {
       openEntryPrice: trade?.openEntryPrice ?? null,
       openPnlUsd,
       realizedPnlTodayUsd,
+      realizedPnlTotalUsd,
+      openTradesCount,
       openTs: trade?.openTs ?? null,
       dailyTradeCount: trade?.dailyTradeCount ?? 0,
       lastTradeTs: trade?.lastTradeTs ?? null,
@@ -14401,11 +14843,23 @@ app.get("/bots/:id/overview", requireAuth, async (req, res) => {
       openNotionalApprox,
       openPnlUsd,
       realizedPnlTodayUsd,
+      realizedPnlTotalUsd,
+      openTradesCount,
       dailyTradeCount: trade?.dailyTradeCount ?? 0,
       lastTradeTs: trade?.lastTradeTs ?? null,
       lastSignal: trade?.lastSignal ?? null,
       lastSignalTs: trade?.lastSignalTs ?? null,
-      lastPredictionConfidence
+      lastPredictionConfidence,
+      winRatePct: coreMetrics.winRatePct,
+      avgWinUsd: coreMetrics.avgWinUsd,
+      avgLossUsd: coreMetrics.avgLossUsd,
+      profitFactor: coreMetrics.profitFactor,
+      netPnlUsd: coreMetrics.netPnlUsd,
+      maxDrawdownUsd: coreMetrics.maxDrawdownUsd,
+      avgHoldMinutes: coreMetrics.avgHoldMinutes,
+      closedTrades: coreMetrics.trades,
+      wins: coreMetrics.wins,
+      losses: coreMetrics.losses
     },
     recentEvents: recentEvents.map((event) => ({
       id: event.id,
@@ -14414,6 +14868,313 @@ app.get("/bots/:id/overview", requireAuth, async (req, res) => {
       createdAt: event.createdAt,
       meta: event.meta ?? null
     }))
+  });
+});
+
+app.get("/bots/:id/trade-history", requireAuth, async (req, res) => {
+  const user = getUserFromLocals(res);
+  const queryParsed = botTradeHistoryQuerySchema.safeParse(req.query ?? {});
+  if (!queryParsed.success) {
+    return res.status(400).json({ error: "invalid_query", details: queryParsed.error.flatten() });
+  }
+
+  const bot = await db.bot.findFirst({
+    where: {
+      id: req.params.id,
+      userId: user.id
+    },
+    select: {
+      id: true
+    }
+  });
+  if (!bot) return res.status(404).json({ error: "bot_not_found" });
+
+  const cursor = decodeTradeHistoryCursor(queryParsed.data.cursor);
+  if (queryParsed.data.cursor && !cursor) {
+    return res.status(400).json({ error: "invalid_cursor" });
+  }
+
+  const fromDate = queryParsed.data.from ? new Date(queryParsed.data.from) : null;
+  const toDate = queryParsed.data.to ? new Date(queryParsed.data.to) : null;
+
+  const baseWhere: Record<string, unknown> = {
+    botId: bot.id,
+    ...(queryParsed.data.outcome ? { outcome: queryParsed.data.outcome } : {}),
+    ...((fromDate || toDate)
+      ? {
+          entryTs: {
+            ...(fromDate ? { gte: fromDate } : {}),
+            ...(toDate ? { lte: toDate } : {})
+          }
+        }
+      : {})
+  };
+  const whereWithCursor = cursor
+    ? {
+        ...baseWhere,
+        OR: [
+          { entryTs: { lt: cursor.entryTs } },
+          { entryTs: cursor.entryTs, id: { lt: cursor.id } }
+        ]
+      }
+    : baseWhere;
+
+  const rowsRaw = await ignoreMissingTable(() => db.botTradeHistory.findMany({
+    where: whereWithCursor,
+    orderBy: [{ entryTs: "desc" }, { id: "desc" }],
+    take: queryParsed.data.limit + 1
+  }));
+  const rows = Array.isArray(rowsRaw) ? rowsRaw : [];
+  const hasMore = rows.length > queryParsed.data.limit;
+  const selected = hasMore ? rows.slice(0, queryParsed.data.limit) : rows;
+  const nextCursor = hasMore
+    ? encodeTradeHistoryCursor(selected[selected.length - 1].entryTs, selected[selected.length - 1].id)
+    : null;
+
+  const summaryRowsRaw = await ignoreMissingTable(() => db.botTradeHistory.findMany({
+    where: baseWhere,
+    select: {
+      realizedPnlUsd: true,
+      status: true
+    }
+  }));
+  const summaryRows = Array.isArray(summaryRowsRaw) ? summaryRowsRaw : [];
+  let wins = 0;
+  let losses = 0;
+  let netPnlUsd = 0;
+  let count = 0;
+  for (const row of summaryRows) {
+    const status = String(row.status ?? "").trim().toLowerCase();
+    if (status !== "closed") continue;
+    count += 1;
+    const realized = Number(row.realizedPnlUsd ?? 0);
+    if (!Number.isFinite(realized)) continue;
+    netPnlUsd += realized;
+    if (realized > 0) wins += 1;
+    if (realized < 0) losses += 1;
+  }
+
+  return res.json({
+    items: selected.map((row) => ({
+      id: row.id,
+      botId: row.botId,
+      userId: row.userId,
+      exchangeAccountId: row.exchangeAccountId,
+      symbol: row.symbol,
+      marketType: row.marketType,
+      side: row.side,
+      status: row.status,
+      entryTs: row.entryTs,
+      entryPrice: row.entryPrice,
+      entryQty: row.entryQty,
+      entryNotionalUsd: row.entryNotionalUsd,
+      tpPrice: row.tpPrice,
+      slPrice: row.slPrice,
+      exitTs: row.exitTs,
+      exitPrice: row.exitPrice,
+      exitNotionalUsd: row.exitNotionalUsd,
+      realizedPnlUsd: row.realizedPnlUsd,
+      realizedPnlPct:
+        Number.isFinite(Number(row.realizedPnlPct))
+          ? Number(row.realizedPnlPct)
+          : computeRealizedPnlPct({
+              side: row.side,
+              entryPrice: row.entryPrice,
+              exitPrice: row.exitPrice
+            }),
+      outcome: (typeof row.outcome === "string" && row.outcome.trim()
+        ? row.outcome
+        : classifyOutcomeFromClose({ exitReason: row.exitReason })) as BotTradeHistoryOutcome,
+      exitReason: row.exitReason,
+      entryOrderId: row.entryOrderId,
+      exitOrderId: row.exitOrderId,
+      predictionStateId: row.predictionStateId,
+      predictionHash: row.predictionHash,
+      predictionSignal: row.predictionSignal,
+      predictionConfidence: row.predictionConfidence,
+      predictionTags: Array.isArray(row.predictionTagsJson) ? row.predictionTagsJson : [],
+      createdAt: row.createdAt,
+      updatedAt: row.updatedAt
+    })),
+    nextCursor,
+    summary: {
+      count,
+      wins,
+      losses,
+      netPnlUsd: Number(netPnlUsd.toFixed(4))
+    }
+  });
+});
+
+app.get("/bots/:id/open-trades", requireAuth, async (req, res) => {
+  const user = getUserFromLocals(res);
+  const bot = await db.bot.findFirst({
+    where: {
+      id: req.params.id,
+      userId: user.id
+    },
+    select: {
+      id: true,
+      symbol: true,
+      exchangeAccountId: true,
+      runtime: {
+        select: {
+          mid: true,
+          bid: true,
+          ask: true
+        }
+      }
+    }
+  });
+  if (!bot) return res.status(404).json({ error: "bot_not_found" });
+
+  const tradeRowsRaw = await ignoreMissingTable(() => db.botTradeState.findMany({
+    where: { botId: bot.id },
+    select: {
+      botId: true,
+      symbol: true,
+      lastSignal: true,
+      lastSignalTs: true,
+      lastTradeTs: true,
+      dailyTradeCount: true,
+      openSide: true,
+      openQty: true,
+      openEntryPrice: true,
+      openTs: true
+    }
+  }));
+  const tradeRows: BotTradeStateOverviewRow[] = Array.isArray(tradeRowsRaw)
+    ? tradeRowsRaw as BotTradeStateOverviewRow[]
+    : [];
+  const trade = readBotPrimaryTradeState(tradeRows, bot.id, bot.symbol);
+
+  const historyOpenRaw = await ignoreMissingTable(() => db.botTradeHistory.findFirst({
+    where: {
+      botId: bot.id,
+      symbol: normalizeSymbolInput(bot.symbol),
+      status: "open"
+    },
+    orderBy: [{ entryTs: "desc" }, { createdAt: "desc" }]
+  }));
+  const historyOpen =
+    historyOpenRaw && typeof historyOpenRaw === "object"
+      ? historyOpenRaw as any
+      : null;
+
+  const hasStateOpen =
+    !!trade?.openSide &&
+    Number.isFinite(Number(trade?.openQty ?? NaN)) &&
+    Number(trade?.openQty ?? 0) > 0;
+  const botPosition = hasStateOpen || historyOpen
+    ? {
+        side: hasStateOpen ? trade?.openSide ?? null : historyOpen?.side ?? null,
+        qty: hasStateOpen ? Number(trade?.openQty ?? 0) : Number(historyOpen?.entryQty ?? 0),
+        entryPrice: hasStateOpen
+          ? (Number.isFinite(Number(trade?.openEntryPrice)) ? Number(trade?.openEntryPrice) : null)
+          : (Number.isFinite(Number(historyOpen?.entryPrice)) ? Number(historyOpen?.entryPrice) : null),
+        openTs: hasStateOpen ? trade?.openTs ?? null : historyOpen?.entryTs ?? null,
+        tpPrice: historyOpen?.tpPrice ?? null,
+        slPrice: historyOpen?.slPrice ?? null,
+        historyId: historyOpen?.id ?? null
+      }
+    : null;
+
+  let exchangePosition: Record<string, unknown> | null = null;
+  let exchangeError: string | null = null;
+  if (bot.exchangeAccountId) {
+    try {
+      const resolved = await resolveMarketDataTradingAccount(user.id, bot.exchangeAccountId);
+      const adapter = createBitgetAdapter(resolved.marketDataAccount);
+      try {
+        const liveRows = isPaperTradingAccount(resolved.selectedAccount)
+          ? await listPaperPositions(resolved.selectedAccount, adapter, bot.symbol)
+          : await listPositions(adapter, bot.symbol);
+        const normalizedSymbol = normalizeSymbolInput(bot.symbol);
+        const live = liveRows.find((row) => normalizeSymbolInput(row.symbol) === normalizedSymbol) ?? liveRows[0] ?? null;
+        if (live) {
+          exchangePosition = {
+            symbol: live.symbol,
+            side: live.side,
+            qty: live.size,
+            entryPrice: live.entryPrice,
+            markPrice: live.markPrice,
+            unrealizedPnl: live.unrealizedPnl,
+            tpPrice: live.takeProfitPrice,
+            slPrice: live.stopLossPrice
+          };
+        }
+      } finally {
+        await adapter.close();
+      }
+    } catch (error) {
+      exchangeError = error instanceof Error ? error.message : String(error);
+    }
+  }
+
+  const markPrice = computeRuntimeMarkPrice({
+    mid: bot.runtime?.mid ?? null,
+    bid: bot.runtime?.bid ?? null,
+    ask: bot.runtime?.ask ?? null
+  });
+  const mergedSide = String(
+    botPosition?.side
+    ?? exchangePosition?.side
+    ?? ""
+  ).toLowerCase();
+  const mergedQty =
+    [botPosition?.qty, exchangePosition?.qty]
+      .map((value) => toFiniteNumber(value))
+      .find((value): value is number => value !== null && value > 0)
+    ?? null;
+  const mergedEntry =
+    [botPosition?.entryPrice, exchangePosition?.entryPrice]
+      .map((value) => toFiniteNumber(value))
+      .find((value): value is number => value !== null && value > 0)
+    ?? null;
+  const mergedMark =
+    [exchangePosition?.markPrice, markPrice]
+      .map((value) => toFiniteNumber(value))
+      .find((value): value is number => value !== null && value > 0)
+    ?? null;
+  const exchangeUnrealizedPnl = toFiniteNumber(exchangePosition?.unrealizedPnl);
+  const mergedOpenPnl = computeOpenPnlUsd({
+    side: mergedSide,
+    qty: mergedQty,
+    entryPrice: mergedEntry,
+    markPrice: mergedMark
+  });
+  const mergedUnrealizedPnlUsd = exchangeUnrealizedPnl ?? mergedOpenPnl ?? null;
+
+  let consistency: "matched" | "mismatch" | "missing_live" | "live_only" | "none" = "none";
+  if (botPosition && exchangePosition) {
+    const sideMatches = String(botPosition.side ?? "").toLowerCase() === String(exchangePosition.side ?? "").toLowerCase();
+    const qtyDiff = Math.abs(Number(botPosition.qty ?? 0) - Number(exchangePosition.qty ?? 0));
+    consistency = sideMatches && qtyDiff <= 1e-10 ? "matched" : "mismatch";
+  } else if (botPosition && !exchangePosition) {
+    consistency = "missing_live";
+  } else if (!botPosition && exchangePosition) {
+    consistency = "live_only";
+  }
+
+  return res.json({
+    botPosition,
+    exchangePosition,
+    mergedView: mergedQty && mergedEntry
+      ? {
+          symbol: normalizeSymbolInput(bot.symbol),
+          side: mergedSide || null,
+          qty: mergedQty,
+          entryPrice: mergedEntry,
+          markPrice: mergedMark,
+          tpPrice: exchangePosition?.tpPrice ?? botPosition?.tpPrice ?? null,
+          slPrice: exchangePosition?.slPrice ?? botPosition?.slPrice ?? null,
+          unrealizedPnlUsd: mergedUnrealizedPnlUsd,
+          openTs: botPosition?.openTs ?? null
+        }
+      : null,
+    consistency,
+    exchangeError,
+    updatedAt: new Date().toISOString()
   });
 });
 
@@ -14860,6 +15621,10 @@ app.post("/bots/:id/start", requireAuth, async (req, res) => {
 
 app.post("/bots/:id/stop", requireAuth, async (req, res) => {
   const user = getUserFromLocals(res);
+  const parsedBody = botStopSchema.safeParse(req.body ?? {});
+  if (!parsedBody.success) {
+    return res.status(400).json({ error: "invalid_payload", details: parsedBody.error.flatten() });
+  }
   const bot = await db.bot.findFirst({
     where: { id: req.params.id, userId: user.id }
   });
@@ -14893,7 +15658,49 @@ app.post("/bots/:id/stop", requireAuth, async (req, res) => {
     // Worker loop also exits on DB status check even if queue cleanup is unavailable.
   }
 
-  return res.json({ id: updated.id, status: updated.status });
+  const closeRequested = parsedBody.data.closeOpenPosition === true;
+  let closeResult: {
+    requested: boolean;
+    closedCount: number;
+    orderIds: string[];
+    error?: string;
+  } | null = null;
+
+  if (closeRequested) {
+    closeResult = {
+      requested: true,
+      closedCount: 0,
+      orderIds: []
+    };
+    try {
+      if (!bot.exchangeAccountId) {
+        throw new Error("bot_exchange_account_missing");
+      }
+      const symbol = normalizeSymbolInput(bot.symbol);
+      if (!symbol) {
+        throw new Error("bot_symbol_invalid");
+      }
+      const resolved = await resolveMarketDataTradingAccount(user.id, bot.exchangeAccountId);
+      const adapter = createBitgetAdapter(resolved.marketDataAccount);
+      try {
+        const orderIds = isPaperTradingAccount(resolved.selectedAccount)
+          ? await closePaperPosition(resolved.selectedAccount, adapter, symbol)
+          : await closePositionsMarket(adapter, symbol);
+        closeResult.closedCount = orderIds.length;
+        closeResult.orderIds = orderIds;
+      } finally {
+        await adapter.close();
+      }
+    } catch (error) {
+      closeResult.error = error instanceof Error ? error.message : String(error);
+    }
+  }
+
+  return res.json({
+    id: updated.id,
+    status: updated.status,
+    ...(closeResult ? { positionClose: closeResult } : {})
+  });
 });
 
 async function deleteBotForUser(userId: string, botId: string): Promise<{ deletedBotId: string }> {
@@ -14919,6 +15726,7 @@ async function deleteBotForUser(userId: string, botId: string): Promise<{ delete
   await ignoreMissingTable(() => db.riskEvent.deleteMany({ where: { botId: bot.id } }));
   await ignoreMissingTable(() => db.botRuntime.deleteMany({ where: { botId: bot.id } }));
   await ignoreMissingTable(() => db.botTradeState.deleteMany({ where: { botId: bot.id } }));
+  await ignoreMissingTable(() => db.botTradeHistory.deleteMany({ where: { botId: bot.id } }));
   await ignoreMissingTable(() => db.futuresBotConfig.deleteMany({ where: { botId: bot.id } }));
   await ignoreMissingTable(() => db.marketMakingConfig.deleteMany({ where: { botId: bot.id } }));
   await ignoreMissingTable(() => db.volumeConfig.deleteMany({ where: { botId: bot.id } }));

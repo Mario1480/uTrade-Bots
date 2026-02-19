@@ -5,6 +5,7 @@ import {
   buildPredictionHash,
   evaluatePredictionCopierDecision,
   readPredictionCopierConfig,
+  resolveEntryTpSlPrices,
   type PredictionCopierConfig
 } from "./prediction-copier.js";
 
@@ -157,6 +158,21 @@ test("readPredictionCopierConfig keeps sourceStateId and sourceSnapshot", () => 
   assert.equal(cfg.sourceSnapshot?.symbol, "BTCUSDT");
 });
 
+test("readPredictionCopierConfig treats non-positive timeStopMin as disabled", () => {
+  const cfg = readPredictionCopierConfig(
+    makeBot({
+      paramsJson: {
+        predictionCopier: {
+          risk: {
+            timeStopMin: 0
+          }
+        }
+      }
+    })
+  );
+  assert.equal(cfg.risk.timeStopMin, null);
+});
+
 test("buildPredictionHash is deterministic", () => {
   const prediction = makePrediction();
   const h1 = buildPredictionHash(prediction);
@@ -258,6 +274,33 @@ test("decision blocks cooldown after recent trade", () => {
   assert.equal(decision.reason, "cooldown_active");
 });
 
+test("decision does not time-stop when timeStopMin is zero", () => {
+  const now = new Date("2026-02-12T12:01:00.000Z");
+  const prediction = makePrediction({ signal: "up", confidence: 82 });
+
+  const decision = evaluatePredictionCopierDecision({
+    config: makeConfig({
+      risk: {
+        ...makeConfig().risk,
+        timeStopMin: 0
+      }
+    }),
+    now,
+    prediction,
+    predictionHash: buildPredictionHash(prediction),
+    state: makeState({ openSide: "long", openTs: new Date("2026-02-12T11:00:00.000Z") }),
+    openPosition: { side: "long", size: 0.01, openTs: new Date("2026-02-12T11:00:00.000Z") },
+    openPositionsCount: 1,
+    totalNotionalUsd: 100,
+    symbolNotionalUsd: 100,
+    candidateNotionalUsd: 100,
+    dailyTradeCount: 1
+  });
+
+  assert.equal(decision.action, "skip");
+  assert.equal(decision.reason, "position_aligned");
+});
+
 test("decision blocks blocked tags", () => {
   const now = new Date("2026-02-12T12:01:00.000Z");
   const prediction = makePrediction({ tags: ["data_gap"] });
@@ -305,4 +348,32 @@ test("decision blocks news_risk only when newsRiskBlockEnabled is true", () => {
   });
   assert.equal(blocked.action, "skip");
   assert.equal(blocked.reason, "blocked_tag:news_risk");
+});
+
+test("resolveEntryTpSlPrices falls back to prediction levels when config tp/sl is empty", () => {
+  const resolved = resolveEntryTpSlPrices({
+    side: "short",
+    referencePrice: 66_000,
+    stopLossPct: null,
+    takeProfitPct: null,
+    predictionStopLossPrice: 66_400,
+    predictionTakeProfitPrice: 65_400
+  });
+
+  assert.equal(resolved.stopLossPrice, 66_400);
+  assert.equal(resolved.takeProfitPrice, 65_400);
+});
+
+test("resolveEntryTpSlPrices ignores prediction levels with wrong side direction", () => {
+  const resolved = resolveEntryTpSlPrices({
+    side: "short",
+    referencePrice: 66_000,
+    stopLossPct: null,
+    takeProfitPct: null,
+    predictionStopLossPrice: 65_900,
+    predictionTakeProfitPrice: 66_100
+  });
+
+  assert.equal(resolved.stopLossPrice, undefined);
+  assert.equal(resolved.takeProfitPrice, undefined);
 });

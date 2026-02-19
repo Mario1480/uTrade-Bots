@@ -196,12 +196,46 @@ function normalizeSignal(value: unknown): Signal {
 }
 
 function pickNumber(snapshot: Record<string, unknown>, keys: string[]): number | null {
+  const readPathValue = (obj: Record<string, unknown>, key: string): unknown => {
+    if (!key.includes(".")) return obj[key];
+    let cursor: unknown = obj;
+    for (const part of key.split(".")) {
+      if (!cursor || typeof cursor !== "object" || Array.isArray(cursor)) return undefined;
+      cursor = (cursor as Record<string, unknown>)[part];
+    }
+    return cursor;
+  };
+
   for (const key of keys) {
-    const parsed = Number(snapshot[key]);
+    const parsed = Number(readPathValue(snapshot, key));
     if (Number.isFinite(parsed)) return parsed;
   }
   return null;
 }
+
+const STOP_LOSS_KEYS = [
+  "suggestedStopLoss",
+  "stopLoss",
+  "stopLossPrice",
+  "slPrice",
+  "sl",
+  "tracking.stopLossPrice",
+  "tracking.stopLoss",
+  "levels.stopLossPrice",
+  "levels.stopLoss"
+] as const;
+
+const TAKE_PROFIT_KEYS = [
+  "suggestedTakeProfit",
+  "takeProfit",
+  "takeProfitPrice",
+  "tpPrice",
+  "tp",
+  "tracking.takeProfitPrice",
+  "tracking.takeProfit",
+  "levels.takeProfitPrice",
+  "levels.takeProfit"
+] as const;
 
 function deriveSuggestedEntry(snapshot: Record<string, unknown>) {
   const rawType = String(
@@ -405,8 +439,8 @@ export async function getPredictionDetailController(
       });
     }
 
-    const suggestedStopLoss = pickNumber(snapshot, ["suggestedStopLoss", "stopLoss", "slPrice", "sl"]);
-    const suggestedTakeProfit = pickNumber(snapshot, ["suggestedTakeProfit", "takeProfit", "tpPrice", "tp"]);
+    const suggestedStopLoss = pickNumber(snapshot, [...STOP_LOSS_KEYS]);
+    const suggestedTakeProfit = pickNumber(snapshot, [...TAKE_PROFIT_KEYS]);
     const requestedLeverageRaw = pickNumber(snapshot, ["requestedLeverage", "leverage"]);
     const requestedLeverage =
       requestedLeverageRaw !== null && Number.isFinite(requestedLeverageRaw)
@@ -590,8 +624,8 @@ export async function getPredictionDetailController(
     });
   }
 
-  const suggestedStopLoss = pickNumber(snapshot, ["suggestedStopLoss", "stopLoss", "slPrice", "sl"]);
-  const suggestedTakeProfit = pickNumber(snapshot, ["suggestedTakeProfit", "takeProfit", "tpPrice", "tp"]);
+  const suggestedStopLoss = pickNumber(snapshot, [...STOP_LOSS_KEYS]) ?? toNumber(row.stopLossPrice);
+  const suggestedTakeProfit = pickNumber(snapshot, [...TAKE_PROFIT_KEYS]) ?? toNumber(row.takeProfitPrice);
   const requestedLeverageRaw = pickNumber(snapshot, ["requestedLeverage", "leverage"]);
   const requestedLeverage =
     requestedLeverageRaw !== null && Number.isFinite(requestedLeverageRaw)

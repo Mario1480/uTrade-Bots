@@ -2,12 +2,23 @@ import crypto from "node:crypto";
 import type { TradeIntent } from "@mm/futures-core";
 import { isGlobalTradingEnabled } from "@mm/futures-engine";
 import { BitgetFuturesAdapter } from "@mm/futures-exchange";
-import type { ActiveFuturesBot, BotTradeState, PredictionGateState } from "./db.js";
+import type {
+  ActiveFuturesBot,
+  BotTradeHistoryCloseOutcome,
+  BotTradeState,
+  PredictionGateState
+} from "./db.js";
 import {
+  closePaperPositionForRunner,
+  closeOpenBotTradeHistoryEntries,
+  countOpenBotTradeHistoryEntries,
+  createBotTradeHistoryEntry,
   getBotDailyTradeCount,
+  listPaperPositionsForRunner,
   loadBotTradeState,
   loadLatestPredictionStateForGate,
   loadPredictionStateByIdForGate,
+  placePaperPositionForRunner,
   upsertBotTradeState,
   writeRiskEvent
 } from "./db.js";
@@ -76,6 +87,7 @@ export type PredictionCopierEvalInput = {
   predictionHash: string | null;
   state: BotTradeState;
   openPosition: { side: PredictionCopierSide; size: number; openTs: Date | null } | null;
+  openTradeCount: number;
   openPositionsCount: number;
   totalNotionalUsd: number;
   symbolNotionalUsd: number;
@@ -213,6 +225,7 @@ export function readPredictionCopierConfig(bot: ActiveFuturesBot): PredictionCop
     orderTypeRaw === "limit" ? "limit" : "market";
 
   const allowSignals = normalizeSignalList(filtersRaw.allowSignals);
+  const timeStopMin = toNumber(riskRaw.timeStopMin);
 
   const config: PredictionCopierConfig = {
     botType: "prediction_copier",
@@ -245,7 +258,7 @@ export function readPredictionCopierConfig(bot: ActiveFuturesBot): PredictionCop
       maxLeverage: Math.max(1, Math.trunc(toNumber(riskRaw.maxLeverage) ?? 3)),
       stopLossPct: toNumber(riskRaw.stopLossPct),
       takeProfitPct: toNumber(riskRaw.takeProfitPct),
-      timeStopMin: toNumber(riskRaw.timeStopMin)
+      timeStopMin: timeStopMin !== null && timeStopMin > 0 ? timeStopMin : null
     },
     filters: {
       blockTags: normalizeStringArray(filtersRaw.blockTags, 20).length > 0
@@ -324,6 +337,7 @@ export function evaluatePredictionCopierDecision(input: PredictionCopierEvalInpu
     predictionHash,
     state,
     openPosition,
+    openTradeCount,
     openPositionsCount,
     totalNotionalUsd,
     symbolNotionalUsd,
@@ -346,8 +360,8 @@ export function evaluatePredictionCopierDecision(input: PredictionCopierEvalInpu
     return openPosition ? { action: "exit", reason: tagError, side: openPosition.side } : { action: "skip", reason: tagError };
   }
 
-  if (openPosition && config.risk.timeStopMin !== null && state.openTs instanceof Date) {
-    const maxAgeMs = Math.max(1, config.risk.timeStopMin) * 60_000;
+  if (openPosition && config.risk.timeStopMin !== null && config.risk.timeStopMin > 0 && state.openTs instanceof Date) {
+    const maxAgeMs = config.risk.timeStopMin * 60_000;
     if (now.getTime() - state.openTs.getTime() >= maxAgeMs) {
       return { action: "exit", reason: "time_stop", side: openPosition.side };
     }
@@ -366,7 +380,31 @@ export function evaluatePredictionCopierDecision(input: PredictionCopierEvalInpu
     if (openPosition.side === "short" && signal === "up") {
       return { action: "exit", reason: "signal_flip", side: "short" };
     }
-    return { action: "skip", reason: "position_aligned" };
+    if (predictionHash && state.lastPredictionHash && predictionHash === state.lastPredictionHash) {
+      return { action: "skip", reason: "duplicate_prediction_hash" };
+    }
+    if (state.lastTradeTs instanceof Date && config.risk.cooldownSecAfterTrade > 0) {
+      const cooldownMs = config.risk.cooldownSecAfterTrade * 1000;
+      if (now.getTime() - state.lastTradeTs.getTime() < cooldownMs) {
+        return { action: "skip", reason: "cooldown_active" };
+      }
+    }
+    if (dailyTradeCount >= config.risk.maxDailyTrades) {
+      return { action: "skip", reason: "daily_trade_cap_reached" };
+    }
+    if (openTradeCount >= config.risk.maxOpenPositions) {
+      return { action: "skip", reason: "max_open_positions_reached" };
+    }
+    if (candidateNotionalUsd === null || candidateNotionalUsd <= 0) {
+      return { action: "skip", reason: "sizing_unavailable" };
+    }
+    if (symbolNotionalUsd + candidateNotionalUsd > config.risk.maxNotionalPerSymbolUsd) {
+      return { action: "skip", reason: "symbol_notional_cap_reached" };
+    }
+    if (totalNotionalUsd + candidateNotionalUsd > config.risk.maxTotalNotionalUsd) {
+      return { action: "skip", reason: "total_notional_cap_reached" };
+    }
+    return { action: "enter", reason: "scale_in_aligned_position", side: openPosition.side };
   }
 
   if (confidence < config.minConfidence) return { action: "skip", reason: "confidence_below_min" };
@@ -495,12 +533,88 @@ function computeTpSlPrices(params: {
   return out;
 }
 
+export function resolveEntryTpSlPrices(params: {
+  side: PredictionCopierSide;
+  referencePrice: number;
+  stopLossPct: number | null;
+  takeProfitPct: number | null;
+  predictionStopLossPrice?: number | null;
+  predictionTakeProfitPrice?: number | null;
+}): { stopLossPrice?: number; takeProfitPrice?: number } {
+  const fromConfig = computeTpSlPrices({
+    side: params.side,
+    referencePrice: params.referencePrice,
+    stopLossPct: params.stopLossPct,
+    takeProfitPct: params.takeProfitPct
+  });
+
+  const stopLossPriceRaw = fromConfig.stopLossPrice ?? toNumber(params.predictionStopLossPrice);
+  const takeProfitPriceRaw = fromConfig.takeProfitPrice ?? toNumber(params.predictionTakeProfitPrice);
+  const referencePrice = Number(params.referencePrice);
+  if (!Number.isFinite(referencePrice) || referencePrice <= 0) return {};
+
+  const out: { stopLossPrice?: number; takeProfitPrice?: number } = {};
+  if (
+    Number.isFinite(Number(stopLossPriceRaw)) &&
+    Number(stopLossPriceRaw) > 0 &&
+    (
+      (params.side === "long" && Number(stopLossPriceRaw) < referencePrice) ||
+      (params.side === "short" && Number(stopLossPriceRaw) > referencePrice)
+    )
+  ) {
+    out.stopLossPrice = Number(Number(stopLossPriceRaw).toFixed(6));
+  }
+  if (
+    Number.isFinite(Number(takeProfitPriceRaw)) &&
+    Number(takeProfitPriceRaw) > 0 &&
+    (
+      (params.side === "long" && Number(takeProfitPriceRaw) > referencePrice) ||
+      (params.side === "short" && Number(takeProfitPriceRaw) < referencePrice)
+    )
+  ) {
+    out.takeProfitPrice = Number(Number(takeProfitPriceRaw).toFixed(6));
+  }
+
+  return out;
+}
+
 function buildLimitEntryPrice(side: PredictionCopierSide, markPrice: number, offsetBps: number): number {
   const ratio = Math.max(0, offsetBps) / 10_000;
   const raw = side === "long"
     ? markPrice * (1 + ratio)
     : markPrice * (1 - ratio);
   return Number(raw.toFixed(6));
+}
+
+function computeRealizedPnlPctFromPrices(params: {
+  side: PredictionCopierSide;
+  entryPrice: number | null;
+  exitPrice: number | null;
+}): number | null {
+  const entry = Number(params.entryPrice);
+  const exit = Number(params.exitPrice);
+  if (!Number.isFinite(entry) || entry <= 0) return null;
+  if (!Number.isFinite(exit) || exit <= 0) return null;
+  const pct = params.side === "long"
+    ? ((exit / entry) - 1) * 100
+    : ((entry / exit) - 1) * 100;
+  return Number(pct.toFixed(6));
+}
+
+function mapExitOutcome(reason: string): BotTradeHistoryCloseOutcome {
+  const normalized = String(reason ?? "").trim().toLowerCase();
+  if (normalized === "time_stop") return "time_stop";
+  if (
+    normalized === "signal_flip" ||
+    normalized === "signal_neutral" ||
+    normalized === "confidence_below_min" ||
+    normalized.startsWith("blocked_tag:") ||
+    normalized.startsWith("missing_required_tags:") ||
+    normalized === "expected_move_below_min"
+  ) {
+    return "signal_exit";
+  }
+  return "unknown";
 }
 
 function getOrCreateAdapter(bot: ActiveFuturesBot): BitgetFuturesAdapter {
@@ -517,10 +631,6 @@ function getOrCreateAdapter(bot: ActiveFuturesBot): BitgetFuturesAdapter {
   });
   adapterCache.set(cacheKey, adapter);
   return adapter;
-}
-
-function toPaperOrderId(botId: string): string {
-  return `paper_${botId}_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
 }
 
 async function syncOpenPositionInState(botId: string, symbol: string, state: BotTradeState, openPosition: NormalizedPosition | null) {
@@ -679,26 +789,28 @@ export async function runPredictionCopierTick(
     } catch {
       markPrice = null;
     }
-
-    const openQty = Number(tradeState.openQty ?? 0);
-    const hasOpen = !!tradeState.openSide && Number.isFinite(openQty) && openQty > 0;
-    positions = hasOpen
-      ? [{
-          symbol,
-          side: tradeState.openSide === "long" ? "long" : "short",
-          size: openQty,
-          entryPrice: tradeState.openEntryPrice ?? null,
-          markPrice: markPrice ?? null
-        }]
-      : [];
-
+    const paperPositions = await listPaperPositionsForRunner({
+      exchangeAccountId: bot.exchangeAccountId
+    });
+    positions = paperPositions.map((row) => ({
+      symbol: row.symbol,
+      side: row.side,
+      size: Number(row.size ?? 0),
+      entryPrice: row.entryPrice ?? null,
+      markPrice: row.symbol === symbol ? (markPrice ?? row.entryPrice ?? null) : (row.entryPrice ?? null)
+    }));
     let equity = DEFAULT_PAPER_EQUITY_USD;
-    if (hasOpen && markPrice && Number.isFinite(markPrice) && markPrice > 0 && Number.isFinite(Number(tradeState.openEntryPrice))) {
-      const entryPrice = Number(tradeState.openEntryPrice);
-      const unrealized =
-        tradeState.openSide === "long"
-          ? (markPrice - entryPrice) * openQty
-          : (entryPrice - markPrice) * openQty;
+    for (const row of positions) {
+      const qty = Number(row.size ?? 0);
+      const entry = Number(row.entryPrice ?? 0);
+      const mark = Number(row.markPrice ?? 0);
+      if (!Number.isFinite(qty) || qty <= 0) continue;
+      if (!Number.isFinite(entry) || entry <= 0) continue;
+      if (!Number.isFinite(mark) || mark <= 0) continue;
+      const unrealized = row.side === "long"
+        ? (mark - entry) * qty
+        : (entry - mark) * qty;
+      if (!Number.isFinite(unrealized)) continue;
       equity += unrealized;
     }
     accountState = { equity };
@@ -769,7 +881,11 @@ export async function runPredictionCopierTick(
     ? desiredNotionalUsd
     : null;
 
-  const dailyTradeCount = await getBotDailyTradeCount({ botId: bot.id, now });
+  const [dailyTradeCount, openTradeCountRaw] = await Promise.all([
+    getBotDailyTradeCount({ botId: bot.id, now }),
+    countOpenBotTradeHistoryEntries({ botId: bot.id, symbol })
+  ]);
+  const openTradeCount = Math.max(openTradeCountRaw, openPosition ? 1 : 0);
 
   const decision = evaluatePredictionCopierDecision({
     config,
@@ -784,6 +900,7 @@ export async function runPredictionCopierTick(
           openTs: tradeState.openTs
         }
       : null,
+    openTradeCount,
     openPositionsCount: positionSummary.openPositionsCount,
     totalNotionalUsd: positionSummary.totalNotionalUsd,
     symbolNotionalUsd: positionSummary.bySymbol.get(symbol) ?? 0,
@@ -809,6 +926,7 @@ export async function runPredictionCopierTick(
       sourceStateId: config.sourceStateId ?? null,
       predictionStateId: prediction?.id ?? null,
       dailyTradeCount,
+      openTradeCount,
       openPositionsCount: positionSummary.openPositionsCount,
       totalNotionalUsd: Number(positionSummary.totalNotionalUsd.toFixed(4))
     }
@@ -884,8 +1002,22 @@ export async function runPredictionCopierTick(
               : (entryPriceForPnl - exitPriceForPnl) * openPosition.size
           ).toFixed(4))
         : null;
+    const realizedPnlPct = computeRealizedPnlPctFromPrices({
+      side: openPosition.side,
+      entryPrice: entryPriceForPnl,
+      exitPrice: exitPriceForPnl
+    });
     const placed = executionExchange === "paper"
-      ? { orderId: toPaperOrderId(bot.id) }
+      ? await closePaperPositionForRunner({
+          exchangeAccountId: bot.exchangeAccountId,
+          symbol,
+          side: openPosition.side,
+          fillPrice: exitPriceForPnl
+            ?? markPrice
+            ?? openPosition.markPrice
+            ?? openPosition.entryPrice
+            ?? null
+        }).then((row) => ({ orderId: row.orderId ?? `paper_${bot.id}_${Date.now()}` }))
       : await adapter.placeOrder({
           symbol,
           side: orderSide,
@@ -898,7 +1030,7 @@ export async function runPredictionCopierTick(
       botId: bot.id,
       symbol,
       dailyResetUtc: toUtcDayStart(now),
-      dailyTradeCount: dailyTradeCount + 1,
+      dailyTradeCount,
       lastTradeTs: now,
       lastPredictionHash: predictionHash,
       lastSignal: prediction ? normalizePredictionSignal(prediction.signal) : null,
@@ -908,6 +1040,42 @@ export async function runPredictionCopierTick(
       openEntryPrice: null,
       openTs: null
     });
+
+    try {
+      const closedHistory = await closeOpenBotTradeHistoryEntries({
+        botId: bot.id,
+        symbol,
+        exitTs: now,
+        exitPrice: exitPriceForPnl,
+        outcome: mapExitOutcome(decision.reason),
+        exitReason: decision.reason,
+        exitOrderId: placed.orderId
+      });
+      if (closedHistory.closedCount === 0) {
+        await writeRiskEvent({
+          botId: bot.id,
+          type: "PREDICTION_COPIER_TRADE",
+          message: "orphan_exit",
+          meta: {
+            symbol,
+            reason: decision.reason,
+            orderId: placed.orderId
+          }
+        });
+      }
+    } catch (error) {
+      await writeRiskEvent({
+        botId: bot.id,
+        type: "PREDICTION_COPIER_TRADE",
+        message: "history_close_failed",
+        meta: {
+          symbol,
+          reason: decision.reason,
+          orderId: placed.orderId,
+          error: error instanceof Error ? error.message : String(error)
+        }
+      });
+    }
 
     await writeRiskEvent({
       botId: bot.id,
@@ -990,15 +1158,25 @@ export async function runPredictionCopierTick(
       ? buildLimitEntryPrice(decision.side, markPrice, config.execution.limitOffsetBps)
       : undefined;
 
-  const tpSl = computeTpSlPrices({
+  const tpSl = resolveEntryTpSlPrices({
     side: decision.side,
     referencePrice: markPrice,
     stopLossPct: config.risk.stopLossPct,
-    takeProfitPct: config.risk.takeProfitPct
+    takeProfitPct: config.risk.takeProfitPct,
+    predictionStopLossPrice: prediction?.stopLossPrice ?? null,
+    predictionTakeProfitPrice: prediction?.takeProfitPrice ?? null
   });
 
   const placed = executionExchange === "paper"
-    ? { orderId: toPaperOrderId(bot.id) }
+    ? await placePaperPositionForRunner({
+        exchangeAccountId: bot.exchangeAccountId,
+        symbol,
+        side: decision.side,
+        qty,
+        fillPrice: markPrice,
+        takeProfitPrice: tpSl.takeProfitPrice ?? null,
+        stopLossPrice: tpSl.stopLossPrice ?? null
+      })
     : await adapter.placeOrder({
         symbol,
         side: orderSide,
@@ -1018,10 +1196,50 @@ export async function runPredictionCopierTick(
     lastSignal: prediction ? normalizePredictionSignal(prediction.signal) : null,
     lastSignalTs: prediction?.tsUpdated ?? null,
     openSide: decision.side,
-    openQty: qty,
-    openEntryPrice: markPrice,
-    openTs: now
+    openQty: openPosition ? Number((openPosition.size + qty).toFixed(8)) : qty,
+    openEntryPrice: openPosition && Number.isFinite(Number(openPosition.entryPrice)) && Number(openPosition.entryPrice) > 0
+      ? Number(((
+        (Number(openPosition.entryPrice) * openPosition.size) +
+        (markPrice * qty)
+      ) / Math.max(Number((openPosition.size + qty).toFixed(8)), 1e-8)).toFixed(8))
+      : markPrice,
+    openTs: openPosition ? (tradeState.openTs ?? now) : now
   });
+
+  try {
+    await createBotTradeHistoryEntry({
+      botId: bot.id,
+      userId: bot.userId,
+      exchangeAccountId: bot.exchangeAccountId,
+      symbol,
+      marketType: "perp",
+      side: decision.side,
+      entryTs: now,
+      entryPrice: markPrice,
+      entryQty: qty,
+      entryNotionalUsd: Number((qty * markPrice).toFixed(8)),
+      tpPrice: tpSl.takeProfitPrice ?? null,
+      slPrice: tpSl.stopLossPrice ?? null,
+      entryOrderId: placed.orderId,
+      predictionStateId: prediction?.id ?? null,
+      predictionHash,
+      predictionSignal: prediction ? normalizePredictionSignal(prediction.signal) : null,
+      predictionConfidence: prediction ? confidenceToPct(prediction.confidence) : null,
+      predictionTags: prediction?.tags ?? []
+    });
+  } catch (error) {
+    await writeRiskEvent({
+      botId: bot.id,
+      type: "PREDICTION_COPIER_TRADE",
+      message: "history_entry_failed",
+      meta: {
+        symbol,
+        side: decision.side,
+        orderId: placed.orderId,
+        error: error instanceof Error ? error.message : String(error)
+      }
+    });
+  }
 
   await writeRiskEvent({
     botId: bot.id,

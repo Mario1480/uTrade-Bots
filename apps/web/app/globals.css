@@ -1469,6 +1469,91 @@ a { color: inherit; }
   overflow: hidden;
 }
 
+.botAccordionCard {
+  padding: 14px;
+  margin-bottom: 12px;
+}
+
+.botAccordionSummary {
+  cursor: pointer;
+  font-size: 18px;
+  font-weight: 700;
+  list-style: none;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.botAccordionSummary::-webkit-details-marker {
+  display: none;
+}
+
+.botAccordionSummary::after {
+  content: "\25BE";
+  color: var(--muted);
+  font-size: 12px;
+  transition: transform 0.2s ease;
+}
+
+.botAccordionCard:not([open]) .botAccordionSummary::after {
+  transform: rotate(-90deg);
+}
+
+.botAccordionBody {
+  margin-top: 10px;
+}
+
+.botTradeHistoryFilters {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 10px;
+  align-items: end;
+  margin-bottom: 10px;
+}
+
+.botTradeHistoryFilters .fieldRow {
+  grid-template-columns: 1fr;
+  margin-bottom: 0;
+  gap: 4px;
+}
+
+.botTradeHistorySummary {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px 14px;
+  font-size: 12px;
+  color: var(--muted);
+  margin-bottom: 8px;
+}
+
+.botTradeHistoryTableWrap {
+  width: 100%;
+  overflow-x: auto;
+  border: 1px solid rgba(255, 193, 7, 0.2);
+  border-radius: 8px;
+}
+
+.botTradeHistoryTable {
+  width: 100%;
+  min-width: 980px;
+  border-collapse: collapse;
+  font-size: 12px;
+}
+
+.botTradeHistoryTable th,
+.botTradeHistoryTable td {
+  padding: 8px 10px;
+  border-bottom: 1px solid rgba(255, 193, 7, 0.16);
+  white-space: nowrap;
+  text-align: left;
+  vertical-align: top;
+}
+
+.botTradeHistoryTable th {
+  color: var(--muted);
+  font-weight: 600;
+}
+
 .overviewGrid {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
@@ -1511,6 +1596,12 @@ a { color: inherit; }
   }
   .botOpsGrid {
     grid-template-columns: 1fr;
+  }
+  .botTradeHistoryFilters {
+    grid-template-columns: 1fr;
+  }
+  .botTradeHistoryTable {
+    min-width: 760px;
   }
 }
 

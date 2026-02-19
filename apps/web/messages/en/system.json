@@ -31,6 +31,8 @@
       "tradesToday": "Trades today",
       "openPnlUsdt": "Open PnL (USDT)",
       "realizedPnlTodayUsdt": "Realized PnL today (USDT)",
+      "realizedPnlTotalUsdt": "Realized PnL total (USDT)",
+      "openTrades": "Open trades",
       "lastTrade": "Last trade",
       "reason": "Reason",
       "none": "n/a"
@@ -123,11 +125,13 @@
     "actions": {
       "back": "Back",
       "settings": "Settings",
-      "start": "Start",
-      "starting": "Starting...",
-      "stop": "Stop",
-      "stopping": "Stopping..."
-    },
+    "start": "Start",
+    "starting": "Starting...",
+    "stop": "Stop",
+    "stopping": "Stopping...",
+    "stopAndClose": "Stop + close trade",
+    "stoppingAndClosing": "Stopping + closing..."
+  },
     "fields": {
       "botStatus": "Bot status",
       "exchangeAccount": "Exchange account",
@@ -143,7 +147,10 @@
       "testnet": "Testnet"
     },
     "sections": {
+      "overview": "Overview",
       "opsMetrics": "Ops Metrics",
+      "openTrades": "Open Trades",
+      "tradeHistory": "Trade History",
       "recentEvents": "Recent Events",
       "noEvents": "No recent events recorded.",
       "whyStopped": "Why stopped",
@@ -157,11 +164,89 @@
       "openNotionalApprox": "Open notional (approx)",
       "openPnlUsdt": "Open PnL (USDT)",
       "realizedPnlTodayUsdt": "Realized PnL today (USDT)",
+      "realizedPnlTotalUsdt": "Realized PnL total (USDT)",
+      "openTradesCount": "Open trades",
       "dailyTradeCount": "Trades today",
       "lastTradeTs": "Last trade",
       "lastSignal": "Last signal",
       "lastSignalTs": "Last signal time",
-      "lastPredictionConfidence": "Last prediction confidence (%)"
+      "lastPredictionConfidence": "Last prediction confidence (%)",
+      "winRatePct": "Win rate (%)",
+      "avgWinUsd": "Avg win (USDT)",
+      "avgLossUsd": "Avg loss (USDT)",
+      "profitFactor": "Profit factor",
+      "netPnlUsd": "Net PnL (USDT)",
+      "maxDrawdownUsd": "Max drawdown (USDT)",
+      "avgHoldMinutes": "Avg hold (min)"
+    },
+  "openTrades": {
+    "consistencyLabel": "Consistency",
+    "updated": "Updated",
+    "closeAction": "Close trade",
+    "closingAction": "Closing...",
+    "closeMissingAccount": "No exchange account is configured for this bot.",
+    "exchangeError": "Exchange sync warning",
+    "empty": "No open trades.",
+      "consistency": {
+        "matched": "matched",
+        "mismatch": "mismatch",
+        "missing_live": "missing live position",
+        "live_only": "live-only",
+        "none": "none"
+      },
+      "columns": {
+        "side": "Side",
+        "size": "Size",
+        "entry": "Entry",
+        "mark": "Mark",
+        "tp": "TP",
+      "sl": "SL",
+      "unrealized": "Unrealized PnL",
+      "openTs": "Opened",
+      "action": "Action"
+    }
+  },
+    "history": {
+      "loading": "Loading...",
+      "empty": "No trades found for this filter.",
+      "actions": {
+        "refresh": "Refresh",
+        "loadMore": "Load more"
+      },
+      "filters": {
+        "from": "From",
+        "to": "To",
+        "outcome": "Outcome"
+      },
+      "summary": {
+        "count": "Closed trades",
+        "wins": "Wins",
+        "losses": "Losses",
+        "netPnl": "Net PnL"
+      },
+      "outcomes": {
+        "all": "All",
+        "tp_hit": "TP hit",
+        "sl_hit": "SL hit",
+        "signal_exit": "Signal exit",
+        "manual_exit": "Manual exit",
+        "time_stop": "Time stop",
+        "unknown": "Unknown"
+      },
+      "columns": {
+        "entryTs": "Entry time",
+        "entryPrice": "Entry",
+        "exitTs": "Exit time",
+        "exitPrice": "Exit",
+        "tp": "TP",
+        "sl": "SL",
+        "side": "Side",
+        "qty": "Qty",
+        "outcome": "Outcome",
+        "exitReason": "Exit reason",
+        "realizedPnlUsd": "Realized PnL (USDT)",
+        "realizedPnlPct": "Realized PnL (%)"
+      }
     }
   },
   "botsPriceSupport": {
