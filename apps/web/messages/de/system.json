@@ -125,13 +125,13 @@
     "actions": {
       "back": "Zurück",
       "settings": "Einstellungen",
-    "start": "Start",
-    "starting": "Startet...",
-    "stop": "Stopp",
-    "stopping": "Stoppt...",
-    "stopAndClose": "Stopp + Trade schließen",
-    "stoppingAndClosing": "Stoppt + schließt..."
-  },
+      "start": "Start",
+      "starting": "Startet...",
+      "stop": "Stopp",
+      "stopping": "Stoppt...",
+      "stopAndClose": "Stopp + Trade schließen",
+      "stoppingAndClosing": "Stoppt + schließt..."
+    },
     "fields": {
       "botStatus": "Bot-Status",
       "exchangeAccount": "Exchange-Konto",
@@ -156,6 +156,44 @@
       "whyStopped": "Warum gestoppt",
       "noStoppedReason": "Kein Stop-Grund vorhanden."
     },
+    "decision": {
+      "title": "Letzte Bot-Entscheidung",
+      "none": "Keine Decision vorhanden",
+      "signalLabel": "Signal",
+      "confidenceLabel": "Confidence",
+      "actions": {
+        "skip": "Skip",
+        "enter": "Entry",
+        "exit": "Exit"
+      },
+      "signals": {
+        "up": "Long",
+        "down": "Short",
+        "neutral": "Neutral"
+      },
+      "reasons": {
+        "blocked_tag": "Blockiert durch Tag",
+        "missing_required_tags": "Pflicht-Tags fehlen",
+        "max_open_positions_reached": "Maximum offener Positionen erreicht",
+        "duplicate_prediction_hash": "Duplikat-Signal",
+        "cooldown_active": "Cooldown nach letztem Trade aktiv",
+        "daily_trade_cap_reached": "Tageslimit an Trades erreicht",
+        "symbol_notional_cap_reached": "Symbol-Notional-Limit erreicht",
+        "total_notional_cap_reached": "Gesamt-Notional-Limit erreicht",
+        "sizing_unavailable": "Positionsgröße nicht verfügbar",
+        "confidence_below_min": "Confidence unter Mindestwert",
+        "neutral_signal": "Neutrales Signal",
+        "signal_neutral": "Signal wurde neutral",
+        "signal_not_allowed": "Signal nicht erlaubt",
+        "signal_flip": "Signal-Flip",
+        "position_aligned": "Position bereits ausgerichtet",
+        "scale_in_aligned_position": "Scale-In bei gleicher Richtung",
+        "entry_allowed": "Entry erlaubt",
+        "expected_move_below_min": "Expected Move unter Mindestwert",
+        "missing_prediction_state": "Kein Prediction-State verfügbar",
+        "stale_prediction_state": "Prediction-State veraltet"
+      }
+    },
     "metrics": {
       "openPosition": "Offene Position",
       "isOpen": "Position offen",
@@ -179,14 +217,14 @@
       "maxDrawdownUsd": "Max. Drawdown (USDT)",
       "avgHoldMinutes": "Durchschnitt Haltedauer (Min)"
     },
-  "openTrades": {
-    "consistencyLabel": "Konsistenz",
-    "updated": "Aktualisiert",
-    "closeAction": "Trade schließen",
-    "closingAction": "Schließe...",
-    "closeMissingAccount": "Kein Exchange-Konto für diesen Bot verfügbar.",
-    "exchangeError": "Exchange-Sync-Warnung",
-    "empty": "Keine offenen Trades.",
+    "openTrades": {
+      "consistencyLabel": "Konsistenz",
+      "updated": "Aktualisiert",
+      "closeAction": "Trade schließen",
+      "closingAction": "Schließe...",
+      "closeMissingAccount": "Kein Exchange-Konto für diesen Bot verfügbar.",
+      "exchangeError": "Exchange-Sync-Warnung",
+      "empty": "Keine offenen Trades.",
       "consistency": {
         "matched": "stimmig",
         "mismatch": "abweichend",
@@ -200,12 +238,12 @@
         "entry": "Einstieg",
         "mark": "Mark",
         "tp": "TP",
-      "sl": "SL",
-      "unrealized": "Unrealisierter PnL",
-      "openTs": "Geöffnet",
-      "action": "Aktion"
-    }
-  },
+        "sl": "SL",
+        "unrealized": "Unrealisierter PnL",
+        "openTs": "Geöffnet",
+        "action": "Aktion"
+      }
+    },
     "history": {
       "loading": "Wird geladen...",
       "empty": "Keine Trades für diesen Filter gefunden.",
@@ -337,7 +375,26 @@
     "noEvents": "Keine Events für die gewählten Filter gefunden.",
     "forecast": "Prognose",
     "previous": "Vorher",
-    "actual": "Aktuell"
+    "actual": "Aktuell",
+    "search": {
+      "placeholder": "Events, Land oder Währung suchen"
+    },
+    "tabs": {
+      "today": "Heute",
+      "tomorrow": "Morgen",
+      "next3d": "Nächste 3 Tage",
+      "custom": "Benutzerdefiniert"
+    },
+    "table": {
+      "event": "Event",
+      "impact": "Auswirkung",
+      "currency": "Währung",
+      "date": "Zeitpunkt",
+      "forecast": "Prognose",
+      "previous": "Vorher",
+      "actual": "Aktuell",
+      "noSearchResults": "Keine Treffer für deine Suche."
+    }
   },
   "news": {
     "title": "News",

@@ -1,6 +1,5 @@
 import { NextIntlClientProvider } from "next-intl";
-import AppHeader from "./components/AppHeader";
-import SystemBanner from "./components/SystemBanner";
+import AppShell from "./components/AppShell";
 import { resolveRequestLocale } from "../i18n/request";
 import { getMessages } from "../i18n/messages";
 import "./globals.css";
@@ -15,9 +14,7 @@ export default async function RootLayout({ children }: { children: React.ReactNo
     <html lang={locale}>
       <body>
         <NextIntlClientProvider locale={locale} messages={messages}>
-          <AppHeader />
-          <SystemBanner />
-          <main className="container appMain">{children}</main>
+          <AppShell>{children}</AppShell>
           <footer className="appFooter">
             <div className="container appFooterInner">
               <div className="appFooterCopy">© 2026 uTrade</div>

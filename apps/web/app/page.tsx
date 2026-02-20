@@ -164,149 +164,156 @@ export default function Page() {
 
   return (
     <div>
-      <div className="dashboardHeader">
-        <div>
-          <h2 style={{ margin: 0 }}>{t("title")}</h2>
-          <div style={{ fontSize: 13, color: "var(--muted)" }}>
-            {t("subtitle")}
+      <section id="overview" className="dashboardSectionAnchor">
+        <div className="dashboardHeader">
+          <div>
+            <h2 style={{ margin: 0 }}>{t("title")}</h2>
+            <div style={{ fontSize: 13, color: "var(--muted)" }}>
+              {t("subtitle")}
+            </div>
           </div>
-        </div>
-        <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-          {accessVisibility.predictionsDashboard ? (
-            <Link href={withLocalePath("/predictions", locale)} className="btn">{t("actions.predictions")}</Link>
-          ) : null}
-          {accessVisibility.economicCalendar ? (
-            <Link href={withLocalePath("/calendar", locale)} className="btn">{t("actions.calendar")}</Link>
-          ) : null}
-          {accessVisibility.news ? (
-            <Link href={withLocalePath("/news", locale)} className="btn">{t("actions.news")}</Link>
-          ) : null}
-          {accessVisibility.tradingDesk ? (
-            <Link href={withLocalePath("/trade", locale)} className="btn">{t("actions.manualTrading")}</Link>
-          ) : null}
-          {accessVisibility.bots ? (
-            <Link href={withLocalePath("/bots/new", locale)} className="btn btnPrimary">{t("actions.newFuturesBot")}</Link>
-          ) : null}
-        </div>
-      </div>
-
-      <div className="statGrid">
-        <div className="card statCard">
-          <div className="statLabel">{t("stats.exchangeAccounts")}</div>
-          <div className="statValue">{loading ? "…" : headlineStats.accounts}</div>
-        </div>
-        <div className="card statCard">
-          <div className="statLabel">{t("stats.runningBots")}</div>
-          <div className="statValue">{loading ? "…" : headlineStats.running}</div>
-        </div>
-        <div className="card statCard">
-          <div className="statLabel">{t("stats.botsInError")}</div>
-          <div className="statValue">{loading ? "…" : headlineStats.errors}</div>
-        </div>
-      </div>
-
-      <TotalsBar totals={overviewTotals} />
-
-      <AlertsFeed alerts={alerts} />
-
-      <div className="dashboardInsightsGrid">
-        <div className="card dashboardInsightCard">
-          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8, marginBottom: 6 }}>
-            <div style={{ fontWeight: 700 }}>{t("calendar.title")}</div>
+          <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+            {accessVisibility.predictionsDashboard ? (
+              <Link href={withLocalePath("/predictions", locale)} className="btn">{t("actions.predictions")}</Link>
+            ) : null}
             {accessVisibility.economicCalendar ? (
-              <Link href={withLocalePath("/calendar", locale)} className="btn">{t("calendar.open")}</Link>
+              <Link href={withLocalePath("/calendar", locale)} className="btn">{t("actions.calendar")}</Link>
+            ) : null}
+            {accessVisibility.news ? (
+              <Link href={withLocalePath("/news", locale)} className="btn">{t("actions.news")}</Link>
+            ) : null}
+            {accessVisibility.tradingDesk ? (
+              <Link href={withLocalePath("/trade", locale)} className="btn">{t("actions.manualTrading")}</Link>
+            ) : null}
+            {accessVisibility.bots ? (
+              <Link href={withLocalePath("/bots/new", locale)} className="btn btnPrimary">{t("actions.newFuturesBot")}</Link>
             ) : null}
           </div>
-          {calendarLoadError ? (
-            <div style={{ fontSize: 13, color: "var(--muted)" }}>{t("calendar.unavailable")}</div>
-          ) : loading && calendarEvents.length === 0 ? (
-            <div style={{ fontSize: 13, color: "var(--muted)" }}>{t("calendar.loading")}</div>
-          ) : calendarEvents.length === 0 ? (
-            <div style={{ fontSize: 13, color: "var(--muted)" }}>{t("calendar.none")}</div>
-          ) : (
-            <div style={{ display: "grid", gap: 6 }}>
-              <div style={{ fontSize: 12, color: "var(--muted)" }}>
-                {t("calendar.todayCount", { count: calendarEvents.length })}
-              </div>
-              {calendarEvents.slice(0, 5).map((event) => (
-                <div key={event.id} style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
-                  <span className={`badge ${
-                    event.impact === "high"
-                      ? "calendarImpactBadgeHigh"
-                      : event.impact === "medium"
-                        ? "calendarImpactBadgeMedium"
-                        : "calendarImpactBadgeLow"
-                  }`}>
-                    {event.impact.toUpperCase()}
-                  </span>
-                  <span style={{ fontSize: 13, color: "var(--muted)" }}>
-                    {new Date(event.ts).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })} · {event.title}
-                  </span>
-                </div>
-              ))}
-            </div>
-          )}
         </div>
-
-        <div className="card dashboardInsightCard dashboardFearGreedCard">
-          <img
-            src="https://alternative.me/crypto/fear-and-greed-index.png"
-            alt={t("fearGreed.alt")}
-            className="dashboardFearGreedImage"
-            loading="lazy"
-          />
-        </div>
-
-        <div className="card dashboardInsightCard dashboardUttCard">
-          <Script
-            id="coingecko-widget-script"
-            src="https://widgets.coingecko.com/gecko-coin-price-chart-widget.js"
-            strategy="afterInteractive"
-          />
-          <div className="dashboardUttWidgetHost">
-            {createElement("gecko-coin-price-chart-widget", {
-              locale: locale === "de" ? "de" : "en",
-              "dark-mode": "true",
-              "transparent-background": "true",
-              outlined: "true",
-              "coin-id": "utrade",
-              "initial-currency": "usd"
-            })}
+        <div className="statGrid">
+          <div className="card statCard">
+            <div className="statLabel">{t("stats.exchangeAccounts")}</div>
+            <div className="statValue">{loading ? "…" : headlineStats.accounts}</div>
+          </div>
+          <div className="card statCard">
+            <div className="statLabel">{t("stats.runningBots")}</div>
+            <div className="statValue">{loading ? "…" : headlineStats.running}</div>
+          </div>
+          <div className="card statCard">
+            <div className="statLabel">{t("stats.botsInError")}</div>
+            <div className="statValue">{loading ? "…" : headlineStats.errors}</div>
           </div>
         </div>
-      </div>
 
-      {error ? (
-        <div className="card" style={{ padding: 12, borderColor: "#ef4444", marginBottom: 12 }}>
-          <strong>{t("errors.load")}</strong> {error}
-        </div>
-      ) : null}
+        <TotalsBar totals={overviewTotals} />
+      </section>
 
-      {loading ? (
-        <div className="exchangeOverviewGrid">
-          <DashboardSkeletonCard />
-          <DashboardSkeletonCard />
-          <DashboardSkeletonCard />
-        </div>
-      ) : overview.length === 0 ? (
-        <div className="card exchangeOverviewEmpty">
-          <h3 style={{ marginTop: 0 }}>{t("empty.title")}</h3>
-          <p style={{ color: "var(--muted)", marginTop: 0 }}>
-            {t("empty.description")}
-          </p>
-          <Link href={withLocalePath("/settings", locale)} className="btn btnPrimary">{t("empty.cta")}</Link>
-        </div>
-      ) : (
-        <div className="exchangeOverviewGrid">
-          {overview.map((item) => (
-            <ExchangeAccountOverviewCard
-              key={item.exchangeAccountId}
-              overview={item}
-              visibility={accessVisibility}
+      <section id="risk-alerts" className="dashboardSectionAnchor">
+        <AlertsFeed alerts={alerts} />
+      </section>
+
+      <section id="market-context" className="dashboardSectionAnchor">
+        <div className="dashboardInsightsGrid">
+          <div className="card dashboardInsightCard dashboardCalendarProCard">
+            <div className="dashboardCalendarProHead">
+              <div className="dashboardCalendarProTitle">{t("calendar.title")}</div>
+              {accessVisibility.economicCalendar ? (
+                <Link href={withLocalePath("/calendar", locale)} className="btn">{t("calendar.open")}</Link>
+              ) : null}
+            </div>
+            {calendarLoadError ? (
+              <div className="dashboardCalendarProMeta">{t("calendar.unavailable")}</div>
+            ) : loading && calendarEvents.length === 0 ? (
+              <div className="dashboardCalendarProMeta">{t("calendar.loading")}</div>
+            ) : calendarEvents.length === 0 ? (
+              <div className="dashboardCalendarProMeta">{t("calendar.none")}</div>
+            ) : (
+              <div className="dashboardCalendarProList">
+                <div className="dashboardCalendarProCount">
+                  {t("calendar.todayCount", { count: calendarEvents.length })}
+                </div>
+                {calendarEvents.slice(0, 5).map((event) => (
+                  <div key={event.id} className="dashboardCalendarProRow">
+                    <span className={`badge ${
+                      event.impact === "high"
+                        ? "calendarImpactBadgeHigh"
+                        : event.impact === "medium"
+                          ? "calendarImpactBadgeMedium"
+                          : "calendarImpactBadgeLow"
+                    }`}>
+                      {event.impact.toUpperCase()}
+                    </span>
+                    <span className="dashboardCalendarProMeta">
+                      {new Date(event.ts).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })} · {event.title}
+                    </span>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+
+          <div className="card dashboardInsightCard dashboardFearGreedCard">
+            <img
+              src="https://alternative.me/crypto/fear-and-greed-index.png"
+              alt={t("fearGreed.alt")}
+              className="dashboardFearGreedImage"
+              loading="lazy"
             />
-          ))}
+          </div>
+
+          <div className="card dashboardInsightCard dashboardUttCard">
+            <Script
+              id="coingecko-widget-script"
+              src="https://widgets.coingecko.com/gecko-coin-price-chart-widget.js"
+              strategy="afterInteractive"
+            />
+            <div className="dashboardUttWidgetHost">
+              {createElement("gecko-coin-price-chart-widget", {
+                locale: locale === "de" ? "de" : "en",
+                "dark-mode": "true",
+                "transparent-background": "true",
+                outlined: "true",
+                "coin-id": "utrade",
+                "initial-currency": "usd"
+              })}
+            </div>
+          </div>
         </div>
-      )}
+      </section>
+
+      <section id="accounts" className="dashboardSectionAnchor">
+        {error ? (
+          <div className="card" style={{ padding: 12, borderColor: "#ef4444", marginBottom: 12 }}>
+            <strong>{t("errors.load")}</strong> {error}
+          </div>
+        ) : null}
+
+        {loading ? (
+          <div className="exchangeOverviewGrid">
+            <DashboardSkeletonCard />
+            <DashboardSkeletonCard />
+            <DashboardSkeletonCard />
+          </div>
+        ) : overview.length === 0 ? (
+          <div className="card exchangeOverviewEmpty">
+            <h3 style={{ marginTop: 0 }}>{t("empty.title")}</h3>
+            <p style={{ color: "var(--muted)", marginTop: 0 }}>
+              {t("empty.description")}
+            </p>
+            <Link href={withLocalePath("/settings", locale)} className="btn btnPrimary">{t("empty.cta")}</Link>
+          </div>
+        ) : (
+          <div className="exchangeOverviewGrid">
+            {overview.map((item) => (
+              <ExchangeAccountOverviewCard
+                key={item.exchangeAccountId}
+                overview={item}
+                visibility={accessVisibility}
+              />
+            ))}
+          </div>
+        )}
+      </section>
     </div>
   );
 }

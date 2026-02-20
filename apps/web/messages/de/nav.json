@@ -7,6 +7,18 @@
   "news": "News",
   "settings": "Einstellungen",
   "help": "Hilfe",
+  "header": {
+    "searchPlaceholder": "Seiten suchen",
+    "searchButton": "Los",
+    "userFallback": "Benutzer"
+  },
+  "sidebar": {
+    "quickLinksTitle": "Quick Links",
+    "sectionsTitle": "Bereiche",
+    "close": "Sidebar schließen",
+    "calendarShort": "Kalender",
+    "marketContextShort": "Markt-Kontext"
+  },
   "logout": "Abmelden",
   "loggingOut": "Melde ab...",
   "toggleMenu": "Menü umschalten"

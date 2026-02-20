@@ -5,6 +5,13 @@
   --text: #e8eef7;
   --muted: rgba(232,238,247,.7);
   --border: rgba(255, 193, 7, 0.62);
+  --app-sidebar-width: 248px;
+  --calendar-pro-surface-1: rgba(8, 20, 30, 0.95);
+  --calendar-pro-surface-2: rgba(6, 14, 24, 0.96);
+  --calendar-pro-border: rgba(255, 193, 7, 0.34);
+  --calendar-pro-glow-blue: rgba(20, 129, 192, 0.22);
+  --calendar-pro-glow-gold: rgba(255, 193, 7, 0.16);
+  --calendar-pro-glow-teal: rgba(16, 185, 199, 0.2);
 }
 
 html, body {
@@ -1013,7 +1020,7 @@ a { color: inherit; }
 
 .calendarFilterActions {
   display: flex;
-  align-items: end;
+  align-items: flex-end;
   gap: 8px;
   flex-wrap: wrap;
 }
@@ -1112,7 +1119,7 @@ a { color: inherit; }
 
 .newsFilterActions {
   display: flex;
-  align-items: end;
+  align-items: flex-end;
 }
 
 .newsMetaCard {
@@ -1507,7 +1514,7 @@ a { color: inherit; }
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
   gap: 10px;
-  align-items: end;
+  align-items: flex-end;
   margin-bottom: 10px;
 }
 
@@ -2385,7 +2392,7 @@ a { color: inherit; }
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(210px, 1fr));
   gap: 10px;
-  align-items: end;
+  align-items: flex-end;
 }
 
 .predictionCreateField {
@@ -3037,8 +3044,8 @@ a { color: inherit; }
 }
 
 .badge.calendarImpactBadgeLow {
-  border-color: rgba(34, 197, 94, 0.9);
-  color: #86efac;
+  border-color: rgba(16, 185, 199, 0.92);
+  color: #67e8f9;
 }
 
 .predictionFlipBadge {
@@ -3301,7 +3308,7 @@ a { color: inherit; }
   display: grid;
   grid-template-columns: 1fr 160px 140px 140px;
   gap: 10px;
-  align-items: end;
+  align-items: flex-end;
 }
 
 .adminFieldRow {
@@ -4075,5 +4082,772 @@ a { color: inherit; }
   .calendarEventMeta,
   .calendarEventValues {
     font-size: 11px;
+  }
+}
+
+/* App shell + global sidebar (step 1) */
+.appShell {
+  width: 100%;
+}
+
+.appShellWithSidebar {
+  display: grid;
+  grid-template-columns: var(--app-sidebar-width) minmax(0, 1fr);
+  align-items: start;
+}
+
+.appShellContent {
+  min-width: 0;
+}
+
+.appHeaderCompact {
+  z-index: 30;
+}
+
+.appHeaderCompact .appHeaderInner {
+  padding-top: 10px;
+  padding-bottom: 10px;
+  justify-content: flex-end;
+}
+
+.appHeaderMobileLogo {
+  display: none;
+  margin-right: auto;
+}
+
+.appHeaderSearch {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: min(460px, 100%);
+  margin-left: auto;
+  margin-right: 10px;
+}
+
+.appHeaderSearchWrap {
+  position: relative;
+  flex: 1;
+  min-width: 0;
+}
+
+.appHeaderSearchInput {
+  width: 100%;
+  min-height: 38px;
+  border-radius: 10px;
+  padding: 8px 10px;
+  font-size: 13px;
+}
+
+.appHeaderSearchResults {
+  position: absolute;
+  top: calc(100% + 6px);
+  left: 0;
+  right: 0;
+  z-index: 35;
+  display: grid;
+  gap: 4px;
+  padding: 6px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 10px;
+  background: rgba(10, 16, 24, 0.98);
+  box-shadow: 0 16px 34px rgba(0, 0, 0, 0.42);
+}
+
+.appHeaderSearchResult {
+  display: flex;
+  align-items: center;
+  width: 100%;
+  min-height: 34px;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.02);
+  color: var(--text);
+  text-align: left;
+  padding: 7px 10px;
+  cursor: pointer;
+  font: inherit;
+}
+
+.appHeaderSearchResult:hover {
+  border-color: rgba(255, 193, 7, 0.5);
+  background: rgba(255, 193, 7, 0.16);
+}
+
+.appHeaderSearchResultActive {
+  border-color: var(--border);
+  background: rgba(255, 193, 7, 0.2);
+}
+
+.appHeaderSearchResultLabel {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.appHeaderSearchBtn {
+  min-height: 38px;
+  padding: 8px 12px;
+}
+
+.appHeaderActions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-left: 0;
+}
+
+.appHeaderUserName {
+  display: inline-flex;
+  align-items: center;
+  min-height: 36px;
+  max-width: 170px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 8px;
+  padding: 0 10px;
+  color: var(--muted);
+  font-size: 13px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.appHeaderActions .btn {
+  white-space: nowrap;
+}
+
+.appBurgerVisible {
+  display: none;
+}
+
+.appSidebar {
+  position: sticky;
+  top: 0;
+  width: var(--app-sidebar-width);
+  min-width: var(--app-sidebar-width);
+  height: 100dvh;
+  border-right: 1px solid rgba(255, 255, 255, 0.08);
+  background: rgba(9, 14, 21, 0.96);
+  padding: 12px 8px 12px 12px;
+}
+
+.appSidebarInner {
+  height: 100%;
+  overflow: auto;
+  display: grid;
+  gap: 12px;
+  align-content: start;
+  padding-right: 4px;
+}
+
+.appSidebarTop {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.appSidebarLogo {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  text-decoration: none;
+  color: var(--text);
+}
+
+.appSidebarLogoMark {
+  width: 114px;
+  height: 32px;
+  object-fit: contain;
+  object-position: left center;
+}
+
+.appSidebarLogoText {
+  font-size: 12px;
+  color: var(--muted);
+  white-space: nowrap;
+}
+
+.appSidebarClose {
+  display: none;
+  border: 1px solid var(--border);
+  background: rgba(255, 255, 255, 0.04);
+  color: var(--text);
+  border-radius: 8px;
+  min-height: 34px;
+  padding: 6px 10px;
+  cursor: pointer;
+  justify-content: center;
+}
+
+.appSidebarSection {
+  display: grid;
+  gap: 6px;
+}
+
+.appSidebarSectionTitle {
+  font-size: 11px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+.appSidebarNav {
+  display: grid;
+  gap: 5px;
+}
+
+.appSidebarLink {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  position: relative;
+  min-height: 34px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 8px;
+  padding: 6px 9px;
+  text-decoration: none;
+  color: var(--text);
+  background: rgba(255, 255, 255, 0.02);
+  transition: border-color 120ms ease, background-color 120ms ease;
+}
+
+.appSidebarLinkIcon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  min-width: 20px;
+  height: 20px;
+  border-radius: 6px;
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  background: rgba(255, 255, 255, 0.03);
+  color: var(--muted);
+}
+
+.appSidebarGlyph {
+  width: 13px;
+  height: 13px;
+}
+
+.appSidebarLinkLabel {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.appSidebarLink:hover {
+  border-color: var(--border);
+  background: rgba(255, 255, 255, 0.05);
+}
+
+.appSidebarLinkActive {
+  border-color: var(--border);
+  background: rgba(255, 193, 7, 0.14);
+  font-weight: 700;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.06);
+}
+
+.appSidebarLinkActive::before {
+  content: "";
+  position: absolute;
+  left: -1px;
+  top: 6px;
+  bottom: 6px;
+  width: 3px;
+  border-radius: 3px;
+  background: var(--brand);
+}
+
+.appSidebarLinkActive .appSidebarLinkIcon {
+  border-color: rgba(255, 193, 7, 0.58);
+  color: #fff;
+  background: rgba(255, 193, 7, 0.22);
+}
+
+.appSidebarLinkSectionActive {
+  background: rgba(255, 255, 255, 0.08);
+}
+
+.appSidebarLinkSectionActive .appSidebarLinkIcon {
+  border-color: rgba(255, 255, 255, 0.3);
+  background: rgba(255, 255, 255, 0.16);
+}
+
+.appSidebarLink:focus-visible,
+.appSidebarLogo:focus-visible,
+.appSidebarClose:focus-visible,
+.appBurgerVisible:focus-visible,
+.appSidebarBackdrop:focus-visible {
+  outline: 2px solid rgba(255, 193, 7, 0.9);
+  outline-offset: 2px;
+}
+
+.appSidebarBackdrop {
+  display: none;
+}
+
+.dashboardSectionAnchor {
+  scroll-margin-top: 90px;
+}
+
+@media (max-width: 999px) {
+  .appShellWithSidebar {
+    display: block;
+  }
+
+  .appHeaderCompact .appHeaderInner {
+    flex-direction: row;
+    align-items: center;
+    justify-content: flex-end;
+    flex-wrap: wrap;
+  }
+
+  .appHeaderCompact .appHeaderMobileLogo {
+    display: inline-flex;
+  }
+
+  .appHeaderCompact .appHeaderMobileLogo .appLogoMark {
+    width: 108px;
+    height: 30px;
+  }
+
+  .appHeaderCompact .appHeaderMobileLogo .appLogoText {
+    font-size: 14px;
+    white-space: nowrap;
+  }
+
+  .appHeaderSearch {
+    order: 3;
+    width: 100%;
+    margin: 6px 0 0;
+  }
+
+  .appHeaderSearchBtn {
+    min-width: 58px;
+  }
+
+  .appHeaderActions {
+    margin-left: auto;
+  }
+
+  .appHeaderUserName {
+    max-width: 130px;
+  }
+
+  .appHeaderCompact .appBurgerVisible {
+    display: inline-flex;
+  }
+
+  .appSidebar {
+    position: fixed;
+    inset: 0 auto 0 0;
+    z-index: 45;
+    width: min(var(--app-sidebar-width), 84vw);
+    min-width: 0;
+    transform: translateX(-110%);
+    transition: transform 180ms ease;
+    box-shadow: 0 14px 36px rgba(0, 0, 0, 0.45);
+  }
+
+  .appSidebarDrawer {
+    transform: translateX(0);
+  }
+
+  .appSidebarClose {
+    display: inline-flex;
+  }
+
+  .appSidebarLogoMark {
+    width: 104px;
+    height: 28px;
+  }
+
+  .appSidebarLogoText {
+    font-size: 11px;
+  }
+
+  .appSidebarBackdrop {
+    display: block;
+    position: fixed;
+    inset: 0;
+    border: 0;
+    padding: 0;
+    background: rgba(0, 0, 0, 0.46);
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 160ms ease;
+    z-index: 40;
+  }
+
+  .appSidebarBackdropOpen {
+    opacity: 1;
+    pointer-events: auto;
+  }
+}
+
+@media (min-width: 1000px) {
+  .appHeaderCompact .appBurgerVisible {
+    display: none;
+  }
+
+  .appSidebarBackdrop {
+    display: none !important;
+  }
+}
+
+/* Calendar pro panel redesign */
+.calendarProPage {
+  gap: 14px;
+}
+
+.calendarProTopbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.calendarProTitleRow {
+  display: grid;
+  gap: 4px;
+}
+
+.calendarProSubtitle {
+  font-size: 13px;
+  color: var(--muted);
+}
+
+.calendarProControls,
+.calendarProStatusStrip,
+.calendarProEventsCard {
+  border-color: var(--calendar-pro-border);
+  border-radius: 12px;
+  background:
+    radial-gradient(circle at 100% -20%, var(--calendar-pro-glow-blue), transparent 48%),
+    radial-gradient(circle at 0% 120%, var(--calendar-pro-glow-teal), transparent 44%),
+    linear-gradient(180deg, var(--calendar-pro-surface-1), var(--calendar-pro-surface-2));
+}
+
+.calendarProControls {
+  display: grid;
+  gap: 12px;
+}
+
+.calendarProTabRow {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.calendarProTab {
+  min-height: 34px;
+  padding: 7px 11px;
+  border-radius: 999px;
+  border: 1px solid rgba(255, 193, 7, 0.26);
+  background: rgba(255, 255, 255, 0.02);
+  color: var(--muted);
+  cursor: pointer;
+  font-size: 12px;
+}
+
+.calendarProTab:hover {
+  border-color: rgba(255, 193, 7, 0.48);
+  color: var(--text);
+}
+
+.calendarProTabActive {
+  border-color: rgba(255, 193, 7, 0.88);
+  color: #fff;
+  background: linear-gradient(125deg, rgba(20, 129, 192, 0.42), rgba(255, 193, 7, 0.28));
+}
+
+.calendarProTab:focus-visible,
+.calendarProImpactToggleActive:focus-visible,
+.calendarProImpactToggleInactive:focus-visible {
+  outline: 2px solid rgba(255, 193, 7, 0.9);
+  outline-offset: 2px;
+}
+
+.calendarProFilterGrid {
+  grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
+  align-items: flex-end;
+}
+
+.calendarProFilterLabel {
+  font-size: 12px;
+  color: var(--muted);
+  margin-bottom: 4px;
+}
+
+.calendarProSearch {
+  min-height: 40px;
+}
+
+.calendarProImpactToggleActive {
+  background: rgba(255, 255, 255, 0.09);
+  opacity: 1;
+  cursor: pointer;
+}
+
+.calendarProImpactToggleInactive {
+  background: transparent;
+  opacity: 0.62;
+  cursor: pointer;
+}
+
+.calendarProFilterActions {
+  justify-content: flex-end;
+}
+
+.calendarProFilterActions .btn {
+  min-width: 120px;
+}
+
+.calendarProStatusStrip {
+  display: grid;
+  gap: 6px;
+  border-left: 3px solid rgba(16, 185, 199, 0.72);
+}
+
+.calendarProStatusStripAlert {
+  border-left-color: rgba(239, 68, 68, 0.86);
+  box-shadow: inset 0 0 0 1px rgba(239, 68, 68, 0.2);
+}
+
+.calendarProStatusTitle {
+  font-weight: 700;
+}
+
+.calendarProStatusText {
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.calendarProErrorCard {
+  border-color: rgba(239, 68, 68, 0.8);
+  background: linear-gradient(180deg, rgba(239, 68, 68, 0.1), rgba(239, 68, 68, 0.02));
+}
+
+.calendarProEventsCard {
+  display: grid;
+  gap: 10px;
+}
+
+.calendarProEventsHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.calendarProEventsTitle {
+  font-weight: 700;
+}
+
+.calendarProEventsCount {
+  min-width: 28px;
+  min-height: 28px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 999px;
+  border: 1px solid rgba(255, 193, 7, 0.5);
+  background: rgba(255, 193, 7, 0.16);
+  color: #fff;
+  font-size: 12px;
+}
+
+.calendarProStateText {
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.calendarProTableWrap {
+  border: 1px solid rgba(255, 193, 7, 0.2);
+  border-radius: 10px;
+  overflow: hidden;
+  background: rgba(6, 12, 20, 0.68);
+}
+
+.calendarProTable {
+  width: 100%;
+  border-collapse: collapse;
+  table-layout: fixed;
+  font-size: 12px;
+}
+
+.calendarProTable thead th {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  text-align: left;
+  color: var(--muted);
+  background:
+    radial-gradient(circle at 0% 0%, var(--calendar-pro-glow-gold), transparent 34%),
+    rgba(8, 15, 24, 0.96);
+  border-bottom: 1px solid rgba(255, 193, 7, 0.24);
+  backdrop-filter: blur(6px);
+}
+
+.calendarProTable th,
+.calendarProTable td {
+  padding: 10px 8px;
+  vertical-align: top;
+}
+
+.calendarProTable th:first-child,
+.calendarProTable td:first-child {
+  width: 31%;
+}
+
+.calendarProTable tbody tr {
+  border-top: 1px solid rgba(255, 255, 255, 0.05);
+}
+
+.calendarProTable tbody tr:nth-child(even) {
+  background: rgba(255, 255, 255, 0.015);
+}
+
+.calendarProTable tbody tr:hover {
+  background: rgba(20, 129, 192, 0.08);
+}
+
+.calendarProEventTitle {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  overflow: hidden;
+  line-height: 1.35;
+}
+
+.calendarProCurrencyCell {
+  display: grid;
+  gap: 2px;
+}
+
+.calendarProCountry,
+.calendarProDateCell {
+  color: var(--muted);
+}
+
+.calendarProValueCell {
+  color: var(--text);
+}
+
+.calendarProMobileList {
+  display: none;
+}
+
+.calendarProMobileCard {
+  margin: 0;
+  border-color: rgba(255, 193, 7, 0.34);
+  border-radius: 10px;
+  background: rgba(9, 16, 24, 0.86);
+  display: grid;
+  gap: 7px;
+}
+
+.calendarProMobileHead {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 8px;
+}
+
+.calendarProMobileTitle {
+  font-weight: 700;
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  overflow: hidden;
+}
+
+.calendarProMobileMeta,
+.calendarProMobileValues {
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.calendarProMobileValues {
+  display: grid;
+  gap: 4px;
+}
+
+/* Dashboard calendar card alignment */
+.dashboardCalendarProCard {
+  border-radius: 12px;
+  border-color: var(--calendar-pro-border);
+  background:
+    radial-gradient(circle at 100% -20%, rgba(20, 129, 192, 0.2), transparent 45%),
+    radial-gradient(circle at 0% 120%, rgba(255, 193, 7, 0.14), transparent 45%),
+    linear-gradient(180deg, rgba(8, 20, 30, 0.94), rgba(6, 14, 24, 0.96));
+}
+
+.dashboardCalendarProHead {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+
+.dashboardCalendarProTitle {
+  font-weight: 700;
+}
+
+.dashboardCalendarProList {
+  display: grid;
+  gap: 6px;
+}
+
+.dashboardCalendarProCount {
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.dashboardCalendarProRow {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: nowrap;
+}
+
+.dashboardCalendarProMeta {
+  font-size: 13px;
+  color: var(--muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+@media (max-width: 767px) {
+  .calendarProFilterGrid {
+    grid-template-columns: 1fr;
+  }
+
+  .calendarProFilterActions {
+    justify-content: stretch;
+  }
+
+  .calendarProFilterActions .btn {
+    width: 100%;
+  }
+
+  .calendarProTableWrap {
+    display: none;
+  }
+
+  .calendarProMobileList {
+    display: grid;
+    gap: 8px;
+  }
+
+  .dashboardCalendarProRow {
+    align-items: flex-start;
+  }
+
+  .dashboardCalendarProMeta {
+    white-space: normal;
   }
 }

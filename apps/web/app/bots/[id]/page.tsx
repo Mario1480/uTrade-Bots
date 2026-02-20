@@ -368,6 +368,81 @@ export default function BotDetailsPage() {
     if (!raw) return t("na");
     return t(`openTrades.consistency.${raw}` as any);
   }, [openTrades?.consistency, t]);
+  const latestDecision = useMemo(() => {
+    const event = overview?.recentEvents?.find((entry) => entry.type === "PREDICTION_COPIER_DECISION");
+    if (!event) return null;
+    const meta =
+      event.meta && typeof event.meta === "object" && !Array.isArray(event.meta)
+        ? (event.meta as Record<string, unknown>)
+        : null;
+    const actionRaw = String(meta?.action ?? "").trim().toLowerCase();
+    const action =
+      actionRaw === "skip" || actionRaw === "enter" || actionRaw === "exit"
+        ? actionRaw
+        : null;
+    const signalRaw = String(meta?.signal ?? "").trim().toLowerCase();
+    const signal =
+      signalRaw === "up" || signalRaw === "down" || signalRaw === "neutral"
+        ? signalRaw
+        : null;
+    const confidenceRaw = Number(meta?.confidence ?? NaN);
+    const confidencePct = Number.isFinite(confidenceRaw)
+      ? Number((confidenceRaw <= 1 ? confidenceRaw * 100 : confidenceRaw).toFixed(2))
+      : null;
+    const reason = typeof event.message === "string" && event.message.trim()
+      ? event.message.trim()
+      : null;
+    return {
+      action,
+      signal,
+      confidencePct,
+      reason,
+      createdAt: event.createdAt
+    };
+  }, [overview?.recentEvents]);
+  const latestDecisionText = useMemo(() => {
+    if (!latestDecision) return t("decision.none");
+    const reason = latestDecision.reason;
+    let reasonLabel: string | null = null;
+    if (reason) {
+      if (reason.startsWith("blocked_tag:")) {
+        const blockedTag = reason.slice("blocked_tag:".length).trim();
+        reasonLabel = blockedTag
+          ? `${t("decision.reasons.blocked_tag")} (${blockedTag})`
+          : t("decision.reasons.blocked_tag");
+      } else if (reason.startsWith("missing_required_tags:")) {
+        const requiredTags = reason.slice("missing_required_tags:".length).trim();
+        reasonLabel = requiredTags
+          ? `${t("decision.reasons.missing_required_tags")} (${requiredTags})`
+          : t("decision.reasons.missing_required_tags");
+      } else {
+        const reasonKey = `decision.reasons.${reason}`;
+        reasonLabel = t.has(reasonKey) ? t(reasonKey as any) : reason;
+      }
+    }
+
+    const signalLabel = latestDecision.signal
+      ? (() => {
+          const signalKey = `decision.signals.${latestDecision.signal}`;
+          return t.has(signalKey) ? t(signalKey as any) : latestDecision.signal;
+        })()
+      : null;
+
+    const parts: string[] = [];
+    if (latestDecision.action) {
+      parts.push(t(`decision.actions.${latestDecision.action}` as any));
+    }
+    if (reasonLabel) {
+      parts.push(reasonLabel);
+    }
+    if (signalLabel) {
+      parts.push(`${t("decision.signalLabel")}: ${signalLabel}`);
+    }
+    if (latestDecision.confidencePct !== null) {
+      parts.push(`${t("decision.confidenceLabel")}: ${latestDecision.confidencePct.toFixed(2)}%`);
+    }
+    return parts.join(" · ");
+  }, [latestDecision, t]);
   const hasOpenPosition = Boolean(openTrades?.mergedView);
   const openTradeUnrealizedPnl =
     openTrades?.mergedView?.unrealizedPnlUsd
@@ -476,6 +551,10 @@ export default function BotDetailsPage() {
           >
             {closingPosition ? t("openTrades.closingAction") : t("openTrades.closeAction")}
           </button>
+        </div>
+        <div className="botReasonText" style={{ marginBottom: 10, fontSize: 12 }}>
+          {t("decision.title")}: {latestDecisionText}
+          {latestDecision?.createdAt ? ` (${formatDateTime(latestDecision.createdAt)})` : ""}
         </div>
         {openTrades?.exchangeError ? (
           <div className="botReasonText" style={{ marginBottom: 10, color: "#fca5a5", fontSize: 12 }}>

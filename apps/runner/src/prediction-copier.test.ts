@@ -229,6 +229,29 @@ test("decision exits long when signal flips down", () => {
   }
 });
 
+test("decision keeps open position when confidence drops below min", () => {
+  const now = new Date("2026-02-12T12:01:00.000Z");
+  const prediction = makePrediction({ signal: "up", confidence: 55 });
+
+  const decision = evaluatePredictionCopierDecision({
+    config: makeConfig({ minConfidence: 70 }),
+    now,
+    prediction,
+    predictionHash: buildPredictionHash(prediction),
+    state: makeState({ openSide: "long", openTs: new Date("2026-02-12T11:50:00.000Z") }),
+    openPosition: { side: "long", size: 0.01, openTs: new Date("2026-02-12T11:50:00.000Z") },
+    openTradeCount: 1,
+    openPositionsCount: 1,
+    totalNotionalUsd: 100,
+    symbolNotionalUsd: 100,
+    candidateNotionalUsd: 100,
+    dailyTradeCount: 1
+  });
+
+  assert.equal(decision.action, "skip");
+  assert.equal(decision.reason, "confidence_below_min");
+});
+
 test("decision blocks duplicate prediction hash", () => {
   const now = new Date("2026-02-12T12:01:00.000Z");
   const prediction = makePrediction();
@@ -274,7 +297,7 @@ test("decision blocks cooldown after recent trade", () => {
   assert.equal(decision.reason, "cooldown_active");
 });
 
-test("decision does not time-stop when timeStopMin is zero", () => {
+test("decision does not time-stop when timeStopMin is zero and may scale in", () => {
   const now = new Date("2026-02-12T12:01:00.000Z");
   const prediction = makePrediction({ signal: "up", confidence: 82 });
 
@@ -290,6 +313,7 @@ test("decision does not time-stop when timeStopMin is zero", () => {
     predictionHash: buildPredictionHash(prediction),
     state: makeState({ openSide: "long", openTs: new Date("2026-02-12T11:00:00.000Z") }),
     openPosition: { side: "long", size: 0.01, openTs: new Date("2026-02-12T11:00:00.000Z") },
+    openTradeCount: 1,
     openPositionsCount: 1,
     totalNotionalUsd: 100,
     symbolNotionalUsd: 100,
@@ -297,8 +321,8 @@ test("decision does not time-stop when timeStopMin is zero", () => {
     dailyTradeCount: 1
   });
 
-  assert.equal(decision.action, "skip");
-  assert.equal(decision.reason, "position_aligned");
+  assert.equal(decision.action, "enter");
+  assert.equal(decision.reason, "scale_in_aligned_position");
 });
 
 test("decision blocks blocked tags", () => {

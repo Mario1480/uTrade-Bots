@@ -125,13 +125,13 @@
     "actions": {
       "back": "Back",
       "settings": "Settings",
-    "start": "Start",
-    "starting": "Starting...",
-    "stop": "Stop",
-    "stopping": "Stopping...",
-    "stopAndClose": "Stop + close trade",
-    "stoppingAndClosing": "Stopping + closing..."
-  },
+      "start": "Start",
+      "starting": "Starting...",
+      "stop": "Stop",
+      "stopping": "Stopping...",
+      "stopAndClose": "Stop + close trade",
+      "stoppingAndClosing": "Stopping + closing..."
+    },
     "fields": {
       "botStatus": "Bot status",
       "exchangeAccount": "Exchange account",
@@ -156,6 +156,44 @@
       "whyStopped": "Why stopped",
       "noStoppedReason": "No stop reason available."
     },
+    "decision": {
+      "title": "Last bot decision",
+      "none": "No decision available",
+      "signalLabel": "Signal",
+      "confidenceLabel": "Confidence",
+      "actions": {
+        "skip": "Skip",
+        "enter": "Entry",
+        "exit": "Exit"
+      },
+      "signals": {
+        "up": "Long",
+        "down": "Short",
+        "neutral": "Neutral"
+      },
+      "reasons": {
+        "blocked_tag": "Blocked by tag",
+        "missing_required_tags": "Missing required tags",
+        "max_open_positions_reached": "Maximum open positions reached",
+        "duplicate_prediction_hash": "Duplicate signal",
+        "cooldown_active": "Cooldown after last trade is active",
+        "daily_trade_cap_reached": "Daily trade cap reached",
+        "symbol_notional_cap_reached": "Symbol notional cap reached",
+        "total_notional_cap_reached": "Total notional cap reached",
+        "sizing_unavailable": "Position sizing unavailable",
+        "confidence_below_min": "Confidence below minimum",
+        "neutral_signal": "Neutral signal",
+        "signal_neutral": "Signal turned neutral",
+        "signal_not_allowed": "Signal not allowed",
+        "signal_flip": "Signal flip",
+        "position_aligned": "Position already aligned",
+        "scale_in_aligned_position": "Scale-in on aligned position",
+        "entry_allowed": "Entry allowed",
+        "expected_move_below_min": "Expected move below minimum",
+        "missing_prediction_state": "Missing prediction state",
+        "stale_prediction_state": "Prediction state is stale"
+      }
+    },
     "metrics": {
       "openPosition": "Open position",
       "isOpen": "Position open",
@@ -179,14 +217,14 @@
       "maxDrawdownUsd": "Max drawdown (USDT)",
       "avgHoldMinutes": "Avg hold (min)"
     },
-  "openTrades": {
-    "consistencyLabel": "Consistency",
-    "updated": "Updated",
-    "closeAction": "Close trade",
-    "closingAction": "Closing...",
-    "closeMissingAccount": "No exchange account is configured for this bot.",
-    "exchangeError": "Exchange sync warning",
-    "empty": "No open trades.",
+    "openTrades": {
+      "consistencyLabel": "Consistency",
+      "updated": "Updated",
+      "closeAction": "Close trade",
+      "closingAction": "Closing...",
+      "closeMissingAccount": "No exchange account is configured for this bot.",
+      "exchangeError": "Exchange sync warning",
+      "empty": "No open trades.",
       "consistency": {
         "matched": "matched",
         "mismatch": "mismatch",
@@ -200,12 +238,12 @@
         "entry": "Entry",
         "mark": "Mark",
         "tp": "TP",
-      "sl": "SL",
-      "unrealized": "Unrealized PnL",
-      "openTs": "Opened",
-      "action": "Action"
-    }
-  },
+        "sl": "SL",
+        "unrealized": "Unrealized PnL",
+        "openTs": "Opened",
+        "action": "Action"
+      }
+    },
     "history": {
       "loading": "Loading...",
       "empty": "No trades found for this filter.",
@@ -337,7 +375,26 @@
     "noEvents": "No events found for the selected filters.",
     "forecast": "Forecast",
     "previous": "Previous",
-    "actual": "Actual"
+    "actual": "Actual",
+    "search": {
+      "placeholder": "Search events, country or currency"
+    },
+    "tabs": {
+      "today": "Today",
+      "tomorrow": "Tomorrow",
+      "next3d": "Next 3 days",
+      "custom": "Custom"
+    },
+    "table": {
+      "event": "Event",
+      "impact": "Impact",
+      "currency": "Currency",
+      "date": "Date",
+      "forecast": "Forecast",
+      "previous": "Previous",
+      "actual": "Actual",
+      "noSearchResults": "No events match your search."
+    }
   },
   "news": {
     "title": "News",

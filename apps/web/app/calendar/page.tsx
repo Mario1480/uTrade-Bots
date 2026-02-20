@@ -1,10 +1,11 @@
 "use client";
 
-import { useEffect, useMemo, useState, type CSSProperties } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useLocale, useTranslations } from "next-intl";
 import { ApiError, apiGet } from "../../lib/api";
 
 type CalendarImpact = "low" | "medium" | "high";
+type CalendarDayTab = "today" | "tomorrow" | "next3d" | "custom";
 
 type EconomicEvent = {
   id: string;
@@ -66,54 +67,28 @@ function fmtDateTimeEu(value: string, locale: string): string {
   });
 }
 
-function fmtDayEu(isoDay: string, locale: string): string {
-  const parsed = new Date(`${isoDay}T00:00:00Z`);
-  if (Number.isNaN(parsed.getTime())) return isoDay;
-  return parsed.toLocaleDateString(locale, {
-    day: "2-digit",
-    month: "2-digit",
-    year: "numeric",
-    timeZone: "UTC"
-  });
-}
-
 function impactClass(impact: CalendarImpact): string {
   if (impact === "high") return "calendarImpactBadgeHigh";
   if (impact === "medium") return "calendarImpactBadgeMedium";
   return "calendarImpactBadgeLow";
 }
 
-function impactEventCardClass(impact: CalendarImpact): string {
-  if (impact === "high") return "calendarEventCardHigh";
-  if (impact === "medium") return "calendarEventCardMedium";
-  return "calendarEventCardLow";
-}
+function dateRangeFromTab(tab: Exclude<CalendarDayTab, "custom">): { from: string; to: string } {
+  const now = new Date();
 
-function impactEventCardStyle(impact: CalendarImpact): CSSProperties {
-  if (impact === "high") {
-    return {
-      borderLeft: "7px solid #ef4444",
-      borderColor: "rgba(239, 68, 68, 0.55)",
-      boxShadow: "inset 0 0 0 1px rgba(239, 68, 68, 0.18)",
-      background:
-        "linear-gradient(90deg, rgba(239, 68, 68, 0.18) 0%, rgba(239, 68, 68, 0.06) 16%, rgba(239, 68, 68, 0) 38%)"
-    };
+  if (tab === "today") {
+    const day = toDateInput(now);
+    return { from: day, to: day };
   }
-  if (impact === "medium") {
-    return {
-      borderLeft: "7px solid #f59e0b",
-      borderColor: "rgba(245, 158, 11, 0.5)",
-      boxShadow: "inset 0 0 0 1px rgba(245, 158, 11, 0.16)",
-      background:
-        "linear-gradient(90deg, rgba(245, 158, 11, 0.18) 0%, rgba(245, 158, 11, 0.06) 16%, rgba(245, 158, 11, 0) 38%)"
-    };
+
+  if (tab === "tomorrow") {
+    const tomorrow = toDateInput(addDays(now, 1));
+    return { from: tomorrow, to: tomorrow };
   }
+
   return {
-    borderLeft: "7px solid #22c55e",
-    borderColor: "rgba(34, 197, 94, 0.45)",
-    boxShadow: "inset 0 0 0 1px rgba(34, 197, 94, 0.14)",
-    background:
-      "linear-gradient(90deg, rgba(34, 197, 94, 0.16) 0%, rgba(34, 197, 94, 0.05) 16%, rgba(34, 197, 94, 0) 38%)"
+    from: toDateInput(now),
+    to: toDateInput(addDays(now, 3))
   };
 }
 
@@ -121,10 +96,14 @@ export default function CalendarPage() {
   const t = useTranslations("system.calendar");
   const locale = useLocale();
   const dateLocale = locale === "de" ? "de-DE" : "en-GB";
+
+  const initialRange = useMemo(() => dateRangeFromTab("next3d"), []);
   const [currency, setCurrency] = useState("USD");
   const [impacts, setImpacts] = useState<CalendarImpact[]>(["high"]);
-  const [from, setFrom] = useState(() => toDateInput(new Date()));
-  const [to, setTo] = useState(() => toDateInput(addDays(new Date(), 3)));
+  const [dayTab, setDayTab] = useState<CalendarDayTab>("next3d");
+  const [searchQuery, setSearchQuery] = useState("");
+  const [from, setFrom] = useState(initialRange.from);
+  const [to, setTo] = useState(initialRange.to);
   const [events, setEvents] = useState<EconomicEvent[]>([]);
   const [nextSummary, setNextSummary] = useState<NextSummary | null>(null);
   const [loading, setLoading] = useState(true);
@@ -148,14 +127,25 @@ export default function CalendarPage() {
         if (current.length <= 1) return current;
         return current.filter((entry) => entry !== nextImpact);
       }
+
       const merged = [...current, nextImpact];
       return IMPACT_ORDER.filter((entry) => merged.includes(entry));
     });
   }
 
+  function applyDayTab(nextTab: CalendarDayTab) {
+    setDayTab(nextTab);
+    if (nextTab === "custom") return;
+
+    const range = dateRangeFromTab(nextTab);
+    setFrom(range.from);
+    setTo(range.to);
+  }
+
   async function load() {
     setLoading(true);
     setError(null);
+
     try {
       const impactList = sortedImpacts.join(",");
       const [eventsResp, nextResp] = await Promise.all([
@@ -166,6 +156,7 @@ export default function CalendarPage() {
           `/economic-calendar/next?currency=${encodeURIComponent(currency)}&impact=${summaryImpact}`
         )
       ]);
+
       setEvents(Array.isArray(eventsResp.events) ? eventsResp.events : []);
       setNextSummary(nextResp);
     } catch (e) {
@@ -180,39 +171,78 @@ export default function CalendarPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [currency, sortedImpacts.join(","), summaryImpact, from, to]);
 
-  const grouped = useMemo(() => {
-    const map = new Map<string, EconomicEvent[]>();
-    for (const event of events) {
-      const day = event.ts.slice(0, 10);
-      const current = map.get(day) ?? [];
-      current.push(event);
-      map.set(day, current);
-    }
-    return Array.from(map.entries()).sort((a, b) => a[0].localeCompare(b[0]));
+  const sortedEvents = useMemo(() => {
+    const copy = [...events];
+    copy.sort((a, b) => {
+      const left = new Date(a.ts).getTime();
+      const right = new Date(b.ts).getTime();
+      if (Number.isNaN(left) || Number.isNaN(right)) {
+        return a.ts.localeCompare(b.ts);
+      }
+      return left - right;
+    });
+    return copy;
   }, [events]);
 
+  const filteredEvents = useMemo(() => {
+    const normalized = searchQuery.trim().toLowerCase();
+    if (!normalized) return sortedEvents;
+
+    return sortedEvents.filter((event) => {
+      const haystack = `${event.title} ${event.country} ${event.currency}`.toLowerCase();
+      return haystack.includes(normalized);
+    });
+  }, [searchQuery, sortedEvents]);
+
+  const showNoSearchResults =
+    !loading
+    && !error
+    && sortedEvents.length > 0
+    && filteredEvents.length === 0
+    && searchQuery.trim().length > 0;
+
+  const tabDefs: Array<{ key: CalendarDayTab; label: string }> = [
+    { key: "today", label: t("tabs.today") },
+    { key: "tomorrow", label: t("tabs.tomorrow") },
+    { key: "next3d", label: t("tabs.next3d") },
+    { key: "custom", label: t("tabs.custom") }
+  ];
+
   return (
-    <div className="calendarPage">
-      <div className="dashboardHeader">
-        <div>
+    <div className="calendarPage calendarProPage">
+      <div className="calendarProTopbar">
+        <div className="calendarProTitleRow">
           <h2 style={{ margin: 0 }}>{t("title")}</h2>
-          <div style={{ fontSize: 13, color: "var(--muted)" }}>
-            {t("subtitle")}
-          </div>
+          <div className="calendarProSubtitle">{t("subtitle")}</div>
         </div>
       </div>
 
-      <div className="card calendarFilterCard">
-        <div className="calendarFilterGrid">
+      <div className="card calendarFilterCard calendarProControls">
+        <div className="calendarProTabRow" role="group" aria-label={t("title")}>
+          {tabDefs.map((tab) => (
+            <button
+              key={tab.key}
+              type="button"
+              className={`calendarProTab ${dayTab === tab.key ? "calendarProTabActive" : ""}`}
+              onClick={() => applyDayTab(tab.key)}
+              aria-pressed={dayTab === tab.key}
+            >
+              {tab.label}
+            </button>
+          ))}
+        </div>
+
+        <div className="calendarFilterGrid calendarProFilterGrid">
           <label className="calendarFilterField">
-            <div style={{ fontSize: 12, color: "var(--muted)", marginBottom: 4 }}>{t("filters.currency")}</div>
-            <select className="input" value={currency} onChange={(e) => setCurrency(e.target.value.toUpperCase())}>
+            <div className="calendarProFilterLabel">{t("filters.currency")}</div>
+            <select className="input" value={currency} onChange={(event) => setCurrency(event.target.value.toUpperCase())}>
               <option value="USD">USD</option>
               <option value="EUR">EUR</option>
             </select>
           </label>
+
           <label className="calendarFilterField">
-            <div style={{ fontSize: 12, color: "var(--muted)", marginBottom: 4 }}>{t("filters.impact")}</div>
+            <div className="calendarProFilterLabel">{t("filters.impact")}</div>
             <div className="calendarImpactToggleRow">
               {IMPACT_ORDER.map((entry) => {
                 const active = impacts.includes(entry);
@@ -220,13 +250,9 @@ export default function CalendarPage() {
                   <button
                     key={entry}
                     type="button"
-                    className={`badge ${impactClass(entry)}`}
-                    style={{
-                      background: active ? "rgba(255,255,255,0.08)" : "transparent",
-                      opacity: active ? 1 : 0.6,
-                      cursor: "pointer"
-                    }}
+                    className={`badge ${impactClass(entry)} ${active ? "calendarProImpactToggleActive" : "calendarProImpactToggleInactive"}`}
                     onClick={() => toggleImpact(entry)}
+                    aria-pressed={active}
                   >
                     {t(`impact.${entry}`)}
                   </button>
@@ -234,97 +260,152 @@ export default function CalendarPage() {
               })}
             </div>
           </label>
+
+          <label className="calendarFilterField">
+            <div className="calendarProFilterLabel">{t("search.placeholder")}</div>
+            <input
+              className="input calendarProSearch"
+              type="search"
+              value={searchQuery}
+              onChange={(event) => setSearchQuery(event.target.value)}
+              placeholder={t("search.placeholder")}
+              aria-label={t("search.placeholder")}
+              autoComplete="off"
+            />
+          </label>
+
           <label className="calendarFilterField calendarFilterFieldDate">
-            <div style={{ fontSize: 12, color: "var(--muted)", marginBottom: 4 }}>{t("filters.from")}</div>
+            <div className="calendarProFilterLabel">{t("filters.from")}</div>
             <input
               className="input calendarDateInput"
               type="date"
               lang={dateLocale}
               value={from}
-              onChange={(e) => setFrom(e.target.value)}
+              onChange={(event) => {
+                setDayTab("custom");
+                setFrom(event.target.value);
+              }}
+              disabled={dayTab !== "custom"}
             />
           </label>
+
           <label className="calendarFilterField calendarFilterFieldDate">
-            <div style={{ fontSize: 12, color: "var(--muted)", marginBottom: 4 }}>{t("filters.to")}</div>
+            <div className="calendarProFilterLabel">{t("filters.to")}</div>
             <input
               className="input calendarDateInput"
               type="date"
               lang={dateLocale}
               value={to}
-              onChange={(e) => setTo(e.target.value)}
+              onChange={(event) => {
+                setDayTab("custom");
+                setTo(event.target.value);
+              }}
+              disabled={dayTab !== "custom"}
             />
           </label>
-          <div className="calendarFilterActions">
-            <button className="btn" onClick={() => setFrom(toDateInput(new Date()))} type="button">{t("actions.today")}</button>
-            <button className="btn" onClick={() => setTo(toDateInput(addDays(new Date(), 3)))} type="button">{t("actions.next3d")}</button>
+
+          <div className="calendarFilterActions calendarProFilterActions">
             <button className="btn btnPrimary" onClick={() => void load()} type="button">{t("actions.refresh")}</button>
           </div>
         </div>
       </div>
 
       {nextSummary ? (
-        <div
-          className="card calendarSummaryCard"
-          style={{ borderColor: nextSummary.blackoutActive ? "#ef4444" : undefined }}
-        >
-          <div style={{ fontWeight: 700, marginBottom: 6 }}>
+        <div className={`card calendarSummaryCard calendarProStatusStrip ${nextSummary.blackoutActive ? "calendarProStatusStripAlert" : ""}`}>
+          <div className="calendarProStatusTitle">
             {nextSummary.blackoutActive ? t("summary.blackoutActive") : t("summary.noBlackout")} ({nextSummary.currency})
           </div>
           {nextSummary.blackoutActive && nextSummary.activeWindow ? (
-            <div style={{ color: "var(--muted)", fontSize: 13 }}>
+            <div className="calendarProStatusText">
               {t("summary.until")} {fmtDateTimeEu(nextSummary.activeWindow.to, dateLocale)} · {nextSummary.activeWindow.event.title}
             </div>
           ) : nextSummary.nextEvent ? (
-            <div style={{ color: "var(--muted)", fontSize: 13 }}>
-              {t("summary.nextEvent", { impact: nextSummary.impactMin })}: {nextSummary.nextEvent.title} {t("summary.at")}{" "}
-              {fmtDateTimeEu(nextSummary.nextEvent.ts, dateLocale)}
+            <div className="calendarProStatusText">
+              {t("summary.nextEvent", { impact: nextSummary.impactMin })}: {nextSummary.nextEvent.title} {t("summary.at")} {fmtDateTimeEu(nextSummary.nextEvent.ts, dateLocale)}
             </div>
           ) : (
-            <div style={{ color: "var(--muted)", fontSize: 13 }}>{t("summary.noUpcoming")}</div>
+            <div className="calendarProStatusText">{t("summary.noUpcoming")}</div>
           )}
         </div>
       ) : null}
 
       {error ? (
-        <div className="card calendarErrorCard">
+        <div className="card calendarErrorCard calendarProErrorCard">
           <strong>{t("loadError")}:</strong> {error}
         </div>
       ) : null}
 
-      <div className="card calendarEventsCard">
-        <div style={{ fontWeight: 700, marginBottom: 8 }}>{t("eventsTitle")}</div>
+      <div className="card calendarEventsCard calendarProEventsCard">
+        <div className="calendarProEventsHeader">
+          <div className="calendarProEventsTitle">{t("eventsTitle")}</div>
+          {!loading ? <div className="calendarProEventsCount">{filteredEvents.length}</div> : null}
+        </div>
+
         {loading ? (
-          <div style={{ color: "var(--muted)" }}>{t("loadingEvents")}</div>
-        ) : grouped.length === 0 ? (
-          <div style={{ color: "var(--muted)" }}>{t("noEvents")}</div>
+          <div className="calendarProStateText">{t("loadingEvents")}</div>
+        ) : sortedEvents.length === 0 ? (
+          <div className="calendarProStateText">{t("noEvents")}</div>
+        ) : showNoSearchResults ? (
+          <div className="calendarProStateText">{t("table.noSearchResults")}</div>
         ) : (
-          grouped.map(([day, rows]) => (
-            <div key={day} style={{ marginBottom: 14 }}>
-              <div style={{ fontWeight: 700, marginBottom: 8 }}>{fmtDayEu(day, dateLocale)}</div>
-              <div style={{ display: "grid", gap: 8 }}>
-                {rows.map((event) => (
-                  <div
-                    key={event.id}
-                    className={`card calendarEventCard ${impactEventCardClass(event.impact)}`}
-                    style={impactEventCardStyle(event.impact)}
-                  >
-                    <div className="calendarEventHeader">
-                      <div style={{ fontWeight: 700 }}>{event.title}</div>
-                      <span className={`badge ${impactClass(event.impact)}`}>{event.impact}</span>
-                    </div>
-                    <div className="calendarEventMeta">
-                      {fmtDateTimeEu(event.ts, dateLocale)} · {event.country} · {event.currency}
-                    </div>
-                    <div className="calendarEventValues">
-                      <span>{t("forecast")}: {fmtNumber(event.forecast)}</span>
-                      <span>{t("previous")}: {fmtNumber(event.previous)}</span>
-                      <span>{t("actual")}: {fmtNumber(event.actual)}</span>
-                    </div>
-                  </div>
-                ))}
-              </div>
+          <>
+            <div className="calendarProTableWrap">
+              <table className="calendarProTable">
+                <thead>
+                  <tr>
+                    <th scope="col">{t("table.event")}</th>
+                    <th scope="col">{t("table.impact")}</th>
+                    <th scope="col">{t("table.currency")}</th>
+                    <th scope="col">{t("table.date")}</th>
+                    <th scope="col">{t("table.forecast")}</th>
+                    <th scope="col">{t("table.previous")}</th>
+                    <th scope="col">{t("table.actual")}</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {filteredEvents.map((event) => (
+                    <tr key={event.id} className="calendarProRow">
+                      <td>
+                        <span className="calendarProEventTitle" title={event.title}>{event.title}</span>
+                      </td>
+                      <td>
+                        <span className={`badge ${impactClass(event.impact)}`}>{t(`impact.${event.impact}`)}</span>
+                      </td>
+                      <td>
+                        <div className="calendarProCurrencyCell">
+                          <span>{event.currency}</span>
+                          <span className="calendarProCountry">{event.country}</span>
+                        </div>
+                      </td>
+                      <td className="calendarProDateCell">{fmtDateTimeEu(event.ts, dateLocale)}</td>
+                      <td className="calendarProValueCell">{fmtNumber(event.forecast)}</td>
+                      <td className="calendarProValueCell">{fmtNumber(event.previous)}</td>
+                      <td className="calendarProValueCell">{fmtNumber(event.actual)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
             </div>
-          ))
+
+            <div className="calendarProMobileList">
+              {filteredEvents.map((event) => (
+                <article key={event.id} className="card calendarProMobileCard">
+                  <div className="calendarProMobileHead">
+                    <div className="calendarProMobileTitle">{event.title}</div>
+                    <span className={`badge ${impactClass(event.impact)}`}>{t(`impact.${event.impact}`)}</span>
+                  </div>
+                  <div className="calendarProMobileMeta">
+                    {fmtDateTimeEu(event.ts, dateLocale)} · {event.country} · {event.currency}
+                  </div>
+                  <div className="calendarProMobileValues">
+                    <span>{t("table.forecast")}: {fmtNumber(event.forecast)}</span>
+                    <span>{t("table.previous")}: {fmtNumber(event.previous)}</span>
+                    <span>{t("table.actual")}: {fmtNumber(event.actual)}</span>
+                  </div>
+                </article>
+              ))}
+            </div>
+          </>
         )}
       </div>
     </div>

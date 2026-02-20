@@ -13552,6 +13552,9 @@ app.get("/exchange-accounts", requireAuth, async (_req, res) => {
 
 app.get("/dashboard/overview", requireAuth, async (_req, res) => {
   const user = getUserFromLocals(res);
+  const dayStartUtc = new Date();
+  dayStartUtc.setUTCHours(0, 0, 0, 0);
+
   const [accounts, bots, predictionStates] = await Promise.all([
     db.exchangeAccount.findMany({
       where: { userId: user.id },
@@ -13604,6 +13607,38 @@ app.get("/dashboard/overview", requireAuth, async (_req, res) => {
       }
     })
   ]);
+  const botIds = Array.from(
+    new Set(
+      bots
+        .map((row: any) => (typeof row.id === "string" ? row.id : null))
+        .filter((value): value is string => Boolean(value))
+    )
+  );
+  const botRealizedRows = botIds.length > 0
+    ? await ignoreMissingTable(() => db.botTradeHistory.findMany({
+        where: {
+          botId: { in: botIds },
+          status: "closed",
+          exitTs: { gte: dayStartUtc }
+        },
+        select: {
+          exchangeAccountId: true,
+          realizedPnlUsd: true
+        }
+      }))
+    : [];
+  const botRealizedByAccount = new Map<string, { pnl: number; count: number }>();
+  for (const row of Array.isArray(botRealizedRows) ? botRealizedRows : []) {
+    const exchangeAccountId =
+      typeof (row as any)?.exchangeAccountId === "string" ? String((row as any).exchangeAccountId) : "";
+    if (!exchangeAccountId) continue;
+    const pnl = toFiniteNumber((row as any)?.realizedPnlUsd);
+    if (pnl === null) continue;
+    const current = botRealizedByAccount.get(exchangeAccountId) ?? { pnl: 0, count: 0 };
+    current.pnl += pnl;
+    current.count += 1;
+    botRealizedByAccount.set(exchangeAccountId, current);
+  }
   const paperIds = accounts
     .filter((row: any) => normalizeExchangeValue(String(row.exchange ?? "")) === "paper")
     .map((row: any) => String(row.id));
@@ -13675,6 +13710,13 @@ app.get("/dashboard/overview", requireAuth, async (_req, res) => {
 
   const overview: ExchangeAccountOverview[] = accounts.map((account) => {
     const row = aggregate.get(account.id);
+    const botRealizedToday = botRealizedByAccount.get(account.id) ?? null;
+    const exchangePnlToday = toFiniteNumber(account.pnlTodayUsd);
+    const pnlTodayUsd = exchangePnlToday !== null
+      ? exchangePnlToday
+      : botRealizedToday && botRealizedToday.count > 0
+        ? Number(botRealizedToday.pnl.toFixed(6))
+        : null;
     const isPaper = normalizeExchangeValue(String(account.exchange ?? "")) === "paper";
     const linkedMarketDataId = isPaper ? (paperBindings[account.id] ?? null) : null;
     const linkedMarketDataAccount = linkedMarketDataId
@@ -13720,7 +13762,7 @@ app.get("/dashboard/overview", requireAuth, async (_req, res) => {
           availableMargin
         };
       })(),
-      pnlTodayUsd: account.pnlTodayUsd ?? null,
+      pnlTodayUsd,
       lastSyncError:
         account.lastSyncErrorAt || account.lastSyncErrorMessage
           ? {

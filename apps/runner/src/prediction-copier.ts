@@ -369,7 +369,7 @@ export function evaluatePredictionCopierDecision(input: PredictionCopierEvalInpu
 
   if (openPosition) {
     if (confidence < config.minConfidence) {
-      return { action: "exit", reason: "confidence_below_min", side: openPosition.side };
+      return { action: "skip", reason: "confidence_below_min" };
     }
     if (signal === "neutral") {
       return { action: "exit", reason: "signal_neutral", side: openPosition.side };
