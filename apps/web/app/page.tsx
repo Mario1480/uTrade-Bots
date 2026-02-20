@@ -4,6 +4,15 @@ import Link from "next/link";
 import Script from "next/script";
 import { createElement, useEffect, useMemo, useState } from "react";
 import { useLocale, useTranslations } from "next-intl";
+import {
+  Area,
+  AreaChart,
+  CartesianGrid,
+  ResponsiveContainer,
+  Tooltip,
+  XAxis,
+  YAxis
+} from "recharts";
 import ExchangeAccountOverviewCard, {
 type ExchangeAccountOverview
 } from "./components/ExchangeAccountOverviewCard";
@@ -30,6 +39,19 @@ type EconomicCalendarSummary = {
   source: string;
 };
 
+type DashboardNewsItem = {
+  id: string;
+  feed: "crypto" | "general";
+  title: string;
+  url: string;
+  publishedAt: string;
+  symbol?: string | null;
+};
+
+type DashboardNewsResponse = {
+  items: DashboardNewsItem[];
+};
+
 type DashboardOverviewResponse = {
   accounts: ExchangeAccountOverview[];
   totals: DashboardTotals;
@@ -39,10 +61,60 @@ type DashboardAlertsResponse = {
   items: DashboardAlert[];
 };
 
+type PerformanceRange = "24h" | "7d" | "30d";
+
+type DashboardPerformancePoint = {
+  ts: string;
+  totalEquity: number;
+  totalAvailableMargin: number;
+  totalTodayPnl: number;
+  includedAccounts: number;
+};
+
+type DashboardPerformanceResponse = {
+  range: PerformanceRange;
+  bucketSeconds: number;
+  points: DashboardPerformancePoint[];
+};
+
+type DashboardPerformanceChartPoint = {
+  ts: number;
+  totalEquity: number;
+};
+
+const PERFORMANCE_RANGES: PerformanceRange[] = ["24h", "7d", "30d"];
+
 function errMsg(e: unknown): string {
   if (e instanceof ApiError) return `${e.message} (HTTP ${e.status})`;
   if (e && typeof e === "object" && "message" in e) return String((e as any).message);
   return String(e);
+}
+
+function resolveIntlLocale(locale: AppLocale): string {
+  return locale === "de" ? "de-DE" : "en-US";
+}
+
+function formatUsdt(value: number | null | undefined, locale: AppLocale, decimals = 2): string {
+  if (!Number.isFinite(Number(value))) return "—";
+  return `${new Intl.NumberFormat(resolveIntlLocale(locale), {
+    minimumFractionDigits: decimals,
+    maximumFractionDigits: decimals
+  }).format(Number(value))} USDT`;
+}
+
+function formatPerformanceAxisTick(ts: number, range: PerformanceRange, locale: AppLocale): string {
+  const date = new Date(ts);
+  if (!Number.isFinite(date.getTime())) return "—";
+  if (range === "24h") {
+    return date.toLocaleTimeString(resolveIntlLocale(locale), {
+      hour: "2-digit",
+      minute: "2-digit"
+    });
+  }
+  return date.toLocaleDateString(resolveIntlLocale(locale), {
+    month: "2-digit",
+    day: "2-digit"
+  });
 }
 
 function DashboardSkeletonCard() {
@@ -72,6 +144,11 @@ export default function Page() {
   const [alerts, setAlerts] = useState<DashboardAlert[]>([]);
   const [calendarEvents, setCalendarEvents] = useState<EconomicCalendarSummary[]>([]);
   const [calendarLoadError, setCalendarLoadError] = useState(false);
+  const [newsItems, setNewsItems] = useState<DashboardNewsItem[]>([]);
+  const [newsLoadError, setNewsLoadError] = useState(false);
+  const [performanceRange, setPerformanceRange] = useState<PerformanceRange>("24h");
+  const [performancePoints, setPerformancePoints] = useState<DashboardPerformancePoint[]>([]);
+  const [performanceLoadError, setPerformanceLoadError] = useState(false);
   const [accessVisibility, setAccessVisibility] = useState<AccessSectionVisibility>(
     DEFAULT_ACCESS_SECTION_VISIBILITY
   );
@@ -86,12 +163,21 @@ export default function Page() {
       setLoading(true);
       setError(null);
       try {
-        const [overviewResult, alertsResult, calendarResult, accessResult] = await Promise.allSettled([
+        const [
+          overviewResult,
+          alertsResult,
+          calendarResult,
+          newsResult,
+          performanceResult,
+          accessResult
+        ] = await Promise.allSettled([
           apiGet<DashboardOverviewResponse | ExchangeAccountOverview[]>("/dashboard/overview"),
           apiGet<DashboardAlertsResponse>("/dashboard/alerts?limit=10"),
           apiGet<{ events: EconomicCalendarSummary[] }>(
             `/economic-calendar?from=${today}&to=${today}&currency=USD&impacts=high,medium`
           ),
+          apiGet<DashboardNewsResponse>("/news?mode=all&limit=3&page=0"),
+          apiGet<DashboardPerformanceResponse>(`/dashboard/performance?range=${performanceRange}`),
           apiGet<{ visibility?: AccessSectionVisibility }>("/settings/access-section")
         ]);
         if (!mounted) return;
@@ -120,6 +206,22 @@ export default function Page() {
           setCalendarEvents([]);
           setCalendarLoadError(true);
         }
+        if (newsResult.status === "fulfilled") {
+          const items = Array.isArray(newsResult.value?.items) ? newsResult.value.items : [];
+          setNewsItems(items);
+          setNewsLoadError(false);
+        } else {
+          setNewsItems([]);
+          setNewsLoadError(true);
+        }
+        if (performanceResult.status === "fulfilled") {
+          const points = Array.isArray(performanceResult.value?.points) ? performanceResult.value.points : [];
+          setPerformancePoints(points);
+          setPerformanceLoadError(false);
+        } else {
+          setPerformancePoints([]);
+          setPerformanceLoadError(true);
+        }
         if (accessResult.status === "fulfilled" && accessResult.value?.visibility) {
           setAccessVisibility({
             tradingDesk: accessResult.value.visibility.tradingDesk !== false,
@@ -134,6 +236,8 @@ export default function Page() {
       } catch (e) {
         if (!mounted) return;
         setError(errMsg(e));
+        setPerformancePoints([]);
+        setPerformanceLoadError(true);
       } finally {
         if (mounted) setLoading(false);
       }
@@ -148,7 +252,7 @@ export default function Page() {
       mounted = false;
       clearInterval(timer);
     };
-  }, []);
+  }, [performanceRange]);
 
   const headlineStats = useMemo(() => {
     return overview.reduce(
@@ -161,6 +265,78 @@ export default function Page() {
       { accounts: 0, running: 0, errors: 0 }
     );
   }, [overview]);
+
+  const resolvedTotals = useMemo<DashboardTotals | null>(() => {
+    if (overviewTotals) return overviewTotals;
+    if (!overview.length) return null;
+    const reduced = overview.reduce<DashboardTotals>(
+      (acc, row) => {
+        const spotTotal = Number(row.spotBudget?.total ?? NaN);
+        const futuresEquity = Number(row.futuresBudget?.equity ?? NaN);
+        const availableMargin = Number(row.futuresBudget?.availableMargin ?? NaN);
+        const pnlToday = Number(row.pnlTodayUsd ?? NaN);
+
+        let contributes = false;
+
+        if (Number.isFinite(spotTotal)) {
+          acc.totalEquity += spotTotal;
+          contributes = true;
+        }
+        if (Number.isFinite(futuresEquity)) {
+          acc.totalEquity += futuresEquity;
+          contributes = true;
+        }
+        if (Number.isFinite(availableMargin)) {
+          acc.totalAvailableMargin += availableMargin;
+          contributes = true;
+        }
+        if (Number.isFinite(pnlToday)) {
+          acc.totalTodayPnl += pnlToday;
+          contributes = true;
+        }
+        if (contributes) acc.includedAccounts += 1;
+        return acc;
+      },
+      {
+        totalEquity: 0,
+        totalAvailableMargin: 0,
+        totalTodayPnl: 0,
+        currency: "USDT",
+        includedAccounts: 0
+      }
+    );
+    return {
+      ...reduced,
+      totalEquity: Number(reduced.totalEquity.toFixed(6)),
+      totalAvailableMargin: Number(reduced.totalAvailableMargin.toFixed(6)),
+      totalTodayPnl: Number(reduced.totalTodayPnl.toFixed(6))
+    };
+  }, [overview, overviewTotals]);
+
+  const performanceChartData = useMemo<DashboardPerformanceChartPoint[]>(() => {
+    return performancePoints
+      .map((point) => {
+        const ts = new Date(point.ts).getTime();
+        if (!Number.isFinite(ts)) return null;
+        const totalEquity = Number(point.totalEquity);
+        if (!Number.isFinite(totalEquity)) return null;
+        return { ts, totalEquity };
+      })
+      .filter((point): point is DashboardPerformanceChartPoint => Boolean(point));
+  }, [performancePoints]);
+
+  const latestPerformancePoint = useMemo(() => {
+    return performancePoints.length > 0 ? performancePoints[performancePoints.length - 1] : null;
+  }, [performancePoints]);
+
+  const fallbackPerformanceTotals = useMemo(() => {
+    return {
+      totalEquity: latestPerformancePoint?.totalEquity ?? resolvedTotals?.totalEquity ?? null,
+      totalAvailableMargin:
+        latestPerformancePoint?.totalAvailableMargin ?? resolvedTotals?.totalAvailableMargin ?? null,
+      totalTodayPnl: latestPerformancePoint?.totalTodayPnl ?? resolvedTotals?.totalTodayPnl ?? null
+    };
+  }, [latestPerformancePoint, resolvedTotals]);
 
   return (
     <div>
@@ -205,7 +381,7 @@ export default function Page() {
           </div>
         </div>
 
-        <TotalsBar totals={overviewTotals} />
+        <TotalsBar totals={resolvedTotals} />
       </section>
 
       <section id="risk-alerts" className="dashboardSectionAnchor">
@@ -214,6 +390,136 @@ export default function Page() {
 
       <section id="market-context" className="dashboardSectionAnchor">
         <div className="dashboardInsightsGrid">
+          <div className="card dashboardInsightCard dashboardPerformanceProCard dashboardInsightSpan2">
+            <div className="dashboardPerformanceHead">
+              <div>
+                <div className="dashboardPerformanceTitle">{t("performance.title")}</div>
+                <div className="dashboardPerformanceSubtitle">{t("performance.subtitle")}</div>
+              </div>
+              <div className="dashboardPerformanceTabs" role="tablist" aria-label={t("performance.title")}>
+                {PERFORMANCE_RANGES.map((range) => (
+                  <button
+                    key={range}
+                    type="button"
+                    role="tab"
+                    aria-selected={performanceRange === range}
+                    className={`dashboardPerformanceTab ${
+                      performanceRange === range ? "dashboardPerformanceTabActive" : ""
+                    }`}
+                    onClick={() => setPerformanceRange(range)}
+                  >
+                    {range === "24h"
+                      ? t("performance.range24h")
+                      : range === "7d"
+                        ? t("performance.range7d")
+                        : t("performance.range30d")}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            {performanceLoadError ? (
+              <div className="dashboardPerformanceState">{t("performance.unavailable")}</div>
+            ) : loading && performanceChartData.length === 0 ? (
+              <div className="dashboardPerformanceState">{t("performance.loading")}</div>
+            ) : performanceChartData.length === 0 ? (
+              <div className="dashboardPerformanceState">{t("performance.none")}</div>
+            ) : (
+              <div className="dashboardPerformanceChartWrap">
+                <ResponsiveContainer width="100%" height={230}>
+                  <AreaChart data={performanceChartData} margin={{ top: 6, right: 10, left: 0, bottom: 0 }}>
+                    <defs>
+                      <linearGradient id="dashboardPerformanceAreaFill" x1="0" y1="0" x2="0" y2="1">
+                        <stop offset="5%" stopColor="rgba(16, 185, 199, 0.78)" />
+                        <stop offset="95%" stopColor="rgba(16, 185, 199, 0.05)" />
+                      </linearGradient>
+                    </defs>
+                    <CartesianGrid stroke="rgba(255,255,255,0.06)" vertical={false} />
+                    <XAxis
+                      dataKey="ts"
+                      type="number"
+                      domain={["dataMin", "dataMax"]}
+                      tickFormatter={(value) =>
+                        formatPerformanceAxisTick(Number(value), performanceRange, locale)
+                      }
+                      stroke="rgba(255,255,255,0.48)"
+                      tickLine={false}
+                      axisLine={false}
+                      minTickGap={24}
+                    />
+                    <YAxis
+                      tickFormatter={(value) => formatUsdt(Number(value), locale, 0)}
+                      stroke="rgba(255,255,255,0.48)"
+                      tickLine={false}
+                      axisLine={false}
+                      width={86}
+                    />
+                    <Tooltip
+                      formatter={(value: number) => [formatUsdt(value, locale), t("performance.metrics.equity")]}
+                      labelFormatter={(value) =>
+                        new Date(Number(value)).toLocaleString(resolveIntlLocale(locale), {
+                          month: "2-digit",
+                          day: "2-digit",
+                          hour: "2-digit",
+                          minute: "2-digit"
+                        })
+                      }
+                      contentStyle={{
+                        border: "1px solid rgba(255,193,7,0.34)",
+                        background: "rgba(7, 17, 26, 0.95)",
+                        borderRadius: 10
+                      }}
+                      labelStyle={{ color: "var(--muted)" }}
+                      itemStyle={{ color: "var(--text)" }}
+                    />
+                    <Area
+                      type="monotone"
+                      dataKey="totalEquity"
+                      stroke="rgba(16, 185, 199, 0.95)"
+                      strokeWidth={2}
+                      fill="url(#dashboardPerformanceAreaFill)"
+                      dot={false}
+                      activeDot={{ r: 4 }}
+                    />
+                  </AreaChart>
+                </ResponsiveContainer>
+              </div>
+            )}
+
+            <div className="dashboardPerformanceMetrics">
+              <div className="dashboardPerformanceMetricCard">
+                <div className="dashboardPerformanceMetricLabel">{t("performance.metrics.equity")}</div>
+                <div className="dashboardPerformanceMetricValue">
+                  {formatUsdt(fallbackPerformanceTotals.totalEquity, locale)}
+                </div>
+              </div>
+              <div className="dashboardPerformanceMetricCard">
+                <div className="dashboardPerformanceMetricLabel">{t("performance.metrics.margin")}</div>
+                <div className="dashboardPerformanceMetricValue">
+                  {formatUsdt(fallbackPerformanceTotals.totalAvailableMargin, locale)}
+                </div>
+              </div>
+              <div className="dashboardPerformanceMetricCard">
+                <div className="dashboardPerformanceMetricLabel">{t("performance.metrics.pnl")}</div>
+                <div
+                  className={`dashboardPerformanceMetricValue ${
+                    Number(fallbackPerformanceTotals.totalTodayPnl ?? 0) < 0
+                      ? "dashboardPerformanceMetricValueNegative"
+                      : "dashboardPerformanceMetricValuePositive"
+                  }`}
+                >
+                  {formatUsdt(fallbackPerformanceTotals.totalTodayPnl, locale)}
+                </div>
+              </div>
+              <div className="dashboardPerformanceMetricCard">
+                <div className="dashboardPerformanceMetricLabel">{t("performance.metrics.bots")}</div>
+                <div className="dashboardPerformanceMetricValue">
+                  {headlineStats.running} / {headlineStats.errors}
+                </div>
+              </div>
+            </div>
+          </div>
+
           <div className="card dashboardInsightCard dashboardCalendarProCard">
             <div className="dashboardCalendarProHead">
               <div className="dashboardCalendarProTitle">{t("calendar.title")}</div>
@@ -251,6 +557,47 @@ export default function Page() {
               </div>
             )}
           </div>
+
+          {accessVisibility.news ? (
+            <div className="card dashboardInsightCard dashboardNewsProCard">
+              <div className="dashboardNewsProHead">
+                <div className="dashboardNewsProTitle">{t("news.title")}</div>
+                <Link href={withLocalePath("/news", locale)} className="btn">{t("news.open")}</Link>
+              </div>
+              {newsLoadError ? (
+                <div className="dashboardNewsProMeta">{t("news.unavailable")}</div>
+              ) : loading && newsItems.length === 0 ? (
+                <div className="dashboardNewsProMeta">{t("news.loading")}</div>
+              ) : newsItems.length === 0 ? (
+                <div className="dashboardNewsProMeta">{t("news.none")}</div>
+              ) : (
+                <div className="dashboardNewsProList">
+                  {newsItems.map((item) => (
+                    <a
+                      key={item.id}
+                      href={item.url}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="dashboardNewsProRow"
+                    >
+                      <div className="dashboardNewsProBadges">
+                        <span className={`badge ${item.feed === "crypto" ? "newsBadgeCrypto" : "newsBadgeGeneral"}`}>
+                          {item.feed.toUpperCase()}
+                        </span>
+                        {item.symbol ? <span className="badge">{item.symbol}</span> : null}
+                      </div>
+                      <div className="dashboardNewsProContent">
+                        <span className="dashboardNewsProTime">
+                          {new Date(item.publishedAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
+                        </span>
+                        <span className="dashboardNewsProTitleText">{item.title}</span>
+                      </div>
+                    </a>
+                  ))}
+                </div>
+              )}
+            </div>
+          ) : null}
 
           <div className="card dashboardInsightCard dashboardFearGreedCard">
             <img

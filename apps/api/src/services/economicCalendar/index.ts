@@ -15,7 +15,7 @@ import type {
 } from "./types.js";
 
 const DEFAULT_CONFIG_KEY = "default";
-const DEFAULT_CURRENCIES = "USD,EUR";
+const DEFAULT_CURRENCIES = "USD,EUR,GBP,JPY,CHF,CAD,AUD,NZD,CNY";
 const DEFAULT_IMPACT: EconomicImpact = "high";
 const DEFAULT_PRE_MINUTES = 30;
 const DEFAULT_POST_MINUTES = 30;

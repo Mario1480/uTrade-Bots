@@ -35,6 +35,17 @@ type NextSummary = {
 };
 
 const IMPACT_ORDER: CalendarImpact[] = ["high", "medium", "low"];
+const CALENDAR_CURRENCIES = [
+  { code: "USD", flag: "🇺🇸" },
+  { code: "EUR", flag: "🇪🇺" },
+  { code: "GBP", flag: "🇬🇧" },
+  { code: "JPY", flag: "🇯🇵" },
+  { code: "CHF", flag: "🇨🇭" },
+  { code: "CAD", flag: "🇨🇦" },
+  { code: "AUD", flag: "🇦🇺" },
+  { code: "NZD", flag: "🇳🇿" },
+  { code: "CNY", flag: "🇨🇳" }
+] as const;
 
 function errMsg(error: unknown): string {
   if (error instanceof ApiError) return `${error.message} (HTTP ${error.status})`;
@@ -235,9 +246,17 @@ export default function CalendarPage() {
         <div className="calendarFilterGrid calendarProFilterGrid">
           <label className="calendarFilterField">
             <div className="calendarProFilterLabel">{t("filters.currency")}</div>
-            <select className="input" value={currency} onChange={(event) => setCurrency(event.target.value.toUpperCase())}>
-              <option value="USD">USD</option>
-              <option value="EUR">EUR</option>
+            <select
+              className="input calendarProCurrencySelect"
+              value={currency}
+              onChange={(event) => setCurrency(event.target.value.toUpperCase())}
+              aria-label={t("filters.currency")}
+            >
+              {CALENDAR_CURRENCIES.map((entry) => (
+                <option key={entry.code} value={entry.code}>
+                  {entry.flag} {entry.code}
+                </option>
+              ))}
             </select>
           </label>
 

@@ -36,6 +36,29 @@
     "open": "Kalender öffnen",
     "todayCount": "{count} Events heute"
   },
+  "news": {
+    "title": "Markt-News",
+    "open": "News öffnen",
+    "loading": "News werden geladen...",
+    "unavailable": "News aktuell nicht verfügbar.",
+    "none": "Keine News-Einträge verfügbar."
+  },
+  "performance": {
+    "title": "Account-Performance",
+    "subtitle": "Aggregierter Equity-Verlauf mit Kern-Risiko-Kennzahlen.",
+    "range24h": "24h",
+    "range7d": "7d",
+    "range30d": "30d",
+    "loading": "Performance-Daten werden geladen...",
+    "unavailable": "Performance-Daten aktuell nicht verfügbar.",
+    "none": "Noch keine Performance-Snapshots verfügbar.",
+    "metrics": {
+      "equity": "Gesamte Equity",
+      "margin": "Verfügbare Margin",
+      "pnl": "Heutiges PnL",
+      "bots": "Laufende / Fehler-Bots"
+    }
+  },
   "fearGreed": {
     "title": "Crypto Fear & Greed Index",
     "subtitle": "Täglicher Stimmungs-Snapshot von Alternative.me.",

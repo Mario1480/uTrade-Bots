@@ -872,6 +872,10 @@ const dashboardAlertsQuerySchema = z.object({
   limit: z.coerce.number().int().min(1).max(100).default(20)
 });
 
+const dashboardPerformanceQuerySchema = z.object({
+  range: z.enum(["24h", "7d", "30d"]).default("24h")
+});
+
 const predictionGenerateSchema = z.object({
   symbol: z.string().trim().min(1),
   marketType: z.enum(["spot", "perp"]),
@@ -1035,6 +1039,15 @@ type DashboardOverviewResponse = {
   totals: DashboardOverviewTotals;
 };
 
+type DashboardPerformanceRange = "24h" | "7d" | "30d";
+type DashboardPerformancePoint = {
+  ts: string;
+  totalEquity: number;
+  totalAvailableMargin: number;
+  totalTodayPnl: number;
+  includedAccounts: number;
+};
+
 type DashboardAlertSeverity = "critical" | "warning" | "info";
 type DashboardAlertType =
   | "API_DOWN"
@@ -1060,6 +1073,15 @@ const DASHBOARD_CONNECTED_WINDOW_MS =
   Number(process.env.DASHBOARD_STATUS_CONNECTED_SECONDS ?? "120") * 1000;
 const DASHBOARD_DEGRADED_WINDOW_MS =
   Number(process.env.DASHBOARD_STATUS_DEGRADED_SECONDS ?? "600") * 1000;
+const DASHBOARD_PERFORMANCE_SNAPSHOT_BUCKET_SECONDS = Math.max(
+  60,
+  Number(process.env.DASHBOARD_PERFORMANCE_SNAPSHOT_BUCKET_SECONDS ?? "300")
+);
+const DASHBOARD_PERFORMANCE_RANGE_MS: Record<DashboardPerformanceRange, number> = {
+  "24h": 24 * 60 * 60 * 1000,
+  "7d": 7 * 24 * 60 * 60 * 1000,
+  "30d": 30 * 24 * 60 * 60 * 1000
+};
 const EXCHANGE_AUTO_SYNC_INTERVAL_MS =
   Math.max(15, Number(process.env.EXCHANGE_AUTO_SYNC_INTERVAL_SECONDS ?? "60")) * 1000;
 const EXCHANGE_AUTO_SYNC_ENABLED = !["0", "false", "off", "no"].includes(
@@ -4425,6 +4447,7 @@ function maskSecret(value: string): string {
 
 type ExchangeAccountSecrets = {
   id: string;
+  userId: string;
   exchange: string;
   apiKeyEnc: string;
   apiSecretEnc: string;
@@ -4436,7 +4459,101 @@ function normalizeSyncErrorMessage(message: string): string {
   return compact.slice(0, 500);
 }
 
-async function persistExchangeSyncSuccess(accountId: string, synced: Awaited<ReturnType<typeof syncExchangeAccount>>) {
+function bucketTimestampBySeconds(at: Date, bucketSeconds: number): Date {
+  const bucketMs = Math.max(1, bucketSeconds) * 1000;
+  return new Date(Math.floor(at.getTime() / bucketMs) * bucketMs);
+}
+
+type DashboardPerformanceTotals = Omit<DashboardOverviewTotals, "currency">;
+
+async function aggregateDashboardPerformanceTotalsForUser(userId: string): Promise<DashboardPerformanceTotals> {
+  const accounts = await db.exchangeAccount.findMany({
+    where: { userId },
+    select: {
+      spotBudgetTotal: true,
+      futuresBudgetEquity: true,
+      futuresBudgetAvailableMargin: true,
+      pnlTodayUsd: true
+    }
+  });
+
+  const reduced = (Array.isArray(accounts) ? accounts : []).reduce(
+    (acc: DashboardPerformanceTotals, row: any) => {
+      const spotTotal = toFiniteNumber(row.spotBudgetTotal);
+      const futuresEquity = toFiniteNumber(row.futuresBudgetEquity);
+      const availableMargin = toFiniteNumber(row.futuresBudgetAvailableMargin);
+      const pnlToday = toFiniteNumber(row.pnlTodayUsd);
+
+      let contributes = false;
+
+      if (spotTotal !== null) {
+        acc.totalEquity += spotTotal;
+        contributes = true;
+      }
+      if (futuresEquity !== null) {
+        acc.totalEquity += futuresEquity;
+        contributes = true;
+      }
+      if (availableMargin !== null) {
+        acc.totalAvailableMargin += availableMargin;
+        contributes = true;
+      }
+      if (pnlToday !== null) {
+        acc.totalTodayPnl += pnlToday;
+        contributes = true;
+      }
+      if (contributes) acc.includedAccounts += 1;
+      return acc;
+    },
+    {
+      totalEquity: 0,
+      totalAvailableMargin: 0,
+      totalTodayPnl: 0,
+      includedAccounts: 0
+    } satisfies DashboardPerformanceTotals
+  );
+
+  return {
+    totalEquity: Number(reduced.totalEquity.toFixed(6)),
+    totalAvailableMargin: Number(reduced.totalAvailableMargin.toFixed(6)),
+    totalTodayPnl: Number(reduced.totalTodayPnl.toFixed(6)),
+    includedAccounts: reduced.includedAccounts
+  };
+}
+
+async function captureDashboardPerformanceSnapshot(userId: string, at: Date): Promise<void> {
+  const bucketTs = bucketTimestampBySeconds(at, DASHBOARD_PERFORMANCE_SNAPSHOT_BUCKET_SECONDS);
+  const totals = await aggregateDashboardPerformanceTotalsForUser(userId);
+
+  await db.dashboardPerformanceSnapshot.upsert({
+    where: {
+      userId_bucketTs: {
+        userId,
+        bucketTs
+      }
+    },
+    create: {
+      userId,
+      bucketTs,
+      totalEquity: totals.totalEquity,
+      totalAvailableMargin: totals.totalAvailableMargin,
+      totalTodayPnl: totals.totalTodayPnl,
+      includedAccounts: totals.includedAccounts
+    },
+    update: {
+      totalEquity: totals.totalEquity,
+      totalAvailableMargin: totals.totalAvailableMargin,
+      totalTodayPnl: totals.totalTodayPnl,
+      includedAccounts: totals.includedAccounts
+    }
+  });
+}
+
+async function persistExchangeSyncSuccess(
+  userId: string,
+  accountId: string,
+  synced: Awaited<ReturnType<typeof syncExchangeAccount>>
+) {
   await db.exchangeAccount.update({
     where: { id: accountId },
     data: {
@@ -4450,6 +4567,15 @@ async function persistExchangeSyncSuccess(accountId: string, synced: Awaited<Ret
       lastSyncErrorMessage: null
     }
   });
+
+  try {
+    await captureDashboardPerformanceSnapshot(userId, synced.syncedAt);
+  } catch (error) {
+    console.warn(
+      `[dashboard-performance] snapshot capture failed for account ${accountId}:`,
+      error instanceof Error ? error.message : String(error)
+    );
+  }
 }
 
 async function persistExchangeSyncFailure(accountId: string, errorMessage: string) {
@@ -4502,6 +4628,7 @@ async function runExchangeAutoSyncCycle() {
       where: { exchange: "bitget" },
       select: {
         id: true,
+        userId: true,
         exchange: true,
         apiKeyEnc: true,
         apiSecretEnc: true,
@@ -4512,7 +4639,7 @@ async function runExchangeAutoSyncCycle() {
     for (const account of accounts) {
       try {
         const synced = await executeExchangeSync(account);
-        await persistExchangeSyncSuccess(account.id, synced);
+        await persistExchangeSyncSuccess(account.userId, account.id, synced);
       } catch (error) {
         const message =
           error instanceof ExchangeSyncError
@@ -13607,17 +13734,14 @@ app.get("/dashboard/overview", requireAuth, async (_req, res) => {
       }
     })
   ]);
-  const botIds = Array.from(
-    new Set(
-      bots
-        .map((row: any) => (typeof row.id === "string" ? row.id : null))
-        .filter((value): value is string => Boolean(value))
-    )
-  );
-  const botRealizedRows = botIds.length > 0
+  const accountIds = accounts
+    .map((row: any) => (typeof row.id === "string" ? row.id : null))
+    .filter((value): value is string => Boolean(value));
+  const botRealizedRows = accountIds.length > 0
     ? await ignoreMissingTable(() => db.botTradeHistory.findMany({
         where: {
-          botId: { in: botIds },
+          userId: user.id,
+          exchangeAccountId: { in: accountIds },
           status: "closed",
           exitTs: { gte: dayStartUtc }
         },
@@ -13711,12 +13835,15 @@ app.get("/dashboard/overview", requireAuth, async (_req, res) => {
   const overview: ExchangeAccountOverview[] = accounts.map((account) => {
     const row = aggregate.get(account.id);
     const botRealizedToday = botRealizedByAccount.get(account.id) ?? null;
-    const exchangePnlToday = toFiniteNumber(account.pnlTodayUsd);
+    const exchangePnlToday =
+      account.pnlTodayUsd === null || account.pnlTodayUsd === undefined
+        ? null
+        : toFiniteNumber(account.pnlTodayUsd);
     const pnlTodayUsd = exchangePnlToday !== null
       ? exchangePnlToday
       : botRealizedToday && botRealizedToday.count > 0
         ? Number(botRealizedToday.pnl.toFixed(6))
-        : null;
+        : 0;
     const isPaper = normalizeExchangeValue(String(account.exchange ?? "")) === "paper";
     const linkedMarketDataId = isPaper ? (paperBindings[account.id] ?? null) : null;
     const linkedMarketDataAccount = linkedMarketDataId
@@ -13832,6 +13959,49 @@ app.get("/dashboard/overview", requireAuth, async (_req, res) => {
   };
 
   return res.json(response);
+});
+
+app.get("/dashboard/performance", requireAuth, async (req, res) => {
+  const user = getUserFromLocals(res);
+  const parsed = dashboardPerformanceQuerySchema.safeParse(req.query ?? {});
+  if (!parsed.success) {
+    return res.status(400).json({ error: "invalid_query", details: parsed.error.flatten() });
+  }
+
+  const range = parsed.data.range as DashboardPerformanceRange;
+  const now = new Date();
+  const from = new Date(now.getTime() - DASHBOARD_PERFORMANCE_RANGE_MS[range]);
+  const rows = await db.dashboardPerformanceSnapshot.findMany({
+    where: {
+      userId: user.id,
+      bucketTs: {
+        gte: from,
+        lte: now
+      }
+    },
+    orderBy: { bucketTs: "asc" },
+    select: {
+      bucketTs: true,
+      totalEquity: true,
+      totalAvailableMargin: true,
+      totalTodayPnl: true,
+      includedAccounts: true
+    }
+  });
+
+  const points: DashboardPerformancePoint[] = rows.map((row: any) => ({
+    ts: row.bucketTs.toISOString(),
+    totalEquity: Number(Number(row.totalEquity ?? 0).toFixed(6)),
+    totalAvailableMargin: Number(Number(row.totalAvailableMargin ?? 0).toFixed(6)),
+    totalTodayPnl: Number(Number(row.totalTodayPnl ?? 0).toFixed(6)),
+    includedAccounts: Math.max(0, Number(row.includedAccounts ?? 0) || 0)
+  }));
+
+  return res.json({
+    range,
+    bucketSeconds: DASHBOARD_PERFORMANCE_SNAPSHOT_BUCKET_SECONDS,
+    points
+  });
 });
 
 app.get("/dashboard/alerts", requireAuth, async (req, res) => {
@@ -14287,6 +14457,7 @@ app.post("/exchange-accounts/:id/test-connection", requireAuth, async (req, res)
     where: { id, userId: user.id },
     select: {
       id: true,
+      userId: true,
       exchange: true,
       apiKeyEnc: true,
       apiSecretEnc: true,
@@ -14315,7 +14486,7 @@ app.post("/exchange-accounts/:id/test-connection", requireAuth, async (req, res)
             endpoint: "paper/simulated"
           }
         };
-        await persistExchangeSyncSuccess(account.id, synced);
+        await persistExchangeSyncSuccess(account.userId, account.id, synced);
         return res.json({
           ok: true,
           message: "paper_sync_ok",
@@ -14335,7 +14506,7 @@ app.post("/exchange-accounts/:id/test-connection", requireAuth, async (req, res)
 
   try {
     const synced = await executeExchangeSync(account);
-    await persistExchangeSyncSuccess(account.id, synced);
+    await persistExchangeSyncSuccess(account.userId, account.id, synced);
 
     return res.json({
       ok: true,

@@ -111,7 +111,7 @@ export default function ExchangeAccountOverviewCard({
         </div>
         <div className="exchangeOverviewStatBlock">
           <div className="exchangeOverviewStatTitle">{t("todayPnl")}</div>
-          <div className="exchangeOverviewStatValue">{formatMoney(overview.pnlTodayUsd)}</div>
+          <div className="exchangeOverviewStatValue">{formatMoney(overview.pnlTodayUsd ?? 0)}</div>
         </div>
         <div className="exchangeOverviewStatBlock">
           <div className="exchangeOverviewStatTitle">{t("botsPredictions")}</div>

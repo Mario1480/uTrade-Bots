@@ -159,6 +159,7 @@ SMTP:
   - `GET /economic-calendar/next?currency=USD&impact=high`
   - `GET /economic-calendar/config`
   - `PUT /economic-calendar/config` (superadmin)
+  - Default currencies (refresh/config fallback): `USD,EUR,GBP,JPY,CHF,CAD,AUD,NZD,CNY`
 - Telegram Settings: `/settings/notifications`
 - Admin Backend: `/admin` (Superadmin)
 - Global OpenAI Key (encrypted DB): `/admin/api-keys`

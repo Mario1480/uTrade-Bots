@@ -103,51 +103,54 @@ export default function NewsPage() {
   }, [query]);
 
   return (
-    <div className="newsPage">
-      <div className="dashboardHeader">
-        <div>
+    <div className="newsPage newsProPage">
+      <div className="newsProTopbar">
+        <div className="newsProTitleRow">
           <h2 style={{ margin: 0 }}>{t("title")}</h2>
-          <div style={{ fontSize: 13, color: "var(--muted)" }}>{t("subtitle")}</div>
+          <div className="newsProSubtitle">{t("subtitle")}</div>
         </div>
       </div>
 
-      <div className="card newsFilterCard">
-        <div className="newsTabRow">
+      <div className="card newsFilterCard newsProControls">
+        <div className="newsProTabRow">
           <button
             type="button"
-            className={`btn ${mode === "all" ? "btnPrimary" : ""}`}
+            className={`newsProTab ${mode === "all" ? "newsProTabActive" : ""}`}
             onClick={() => {
               setMode("all");
               setPage(0);
             }}
+            aria-pressed={mode === "all"}
           >
             {t("tabs.all")}
           </button>
           <button
             type="button"
-            className={`btn ${mode === "crypto" ? "btnPrimary" : ""}`}
+            className={`newsProTab ${mode === "crypto" ? "newsProTabActive" : ""}`}
             onClick={() => {
               setMode("crypto");
               setPage(0);
             }}
+            aria-pressed={mode === "crypto"}
           >
             {t("tabs.crypto")}
           </button>
           <button
             type="button"
-            className={`btn ${mode === "general" ? "btnPrimary" : ""}`}
+            className={`newsProTab ${mode === "general" ? "newsProTabActive" : ""}`}
             onClick={() => {
               setMode("general");
               setPage(0);
             }}
+            aria-pressed={mode === "general"}
           >
             {t("tabs.general")}
           </button>
         </div>
 
-        <div className="newsFilterGrid">
+        <div className="newsFilterGrid newsProFilterGrid">
           <label className="newsFilterField">
-            <div className="newsFilterLabel">{t("filters.limit")}</div>
+            <div className="newsProFilterLabel">{t("filters.limit")}</div>
             <select
               className="input"
               value={limit}
@@ -164,7 +167,7 @@ export default function NewsPage() {
           </label>
 
           <label className="newsFilterField">
-            <div className="newsFilterLabel">{t("filters.page")}</div>
+            <div className="newsProFilterLabel">{t("filters.page")}</div>
             <select className="input" value={page} onChange={(event) => setPage(Number(event.target.value))}>
               {Array.from({ length: 6 }).map((_, index) => (
                 <option key={index} value={index}>
@@ -176,7 +179,7 @@ export default function NewsPage() {
 
           {(mode === "all" || mode === "crypto") ? (
             <label className="newsFilterField">
-              <div className="newsFilterLabel">{t("filters.search")}</div>
+              <div className="newsProFilterLabel">{t("filters.search")}</div>
               <input
                 className="input"
                 placeholder={t("filters.searchPlaceholder")}
@@ -191,7 +194,7 @@ export default function NewsPage() {
 
           {(mode === "all" || mode === "crypto") ? (
             <label className="newsFilterField">
-              <div className="newsFilterLabel">{t("filters.symbols")}</div>
+              <div className="newsProFilterLabel">{t("filters.symbols")}</div>
               <input
                 className="input"
                 placeholder={t("filters.symbolsPlaceholder")}
@@ -207,7 +210,7 @@ export default function NewsPage() {
           {mode !== "crypto" ? (
             <>
               <label className="newsFilterField">
-                <div className="newsFilterLabel">{t("filters.from")}</div>
+                <div className="newsProFilterLabel">{t("filters.from")}</div>
                 <input
                   className="input"
                   type="date"
@@ -219,7 +222,7 @@ export default function NewsPage() {
                 />
               </label>
               <label className="newsFilterField">
-                <div className="newsFilterLabel">{t("filters.to")}</div>
+                <div className="newsProFilterLabel">{t("filters.to")}</div>
                 <input
                   className="input"
                   type="date"
@@ -233,7 +236,7 @@ export default function NewsPage() {
             </>
           ) : null}
 
-          <div className="newsFilterActions">
+          <div className="newsFilterActions newsProFilterActions">
             <button className="btn" type="button" onClick={() => void load()}>
               {t("actions.refresh")}
             </button>
@@ -242,52 +245,54 @@ export default function NewsPage() {
       </div>
 
       {meta ? (
-        <div className="card newsMetaCard">
-          <span className="badge">{t("meta.mode")}: {meta.mode}</span>
-          <span className="badge">{t("meta.cache")}: {meta.cache}</span>
-          {meta.searchApplied && meta.searchQuery ? (
-            <span className="badge">{t("meta.search")}: {meta.searchQuery}</span>
-          ) : null}
-          {meta.searchFallback ? (
-            <span className="badge badgeWarn">{t("meta.searchFallback")}</span>
-          ) : null}
-          <span className="badge">
-            {t("meta.fetchedAt")}: {new Date(meta.fetchedAt).toLocaleString(dateLocale)}
-          </span>
-          {meta.partial ? (
-            <span className="badge badgeWarn">{t("meta.partial")}</span>
-          ) : null}
+        <div className="card newsMetaCard newsProStatusStrip">
+          <div className="newsProStatusTitle">{t("meta.mode")}: {meta.mode}</div>
+          <div className="newsProStatusMeta">
+            <span className="newsProStatusTag">{t("meta.cache")}: {meta.cache}</span>
+            {meta.searchApplied && meta.searchQuery ? (
+              <span className="newsProStatusTag">{t("meta.search")}: {meta.searchQuery}</span>
+            ) : null}
+            {meta.searchFallback ? (
+              <span className="newsProStatusTag">{t("meta.searchFallback")}</span>
+            ) : null}
+            <span className="newsProStatusTag">
+              {t("meta.fetchedAt")}: {new Date(meta.fetchedAt).toLocaleString(dateLocale)}
+            </span>
+            {meta.partial ? (
+              <span className="newsProStatusTag">{t("meta.partial")}</span>
+            ) : null}
+          </div>
         </div>
       ) : null}
 
       {error ? (
-        <div className="card newsErrorCard">{t("loadError")}: {error}</div>
+        <div className="card newsErrorCard newsProErrorCard">{t("loadError")}: {error}</div>
       ) : null}
 
-      <div className="card newsListCard">
+      <div className="card newsListCard newsProListCard">
         {loading ? (
-          <div className="newsEmptyText">{t("loading")}</div>
+          <div className="newsProStateText">{t("loading")}</div>
         ) : items.length === 0 ? (
-          <div className="newsEmptyText">{t("empty")}</div>
+          <div className="newsProStateText">{t("empty")}</div>
         ) : (
-          <div className="newsList">
+          <div className="newsList newsProList">
             {items.map((item) => (
-              <article className="card newsItemCard" key={item.id}>
+              <article className="card newsItemCard newsProItemCard" key={item.id}>
                 <div className="newsItemContent">
-                  <div className="newsItemHeader">
+                  <div className="newsItemHeader newsProItemHeader">
                     <span className={`badge ${item.feed === "crypto" ? "newsBadgeCrypto" : "newsBadgeGeneral"}`}>
                       {item.feed === "crypto" ? t("feed.crypto") : t("feed.general")}
                     </span>
                     {item.symbol ? <span className="badge">{item.symbol}</span> : null}
-                    <span className="newsItemTime">
+                    <span className="newsItemTime newsProItemTime">
                       {new Date(item.publishedAt).toLocaleString(dateLocale)}
                     </span>
                   </div>
-                  <a href={item.url} target="_blank" rel="noreferrer" className="newsItemTitle">
+                  <a href={item.url} target="_blank" rel="noreferrer" className="newsItemTitle newsProItemTitle">
                     {item.title}
                   </a>
                   {item.site ? <div className="newsItemSite">{item.site}</div> : null}
-                  {item.text ? <p className="newsItemText">{item.text}</p> : null}
+                  {item.text ? <p className="newsItemText newsProItemText">{item.text}</p> : null}
                 </div>
                 {item.imageUrl ? (
                   <img src={item.imageUrl} alt={item.title} className="newsItemImage" loading="lazy" />
