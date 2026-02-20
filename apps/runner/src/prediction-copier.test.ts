@@ -4,6 +4,7 @@ import type { ActiveFuturesBot, BotTradeState, PredictionGateState } from "./db.
 import {
   buildPredictionHash,
   evaluatePredictionCopierDecision,
+  inferExternalCloseOutcome,
   readPredictionCopierConfig,
   resolveEntryTpSlPrices,
   type PredictionCopierConfig
@@ -400,4 +401,37 @@ test("resolveEntryTpSlPrices ignores prediction levels with wrong side direction
 
   assert.equal(resolved.stopLossPrice, undefined);
   assert.equal(resolved.takeProfitPrice, undefined);
+});
+
+test("inferExternalCloseOutcome maps long SL hit", () => {
+  const inferred = inferExternalCloseOutcome({
+    side: "long",
+    markPrice: 64_900,
+    tpPrice: 66_500,
+    slPrice: 65_000
+  });
+  assert.equal(inferred.outcome, "sl_hit");
+  assert.equal(inferred.reason, "sl_hit_external");
+});
+
+test("inferExternalCloseOutcome maps short TP hit", () => {
+  const inferred = inferExternalCloseOutcome({
+    side: "short",
+    markPrice: 64_900,
+    tpPrice: 65_000,
+    slPrice: 66_500
+  });
+  assert.equal(inferred.outcome, "tp_hit");
+  assert.equal(inferred.reason, "tp_hit_external");
+});
+
+test("inferExternalCloseOutcome falls back to unknown when levels not hit", () => {
+  const inferred = inferExternalCloseOutcome({
+    side: "short",
+    markPrice: 66_000,
+    tpPrice: 65_000,
+    slPrice: 67_000
+  });
+  assert.equal(inferred.outcome, "unknown");
+  assert.equal(inferred.reason, "position_closed_external");
 });

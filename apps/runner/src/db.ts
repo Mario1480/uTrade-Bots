@@ -89,6 +89,13 @@ export type BotTradeHistoryCloseOutcome =
   | "time_stop"
   | "unknown";
 
+export type OpenBotTradeHistoryEntry = {
+  id: string;
+  side: "long" | "short";
+  tpPrice: number | null;
+  slPrice: number | null;
+};
+
 export type RiskEventType =
   | "KILL_SWITCH_BLOCK"
   | "CIRCUIT_BREAKER_TRIPPED"
@@ -1047,6 +1054,40 @@ export async function countOpenBotTradeHistoryEntries(params: {
   }
   const count = await db.botTradeHistory.count({ where });
   return Number(count ?? 0) || 0;
+}
+
+export async function loadLatestOpenBotTradeHistoryEntry(params: {
+  botId: string;
+  symbol: string;
+}): Promise<OpenBotTradeHistoryEntry | null> {
+  const symbol = normalizeSymbol(params.symbol);
+  const row = await db.botTradeHistory.findFirst({
+    where: {
+      botId: params.botId,
+      symbol,
+      status: "open"
+    },
+    orderBy: [{ entryTs: "desc" }, { createdAt: "desc" }],
+    select: {
+      id: true,
+      side: true,
+      tpPrice: true,
+      slPrice: true
+    }
+  });
+  if (!row) return null;
+
+  const sideRaw = String(row.side ?? "").trim().toLowerCase();
+  const side: "long" | "short" = sideRaw === "short" ? "short" : "long";
+  const tpPrice = Number.isFinite(Number(row.tpPrice)) ? Number(row.tpPrice) : null;
+  const slPrice = Number.isFinite(Number(row.slPrice)) ? Number(row.slPrice) : null;
+
+  return {
+    id: String(row.id),
+    side,
+    tpPrice,
+    slPrice
+  };
 }
 
 export async function closeOpenBotTradeHistoryEntries(params: {

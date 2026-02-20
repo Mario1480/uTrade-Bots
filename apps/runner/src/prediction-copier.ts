@@ -16,6 +16,7 @@ import {
   getBotDailyTradeCount,
   listPaperPositionsForRunner,
   loadBotTradeState,
+  loadLatestOpenBotTradeHistoryEntry,
   loadLatestPredictionStateForGate,
   loadPredictionStateByIdForGate,
   placePaperPositionForRunner,
@@ -617,6 +618,41 @@ function mapExitOutcome(reason: string): BotTradeHistoryCloseOutcome {
   return "unknown";
 }
 
+export function inferExternalCloseOutcome(params: {
+  side: PredictionCopierSide | null;
+  markPrice: number | null;
+  tpPrice: number | null;
+  slPrice: number | null;
+}): { outcome: BotTradeHistoryCloseOutcome; reason: string } {
+  const side = params.side;
+  const markPrice = toNumber(params.markPrice);
+  const tpPrice = toNumber(params.tpPrice);
+  const slPrice = toNumber(params.slPrice);
+
+  if (!side || markPrice === null || markPrice <= 0) {
+    return { outcome: "unknown", reason: "position_closed_external" };
+  }
+
+  if (side === "long") {
+    // Conservative order: if both levels were crossed intra-tick, prefer SL classification.
+    if (slPrice !== null && slPrice > 0 && markPrice <= slPrice) {
+      return { outcome: "sl_hit", reason: "sl_hit_external" };
+    }
+    if (tpPrice !== null && tpPrice > 0 && markPrice >= tpPrice) {
+      return { outcome: "tp_hit", reason: "tp_hit_external" };
+    }
+    return { outcome: "unknown", reason: "position_closed_external" };
+  }
+
+  if (slPrice !== null && slPrice > 0 && markPrice >= slPrice) {
+    return { outcome: "sl_hit", reason: "sl_hit_external" };
+  }
+  if (tpPrice !== null && tpPrice > 0 && markPrice <= tpPrice) {
+    return { outcome: "tp_hit", reason: "tp_hit_external" };
+  }
+  return { outcome: "unknown", reason: "position_closed_external" };
+}
+
 function getOrCreateAdapter(bot: ActiveFuturesBot): BitgetFuturesAdapter {
   const cacheKey = `${bot.id}:${bot.marketData.exchangeAccountId}`;
   const cached = adapterCache.get(cacheKey);
@@ -881,10 +917,71 @@ export async function runPredictionCopierTick(
     ? desiredNotionalUsd
     : null;
 
-  const [dailyTradeCount, openTradeCountRaw] = await Promise.all([
+  const [dailyTradeCount, openTradeCountFromHistory] = await Promise.all([
     getBotDailyTradeCount({ botId: bot.id, now }),
     countOpenBotTradeHistoryEntries({ botId: bot.id, symbol })
   ]);
+  let openTradeCountRaw = openTradeCountFromHistory;
+
+  if (!openPosition && openTradeCountRaw > 0) {
+    try {
+      const latestOpenHistory = await loadLatestOpenBotTradeHistoryEntry({
+        botId: bot.id,
+        symbol
+      });
+      const inferredClose = inferExternalCloseOutcome({
+        side: latestOpenHistory?.side ?? tradeState.openSide ?? null,
+        markPrice,
+        tpPrice: latestOpenHistory?.tpPrice ?? null,
+        slPrice: latestOpenHistory?.slPrice ?? null
+      });
+      const closedHistory = await closeOpenBotTradeHistoryEntries({
+        botId: bot.id,
+        symbol,
+        exitTs: now,
+        exitPrice: markPrice,
+        outcome: inferredClose.outcome,
+        exitReason: inferredClose.reason
+      });
+      if (closedHistory.closedCount > 0) {
+        openTradeCountRaw = 0;
+        await upsertBotTradeState({
+          botId: bot.id,
+          symbol,
+          dailyResetUtc: tradeState.dailyResetUtc,
+          dailyTradeCount: tradeState.dailyTradeCount,
+          lastTradeTs: now,
+          openSide: null,
+          openQty: null,
+          openEntryPrice: null,
+          openTs: null
+        });
+        await writeRiskEvent({
+          botId: bot.id,
+          type: "PREDICTION_COPIER_TRADE",
+          message: "external_close_reconciled",
+          meta: {
+            symbol,
+            closedCount: closedHistory.closedCount,
+            outcome: inferredClose.outcome,
+            reason: inferredClose.reason,
+            exitPrice: Number.isFinite(Number(markPrice)) ? Number(markPrice) : null
+          }
+        });
+      }
+    } catch (error) {
+      await writeRiskEvent({
+        botId: bot.id,
+        type: "PREDICTION_COPIER_TRADE",
+        message: "external_close_reconcile_failed",
+        meta: {
+          symbol,
+          error: error instanceof Error ? error.message : String(error)
+        }
+      });
+    }
+  }
+
   const openTradeCount = Math.max(openTradeCountRaw, openPosition ? 1 : 0);
 
   const decision = evaluatePredictionCopierDecision({
