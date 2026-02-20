@@ -41,6 +41,14 @@ function parseNumeric(value: unknown): number | null {
   return Number.isFinite(parsed) ? parsed : null;
 }
 
+function parseFirstNumeric(raw: FmpRawEvent, keys: string[]): number | null {
+  for (const key of keys) {
+    const parsed = parseNumeric(raw[key]);
+    if (parsed !== null) return parsed;
+  }
+  return null;
+}
+
 function parseTimestamp(raw: FmpRawEvent): Date | null {
   const candidates = [
     raw.date,
@@ -161,9 +169,19 @@ export function normalizeFmpEventsPayload(payload: unknown): EconomicEventNormal
       currency,
       title,
       impact: normalizeImpact(raw.impact ?? raw.importance),
-      forecast: parseNumeric(raw.forecast ?? raw.consensus),
-      previous: parseNumeric(raw.previous ?? raw.prev),
-      actual: parseNumeric(raw.actual),
+      forecast: parseFirstNumeric(raw, [
+        "forecast",
+        "consensus",
+        "estimate",
+        "est",
+        "expected",
+        "consensusEstimate",
+        "consensus_estimate",
+        "forecastValue",
+        "forecast_value"
+      ]),
+      previous: parseFirstNumeric(raw, ["previous", "prev", "prior"]),
+      actual: parseFirstNumeric(raw, ["actual", "result", "value"]),
       source: "fmp"
     });
   }
