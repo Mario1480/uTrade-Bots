@@ -34,3 +34,24 @@ test("normalizeFmpEventsPayload skips invalid rows", () => {
   ]);
   assert.equal(rows.length, 0);
 });
+
+test("normalizeFmpEventsPayload reads estimate/prior/result aliases", () => {
+  const rows = normalizeFmpEventsPayload([
+    {
+      id: "evt-2",
+      date: "2026-02-12 15:00:00",
+      country: "US",
+      currency: "USD",
+      event: "Retail Sales",
+      impact: "Medium",
+      estimate: "0.4%",
+      prior: "0.2%",
+      result: "0.1%"
+    }
+  ]);
+
+  assert.equal(rows.length, 1);
+  assert.equal(rows[0]?.forecast, 0.4);
+  assert.equal(rows[0]?.previous, 0.2);
+  assert.equal(rows[0]?.actual, 0.1);
+});
