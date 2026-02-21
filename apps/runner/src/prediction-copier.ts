@@ -74,6 +74,10 @@ export type PredictionCopierConfig = {
     limitOffsetBps: number;
     reduceOnlyOnExit: boolean;
   };
+  exit: {
+    onSignalFlip: boolean;
+    onConfidenceDrop: boolean;
+  };
 };
 
 export type PredictionCopierDecision =
@@ -215,6 +219,9 @@ export function readPredictionCopierConfig(bot: ActiveFuturesBot): PredictionCop
     root.execution && typeof root.execution === "object" && !Array.isArray(root.execution)
       ? (root.execution as AnyObject)
       : {};
+  const exitRaw = root.exit && typeof root.exit === "object" && !Array.isArray(root.exit)
+    ? (root.exit as AnyObject)
+    : {};
 
   const symbols = normalizeStringArray(root.symbols, 100)
     .map((item) => normalizeSymbol(item))
@@ -279,6 +286,10 @@ export function readPredictionCopierConfig(bot: ActiveFuturesBot): PredictionCop
       orderType,
       limitOffsetBps: clamp(toNumber(executionRaw.limitOffsetBps) ?? 2, 0, 100),
       reduceOnlyOnExit: toBoolean(executionRaw.reduceOnlyOnExit, true)
+    },
+    exit: {
+      onSignalFlip: toBoolean(exitRaw.onSignalFlip, false),
+      onConfidenceDrop: toBoolean(exitRaw.onConfidenceDrop, false)
     }
   };
 
@@ -361,7 +372,7 @@ export function evaluatePredictionCopierDecision(input: PredictionCopierEvalInpu
 
   const tagError = evaluateTagFilters(config, prediction);
   if (tagError) {
-    return openPosition ? { action: "exit", reason: tagError, side: openPosition.side } : { action: "skip", reason: tagError };
+    return { action: "skip", reason: tagError };
   }
 
   if (openPosition && config.risk.timeStopMin !== null && config.risk.timeStopMin > 0 && state.openTs instanceof Date) {
@@ -373,16 +384,25 @@ export function evaluatePredictionCopierDecision(input: PredictionCopierEvalInpu
 
   if (openPosition) {
     if (confidence < config.minConfidence) {
+      if (config.exit.onConfidenceDrop) {
+        return { action: "exit", reason: "confidence_below_min", side: openPosition.side };
+      }
       return { action: "skip", reason: "confidence_below_min" };
     }
     if (signal === "neutral") {
-      return { action: "exit", reason: "signal_neutral", side: openPosition.side };
+      return { action: "skip", reason: "signal_neutral" };
     }
     if (openPosition.side === "long" && signal === "down") {
-      return { action: "exit", reason: "signal_flip", side: "long" };
+      if (config.exit.onSignalFlip) {
+        return { action: "exit", reason: "signal_flip", side: "long" };
+      }
+      return { action: "skip", reason: "signal_flip" };
     }
     if (openPosition.side === "short" && signal === "up") {
-      return { action: "exit", reason: "signal_flip", side: "short" };
+      if (config.exit.onSignalFlip) {
+        return { action: "exit", reason: "signal_flip", side: "short" };
+      }
+      return { action: "skip", reason: "signal_flip" };
     }
     if (predictionHash && state.lastPredictionHash && predictionHash === state.lastPredictionHash) {
       return { action: "skip", reason: "duplicate_prediction_hash" };

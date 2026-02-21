@@ -30,6 +30,22 @@ function toInterval(granularity: string): string {
   return map[normalized] ?? "1m";
 }
 
+function intervalToMs(interval: string): number {
+  const raw = String(interval ?? "").trim();
+  if (raw.endsWith("M")) {
+    const amount = Number.parseInt(raw, 10);
+    if (Number.isFinite(amount) && amount > 0) return amount * 30 * 24 * 60 * 60_000;
+  }
+  const normalized = raw.toLowerCase();
+  const amount = Number.parseInt(normalized, 10);
+  if (!Number.isFinite(amount) || amount <= 0) return 60_000;
+  if (normalized.endsWith("m")) return amount * 60_000;
+  if (normalized.endsWith("h")) return amount * 60 * 60_000;
+  if (normalized.endsWith("d")) return amount * 24 * 60 * 60_000;
+  if (normalized.endsWith("w")) return amount * 7 * 24 * 60 * 60_000;
+  return 60_000;
+}
+
 function parseMid(raw: unknown): number | null {
   const parsed = Number(raw);
   return Number.isFinite(parsed) ? parsed : null;
@@ -110,7 +126,8 @@ export class HyperliquidMarketApi {
     const coin = parseCoinFromAnySymbol(params.symbol);
     const endTime = toMs(params.endTime ?? Date.now());
     const interval = toInterval(params.granularity);
-    const defaultWindowMs = Math.max(60_000, (Number(params.limit ?? 500) || 500) * 60_000);
+    const intervalMs = intervalToMs(interval);
+    const defaultWindowMs = Math.max(intervalMs, (Number(params.limit ?? 500) || 500) * intervalMs);
     const startTime = toMs(params.startTime ?? endTime - defaultWindowMs);
 
     return this.sdk.info.getCandleSnapshot(coin, interval, startTime, endTime, true);

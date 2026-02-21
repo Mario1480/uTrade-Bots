@@ -501,8 +501,8 @@ export default function Page() {
                   <div className="dashboardPerformanceState">{t("performance.none")}</div>
                 ) : (
                   <div className="dashboardPerformanceChartWrap">
-                    <ResponsiveContainer width="100%" height={270}>
-                      <AreaChart data={performanceChartData} margin={{ top: 6, right: 10, left: 0, bottom: 0 }}>
+                    <ResponsiveContainer width="100%" height="100%">
+                      <AreaChart data={performanceChartData} margin={{ top: 14, right: 14, left: 6, bottom: 2 }}>
                         <defs>
                           <linearGradient id="dashboardPerformanceAreaFill" x1="0" y1="0" x2="0" y2="1">
                             <stop offset="5%" stopColor="rgba(16, 185, 199, 0.78)" />
@@ -527,7 +527,8 @@ export default function Page() {
                           stroke="rgba(255,255,255,0.48)"
                           tickLine={false}
                           axisLine={false}
-                          width={86}
+                          width={92}
+                          padding={{ top: 30, bottom: 4 }}
                         />
                         <Tooltip
                           formatter={(value: number) => [formatUsdt(value, locale), t("performance.metrics.equity")]}

@@ -4834,27 +4834,28 @@ a { color: inherit; }
     radial-gradient(circle at 45% -20%, rgba(255, 193, 7, 0.12), transparent 42%),
     linear-gradient(180deg, rgba(8, 20, 30, 0.96), rgba(6, 14, 24, 0.98));
   display: grid;
-  gap: 10px;
+  gap: 14px;
+  padding: 14px;
 }
 
 .dashboardPerformanceHead {
   display: flex;
   justify-content: space-between;
   align-items: flex-start;
-  gap: 10px;
+  gap: 12px;
   flex-wrap: wrap;
 }
 
 .dashboardPerformanceBody {
   display: grid;
   grid-template-columns: minmax(0, 2.2fr) minmax(320px, 1fr);
-  gap: 12px;
+  gap: 14px;
 }
 
 .dashboardPerformanceMain {
   min-width: 0;
   display: grid;
-  gap: 10px;
+  gap: 12px;
 }
 
 .dashboardPerformanceTitle {
@@ -4903,11 +4904,15 @@ a { color: inherit; }
 }
 
 .dashboardPerformanceChartWrap {
-  min-height: 270px;
+  min-height: 500px;
+  border: 1px solid rgba(255, 193, 7, 0.2);
+  border-radius: 12px;
+  background: linear-gradient(180deg, rgba(8, 21, 32, 0.78), rgba(6, 14, 24, 0.62));
+  padding: 8px 8px 4px;
 }
 
 .dashboardPerformanceState {
-  min-height: 270px;
+  min-height: 300px;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -4920,16 +4925,18 @@ a { color: inherit; }
 .dashboardPerformanceMetrics {
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
-  gap: 8px;
+  gap: 7px;
 }
 
 .dashboardPerformanceMetricCard {
   border: 1px solid rgba(255, 193, 7, 0.24);
   border-radius: 10px;
   background: rgba(6, 13, 23, 0.76);
-  padding: 10px 11px;
+  padding: 8px 9px;
+  min-height: 30px;
   display: grid;
-  gap: 6px;
+  gap: 3px;
+  align-content: start;
 }
 
 .dashboardPerformanceMetricLabel {
@@ -4938,7 +4945,7 @@ a { color: inherit; }
 }
 
 .dashboardPerformanceMetricValue {
-  font-size: 20px;
+  font-size: 18px;
   font-weight: 700;
   line-height: 1.1;
   color: var(--text);
@@ -4954,7 +4961,7 @@ a { color: inherit; }
 }
 
 .dashboardPerformanceMetricValueUnit {
-  font-size: 12px;
+  font-size: 10px;
   font-weight: 600;
   letter-spacing: 0.04em;
   color: var(--muted);
@@ -4975,9 +4982,9 @@ a { color: inherit; }
   background:
     radial-gradient(circle at 100% -30%, rgba(20, 129, 192, 0.25), transparent 48%),
     linear-gradient(180deg, rgba(6, 14, 24, 0.92), rgba(5, 10, 19, 0.98));
-  padding: 10px;
+  padding: 12px;
   display: grid;
-  gap: 10px;
+  gap: 12px;
   align-content: start;
 }
 
@@ -5563,7 +5570,7 @@ a { color: inherit; }
 
   .dashboardPerformanceChartWrap,
   .dashboardPerformanceState {
-    min-height: 220px;
+    min-height: 230px;
   }
 
   .dashboardPerformanceMetrics {

@@ -55,6 +55,8 @@ type SymbolItem = {
   stepSize: number | null;
   minQty: number | null;
   maxQty: number | null;
+  baseAsset?: string | null;
+  quoteAsset?: string | null;
 };
 
 type AccountSummary = {
@@ -335,18 +337,28 @@ function TradePageContent() {
   }, [summary, numericLeverage, refPrice, selectedSymbolMeta]);
 
   const baseAssetUnit = useMemo(() => {
-    if (selectedSymbol.endsWith("USDT")) {
+    const baseAsset = selectedSymbolMeta?.baseAsset;
+    if (baseAsset && baseAsset.trim()) return baseAsset.trim().toUpperCase();
+    if (selectedSymbol.endsWith("USDT") || selectedSymbol.endsWith("USDC")) {
       return selectedSymbol.slice(0, -4) || selectedSymbol;
     }
     return selectedSymbol;
-  }, [selectedSymbol]);
+  }, [selectedSymbol, selectedSymbolMeta]);
+
+  const quoteAssetUnit = useMemo(() => {
+    const quoteAsset = selectedSymbolMeta?.quoteAsset;
+    if (quoteAsset && quoteAsset.trim()) return quoteAsset.trim().toUpperCase();
+    if (selectedSymbol.endsWith("USDC")) return "USDC";
+    if (selectedSymbol.endsWith("USDT")) return "USDT";
+    return "USD";
+  }, [selectedSymbol, selectedSymbolMeta]);
 
   const qtyInputModeOption = useMemo(
     () => QTY_INPUT_MODE_OPTIONS.find((item) => item.value === qtyInputMode) ?? QTY_INPUT_MODE_OPTIONS[0],
     [qtyInputMode]
   );
 
-  const qtyDisplayUnit = qtyInputMode === "quantity" ? baseAssetUnit : "USDT";
+  const qtyDisplayUnit = qtyInputMode === "quantity" ? baseAssetUnit : quoteAssetUnit;
 
   const qtyInputValue = useMemo(() => {
     const parsed = Number(qty);
@@ -1443,7 +1455,9 @@ function TradePageContent() {
                 >
                   {symbols.map((symbol) => (
                     <option key={symbol.symbol} value={symbol.symbol}>
-                      {symbol.symbol} {symbol.tradable ? "" : `(${t("misc.restricted")})`}
+                      {symbol.symbol}
+                      {symbol.baseAsset && symbol.quoteAsset ? ` (${symbol.baseAsset}/${symbol.quoteAsset})` : ""}
+                      {symbol.tradable ? "" : ` (${t("misc.restricted")})`}
                     </option>
                   ))}
                 </select>
@@ -1585,7 +1599,7 @@ function TradePageContent() {
 
                 <div className="tradeOrderMetaRow">
                   <span>{t("fields.available")}</span>
-                  <strong>{fmt(summary?.availableMargin, 3)} USDT</strong>
+                  <strong>{fmt(summary?.availableMargin, 3)} {quoteAssetUnit}</strong>
                 </div>
 
                 {orderType === "limit" ? (
@@ -1658,7 +1672,7 @@ function TradePageContent() {
                     <span>{t("fields.cost")}</span>
                     <strong>
                       <span>{fmt(estimatedCost, 4)}</span>
-                      <span className="tradeOrderValueUnit"> USDT</span>
+                      <span className="tradeOrderValueUnit"> {quoteAssetUnit}</span>
                     </strong>
                   </div>
                   <div className="tradeOrderDualRow">
@@ -2412,7 +2426,7 @@ function TradePageContent() {
 
             <div className="tradeModalOptions">
               {QTY_INPUT_MODE_OPTIONS.map((option) => {
-                const unit = option.unit === "BASE" ? baseAssetUnit : option.unit;
+                const unit = option.unit === "BASE" ? baseAssetUnit : quoteAssetUnit;
                 const isSelected = qtyInputModeDraft === option.value;
                 return (
                   <button

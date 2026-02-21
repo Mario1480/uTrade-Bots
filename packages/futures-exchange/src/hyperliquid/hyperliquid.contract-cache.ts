@@ -30,7 +30,7 @@ function toContractInfo(params: {
     canonicalSymbol,
     mexcSymbol: exchangeSymbol,
     baseAsset: coin,
-    quoteAsset: "USDT",
+    quoteAsset: "USDC",
     apiAllowed: true,
     priceScale: null,
     volScale: toNumber(params.universe.szDecimals),

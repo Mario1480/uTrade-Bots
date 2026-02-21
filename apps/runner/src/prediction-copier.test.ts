@@ -117,6 +117,10 @@ function makeConfig(overrides: Partial<PredictionCopierConfig> = {}): Prediction
       limitOffsetBps: 2,
       reduceOnlyOnExit: true
     },
+    exit: {
+      onSignalFlip: false,
+      onConfidenceDrop: false
+    },
     ...overrides
   };
 }
@@ -129,6 +133,8 @@ test("readPredictionCopierConfig returns safe defaults", () => {
   assert.equal(cfg.positionSizing.type, "fixed_usd");
   assert.equal(cfg.positionSizing.value, 100);
   assert.deepEqual(cfg.filters.allowSignals, ["up", "down"]);
+  assert.equal(cfg.exit.onSignalFlip, false);
+  assert.equal(cfg.exit.onConfidenceDrop, false);
 });
 
 test("readPredictionCopierConfig supports paper execution exchange", () => {
@@ -174,6 +180,23 @@ test("readPredictionCopierConfig treats non-positive timeStopMin as disabled", (
   assert.equal(cfg.risk.timeStopMin, null);
 });
 
+test("readPredictionCopierConfig reads explicit exit toggles", () => {
+  const cfg = readPredictionCopierConfig(
+    makeBot({
+      paramsJson: {
+        predictionCopier: {
+          exit: {
+            onSignalFlip: true,
+            onConfidenceDrop: true
+          }
+        }
+      }
+    })
+  );
+  assert.equal(cfg.exit.onSignalFlip, true);
+  assert.equal(cfg.exit.onConfidenceDrop, true);
+});
+
 test("buildPredictionHash is deterministic", () => {
   const prediction = makePrediction();
   const h1 = buildPredictionHash(prediction);
@@ -206,12 +229,39 @@ test("decision enters on fresh up signal when flat", () => {
   }
 });
 
-test("decision exits long when signal flips down", () => {
+test("decision keeps long open when signal flips down and exit toggle is disabled", () => {
   const now = new Date("2026-02-12T12:01:00.000Z");
   const prediction = makePrediction({ signal: "down" });
 
   const decision = evaluatePredictionCopierDecision({
     config: makeConfig(),
+    now,
+    prediction,
+    predictionHash: buildPredictionHash(prediction),
+    state: makeState({ openSide: "long", openTs: new Date("2026-02-12T11:50:00.000Z") }),
+    openPosition: { side: "long", size: 0.01, openTs: new Date("2026-02-12T11:50:00.000Z") },
+    openPositionsCount: 1,
+    totalNotionalUsd: 100,
+    symbolNotionalUsd: 100,
+    candidateNotionalUsd: 100,
+    dailyTradeCount: 1
+  });
+
+  assert.equal(decision.action, "skip");
+  assert.equal(decision.reason, "signal_flip");
+});
+
+test("decision exits long when signal flips down and exit toggle is enabled", () => {
+  const now = new Date("2026-02-12T12:01:00.000Z");
+  const prediction = makePrediction({ signal: "down" });
+
+  const decision = evaluatePredictionCopierDecision({
+    config: makeConfig({
+      exit: {
+        onSignalFlip: true,
+        onConfidenceDrop: false
+      }
+    }),
     now,
     prediction,
     predictionHash: buildPredictionHash(prediction),
@@ -251,6 +301,63 @@ test("decision keeps open position when confidence drops below min", () => {
 
   assert.equal(decision.action, "skip");
   assert.equal(decision.reason, "confidence_below_min");
+});
+
+test("decision exits open position when confidence drops and exit toggle is enabled", () => {
+  const now = new Date("2026-02-12T12:01:00.000Z");
+  const prediction = makePrediction({ signal: "up", confidence: 55 });
+
+  const decision = evaluatePredictionCopierDecision({
+    config: makeConfig({
+      minConfidence: 70,
+      exit: {
+        onSignalFlip: false,
+        onConfidenceDrop: true
+      }
+    }),
+    now,
+    prediction,
+    predictionHash: buildPredictionHash(prediction),
+    state: makeState({ openSide: "long", openTs: new Date("2026-02-12T11:50:00.000Z") }),
+    openPosition: { side: "long", size: 0.01, openTs: new Date("2026-02-12T11:50:00.000Z") },
+    openTradeCount: 1,
+    openPositionsCount: 1,
+    totalNotionalUsd: 100,
+    symbolNotionalUsd: 100,
+    candidateNotionalUsd: 100,
+    dailyTradeCount: 1
+  });
+
+  assert.equal(decision.action, "exit");
+  assert.equal(decision.reason, "confidence_below_min");
+});
+
+test("decision keeps open position when signal turns neutral", () => {
+  const now = new Date("2026-02-12T12:01:00.000Z");
+  const prediction = makePrediction({ signal: "neutral", confidence: 82 });
+
+  const decision = evaluatePredictionCopierDecision({
+    config: makeConfig({
+      exit: {
+        onSignalFlip: true,
+        onConfidenceDrop: false
+      }
+    }),
+    now,
+    prediction,
+    predictionHash: buildPredictionHash(prediction),
+    state: makeState({ openSide: "long", openTs: new Date("2026-02-12T11:50:00.000Z") }),
+    openPosition: { side: "long", size: 0.01, openTs: new Date("2026-02-12T11:50:00.000Z") },
+    openTradeCount: 1,
+    openPositionsCount: 1,
+    totalNotionalUsd: 100,
+    symbolNotionalUsd: 100,
+    candidateNotionalUsd: 100,
+    dailyTradeCount: 1
+  });
+
+  assert.equal(decision.action, "skip");
+  assert.equal(decision.reason, "signal_neutral");
 });
 
 test("decision blocks duplicate prediction hash", () => {
@@ -342,6 +449,29 @@ test("decision blocks blocked tags", () => {
     symbolNotionalUsd: 0,
     candidateNotionalUsd: 100,
     dailyTradeCount: 0
+  });
+
+  assert.equal(decision.action, "skip");
+  assert.equal(decision.reason, "blocked_tag:data_gap");
+});
+
+test("decision keeps open position when blocked tags are present", () => {
+  const now = new Date("2026-02-12T12:01:00.000Z");
+  const prediction = makePrediction({ tags: ["data_gap"] });
+
+  const decision = evaluatePredictionCopierDecision({
+    config: makeConfig(),
+    now,
+    prediction,
+    predictionHash: buildPredictionHash(prediction),
+    state: makeState({ openSide: "long", openTs: new Date("2026-02-12T11:50:00.000Z") }),
+    openPosition: { side: "long", size: 0.01, openTs: new Date("2026-02-12T11:50:00.000Z") },
+    openTradeCount: 1,
+    openPositionsCount: 1,
+    totalNotionalUsd: 100,
+    symbolNotionalUsd: 100,
+    candidateNotionalUsd: 100,
+    dailyTradeCount: 1
   });
 
   assert.equal(decision.action, "skip");

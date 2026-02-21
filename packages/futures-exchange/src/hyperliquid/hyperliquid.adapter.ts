@@ -36,6 +36,12 @@ function toNumber(value: unknown): number | null {
   return Number.isFinite(parsed) ? parsed : null;
 }
 
+function normalizeEvmAddress(value: unknown): string | null {
+  const text = String(value ?? "").trim();
+  if (!/^0x[a-fA-F0-9]{40}$/.test(text)) return null;
+  return text;
+}
+
 function mapMarginMode(mode: MarginMode): "isolated" | "crossed" {
   return mode === "isolated" ? "isolated" : "crossed";
 }
@@ -115,15 +121,16 @@ export class HyperliquidFuturesAdapter implements FuturesExchange {
     this.marginCoin = config.marginCoin ?? HYPERLIQUID_DEFAULT_MARGIN_COIN;
     this.defaultPositionMode = config.defaultPositionMode ?? "one-way";
 
-    const userAddress = String(config.apiKey ?? "").trim();
-    this.userAddress = userAddress || HYPERLIQUID_ZERO_ADDRESS;
+    const walletAddress = normalizeEvmAddress(config.apiKey);
+    const vaultAddress = normalizeEvmAddress(config.apiPassphrase);
+    this.userAddress = vaultAddress ?? walletAddress ?? HYPERLIQUID_ZERO_ADDRESS;
     this.hasSigning = String(config.apiSecret ?? "").trim().length > 0;
 
     this.sdk = new Hyperliquid({
       enableWs: false,
       privateKey: config.apiSecret,
-      walletAddress: this.userAddress,
-      vaultAddress: config.apiPassphrase ?? undefined,
+      walletAddress: walletAddress ?? this.userAddress,
+      vaultAddress: vaultAddress ?? undefined,
       testnet:
         String(config.restBaseUrl ?? "").toLowerCase().includes("testnet") ||
         String(process.env.HYPERLIQUID_TESTNET ?? "").trim() === "1",

@@ -94,7 +94,9 @@
         "maxLeverage": "Max. Leverage",
         "stopLossPct": "Stop-Loss (%)",
         "takeProfitPct": "Take-Profit (%)",
-        "timeStopMin": "Time-Stop (Min)"
+        "timeStopMin": "Time-Stop (Min)",
+        "exitOnSignalFlip": "Exit bei Signal-Flip",
+        "exitOnConfidenceDrop": "Exit bei Confidence-Drop"
       },
       "blockTagsPlaceholder": "data_gap,low_liquidity",
       "requireTagsPlaceholder": "trend_up,high_vol",
@@ -337,7 +339,9 @@
       "maxLeverage": "Max. Leverage",
       "stopLossPct": "Stop-Loss (%)",
       "takeProfitPct": "Take-Profit (%)",
-      "timeStopMin": "Time-Stop (Min)"
+      "timeStopMin": "Time-Stop (Min)",
+      "exitOnSignalFlip": "Exit bei Signal-Flip",
+      "exitOnConfidenceDrop": "Exit bei Confidence-Drop"
     },
     "backToBot": "Zurück zum Bot",
     "dashboard": "Dashboard"

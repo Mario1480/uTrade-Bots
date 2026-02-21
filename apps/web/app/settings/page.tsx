@@ -24,6 +24,15 @@ type ExchangeAccountItem = {
   marketDataExchangeAccountId?: string | null;
   marketDataExchange?: string | null;
   marketDataLabel?: string | null;
+  futuresBudget?: {
+    equity: number | null;
+    availableMargin: number | null;
+    marginCoin: string | null;
+  } | null;
+  lastSyncError?: {
+    at: string | null;
+    message: string | null;
+  } | null;
 };
 
 type ExchangeSyncResponse = {
@@ -933,6 +942,17 @@ export default function SettingsPage() {
                             <div className="settingsMutedText">
                               {tMain("exchange.lastSync")}: {account.lastUsedAt ? new Date(account.lastUsedAt).toLocaleString() : tMain("exchange.never")}
                             </div>
+                            {account.futuresBudget ? (
+                              <div className="settingsMutedText">
+                                Futures: equity {account.futuresBudget.equity ?? "-"} · available {account.futuresBudget.availableMargin ?? "-"}
+                                {account.futuresBudget.marginCoin ? ` ${account.futuresBudget.marginCoin}` : ""}
+                              </div>
+                            ) : null}
+                            {account.lastSyncError?.message ? (
+                              <div className="settingsMutedText" style={{ color: "#d14343" }}>
+                                Sync error: {account.lastSyncError.message}
+                              </div>
+                            ) : null}
                           </div>
                           <div className="settingsAccountActions">
                             <button

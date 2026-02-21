@@ -378,6 +378,10 @@ const predictionCopierSettingsSchema = z.object({
     orderType: z.enum(["market", "limit"]).optional(),
     limitOffsetBps: z.number().nonnegative().max(500).optional(),
     reduceOnlyOnExit: z.boolean().optional()
+  }).optional(),
+  exit: z.object({
+    onSignalFlip: z.boolean().optional(),
+    onConfidenceDrop: z.boolean().optional()
   }).optional()
 });
 
@@ -2746,12 +2750,12 @@ function parseBitgetCandles(value: unknown): CandleBar[] {
     const close = asNumber(rec.close ?? rec.c);
     if (open === null || high === null || low === null || close === null) continue;
     out.push({
-      ts: asNumber(rec.ts ?? rec.time ?? rec.timestamp),
+      ts: asNumber(rec.ts ?? rec.t ?? rec.time ?? rec.timestamp ?? rec.T),
       open,
       high,
       low,
       close,
-      volume: asNumber(rec.volume ?? rec.v)
+      volume: asNumber(rec.volume ?? rec.v ?? rec.baseVolume)
     });
   }
 
@@ -14139,6 +14143,24 @@ app.get("/exchange-accounts", requireAuth, async (_req, res) => {
       createdAt: row.createdAt,
       updatedAt: row.updatedAt,
       lastUsedAt: row.lastUsedAt,
+      futuresBudget:
+        row.futuresBudgetEquity !== null || row.futuresBudgetAvailableMargin !== null
+          ? {
+              equity: row.futuresBudgetEquity,
+              availableMargin: row.futuresBudgetAvailableMargin,
+              marginCoin:
+                normalizeExchangeValue(String(row.exchange ?? "")) === "hyperliquid"
+                  ? "USDC"
+                  : "USDT"
+            }
+          : null,
+      lastSyncError:
+        row.lastSyncErrorAt || row.lastSyncErrorMessage
+          ? {
+              at: toIso(row.lastSyncErrorAt),
+              message: row.lastSyncErrorMessage ?? null
+            }
+          : null,
       marketDataExchangeAccountId: linkedMarketDataId,
       marketDataExchange: linkedMarketData?.exchange ?? null,
       marketDataLabel: linkedMarketData?.label ?? null

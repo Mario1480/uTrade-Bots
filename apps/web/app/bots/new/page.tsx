@@ -91,6 +91,8 @@ export default function NewBotPage() {
   const [riskStopLossPct, setRiskStopLossPct] = useState("");
   const [riskTakeProfitPct, setRiskTakeProfitPct] = useState("");
   const [riskTimeStopMin, setRiskTimeStopMin] = useState("");
+  const [exitOnSignalFlip, setExitOnSignalFlip] = useState(false);
+  const [exitOnConfidenceDrop, setExitOnConfidenceDrop] = useState(false);
 
   const [filtersBlockTags, setFiltersBlockTags] = useState("data_gap,low_liquidity");
   const [filtersNewsRiskBlockEnabled, setFiltersNewsRiskBlockEnabled] = useState(false);
@@ -278,6 +280,10 @@ export default function NewBotPage() {
                 orderType: copierOrderType,
                 limitOffsetBps: executionLimitOffsetBps,
                 reduceOnlyOnExit: executionReduceOnlyOnExit
+              },
+              exit: {
+                onSignalFlip: exitOnSignalFlip,
+                onConfidenceDrop: exitOnConfidenceDrop
               }
             }
           : null;
@@ -495,6 +501,14 @@ export default function NewBotPage() {
                     <label style={{ display: "grid", gap: 6 }}><span style={{ fontSize: 12, color: "var(--muted)" }}>{t("copier.fields.stopLossPct")}</span><input className="input" type="number" min={0} step="0.1" value={riskStopLossPct} onChange={(e) => setRiskStopLossPct(e.target.value)} /></label>
                     <label style={{ display: "grid", gap: 6 }}><span style={{ fontSize: 12, color: "var(--muted)" }}>{t("copier.fields.takeProfitPct")}</span><input className="input" type="number" min={0} step="0.1" value={riskTakeProfitPct} onChange={(e) => setRiskTakeProfitPct(e.target.value)} /></label>
                     <label style={{ display: "grid", gap: 6 }}><span style={{ fontSize: 12, color: "var(--muted)" }}>{t("copier.fields.timeStopMin")}</span><input className="input" type="number" min={0} step="1" value={riskTimeStopMin} onChange={(e) => setRiskTimeStopMin(e.target.value)} /></label>
+                    <label style={{ display: "grid", gap: 6 }}>
+                      <span style={{ fontSize: 12, color: "var(--muted)" }}>{t("copier.fields.exitOnSignalFlip")}</span>
+                      <input type="checkbox" checked={exitOnSignalFlip} onChange={(e) => setExitOnSignalFlip(e.target.checked)} />
+                    </label>
+                    <label style={{ display: "grid", gap: 6 }}>
+                      <span style={{ fontSize: 12, color: "var(--muted)" }}>{t("copier.fields.exitOnConfidenceDrop")}</span>
+                      <input type="checkbox" checked={exitOnConfidenceDrop} onChange={(e) => setExitOnConfidenceDrop(e.target.checked)} />
+                    </label>
                   </div>
                 </div>
 

@@ -2049,7 +2049,7 @@ function parseBookLevels(input: unknown): NormalizedBookLevel[] {
     const record = toRecord(row);
     if (!record) continue;
     const price = getNumber(record, ["price", "p", "px"]);
-    const qty = getNumber(record, ["size", "qty", "q", "vol"]);
+    const qty = getNumber(record, ["size", "qty", "q", "vol", "sz", "amount"]);
     if (price !== null && qty !== null) {
       out.push({ price, qty });
     }
@@ -2064,9 +2064,10 @@ export function normalizeOrderBookPayload(payload: unknown): NormalizedOrderBook
     return { bids: [], asks: [], ts: null };
   }
 
-  const bids = parseBookLevels(record.bids ?? record.bid ?? record.b);
-  const asks = parseBookLevels(record.asks ?? record.ask ?? record.a);
-  const ts = getNumber(record, ["ts", "timestamp", "uTime"]);
+  const levels = Array.isArray(record.levels) ? record.levels : null;
+  const bids = parseBookLevels(record.bids ?? record.bid ?? record.b ?? levels?.[0]);
+  const asks = parseBookLevels(record.asks ?? record.ask ?? record.a ?? levels?.[1]);
+  const ts = getNumber(record, ["ts", "timestamp", "uTime", "time", "t"]);
 
   return { bids, asks, ts };
 }
@@ -2078,10 +2079,10 @@ export function normalizeTickerPayload(payload: unknown): NormalizedTicker {
   return {
     symbol: normalizeCanonicalSymbol(symbolRaw ?? ""),
     last: getNumber(record, ["lastPr", "last", "price", "close"]),
-    mark: getNumber(record, ["markPrice", "mark", "indexPrice"]),
-    bid: getNumber(record, ["bidPr", "bidPrice", "bid"]),
-    ask: getNumber(record, ["askPr", "askPrice", "ask"]),
-    ts: getNumber(record, ["ts", "timestamp"])
+    mark: getNumber(record, ["markPrice", "mark", "indexPrice", "markPx", "midPx", "oraclePx"]),
+    bid: getNumber(record, ["bidPr", "bidPrice", "bid", "bestBid"]),
+    ask: getNumber(record, ["askPr", "askPrice", "ask", "bestAsk"]),
+    ts: getNumber(record, ["ts", "timestamp", "time", "t"])
   };
 }
 
@@ -2089,6 +2090,7 @@ export function normalizeTradesPayload(payload: unknown): NormalizedTrade[] {
   if (!Array.isArray(payload)) {
     const record = toRecord(payload);
     if (!record) return [];
+    if (Array.isArray(record.data)) return normalizeTradesPayload(record.data);
     return [recordToTrade(record)];
   }
 
@@ -2117,10 +2119,10 @@ function recordToTrade(record: Record<string, unknown>): NormalizedTrade {
   const symbolRaw = getString(record, ["instId", "symbol"]);
   return {
     symbol: normalizeCanonicalSymbol(symbolRaw ?? ""),
-    ts: getNumber(record, ["ts", "timestamp", "cTime"]),
+    ts: getNumber(record, ["ts", "timestamp", "cTime", "time", "t"]),
     price: getNumber(record, ["price", "px", "fillPrice"]),
-    qty: getNumber(record, ["size", "qty", "q", "fillSize"]),
-    side: getString(record, ["side", "fillSide", "tradeSide"])?.toLowerCase() ?? null
+    qty: getNumber(record, ["size", "qty", "q", "fillSize", "sz", "amount"]),
+    side: getString(record, ["side", "fillSide", "tradeSide", "dir"])?.toLowerCase() ?? null
   };
 }
 
