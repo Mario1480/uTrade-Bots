@@ -1,5 +1,5 @@
 import { prisma } from "@mm/db";
-import { BitgetFuturesAdapter } from "@mm/futures-exchange";
+import { BitgetFuturesAdapter, HyperliquidFuturesAdapter } from "@mm/futures-exchange";
 import { decryptSecret } from "./secret-crypto.js";
 
 type DbClient = typeof prisma;
@@ -734,7 +734,7 @@ export async function resolveTradingAccount(userId: string, exchangeAccountId?: 
   }
 
   const exchange = String(account.exchange ?? "").toLowerCase();
-  if (exchange !== "bitget" && !isPaperExchange(exchange)) {
+  if (exchange !== "bitget" && exchange !== "hyperliquid" && !isPaperExchange(exchange)) {
     throw new ManualTradingError(`exchange_not_supported:${exchange}`, 400, "exchange_not_supported");
   }
 
@@ -823,6 +823,16 @@ export function createBitgetAdapter(account: TradingAccount): BitgetFuturesAdapt
       400,
       "paper_account_requires_market_data_resolution"
     );
+  }
+  if (account.exchange === "hyperliquid") {
+    return new HyperliquidFuturesAdapter({
+      apiKey: account.apiKey,
+      apiSecret: account.apiSecret,
+      apiPassphrase: account.passphrase ?? undefined,
+      restBaseUrl: process.env.HYPERLIQUID_REST_BASE_URL,
+      productType: "USDT-FUTURES",
+      marginCoin: process.env.HYPERLIQUID_MARGIN_COIN ?? "USDC"
+    }) as unknown as BitgetFuturesAdapter;
   }
   return new BitgetFuturesAdapter({
     apiKey: account.apiKey,

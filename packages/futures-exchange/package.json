@@ -6,6 +6,7 @@
   "types": "dist/index.d.ts",
   "dependencies": {
     "@mm/futures-core": "0.0.1",
+    "hyperliquid": "^1.7.7",
     "ws": "^8.18.3"
   },
   "scripts": {

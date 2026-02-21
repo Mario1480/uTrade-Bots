@@ -576,7 +576,7 @@
     "loadingPage": "Trade-Seite wird geladen...",
     "loadingDesk": "Trading Desk wird geladen...",
     "noAccountsTitle": "Keine Exchange-Konten verfügbar",
-    "noAccountsHint": "Füge zuerst ein Bitget-Konto hinzu, um manuell zu handeln.",
+    "noAccountsHint": "Füge zuerst ein Futures-Exchange-Konto hinzu, um manuell zu handeln.",
     "contextHint": "Wähle Konto, Symbol und Timeframe für Chart und Order-Ticket.",
     "orderEntryHint": "Platziere manuelle Futures-Orders mit Live-Kontodaten.",
     "alerts": {

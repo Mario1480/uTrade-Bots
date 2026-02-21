@@ -1,4 +1,5 @@
 import crypto from "node:crypto";
+import { HyperliquidFuturesAdapter } from "@mm/futures-exchange";
 
 type HttpMethod = "GET" | "POST" | "DELETE";
 
@@ -282,10 +283,76 @@ async function syncBitgetAccount(input: ExchangeSyncInput): Promise<ExchangeSync
   }
 }
 
+function isLikelyEvmAddress(value: string): boolean {
+  return /^0x[a-fA-F0-9]{40}$/.test(value.trim());
+}
+
+async function syncHyperliquidAccount(input: ExchangeSyncInput): Promise<ExchangeSyncResult> {
+  if (!isLikelyEvmAddress(input.apiKey)) {
+    throw new ExchangeSyncError(
+      "Hyperliquid wallet address is invalid (expected 0x + 40 hex chars).",
+      400,
+      "hyperliquid_wallet_invalid"
+    );
+  }
+
+  const adapter = new HyperliquidFuturesAdapter({
+    apiKey: input.apiKey.trim(),
+    apiSecret: input.apiSecret.trim(),
+    apiPassphrase: input.passphrase?.trim() || undefined,
+    restBaseUrl: process.env.HYPERLIQUID_REST_BASE_URL,
+    marginCoin: process.env.HYPERLIQUID_MARGIN_COIN ?? "USDC"
+  });
+
+  try {
+    const [accountState, positions] = await Promise.all([
+      adapter.getAccountState(),
+      adapter.getPositions().catch(() => [])
+    ]);
+
+    const pnlTodayUsd =
+      positions.length > 0
+        ? positions.reduce((sum, row) => sum + (Number(row.unrealizedPnl) || 0), 0)
+        : null;
+
+    return {
+      syncedAt: new Date(),
+      spotBudget: null,
+      futuresBudget: {
+        equity: Number.isFinite(Number(accountState.equity)) ? Number(accountState.equity) : null,
+        availableMargin:
+          accountState.availableMargin !== undefined && Number.isFinite(Number(accountState.availableMargin))
+            ? Number(accountState.availableMargin)
+            : null,
+        marginCoin: process.env.HYPERLIQUID_MARGIN_COIN ?? "USDC"
+      },
+      pnlTodayUsd,
+      details: {
+        exchange: "hyperliquid",
+        endpoint: "/info",
+        productType: "perps"
+      }
+    };
+  } catch (error) {
+    const message = String(error ?? "");
+    const isAuthError = /auth|signature|private key|wallet|forbidden|permission|invalid/i.test(message);
+    throw new ExchangeSyncError(
+      `Hyperliquid sync failed: ${message}`,
+      isAuthError ? 401 : 502,
+      isAuthError ? "hyperliquid_auth_failed" : "hyperliquid_sync_failed"
+    );
+  } finally {
+    await adapter.close().catch(() => undefined);
+  }
+}
+
 export async function syncExchangeAccount(input: ExchangeSyncInput): Promise<ExchangeSyncResult> {
   const exchange = input.exchange.trim().toLowerCase();
   if (exchange === "bitget") {
     return syncBitgetAccount(input);
+  }
+  if (exchange === "hyperliquid") {
+    return syncHyperliquidAccount(input);
   }
 
   throw new ExchangeSyncError(

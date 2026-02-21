@@ -576,7 +576,7 @@
     "loadingPage": "Loading trade page...",
     "loadingDesk": "Loading trading desk...",
     "noAccountsTitle": "No exchange accounts available",
-    "noAccountsHint": "Add a Bitget account first to use manual trading.",
+    "noAccountsHint": "Add a futures exchange account first to use manual trading.",
     "contextHint": "Select account, symbol and timeframe used by chart and order ticket.",
     "orderEntryHint": "Place manual futures orders with live account data.",
     "alerts": {

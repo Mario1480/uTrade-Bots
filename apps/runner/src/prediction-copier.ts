@@ -1,7 +1,7 @@
 import crypto from "node:crypto";
 import type { TradeIntent } from "@mm/futures-core";
 import { isGlobalTradingEnabled } from "@mm/futures-engine";
-import { BitgetFuturesAdapter } from "@mm/futures-exchange";
+import { BitgetFuturesAdapter, HyperliquidFuturesAdapter } from "@mm/futures-exchange";
 import type {
   ActiveFuturesBot,
   BotTradeHistoryCloseOutcome,
@@ -31,7 +31,7 @@ export type PredictionCopierSide = "long" | "short";
 
 export type PredictionCopierConfig = {
   botType: "prediction_copier";
-  exchange: "bitget" | "paper";
+  exchange: "bitget" | "hyperliquid" | "paper";
   accountId: string;
   sourceStateId: string | null;
   sourceSnapshot: {
@@ -119,7 +119,9 @@ type NormalizedPosition = {
   markPrice: number | null;
 };
 
-const adapterCache = new Map<string, BitgetFuturesAdapter>();
+type SupportedFuturesAdapter = BitgetFuturesAdapter | HyperliquidFuturesAdapter;
+
+const adapterCache = new Map<string, SupportedFuturesAdapter>();
 const DEFAULT_PAPER_EQUITY_USD = Math.max(
   0,
   Number(process.env.PAPER_TRADING_START_BALANCE_USD ?? "10000")
@@ -179,8 +181,9 @@ function normalizeTimeframe(value: unknown): PredictionCopierTimeframe {
   return "15m";
 }
 
-function normalizeExecutionExchange(value: unknown): "bitget" | "paper" {
+function normalizeExecutionExchange(value: unknown): "bitget" | "hyperliquid" | "paper" {
   const normalized = String(value ?? "").trim().toLowerCase();
+  if (normalized === "hyperliquid") return "hyperliquid";
   return normalized === "paper" ? "paper" : "bitget";
 }
 
@@ -653,18 +656,29 @@ export function inferExternalCloseOutcome(params: {
   return { outcome: "unknown", reason: "position_closed_external" };
 }
 
-function getOrCreateAdapter(bot: ActiveFuturesBot): BitgetFuturesAdapter {
+function getOrCreateAdapter(bot: ActiveFuturesBot): SupportedFuturesAdapter {
   const cacheKey = `${bot.id}:${bot.marketData.exchangeAccountId}`;
   const cached = adapterCache.get(cacheKey);
   if (cached) return cached;
 
-  const adapter = new BitgetFuturesAdapter({
-    apiKey: bot.marketData.credentials.apiKey,
-    apiSecret: bot.marketData.credentials.apiSecret,
-    apiPassphrase: bot.marketData.credentials.passphrase ?? undefined,
-    productType: (process.env.BITGET_PRODUCT_TYPE as any) ?? "USDT-FUTURES",
-    marginCoin: process.env.BITGET_MARGIN_COIN ?? "USDT"
-  });
+  const marketDataExchange = String(bot.marketData.exchange ?? "").trim().toLowerCase();
+
+  const adapter: SupportedFuturesAdapter =
+    marketDataExchange === "hyperliquid"
+      ? new HyperliquidFuturesAdapter({
+          apiKey: bot.marketData.credentials.apiKey,
+          apiSecret: bot.marketData.credentials.apiSecret,
+          apiPassphrase: bot.marketData.credentials.passphrase ?? undefined,
+          restBaseUrl: process.env.HYPERLIQUID_REST_BASE_URL,
+          marginCoin: process.env.HYPERLIQUID_MARGIN_COIN ?? "USDC"
+        })
+      : new BitgetFuturesAdapter({
+          apiKey: bot.marketData.credentials.apiKey,
+          apiSecret: bot.marketData.credentials.apiSecret,
+          apiPassphrase: bot.marketData.credentials.passphrase ?? undefined,
+          productType: (process.env.BITGET_PRODUCT_TYPE as any) ?? "USDT-FUTURES",
+          marginCoin: process.env.BITGET_MARGIN_COIN ?? "USDT"
+        });
   adapterCache.set(cacheKey, adapter);
   return adapter;
 }
@@ -693,7 +707,10 @@ export async function runPredictionCopierTick(
   const executionExchange = String(bot.exchange ?? "").trim().toLowerCase();
   const marketDataExchange = String(bot.marketData.exchange ?? "").trim().toLowerCase();
 
-  if ((executionExchange !== "bitget" && executionExchange !== "paper") || marketDataExchange !== "bitget") {
+  const executionSupported =
+    executionExchange === "bitget" || executionExchange === "hyperliquid" || executionExchange === "paper";
+  const marketDataSupported = marketDataExchange === "bitget" || marketDataExchange === "hyperliquid";
+  if (!executionSupported || !marketDataSupported) {
     return {
       outcome: "blocked",
       intent: { type: "none" },

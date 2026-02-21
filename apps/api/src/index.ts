@@ -303,6 +303,24 @@ const exchangeCreateSchema = z.object({
       message: "passphrase is required for bitget"
     });
   }
+  if (exchange === "hyperliquid" && value.apiKey && !/^0x[a-fA-F0-9]{40}$/.test(value.apiKey)) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ["apiKey"],
+      message: "apiKey must be a wallet address (0x + 40 hex) for hyperliquid"
+    });
+  }
+  if (
+    exchange === "hyperliquid" &&
+    value.apiSecret &&
+    !/^(0x)?[a-fA-F0-9]{64}$/.test(value.apiSecret)
+  ) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ["apiSecret"],
+      message: "apiSecret must be a private key (64 hex, optional 0x) for hyperliquid"
+    });
+  }
   if (exchange === "paper" && !value.marketDataExchangeAccountId) {
     ctx.addIssue({
       code: z.ZodIssueCode.custom,
@@ -1301,6 +1319,7 @@ const PASSWORD_RESET_OTP_TTL_MIN = Math.max(
 
 const EXCHANGE_OPTION_CATALOG = [
   { value: "bitget", label: "Bitget (Futures)" },
+  { value: "hyperliquid", label: "Hyperliquid (Perps)" },
   { value: "mexc", label: "MEXC (Legacy)" },
   { value: "paper", label: "Paper (Simulated Trading)" }
 ] as const;
@@ -4874,7 +4893,11 @@ async function runExchangeAutoSyncCycle() {
   exchangeAutoSyncRunning = true;
   try {
     const accounts: ExchangeAccountSecrets[] = await db.exchangeAccount.findMany({
-      where: { exchange: "bitget" },
+      where: {
+        exchange: {
+          in: ["bitget", "hyperliquid"]
+        }
+      },
       select: {
         id: true,
         userId: true,
@@ -5179,7 +5202,7 @@ async function runFeatureThresholdCalibrationCycle(mode: "startup" | "scheduled"
         : (["perp"] as ThresholdMarketType[]);
 
     for (const [exchange, accountRef] of byExchange.entries()) {
-      if (exchange !== "bitget") continue;
+      if (exchange !== "bitget" && exchange !== "hyperliquid") continue;
       let adapter: BitgetFuturesAdapter | null = null;
       try {
         const account = await resolveTradingAccount(accountRef.userId, accountRef.id);
