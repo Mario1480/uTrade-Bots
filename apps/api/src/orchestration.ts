@@ -13,6 +13,27 @@ import {
 let queueConnection: RedisConnection | null = null;
 let botQueue: ReturnType<typeof getQueue> | null = null;
 
+type QueueJobLike = {
+  getState: () => Promise<string>;
+  remove: () => Promise<void>;
+};
+
+type QueueLikeForEnqueue = {
+  add: (
+    name: string,
+    data: { botId: string },
+    opts: {
+      jobId: string;
+      attempts: number;
+      backoff: {
+        type: "exponential";
+        delay: number;
+      };
+    }
+  ) => Promise<unknown>;
+  getJob: (jobId: string) => Promise<QueueJobLike | null>;
+};
+
 function isQueueMode(): boolean {
   return getOrchestrationMode() === "queue";
 }
@@ -39,27 +60,67 @@ export function getRuntimeOrchestrationMode(): "queue" | "poll" {
   return getOrchestrationMode();
 }
 
+function isTerminalJobState(state: string): boolean {
+  const normalized = String(state ?? "").trim().toLowerCase();
+  return normalized === "completed" || normalized === "failed";
+}
+
+function isDuplicateJobAddError(error: unknown): boolean {
+  const code = String((error as { code?: unknown })?.code ?? "").trim().toLowerCase();
+  if (code === "ejobidexists") return true;
+  const message = String((error as { message?: unknown })?.message ?? error ?? "").trim().toLowerCase();
+  return (
+    message.includes("jobid") && message.includes("exists")
+  ) || message.includes("job is already waiting");
+}
+
+export async function enqueueBotRunInQueue(
+  queue: QueueLikeForEnqueue,
+  botId: string
+): Promise<{ jobId: string; queued: boolean }> {
+  const jobId = toBotJobId(botId);
+  const existing = await queue.getJob(jobId);
+  if (existing) {
+    try {
+      const existingState = await existing.getState();
+      if (!isTerminalJobState(existingState)) {
+        return { jobId, queued: false };
+      }
+      await existing.remove();
+    } catch {
+      // Best-effort cleanup of terminal jobs; duplicate add protection below remains in place.
+    }
+  }
+
+  try {
+    await queue.add(
+      RUN_BOT_JOB_NAME,
+      { botId },
+      {
+        jobId,
+        attempts: getBotJobAttempts(),
+        backoff: {
+          type: "exponential",
+          delay: getBotJobBackoffDelayMs()
+        }
+      }
+    );
+    return { jobId, queued: true };
+  } catch (error) {
+    if (isDuplicateJobAddError(error)) {
+      return { jobId, queued: false };
+    }
+    throw error;
+  }
+}
+
 export async function enqueueBotRun(botId: string): Promise<{ jobId: string; queued: boolean }> {
   if (!isQueueMode()) return { jobId: toBotJobId(botId), queued: false };
 
   const queue = await ensureBotQueue();
   if (!queue) throw new Error("queue_not_initialized");
 
-  const jobId = toBotJobId(botId);
-  await queue.add(
-    RUN_BOT_JOB_NAME,
-    { botId },
-    {
-      jobId,
-      attempts: getBotJobAttempts(),
-      backoff: {
-        type: "exponential",
-        delay: getBotJobBackoffDelayMs()
-      }
-    }
-  );
-
-  return { jobId, queued: true };
+  return enqueueBotRunInQueue(queue as unknown as QueueLikeForEnqueue, botId);
 }
 
 export async function cancelBotRun(botId: string): Promise<{ jobId: string; removed: boolean }> {

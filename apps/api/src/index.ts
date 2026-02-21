@@ -41,6 +41,7 @@ import {
   getRuntimeOrchestrationMode
 } from "./orchestration.js";
 import { ExchangeSyncError, syncExchangeAccount } from "./exchange-sync.js";
+import { recoverRunningBotJobs } from "./bot-run-recovery.js";
 import { getAiModel, invalidateAiApiKeyCache } from "./ai/provider.js";
 import {
   buildPredictionExplainerPromptPreview,
@@ -1163,6 +1164,8 @@ const EXCHANGE_AUTO_SYNC_INTERVAL_MS =
 const EXCHANGE_AUTO_SYNC_ENABLED = !["0", "false", "off", "no"].includes(
   String(process.env.EXCHANGE_AUTO_SYNC_ENABLED ?? "1").trim().toLowerCase()
 );
+const BOT_QUEUE_RECOVERY_INTERVAL_MS =
+  Math.max(5_000, Number(process.env.BOT_QUEUE_RECOVERY_INTERVAL_MS ?? "30000"));
 const PREDICTION_AUTO_ENABLED = !["0", "false", "off", "no"].includes(
   String(process.env.PREDICTION_AUTO_ENABLED ?? "1").trim().toLowerCase()
 );
@@ -4937,6 +4940,51 @@ function stopExchangeAutoSyncScheduler() {
   if (!exchangeAutoSyncTimer) return;
   clearInterval(exchangeAutoSyncTimer);
   exchangeAutoSyncTimer = null;
+}
+
+let botQueueRecoveryTimer: NodeJS.Timeout | null = null;
+let botQueueRecoveryRunning = false;
+
+async function runBotQueueRecoveryCycle(reason: "startup" | "scheduled") {
+  if (botQueueRecoveryRunning) return;
+  botQueueRecoveryRunning = true;
+  const startedAtMs = Date.now();
+  try {
+    const result = await recoverRunningBotJobs({ db });
+    // eslint-disable-next-line no-console
+    console.log("[bot-queue-recovery] bot_queue_recovery_cycle", {
+      reason,
+      scanned: result.scanned,
+      enqueued: result.enqueued,
+      alreadyQueued: result.alreadyQueued,
+      failed: result.failed,
+      durationMs: Date.now() - startedAtMs
+    });
+  } catch (error) {
+    // eslint-disable-next-line no-console
+    console.warn("[bot-queue-recovery] bot_queue_recovery_failed", {
+      reason,
+      error: error instanceof Error ? error.message : String(error),
+      durationMs: Date.now() - startedAtMs
+    });
+  } finally {
+    botQueueRecoveryRunning = false;
+  }
+}
+
+function startBotQueueRecoveryScheduler() {
+  if (getRuntimeOrchestrationMode() !== "queue") return;
+  if (botQueueRecoveryTimer) return;
+  botQueueRecoveryTimer = setInterval(() => {
+    void runBotQueueRecoveryCycle("scheduled");
+  }, BOT_QUEUE_RECOVERY_INTERVAL_MS);
+  void runBotQueueRecoveryCycle("startup");
+}
+
+function stopBotQueueRecoveryScheduler() {
+  if (!botQueueRecoveryTimer) return;
+  clearInterval(botQueueRecoveryTimer);
+  botQueueRecoveryTimer = null;
 }
 
 let featureThresholdCalibrationTimer: NodeJS.Timeout | null = null;
@@ -16921,6 +16969,7 @@ async function startApiServer() {
     startPredictionAutoScheduler();
     startPredictionOutcomeEvalScheduler();
     startPredictionPerformanceEvalScheduler();
+    startBotQueueRecoveryScheduler();
     economicCalendarRefreshJob.start();
     }
   );
@@ -16934,6 +16983,7 @@ process.on("SIGTERM", () => {
   stopPredictionAutoScheduler();
   stopPredictionOutcomeEvalScheduler();
   stopPredictionPerformanceEvalScheduler();
+  stopBotQueueRecoveryScheduler();
   economicCalendarRefreshJob.stop();
   marketWss.close();
   userWss.close();
@@ -16947,6 +16997,7 @@ process.on("SIGINT", () => {
   stopPredictionAutoScheduler();
   stopPredictionOutcomeEvalScheduler();
   stopPredictionPerformanceEvalScheduler();
+  stopBotQueueRecoveryScheduler();
   economicCalendarRefreshJob.stop();
   marketWss.close();
   userWss.close();
