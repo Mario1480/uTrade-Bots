@@ -112,6 +112,37 @@ type DashboardRiskAnalysisResponse = {
   evaluatedAt: string;
 };
 
+type DashboardOpenPositionItem = {
+  exchangeAccountId: string;
+  exchange: string;
+  exchangeLabel: string;
+  symbol: string;
+  side: "long" | "short";
+  size: number;
+  entryPrice: number | null;
+  stopLossPrice: number | null;
+  takeProfitPrice: number | null;
+  unrealizedPnl: number | null;
+};
+
+type DashboardOpenPositionsExchange = {
+  exchangeAccountId: string;
+  exchange: string;
+  label: string;
+};
+
+type DashboardOpenPositionsMeta = {
+  fetchedAt: string;
+  partialErrors: number;
+  failedExchangeAccountIds: string[];
+};
+
+type DashboardOpenPositionsResponse = {
+  items: DashboardOpenPositionItem[];
+  exchanges: DashboardOpenPositionsExchange[];
+  meta: DashboardOpenPositionsMeta;
+};
+
 const PERFORMANCE_RANGES: PerformanceRange[] = ["24h", "7d", "30d"];
 
 function errMsg(e: unknown): string {
@@ -212,6 +243,11 @@ export default function Page() {
     ok: 0
   });
   const [riskLoadError, setRiskLoadError] = useState(false);
+  const [openPositions, setOpenPositions] = useState<DashboardOpenPositionItem[]>([]);
+  const [openPositionsExchanges, setOpenPositionsExchanges] = useState<DashboardOpenPositionsExchange[]>([]);
+  const [openPositionsMeta, setOpenPositionsMeta] = useState<DashboardOpenPositionsMeta | null>(null);
+  const [openPositionsLoadError, setOpenPositionsLoadError] = useState(false);
+  const [openPositionsExchangeFilter, setOpenPositionsExchangeFilter] = useState<string>("all");
   const [accessVisibility, setAccessVisibility] = useState<AccessSectionVisibility>(
     DEFAULT_ACCESS_SECTION_VISIBILITY
   );
@@ -233,6 +269,7 @@ export default function Page() {
           newsResult,
           performanceResult,
           riskResult,
+          openPositionsResult,
           accessResult
         ] = await Promise.allSettled([
           apiGet<DashboardOverviewResponse | ExchangeAccountOverview[]>("/dashboard/overview"),
@@ -243,6 +280,7 @@ export default function Page() {
           apiGet<DashboardNewsResponse>("/news?mode=all&limit=3&page=0"),
           apiGet<DashboardPerformanceResponse>(`/dashboard/performance?range=${performanceRange}`),
           apiGet<DashboardRiskAnalysisResponse>("/dashboard/risk-analysis?limit=3"),
+          apiGet<DashboardOpenPositionsResponse>("/dashboard/open-positions"),
           apiGet<{ visibility?: AccessSectionVisibility }>("/settings/access-section")
         ]);
         if (!mounted) return;
@@ -305,6 +343,35 @@ export default function Page() {
           setRiskSummary({ critical: 0, warning: 0, ok: 0 });
           setRiskLoadError(true);
         }
+        if (openPositionsResult.status === "fulfilled") {
+          const items = Array.isArray(openPositionsResult.value?.items)
+            ? openPositionsResult.value.items
+            : [];
+          const exchanges = Array.isArray(openPositionsResult.value?.exchanges)
+            ? openPositionsResult.value.exchanges
+            : [];
+          setOpenPositions(items);
+          setOpenPositionsExchanges(exchanges);
+          setOpenPositionsMeta(
+            openPositionsResult.value?.meta && typeof openPositionsResult.value.meta === "object"
+              ? {
+                  fetchedAt: String(openPositionsResult.value.meta.fetchedAt ?? ""),
+                  partialErrors: Math.max(0, Number(openPositionsResult.value.meta.partialErrors ?? 0) || 0),
+                  failedExchangeAccountIds: Array.isArray(openPositionsResult.value.meta.failedExchangeAccountIds)
+                    ? openPositionsResult.value.meta.failedExchangeAccountIds
+                        .map((value) => String(value))
+                        .filter((value) => value.length > 0)
+                    : []
+                }
+              : null
+          );
+          setOpenPositionsLoadError(false);
+        } else {
+          setOpenPositions([]);
+          setOpenPositionsExchanges([]);
+          setOpenPositionsMeta(null);
+          setOpenPositionsLoadError(true);
+        }
         if (accessResult.status === "fulfilled" && accessResult.value?.visibility) {
           setAccessVisibility({
             tradingDesk: accessResult.value.visibility.tradingDesk !== false,
@@ -324,6 +391,10 @@ export default function Page() {
         setRiskItems([]);
         setRiskSummary({ critical: 0, warning: 0, ok: 0 });
         setRiskLoadError(true);
+        setOpenPositions([]);
+        setOpenPositionsExchanges([]);
+        setOpenPositionsMeta(null);
+        setOpenPositionsLoadError(true);
       } finally {
         if (mounted) setLoading(false);
       }
@@ -339,6 +410,16 @@ export default function Page() {
       clearInterval(timer);
     };
   }, [performanceRange]);
+
+  useEffect(() => {
+    if (openPositionsExchangeFilter === "all") return;
+    const exists = openPositionsExchanges.some(
+      (item) => item.exchangeAccountId === openPositionsExchangeFilter
+    );
+    if (!exists) {
+      setOpenPositionsExchangeFilter("all");
+    }
+  }, [openPositionsExchangeFilter, openPositionsExchanges]);
 
   const headlineStats = useMemo(() => {
     return overview.reduce(
@@ -427,6 +508,11 @@ export default function Page() {
       totalTodayPnl: resolvedTotals?.totalTodayPnl ?? latestPerformancePoint?.totalTodayPnl ?? null
     };
   }, [latestPerformancePoint, resolvedTotals]);
+
+  const filteredOpenPositions = useMemo(() => {
+    if (openPositionsExchangeFilter === "all") return openPositions;
+    return openPositions.filter((item) => item.exchangeAccountId === openPositionsExchangeFilter);
+  }, [openPositions, openPositionsExchangeFilter]);
 
   return (
     <div>
@@ -835,6 +921,159 @@ export default function Page() {
           </div>
         )}
       </section>
+
+      {accessVisibility.tradingDesk ? (
+        <section id="open-positions" className="dashboardSectionAnchor">
+          <div className="card dashboardInsightCard dashboardOpenPositionsCard">
+            <div className="dashboardOpenPositionsHead">
+              <div>
+                <div className="dashboardOpenPositionsTitle">{t("openPositions.title")}</div>
+                <div className="dashboardOpenPositionsSubtitle">{t("openPositions.subtitle")}</div>
+              </div>
+              <label className="dashboardOpenPositionsFilter">
+                <span>{t("openPositions.filterLabel")}</span>
+                <select
+                  className="select"
+                  value={openPositionsExchangeFilter}
+                  onChange={(event) => setOpenPositionsExchangeFilter(event.target.value)}
+                >
+                  <option value="all">{t("openPositions.filterAll")}</option>
+                  {openPositionsExchanges.map((item) => (
+                    <option key={item.exchangeAccountId} value={item.exchangeAccountId}>
+                      {item.exchange.toUpperCase()} · {item.label}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            </div>
+
+            {!openPositionsLoadError && (openPositionsMeta?.partialErrors ?? 0) > 0 ? (
+              <div className="dashboardOpenPositionsMeta">
+                {t("openPositions.partial", { count: openPositionsMeta?.partialErrors ?? 0 })}
+              </div>
+            ) : null}
+
+            {openPositionsLoadError ? (
+              <div className="dashboardOpenPositionsState">{t("openPositions.unavailable")}</div>
+            ) : loading && openPositions.length === 0 ? (
+              <div className="dashboardOpenPositionsState">{t("openPositions.loading")}</div>
+            ) : filteredOpenPositions.length === 0 ? (
+              <div className="dashboardOpenPositionsState">{t("openPositions.none")}</div>
+            ) : (
+              <>
+                <div className="dashboardOpenPositionsTableWrap">
+                  <table className="dashboardOpenPositionsTable">
+                    <thead>
+                      <tr>
+                        <th>{t("openPositions.columns.exchange")}</th>
+                        <th>{t("openPositions.columns.side")}</th>
+                        <th>{t("openPositions.columns.size")}</th>
+                        <th>{t("openPositions.columns.entry")}</th>
+                        <th>{t("openPositions.columns.stopLoss")}</th>
+                        <th>{t("openPositions.columns.takeProfit")}</th>
+                        <th>{t("openPositions.columns.pnl")}</th>
+                        <th>{t("openPositions.columns.action")}</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {filteredOpenPositions.map((item) => {
+                        const pnl = Number(item.unrealizedPnl ?? 0);
+                        const pnlClass =
+                          pnl > 0
+                            ? "dashboardOpenPositionsPnlPositive"
+                            : pnl < 0
+                              ? "dashboardOpenPositionsPnlNegative"
+                              : "";
+                        return (
+                          <tr key={`${item.exchangeAccountId}-${item.symbol}-${item.side}`} className="dashboardOpenPositionsRow">
+                            <td>
+                              <span className="dashboardOpenPositionsExchange">
+                                {item.exchange.toUpperCase()} · {item.exchangeLabel}
+                              </span>
+                              <span className="dashboardOpenPositionsSymbol">{item.symbol}</span>
+                            </td>
+                            <td>
+                              <span
+                                className={`dashboardOpenPositionsSide ${
+                                  item.side === "long"
+                                    ? "dashboardOpenPositionsSideLong"
+                                    : "dashboardOpenPositionsSideShort"
+                                }`}
+                              >
+                                {item.side === "long" ? t("openPositions.side.long") : t("openPositions.side.short")}
+                              </span>
+                            </td>
+                            <td>{formatAmount(item.size, locale, 6)}</td>
+                            <td>{formatAmount(item.entryPrice, locale, 4)}</td>
+                            <td>{formatAmount(item.stopLossPrice, locale, 4)}</td>
+                            <td>{formatAmount(item.takeProfitPrice, locale, 4)}</td>
+                            <td className={pnlClass}>{formatSignedUsdt(item.unrealizedPnl, locale)}</td>
+                            <td>
+                              <Link
+                                href={`${withLocalePath("/trade", locale)}?exchangeAccountId=${encodeURIComponent(item.exchangeAccountId)}&symbol=${encodeURIComponent(item.symbol)}`}
+                                className="dashboardOpenPositionsAction"
+                              >
+                                {t("openPositions.actionOpenDesk")}
+                              </Link>
+                            </td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+
+                <div className="dashboardOpenPositionsMobileList">
+                  {filteredOpenPositions.map((item) => {
+                    const pnl = Number(item.unrealizedPnl ?? 0);
+                    const pnlClass =
+                      pnl > 0
+                        ? "dashboardOpenPositionsPnlPositive"
+                        : pnl < 0
+                          ? "dashboardOpenPositionsPnlNegative"
+                          : "";
+                    return (
+                      <article
+                        key={`${item.exchangeAccountId}-${item.symbol}-${item.side}-mobile`}
+                        className="dashboardOpenPositionsMobileCard"
+                      >
+                        <div className="dashboardOpenPositionsMobileHead">
+                          <strong>{item.symbol}</strong>
+                          <span
+                            className={`dashboardOpenPositionsSide ${
+                              item.side === "long"
+                                ? "dashboardOpenPositionsSideLong"
+                                : "dashboardOpenPositionsSideShort"
+                            }`}
+                          >
+                            {item.side === "long" ? t("openPositions.side.long") : t("openPositions.side.short")}
+                          </span>
+                        </div>
+                        <div className="dashboardOpenPositionsMobileMeta">
+                          {item.exchange.toUpperCase()} · {item.exchangeLabel}
+                        </div>
+                        <div className="dashboardOpenPositionsMobileGrid">
+                          <span>{t("openPositions.columns.size")}: {formatAmount(item.size, locale, 6)}</span>
+                          <span>{t("openPositions.columns.entry")}: {formatAmount(item.entryPrice, locale, 4)}</span>
+                          <span>{t("openPositions.columns.stopLoss")}: {formatAmount(item.stopLossPrice, locale, 4)}</span>
+                          <span>{t("openPositions.columns.takeProfit")}: {formatAmount(item.takeProfitPrice, locale, 4)}</span>
+                          <span className={pnlClass}>{t("openPositions.columns.pnl")}: {formatSignedUsdt(item.unrealizedPnl, locale)}</span>
+                        </div>
+                        <Link
+                          href={`${withLocalePath("/trade", locale)}?exchangeAccountId=${encodeURIComponent(item.exchangeAccountId)}&symbol=${encodeURIComponent(item.symbol)}`}
+                          className="dashboardOpenPositionsAction"
+                        >
+                          {t("openPositions.actionOpenDesk")}
+                        </Link>
+                      </article>
+                    );
+                  })}
+                </div>
+              </>
+            )}
+          </div>
+        </section>
+      ) : null}
     </div>
   );
 }

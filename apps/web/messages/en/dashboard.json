@@ -43,6 +43,31 @@
     "unavailable": "News currently unavailable.",
     "none": "No news entries available."
   },
+  "openPositions": {
+    "title": "Open Positions",
+    "subtitle": "All currently open positions across exchanges.",
+    "filterLabel": "Exchange",
+    "filterAll": "All Exchanges",
+    "loading": "Loading open positions...",
+    "unavailable": "Open positions are currently unavailable.",
+    "none": "No open positions found.",
+    "partial": "Some exchanges are currently unavailable ({count}).",
+    "actionOpenDesk": "Open Desk",
+    "side": {
+      "long": "Long",
+      "short": "Short"
+    },
+    "columns": {
+      "exchange": "Exchange",
+      "side": "Side",
+      "size": "Size",
+      "entry": "Entry",
+      "stopLoss": "SL",
+      "takeProfit": "TP",
+      "pnl": "PnL",
+      "action": "Action"
+    }
+  },
   "performance": {
     "title": "Account Performance",
     "subtitle": "Aggregated equity trend with core risk metrics.",

@@ -40,7 +40,7 @@ type SidebarItem = {
 type SidebarSectionItem = {
   key: string;
   label: string;
-  href: "#overview" | "#risk-alerts" | "#market-context" | "#accounts";
+  href: "#overview" | "#risk-alerts" | "#market-context" | "#accounts" | "#open-positions";
   icon: SidebarIconName;
 };
 
@@ -301,13 +301,22 @@ export default function AppSidebar({
   }, [isDashboardRoute, pathname]);
 
   const dashboardSections = useMemo<SidebarSectionItem[]>(() => {
-    return [
+    const sections: SidebarSectionItem[] = [
       { key: "overview", label: tDashboard("title"), href: "#overview", icon: "overview" },
       { key: "risk-alerts", label: tDashboard("alerts.title"), href: "#risk-alerts", icon: "riskAlerts" },
       { key: "market-context", label: tSidebar("marketContextShort"), href: "#market-context", icon: "marketContext" },
       { key: "accounts", label: tDashboard("stats.exchangeAccounts"), href: "#accounts", icon: "accounts" }
     ];
-  }, [tDashboard, tSidebar]);
+    if (visibility.tradingDesk) {
+      sections.push({
+        key: "open-positions",
+        label: tDashboard("openPositions.title"),
+        href: "#open-positions",
+        icon: "manualTrading"
+      });
+    }
+    return sections;
+  }, [tDashboard, tSidebar, visibility.tradingDesk]);
 
   const quickLinks = useMemo<SidebarItem[]>(() => {
     const items: SidebarItem[] = [];

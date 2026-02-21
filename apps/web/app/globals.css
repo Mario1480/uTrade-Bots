@@ -201,6 +201,12 @@ a { color: inherit; }
   display: flex;
   align-items: center;
   justify-content: center;
+  border-radius: 12px;
+  border-color: var(--calendar-pro-border);
+  background:
+    radial-gradient(circle at 100% -20%, rgba(20, 129, 192, 0.2), transparent 45%),
+    radial-gradient(circle at 0% 120%, rgba(255, 193, 7, 0.14), transparent 45%),
+    linear-gradient(180deg, rgba(8, 20, 30, 0.94), rgba(6, 14, 24, 0.96));
 }
 
 .dashboardFearGreedImage {
@@ -215,6 +221,12 @@ a { color: inherit; }
 .dashboardUttCard {
   display: flex;
   align-items: center;
+  border-radius: 12px;
+  border-color: var(--calendar-pro-border);
+  background:
+    radial-gradient(circle at 100% -20%, rgba(20, 129, 192, 0.2), transparent 45%),
+    radial-gradient(circle at 0% 120%, rgba(255, 193, 7, 0.14), transparent 45%),
+    linear-gradient(180deg, rgba(8, 20, 30, 0.94), rgba(6, 14, 24, 0.96));
 }
 
 .dashboardUttWidgetHost {
@@ -1236,6 +1248,12 @@ a { color: inherit; }
   padding: 14px;
   display: grid;
   gap: 12px;
+  border-radius: 12px;
+  border-color: var(--calendar-pro-border);
+  background:
+    radial-gradient(circle at 100% -20%, rgba(20, 129, 192, 0.2), transparent 45%),
+    radial-gradient(circle at 0% 120%, rgba(255, 193, 7, 0.14), transparent 45%),
+    linear-gradient(180deg, rgba(8, 20, 30, 0.94), rgba(6, 14, 24, 0.96));
 }
 
 .exchangeOverviewHeader {
@@ -1264,10 +1282,10 @@ a { color: inherit; }
 }
 
 .exchangeOverviewStatBlock {
-  border: 1px solid rgba(255,255,255,.08);
+  border: 1px solid rgba(255, 193, 7, 0.22);
   border-radius: 12px;
   padding: 10px;
-  background: rgba(255,255,255,.02);
+  background: rgba(7, 14, 22, 0.72);
 }
 
 .exchangeOverviewStatTitle {
@@ -1304,9 +1322,13 @@ a { color: inherit; }
 }
 
 .exchangeOverviewAlertLink {
-  color: var(--brand);
+  color: #fcd34d;
   text-decoration: none;
   white-space: nowrap;
+}
+
+#open-positions.dashboardSectionAnchor {
+  margin-top: 14px;
 }
 
 .exchangeOverviewActions {
@@ -5119,6 +5141,199 @@ a { color: inherit; }
   justify-content: flex-end;
 }
 
+/* Dashboard open positions card */
+.dashboardOpenPositionsCard {
+  border-radius: 12px;
+  border-color: var(--calendar-pro-border);
+  background:
+    radial-gradient(circle at 100% -20%, rgba(20, 129, 192, 0.2), transparent 45%),
+    radial-gradient(circle at 0% 120%, rgba(255, 193, 7, 0.14), transparent 45%),
+    linear-gradient(180deg, rgba(8, 20, 30, 0.94), rgba(6, 14, 24, 0.96));
+  display: grid;
+  gap: 10px;
+}
+
+.dashboardOpenPositionsHead {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-end;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.dashboardOpenPositionsTitle {
+  font-weight: 700;
+}
+
+.dashboardOpenPositionsSubtitle {
+  margin-top: 2px;
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.dashboardOpenPositionsFilter {
+  display: grid;
+  gap: 4px;
+  min-width: 220px;
+}
+
+.dashboardOpenPositionsFilter span {
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.dashboardOpenPositionsMeta {
+  font-size: 12px;
+  color: #fcd34d;
+}
+
+.dashboardOpenPositionsTableWrap {
+  border: 1px solid rgba(255, 193, 7, 0.2);
+  border-radius: 10px;
+  background: rgba(7, 14, 22, 0.8);
+  max-height: 360px;
+  overflow: auto;
+}
+
+.dashboardOpenPositionsTable {
+  width: 100%;
+  border-collapse: collapse;
+  min-width: 680px;
+}
+
+.dashboardOpenPositionsTable thead th {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  background: rgba(8, 17, 27, 0.98);
+  color: var(--muted);
+  text-align: left;
+  font-size: 12px;
+  font-weight: 600;
+  padding: 9px 10px;
+  border-bottom: 1px solid rgba(255, 193, 7, 0.16);
+}
+
+.dashboardOpenPositionsTable tbody td {
+  padding: 9px 10px;
+  border-top: 1px solid rgba(255, 255, 255, 0.06);
+  font-size: 13px;
+  vertical-align: top;
+}
+
+.dashboardOpenPositionsRow:hover {
+  background: rgba(20, 129, 192, 0.08);
+}
+
+.dashboardOpenPositionsExchange {
+  display: block;
+  font-weight: 600;
+  line-height: 1.3;
+}
+
+.dashboardOpenPositionsSymbol {
+  display: block;
+  margin-top: 2px;
+  font-size: 11px;
+  color: var(--muted);
+  letter-spacing: 0.02em;
+}
+
+.dashboardOpenPositionsSide {
+  display: inline-flex;
+  align-items: center;
+  min-height: 22px;
+  border-radius: 999px;
+  border: 1px solid rgba(255, 193, 7, 0.3);
+  padding: 2px 8px;
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.dashboardOpenPositionsSideLong {
+  border-color: rgba(16, 185, 199, 0.8);
+  color: #67e8f9;
+}
+
+.dashboardOpenPositionsSideShort {
+  border-color: rgba(239, 68, 68, 0.85);
+  color: #fca5a5;
+}
+
+.dashboardOpenPositionsPnlPositive {
+  color: #67e8f9;
+}
+
+.dashboardOpenPositionsPnlNegative {
+  color: #fca5a5;
+}
+
+.dashboardOpenPositionsAction {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 28px;
+  border-radius: 8px;
+  border: 1px solid rgba(255, 193, 7, 0.34);
+  color: #fff;
+  text-decoration: none;
+  padding: 4px 10px;
+  font-size: 12px;
+  background: rgba(255, 255, 255, 0.02);
+}
+
+.dashboardOpenPositionsAction:hover {
+  border-color: rgba(255, 193, 7, 0.58);
+}
+
+.dashboardOpenPositionsAction:focus-visible {
+  outline: 2px solid rgba(255, 193, 7, 0.9);
+  outline-offset: 2px;
+}
+
+.dashboardOpenPositionsState {
+  min-height: 120px;
+  border: 1px dashed rgba(255, 193, 7, 0.28);
+  border-radius: 10px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.dashboardOpenPositionsMobileList {
+  display: none;
+}
+
+.dashboardOpenPositionsMobileCard {
+  border: 1px solid rgba(255, 193, 7, 0.24);
+  border-radius: 10px;
+  background: rgba(7, 14, 22, 0.8);
+  padding: 9px;
+  display: grid;
+  gap: 8px;
+}
+
+.dashboardOpenPositionsMobileHead {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 8px;
+}
+
+.dashboardOpenPositionsMobileMeta {
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.dashboardOpenPositionsMobileGrid {
+  display: grid;
+  gap: 4px;
+  font-size: 12px;
+  color: var(--muted);
+}
+
 /* Dashboard calendar card alignment */
 .dashboardCalendarProCard {
   border-radius: 12px;
@@ -5579,6 +5794,27 @@ a { color: inherit; }
 
   .dashboardPerformanceMetricValue {
     font-size: 17px;
+  }
+
+  .dashboardOpenPositionsHead {
+    align-items: stretch;
+  }
+
+  .dashboardOpenPositionsFilter {
+    min-width: 0;
+  }
+
+  .dashboardOpenPositionsFilter .select {
+    width: 100%;
+  }
+
+  .dashboardOpenPositionsTableWrap {
+    display: none;
+  }
+
+  .dashboardOpenPositionsMobileList {
+    display: grid;
+    gap: 8px;
   }
 
   .newsProFilterGrid {

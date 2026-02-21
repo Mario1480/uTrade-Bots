@@ -1093,6 +1093,19 @@ type DashboardPerformancePoint = {
   includedAccounts: number;
 };
 
+type DashboardOpenPositionItem = {
+  exchangeAccountId: string;
+  exchange: string;
+  exchangeLabel: string;
+  symbol: string;
+  side: "long" | "short";
+  size: number;
+  entryPrice: number | null;
+  stopLossPrice: number | null;
+  takeProfitPrice: number | null;
+  unrealizedPnl: number | null;
+};
+
 type RiskSeverity = "critical" | "warning" | "ok";
 type RiskTrigger = "dailyLoss" | "margin" | "insufficientData";
 
@@ -14629,6 +14642,97 @@ app.get("/dashboard/risk-analysis", requireAuth, async (req, res) => {
     }),
     summary,
     evaluatedAt: new Date().toISOString()
+  });
+});
+
+app.get("/dashboard/open-positions", requireAuth, async (_req, res) => {
+  const user = getUserFromLocals(res);
+  const accounts = await db.exchangeAccount.findMany({
+    where: { userId: user.id },
+    orderBy: [
+      { exchange: "asc" },
+      { label: "asc" },
+      { createdAt: "asc" }
+    ],
+    select: {
+      id: true,
+      exchange: true,
+      label: true
+    }
+  });
+
+  const items: DashboardOpenPositionItem[] = [];
+  const failedExchangeAccountIds: string[] = [];
+
+  const results = await Promise.allSettled(
+    accounts.map(async (account: any) => {
+      const exchangeAccountId = String(account.id);
+      const exchange = String(account.exchange ?? "");
+      const exchangeLabel = String(account.label ?? "").trim() || exchange.toUpperCase();
+      const resolved = await resolveMarketDataTradingAccount(user.id, exchangeAccountId);
+      const adapter = createBitgetAdapter(resolved.marketDataAccount);
+      try {
+        const rows = isPaperTradingAccount(resolved.selectedAccount)
+          ? await listPaperPositions(resolved.selectedAccount, adapter)
+          : await listPositions(adapter);
+
+        return rows.map((row) => ({
+          exchangeAccountId,
+          exchange,
+          exchangeLabel,
+          symbol: String(row.symbol ?? ""),
+          side: row.side === "short" ? "short" : "long",
+          size: Number(row.size ?? 0),
+          entryPrice: toFiniteNumber(row.entryPrice),
+          stopLossPrice: toFiniteNumber(row.stopLossPrice),
+          takeProfitPrice: toFiniteNumber(row.takeProfitPrice),
+          unrealizedPnl: toFiniteNumber(row.unrealizedPnl)
+        }));
+      } finally {
+        await adapter.close();
+      }
+    })
+  );
+
+  for (let index = 0; index < results.length; index += 1) {
+    const result = results[index];
+    const account = accounts[index];
+    if (result.status === "fulfilled") {
+      for (const item of result.value) {
+        if (!(item.symbol.length > 0 && Number.isFinite(item.size) && item.size > 0)) continue;
+        items.push(item);
+      }
+      continue;
+    }
+    if (account?.id) {
+      failedExchangeAccountIds.push(String(account.id));
+    }
+  }
+
+  items.sort((a, b) => {
+    const exchangeDiff = a.exchange.localeCompare(b.exchange);
+    if (exchangeDiff !== 0) return exchangeDiff;
+    const labelDiff = a.exchangeLabel.localeCompare(b.exchangeLabel);
+    if (labelDiff !== 0) return labelDiff;
+    const symbolDiff = a.symbol.localeCompare(b.symbol);
+    if (symbolDiff !== 0) return symbolDiff;
+    return a.side.localeCompare(b.side);
+  });
+
+  const exchanges = accounts.map((account: any) => ({
+    exchangeAccountId: String(account.id),
+    exchange: String(account.exchange ?? ""),
+    label: String(account.label ?? "").trim() || String(account.exchange ?? "").toUpperCase()
+  }));
+
+  return res.json({
+    items,
+    exchanges,
+    meta: {
+      fetchedAt: new Date().toISOString(),
+      partialErrors: failedExchangeAccountIds.length,
+      failedExchangeAccountIds
+    }
   });
 });
 

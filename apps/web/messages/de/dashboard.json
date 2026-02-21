@@ -43,6 +43,31 @@
     "unavailable": "News aktuell nicht verfügbar.",
     "none": "Keine News-Einträge verfügbar."
   },
+  "openPositions": {
+    "title": "Offene Positionen",
+    "subtitle": "Alle aktuell offenen Positionen ueber alle Exchanges.",
+    "filterLabel": "Exchange",
+    "filterAll": "Alle Exchanges",
+    "loading": "Offene Positionen werden geladen...",
+    "unavailable": "Offene Positionen sind aktuell nicht verfuegbar.",
+    "none": "Keine offenen Positionen gefunden.",
+    "partial": "Einige Exchanges sind aktuell nicht verfuegbar ({count}).",
+    "actionOpenDesk": "Desk oeffnen",
+    "side": {
+      "long": "Long",
+      "short": "Short"
+    },
+    "columns": {
+      "exchange": "Exchange",
+      "side": "Side",
+      "size": "Size",
+      "entry": "Entry",
+      "stopLoss": "SL",
+      "takeProfit": "TP",
+      "pnl": "PnL",
+      "action": "Action"
+    }
+  },
   "performance": {
     "title": "Account-Performance",
     "subtitle": "Aggregierter Equity-Verlauf mit Kern-Risiko-Kennzahlen.",
