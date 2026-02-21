@@ -15,6 +15,7 @@
   "sidebar": {
     "quickLinksTitle": "Quick Links",
     "sectionsTitle": "Sections",
+    "snapshotTitle": "System Snapshot",
     "close": "Close sidebar",
     "calendarShort": "Calendar",
     "marketContextShort": "Market Context"

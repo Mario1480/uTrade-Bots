@@ -44,6 +44,23 @@ type SidebarSectionItem = {
   icon: SidebarIconName;
 };
 
+type SidebarDashboardOverviewAccount = {
+  bots?: {
+    running?: number;
+    error?: number;
+  } | null;
+};
+
+type SidebarDashboardOverviewResponse = {
+  accounts?: SidebarDashboardOverviewAccount[];
+};
+
+type SidebarSnapshot = {
+  accounts: number;
+  running: number;
+  errors: number;
+};
+
 function SidebarGlyph({ icon }: { icon: SidebarIconName }) {
   const common = {
     viewBox: "0 0 24 24",
@@ -179,6 +196,12 @@ export default function AppSidebar({
     DEFAULT_ACCESS_SECTION_VISIBILITY
   );
   const [activeSectionHash, setActiveSectionHash] = useState<string>("");
+  const [snapshot, setSnapshot] = useState<SidebarSnapshot>({
+    accounts: 0,
+    running: 0,
+    errors: 0
+  });
+  const [snapshotReady, setSnapshotReady] = useState(false);
   const { pathnameWithoutLocale } = extractLocaleFromPathname(pathname);
   const isDashboardRoute = pathnameWithoutLocale === "/" || pathnameWithoutLocale === "/dashboard";
 
@@ -212,6 +235,49 @@ export default function AppSidebar({
     void loadAccessVisibility();
     return () => {
       mounted = false;
+    };
+  }, []);
+
+  useEffect(() => {
+    let mounted = true;
+
+    async function loadSnapshot() {
+      try {
+        const payload = await apiGet<SidebarDashboardOverviewResponse | SidebarDashboardOverviewAccount[]>(
+          "/dashboard/overview"
+        );
+        if (!mounted) return;
+
+        const accounts = Array.isArray(payload)
+          ? payload
+          : Array.isArray(payload?.accounts)
+            ? payload.accounts
+            : [];
+        const reduced = accounts.reduce(
+          (acc, row) => {
+            acc.accounts += 1;
+            acc.running += Number(row?.bots?.running ?? 0) || 0;
+            acc.errors += Number(row?.bots?.error ?? 0) || 0;
+            return acc;
+          },
+          { accounts: 0, running: 0, errors: 0 }
+        );
+        setSnapshot(reduced);
+        setSnapshotReady(true);
+      } catch {
+        if (!mounted) return;
+        setSnapshotReady(true);
+      }
+    }
+
+    void loadSnapshot();
+    const timer = window.setInterval(() => {
+      void loadSnapshot();
+    }, 20_000);
+
+    return () => {
+      mounted = false;
+      window.clearInterval(timer);
     };
   }, []);
 
@@ -380,6 +446,24 @@ export default function AppSidebar({
               </Link>
             ))}
           </nav>
+        </section>
+
+        <section className="appSidebarSection appSidebarSnapshot" aria-label={tSidebar("snapshotTitle")}>
+          <div className="appSidebarSectionTitle">{tSidebar("snapshotTitle")}</div>
+          <div className="appSidebarSnapshotGrid">
+            <div className="appSidebarSnapshotItem">
+              <span className="appSidebarSnapshotLabel">{tDashboard("stats.exchangeAccounts")}</span>
+              <strong className="appSidebarSnapshotValue">{snapshotReady ? snapshot.accounts : "…"}</strong>
+            </div>
+            <div className="appSidebarSnapshotItem">
+              <span className="appSidebarSnapshotLabel">{tDashboard("stats.runningBots")}</span>
+              <strong className="appSidebarSnapshotValue">{snapshotReady ? snapshot.running : "…"}</strong>
+            </div>
+            <div className="appSidebarSnapshotItem">
+              <span className="appSidebarSnapshotLabel">{tDashboard("stats.botsInError")}</span>
+              <strong className="appSidebarSnapshotValue">{snapshotReady ? snapshot.errors : "…"}</strong>
+            </div>
+          </div>
         </section>
       </div>
     </aside>

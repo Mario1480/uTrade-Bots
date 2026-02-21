@@ -70,6 +70,7 @@ function errMsgWithDetails(e: unknown): string {
 
 export default function SettingsPage() {
   const tMain = useTranslations("system.settingsMain");
+  const tRisk = useTranslations("system.settingsRisk");
   const tCommon = useTranslations("settings.common");
   const locale = useLocale() as AppLocale;
   const pathname = usePathname();
@@ -777,7 +778,12 @@ export default function SettingsPage() {
         <section className="card settingsSection settingsLandingGroupCard settingsLandingGroupSettings">
           <div className="settingsSectionHeader">
             <h3 style={{ margin: 0 }}>{tMain("sections.cexTradingSettings")}</h3>
-            <div className="settingsSectionMeta">{tMain("sections.exchangeSettings")}</div>
+            <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+              <div className="settingsSectionMeta">{tMain("sections.exchangeSettings")}</div>
+              <Link href={withLocalePath("/settings/risk", locale)} className="btn">
+                {tRisk("title")}
+              </Link>
+            </div>
           </div>
           <div className="settingsAccordion">
             <div className={`settingsAccordionItem settingsAccordionItemIntegrations ${openSettingsSections.exchange_settings ? "settingsAccordionItemOpen" : ""}`}>

@@ -545,6 +545,31 @@
       "delete": "Delete"
     }
   },
+  "settingsRisk": {
+    "title": "Risk Profiles",
+    "subtitle": "Account-level hybrid limits for daily loss and margin (analysis only).",
+    "loading": "Loading risk profiles...",
+    "empty": "No exchange accounts found.",
+    "save": "Save",
+    "saved": "Saved.",
+    "reset": "Reset",
+    "columns": {
+      "account": "Account",
+      "dailyWarnPct": "Daily Warn %",
+      "dailyWarnUsd": "Daily Warn $",
+      "dailyCriticalPct": "Daily Critical %",
+      "dailyCriticalUsd": "Daily Critical $",
+      "marginWarnPct": "Margin Warn %",
+      "marginWarnUsd": "Margin Warn $",
+      "marginCriticalPct": "Margin Critical %",
+      "marginCriticalUsd": "Margin Critical $",
+      "actions": "Actions"
+    },
+    "errors": {
+      "load": "Load error:",
+      "invalidNumber": "Please enter valid non-negative numbers."
+    }
+  },
   "trade": {
     "title": "Manual Trading Desk",
     "subtitle": "TradingView + futures order controls.",

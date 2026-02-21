@@ -876,6 +876,28 @@ const dashboardPerformanceQuerySchema = z.object({
   range: z.enum(["24h", "7d", "30d"]).default("24h")
 });
 
+const settingsRiskAccountParamSchema = z.object({
+  exchangeAccountId: z.string().trim().min(1)
+});
+
+const settingsRiskUpdateSchema = z.object({
+  dailyLossWarnPct: z.coerce.number().finite().min(0).optional(),
+  dailyLossWarnUsd: z.coerce.number().finite().min(0).optional(),
+  dailyLossCriticalPct: z.coerce.number().finite().min(0).optional(),
+  dailyLossCriticalUsd: z.coerce.number().finite().min(0).optional(),
+  marginWarnPct: z.coerce.number().finite().min(0).optional(),
+  marginWarnUsd: z.coerce.number().finite().min(0).optional(),
+  marginCriticalPct: z.coerce.number().finite().min(0).optional(),
+  marginCriticalUsd: z.coerce.number().finite().min(0).optional()
+}).refine(
+  (value) => Object.values(value).some((entry) => entry !== undefined),
+  { message: "Provide at least one field to update." }
+);
+
+const dashboardRiskAnalysisQuerySchema = z.object({
+  limit: z.coerce.number().int().min(1).max(10).default(3)
+});
+
 const predictionGenerateSchema = z.object({
   symbol: z.string().trim().min(1),
   marketType: z.enum(["spot", "perp"]),
@@ -1048,6 +1070,32 @@ type DashboardPerformancePoint = {
   includedAccounts: number;
 };
 
+type RiskSeverity = "critical" | "warning" | "ok";
+type RiskTrigger = "dailyLoss" | "margin" | "insufficientData";
+
+type RiskLimitValues = {
+  dailyLossWarnPct: number;
+  dailyLossWarnUsd: number;
+  dailyLossCriticalPct: number;
+  dailyLossCriticalUsd: number;
+  marginWarnPct: number;
+  marginWarnUsd: number;
+  marginCriticalPct: number;
+  marginCriticalUsd: number;
+};
+
+type AccountRiskAssessment = {
+  severity: RiskSeverity;
+  triggers: RiskTrigger[];
+  riskScore: number;
+  insufficientData: boolean;
+  lossUsd: number;
+  lossPct: number | null;
+  marginPct: number | null;
+  availableMarginUsd: number | null;
+  pnlTodayUsd: number | null;
+};
+
 type DashboardAlertSeverity = "critical" | "warning" | "info";
 type DashboardAlertType =
   | "API_DOWN"
@@ -1081,6 +1129,16 @@ const DASHBOARD_PERFORMANCE_RANGE_MS: Record<DashboardPerformanceRange, number> 
   "24h": 24 * 60 * 60 * 1000,
   "7d": 7 * 24 * 60 * 60 * 1000,
   "30d": 30 * 24 * 60 * 60 * 1000
+};
+const DEFAULT_EXCHANGE_ACCOUNT_RISK_LIMITS: RiskLimitValues = {
+  dailyLossWarnPct: 2.5,
+  dailyLossWarnUsd: 250,
+  dailyLossCriticalPct: 5,
+  dailyLossCriticalUsd: 500,
+  marginWarnPct: 20,
+  marginWarnUsd: 200,
+  marginCriticalPct: 10,
+  marginCriticalUsd: 100
 };
 const EXCHANGE_AUTO_SYNC_INTERVAL_MS =
   Math.max(15, Number(process.env.EXCHANGE_AUTO_SYNC_INTERVAL_SECONDS ?? "60")) * 1000;
@@ -4219,6 +4277,149 @@ function toFiniteNumber(value: unknown): number | null {
   return Number.isFinite(parsed) ? parsed : null;
 }
 
+function mergeRiskProfileWithDefaults(profile: any): RiskLimitValues {
+  const asValue = (value: unknown, fallback: number): number => {
+    const parsed = toFiniteNumber(value);
+    if (parsed === null) return fallback;
+    return parsed >= 0 ? parsed : fallback;
+  };
+
+  return {
+    dailyLossWarnPct: asValue(profile?.dailyLossWarnPct, DEFAULT_EXCHANGE_ACCOUNT_RISK_LIMITS.dailyLossWarnPct),
+    dailyLossWarnUsd: asValue(profile?.dailyLossWarnUsd, DEFAULT_EXCHANGE_ACCOUNT_RISK_LIMITS.dailyLossWarnUsd),
+    dailyLossCriticalPct: asValue(profile?.dailyLossCriticalPct, DEFAULT_EXCHANGE_ACCOUNT_RISK_LIMITS.dailyLossCriticalPct),
+    dailyLossCriticalUsd: asValue(profile?.dailyLossCriticalUsd, DEFAULT_EXCHANGE_ACCOUNT_RISK_LIMITS.dailyLossCriticalUsd),
+    marginWarnPct: asValue(profile?.marginWarnPct, DEFAULT_EXCHANGE_ACCOUNT_RISK_LIMITS.marginWarnPct),
+    marginWarnUsd: asValue(profile?.marginWarnUsd, DEFAULT_EXCHANGE_ACCOUNT_RISK_LIMITS.marginWarnUsd),
+    marginCriticalPct: asValue(profile?.marginCriticalPct, DEFAULT_EXCHANGE_ACCOUNT_RISK_LIMITS.marginCriticalPct),
+    marginCriticalUsd: asValue(profile?.marginCriticalUsd, DEFAULT_EXCHANGE_ACCOUNT_RISK_LIMITS.marginCriticalUsd)
+  };
+}
+
+function validateRiskLimitValues(limits: RiskLimitValues): string[] {
+  const issues: string[] = [];
+  if (limits.dailyLossCriticalPct < limits.dailyLossWarnPct) {
+    issues.push("dailyLossCriticalPct must be greater than or equal to dailyLossWarnPct");
+  }
+  if (limits.dailyLossCriticalUsd < limits.dailyLossWarnUsd) {
+    issues.push("dailyLossCriticalUsd must be greater than or equal to dailyLossWarnUsd");
+  }
+  if (limits.marginCriticalPct > limits.marginWarnPct) {
+    issues.push("marginCriticalPct must be less than or equal to marginWarnPct");
+  }
+  if (limits.marginCriticalUsd > limits.marginWarnUsd) {
+    issues.push("marginCriticalUsd must be less than or equal to marginWarnUsd");
+  }
+  return issues;
+}
+
+function riskSeverityRank(value: RiskSeverity): number {
+  if (value === "critical") return 3;
+  if (value === "warning") return 2;
+  return 1;
+}
+
+function computeAccountRiskAssessment(
+  account: {
+    pnlTodayUsd?: unknown;
+    futuresBudgetEquity?: unknown;
+    futuresBudgetAvailableMargin?: unknown;
+  },
+  limits: RiskLimitValues
+): AccountRiskAssessment {
+  const equity = toFiniteNumber(account.futuresBudgetEquity);
+  const availableMargin = toFiniteNumber(account.futuresBudgetAvailableMargin);
+  const pnlToday = toFiniteNumber(account.pnlTodayUsd);
+  const safePnlToday = pnlToday ?? 0;
+  const lossUsd = safePnlToday < 0 ? Number(Math.abs(safePnlToday).toFixed(6)) : 0;
+  const lossPct = equity !== null && equity > 0
+    ? Number(((lossUsd / equity) * 100).toFixed(4))
+    : null;
+  const marginPct = equity !== null && equity > 0 && availableMargin !== null
+    ? Number(((availableMargin / equity) * 100).toFixed(4))
+    : null;
+
+  const dailyWarn =
+    (lossPct !== null && lossPct >= limits.dailyLossWarnPct) ||
+    lossUsd >= limits.dailyLossWarnUsd;
+  const dailyCritical =
+    (lossPct !== null && lossPct >= limits.dailyLossCriticalPct) ||
+    lossUsd >= limits.dailyLossCriticalUsd;
+  const marginWarn =
+    (marginPct !== null && marginPct <= limits.marginWarnPct) ||
+    (availableMargin !== null && availableMargin <= limits.marginWarnUsd);
+  const marginCritical =
+    (marginPct !== null && marginPct <= limits.marginCriticalPct) ||
+    (availableMargin !== null && availableMargin <= limits.marginCriticalUsd);
+
+  const insufficientData =
+    equity === null || equity <= 0 || availableMargin === null;
+  const severity: RiskSeverity =
+    dailyCritical || marginCritical
+      ? "critical"
+      : dailyWarn || marginWarn || insufficientData
+        ? "warning"
+        : "ok";
+
+  const triggers: RiskTrigger[] = [];
+  if (dailyWarn || dailyCritical) triggers.push("dailyLoss");
+  if (marginWarn || marginCritical) triggers.push("margin");
+  if (insufficientData) triggers.push("insufficientData");
+
+  let riskScore = 0;
+  if (dailyWarn) riskScore += 28;
+  if (dailyCritical) riskScore += 72;
+  if (marginWarn) riskScore += 28;
+  if (marginCritical) riskScore += 72;
+  if (insufficientData) riskScore += 25;
+  if (lossPct !== null) {
+    riskScore += Math.max(0, lossPct - limits.dailyLossWarnPct) * 2;
+  }
+  if (lossUsd > 0) {
+    riskScore += (Math.max(0, lossUsd - limits.dailyLossWarnUsd) / Math.max(1, limits.dailyLossWarnUsd)) * 24;
+  }
+  if (marginPct !== null) {
+    riskScore += Math.max(0, limits.marginWarnPct - marginPct) * 2;
+  }
+  if (availableMargin !== null) {
+    riskScore += (Math.max(0, limits.marginWarnUsd - availableMargin) / Math.max(1, limits.marginWarnUsd)) * 20;
+  }
+
+  return {
+    severity,
+    triggers,
+    riskScore: Number(riskScore.toFixed(4)),
+    insufficientData,
+    lossUsd,
+    lossPct,
+    marginPct,
+    availableMarginUsd: availableMargin,
+    pnlTodayUsd: pnlToday
+  };
+}
+
+function toSettingsRiskItem(account: any, limits: RiskLimitValues) {
+  const assessment = computeAccountRiskAssessment(account, limits);
+  return {
+    exchangeAccountId: String(account.id),
+    exchange: String(account.exchange ?? ""),
+    label: String(account.label ?? ""),
+    lastSyncAt: toIso(account.lastUsedAt),
+    limits: {
+      ...limits
+    },
+    preview: {
+      lossUsd: assessment.lossUsd,
+      lossPct: assessment.lossPct,
+      marginPct: assessment.marginPct,
+      availableMarginUsd: assessment.availableMarginUsd,
+      pnlTodayUsd: assessment.pnlTodayUsd,
+      severity: assessment.severity,
+      triggers: assessment.triggers
+    }
+  };
+}
+
 function createDashboardAlertId(parts: Array<string | null | undefined>): string {
   const seed = parts.filter(Boolean).join("|");
   return crypto.createHash("sha1").update(seed).digest("hex").slice(0, 16);
@@ -4465,6 +4666,10 @@ function bucketTimestampBySeconds(at: Date, bucketSeconds: number): Date {
 }
 
 type DashboardPerformanceTotals = Omit<DashboardOverviewTotals, "currency">;
+type BotRealizedAccountSummary = {
+  pnl: number;
+  count: number;
+};
 
 async function aggregateDashboardPerformanceTotalsForUser(userId: string): Promise<DashboardPerformanceTotals> {
   const accounts = await db.exchangeAccount.findMany({
@@ -4519,6 +4724,50 @@ async function aggregateDashboardPerformanceTotalsForUser(userId: string): Promi
     totalTodayPnl: Number(reduced.totalTodayPnl.toFixed(6)),
     includedAccounts: reduced.includedAccounts
   };
+}
+
+async function readBotRealizedPnlTodayByAccount(
+  userId: string,
+  accountIds: string[]
+): Promise<Map<string, BotRealizedAccountSummary>> {
+  if (!Array.isArray(accountIds) || accountIds.length === 0) return new Map();
+  const dayStartUtc = new Date();
+  dayStartUtc.setUTCHours(0, 0, 0, 0);
+  const rows = await ignoreMissingTable(() => db.botTradeHistory.findMany({
+    where: {
+      userId,
+      exchangeAccountId: { in: accountIds },
+      status: "closed",
+      exitTs: { gte: dayStartUtc }
+    },
+    select: {
+      exchangeAccountId: true,
+      realizedPnlUsd: true
+    }
+  }));
+
+  const byAccount = new Map<string, BotRealizedAccountSummary>();
+  for (const row of Array.isArray(rows) ? rows : []) {
+    const exchangeAccountId =
+      typeof (row as any)?.exchangeAccountId === "string" ? String((row as any).exchangeAccountId) : "";
+    if (!exchangeAccountId) continue;
+    const pnl = toFiniteNumber((row as any)?.realizedPnlUsd);
+    if (pnl === null) continue;
+    const current = byAccount.get(exchangeAccountId) ?? { pnl: 0, count: 0 };
+    current.pnl += pnl;
+    current.count += 1;
+    byAccount.set(exchangeAccountId, current);
+  }
+  return byAccount;
+}
+
+function resolveEffectivePnlTodayUsd(rawPnlTodayUsd: unknown, botRealizedToday: BotRealizedAccountSummary | null): number {
+  const exchangePnlToday = toFiniteNumber(rawPnlTodayUsd);
+  if (exchangePnlToday !== null) return exchangePnlToday;
+  if (botRealizedToday && botRealizedToday.count > 0) {
+    return Number(botRealizedToday.pnl.toFixed(6));
+  }
+  return 0;
 }
 
 async function captureDashboardPerformanceSnapshot(userId: string, at: Date): Promise<void> {
@@ -9650,6 +9899,157 @@ app.get("/settings/access-section", requireAuth, async (_req, res) => {
   });
 });
 
+app.get("/settings/risk", requireAuth, async (_req, res) => {
+  const user = getUserFromLocals(res);
+  const accounts = await db.exchangeAccount.findMany({
+    where: { userId: user.id },
+    orderBy: { createdAt: "desc" },
+    select: {
+      id: true,
+      exchange: true,
+      label: true,
+      lastUsedAt: true,
+      futuresBudgetEquity: true,
+      futuresBudgetAvailableMargin: true,
+      pnlTodayUsd: true,
+      riskProfile: {
+        select: {
+          dailyLossWarnPct: true,
+          dailyLossWarnUsd: true,
+          dailyLossCriticalPct: true,
+          dailyLossCriticalUsd: true,
+          marginWarnPct: true,
+          marginWarnUsd: true,
+          marginCriticalPct: true,
+          marginCriticalUsd: true
+        }
+      }
+    }
+  });
+  const accountIds = accounts
+    .map((row: any) => (typeof row.id === "string" ? String(row.id) : ""))
+    .filter(Boolean);
+  const botRealizedByAccount = await readBotRealizedPnlTodayByAccount(user.id, accountIds);
+
+  return res.json({
+    defaults: DEFAULT_EXCHANGE_ACCOUNT_RISK_LIMITS,
+    items: accounts.map((account: any) => {
+      const botRealizedToday = botRealizedByAccount.get(String(account.id)) ?? null;
+      const effectivePnlTodayUsd = resolveEffectivePnlTodayUsd(account.pnlTodayUsd, botRealizedToday);
+      return toSettingsRiskItem(
+        {
+          ...account,
+          pnlTodayUsd: effectivePnlTodayUsd
+        },
+        mergeRiskProfileWithDefaults(account.riskProfile)
+      );
+    })
+  });
+});
+
+app.put("/settings/risk/:exchangeAccountId", requireAuth, async (req, res) => {
+  const user = getUserFromLocals(res);
+  const params = settingsRiskAccountParamSchema.safeParse(req.params ?? {});
+  if (!params.success) {
+    return res.status(400).json({ error: "invalid_params", details: params.error.flatten() });
+  }
+  const parsed = settingsRiskUpdateSchema.safeParse(req.body ?? {});
+  if (!parsed.success) {
+    return res.status(400).json({ error: "invalid_payload", details: parsed.error.flatten() });
+  }
+
+  const account = await db.exchangeAccount.findFirst({
+    where: {
+      id: params.data.exchangeAccountId,
+      userId: user.id
+    },
+    select: {
+      id: true,
+      exchange: true,
+      label: true,
+      lastUsedAt: true,
+      futuresBudgetEquity: true,
+      futuresBudgetAvailableMargin: true,
+      pnlTodayUsd: true,
+      riskProfile: {
+        select: {
+          dailyLossWarnPct: true,
+          dailyLossWarnUsd: true,
+          dailyLossCriticalPct: true,
+          dailyLossCriticalUsd: true,
+          marginWarnPct: true,
+          marginWarnUsd: true,
+          marginCriticalPct: true,
+          marginCriticalUsd: true
+        }
+      }
+    }
+  });
+  if (!account) {
+    return res.status(404).json({ error: "exchange_account_not_found" });
+  }
+
+  const current = mergeRiskProfileWithDefaults(account.riskProfile);
+  const next: RiskLimitValues = {
+    dailyLossWarnPct: parsed.data.dailyLossWarnPct ?? current.dailyLossWarnPct,
+    dailyLossWarnUsd: parsed.data.dailyLossWarnUsd ?? current.dailyLossWarnUsd,
+    dailyLossCriticalPct: parsed.data.dailyLossCriticalPct ?? current.dailyLossCriticalPct,
+    dailyLossCriticalUsd: parsed.data.dailyLossCriticalUsd ?? current.dailyLossCriticalUsd,
+    marginWarnPct: parsed.data.marginWarnPct ?? current.marginWarnPct,
+    marginWarnUsd: parsed.data.marginWarnUsd ?? current.marginWarnUsd,
+    marginCriticalPct: parsed.data.marginCriticalPct ?? current.marginCriticalPct,
+    marginCriticalUsd: parsed.data.marginCriticalUsd ?? current.marginCriticalUsd
+  };
+
+  const issues = validateRiskLimitValues(next);
+  if (issues.length > 0) {
+    return res.status(400).json({
+      error: "invalid_payload",
+      details: { issues }
+    });
+  }
+
+  await db.exchangeAccountRiskProfile.upsert({
+    where: {
+      exchangeAccountId: account.id
+    },
+    create: {
+      exchangeAccountId: account.id,
+      dailyLossWarnPct: next.dailyLossWarnPct,
+      dailyLossWarnUsd: next.dailyLossWarnUsd,
+      dailyLossCriticalPct: next.dailyLossCriticalPct,
+      dailyLossCriticalUsd: next.dailyLossCriticalUsd,
+      marginWarnPct: next.marginWarnPct,
+      marginWarnUsd: next.marginWarnUsd,
+      marginCriticalPct: next.marginCriticalPct,
+      marginCriticalUsd: next.marginCriticalUsd
+    },
+    update: {
+      dailyLossWarnPct: next.dailyLossWarnPct,
+      dailyLossWarnUsd: next.dailyLossWarnUsd,
+      dailyLossCriticalPct: next.dailyLossCriticalPct,
+      dailyLossCriticalUsd: next.dailyLossCriticalUsd,
+      marginWarnPct: next.marginWarnPct,
+      marginWarnUsd: next.marginWarnUsd,
+      marginCriticalPct: next.marginCriticalPct,
+      marginCriticalUsd: next.marginCriticalUsd
+    }
+  });
+  const botRealizedByAccount = await readBotRealizedPnlTodayByAccount(user.id, [account.id]);
+  const botRealizedToday = botRealizedByAccount.get(account.id) ?? null;
+  const effectivePnlTodayUsd = resolveEffectivePnlTodayUsd(account.pnlTodayUsd, botRealizedToday);
+
+  return res.json({
+    item: toSettingsRiskItem(
+      {
+        ...account,
+        pnlTodayUsd: effectivePnlTodayUsd
+      },
+      next
+    )
+  });
+});
+
 function normalizeAiPromptSettingsPayload(
   payload: AdminAiPromptsPayload,
   nowIso: string
@@ -14001,6 +14401,141 @@ app.get("/dashboard/performance", requireAuth, async (req, res) => {
     range,
     bucketSeconds: DASHBOARD_PERFORMANCE_SNAPSHOT_BUCKET_SECONDS,
     points
+  });
+});
+
+app.get("/dashboard/risk-analysis", requireAuth, async (req, res) => {
+  const user = getUserFromLocals(res);
+  const parsed = dashboardRiskAnalysisQuerySchema.safeParse(req.query ?? {});
+  if (!parsed.success) {
+    return res.status(400).json({ error: "invalid_query", details: parsed.error.flatten() });
+  }
+
+  const [accounts, bots] = await Promise.all([
+    db.exchangeAccount.findMany({
+      where: { userId: user.id },
+      select: {
+        id: true,
+        exchange: true,
+        label: true,
+        lastUsedAt: true,
+        futuresBudgetEquity: true,
+        futuresBudgetAvailableMargin: true,
+        pnlTodayUsd: true,
+        riskProfile: {
+          select: {
+            dailyLossWarnPct: true,
+            dailyLossWarnUsd: true,
+            dailyLossCriticalPct: true,
+            dailyLossCriticalUsd: true,
+            marginWarnPct: true,
+            marginWarnUsd: true,
+            marginCriticalPct: true,
+            marginCriticalUsd: true
+          }
+        }
+      }
+    }),
+    db.bot.findMany({
+      where: {
+        userId: user.id,
+        exchangeAccountId: {
+          not: null
+        }
+      },
+      select: {
+        exchangeAccountId: true,
+        runtime: {
+          select: {
+            updatedAt: true
+          }
+        }
+      }
+    })
+  ]);
+  const accountIds = accounts
+    .map((row: any) => (typeof row.id === "string" ? String(row.id) : ""))
+    .filter(Boolean);
+  const botRealizedByAccount = await readBotRealizedPnlTodayByAccount(user.id, accountIds);
+
+  const runtimeUpdatedByAccountId = new Map<string, Date>();
+  for (const bot of bots) {
+    const exchangeAccountId =
+      typeof bot.exchangeAccountId === "string" && bot.exchangeAccountId.trim()
+        ? bot.exchangeAccountId.trim()
+        : null;
+    if (!exchangeAccountId) continue;
+    const runtimeUpdatedAt = bot.runtime?.updatedAt ?? null;
+    if (!runtimeUpdatedAt) continue;
+    const current = runtimeUpdatedByAccountId.get(exchangeAccountId);
+    if (!current || runtimeUpdatedAt.getTime() > current.getTime()) {
+      runtimeUpdatedByAccountId.set(exchangeAccountId, runtimeUpdatedAt);
+    }
+  }
+
+  const rankedItems = (Array.isArray(accounts) ? accounts : []).map((account: any) => {
+    const botRealizedToday = botRealizedByAccount.get(String(account.id)) ?? null;
+    const effectivePnlTodayUsd = resolveEffectivePnlTodayUsd(account.pnlTodayUsd, botRealizedToday);
+    const limits = mergeRiskProfileWithDefaults(account.riskProfile);
+    const assessment = computeAccountRiskAssessment(
+      {
+        ...account,
+        pnlTodayUsd: effectivePnlTodayUsd
+      },
+      limits
+    );
+    const runtimeUpdatedAt = runtimeUpdatedByAccountId.get(String(account.id)) ?? null;
+    const recencyTs = Math.max(
+      account.lastUsedAt instanceof Date ? account.lastUsedAt.getTime() : 0,
+      runtimeUpdatedAt instanceof Date ? runtimeUpdatedAt.getTime() : 0
+    );
+    return {
+      exchangeAccountId: String(account.id),
+      exchange: String(account.exchange ?? ""),
+      label: String(account.label ?? ""),
+      severity: assessment.severity,
+      triggers: assessment.triggers,
+      riskScore: assessment.riskScore,
+      insufficientData: assessment.insufficientData,
+      lossUsd: assessment.lossUsd,
+      lossPct: assessment.lossPct,
+      marginPct: assessment.marginPct,
+      availableMarginUsd: assessment.availableMarginUsd,
+      pnlTodayUsd: assessment.pnlTodayUsd,
+      lastSyncAt: toIso(account.lastUsedAt),
+      runtimeUpdatedAt: toIso(runtimeUpdatedAt),
+      _recencyTs: recencyTs
+    };
+  });
+
+  const summary = rankedItems.reduce(
+    (acc, item) => {
+      if (item.severity === "critical") acc.critical += 1;
+      else if (item.severity === "warning") acc.warning += 1;
+      else acc.ok += 1;
+      return acc;
+    },
+    {
+      critical: 0,
+      warning: 0,
+      ok: 0
+    }
+  );
+
+  rankedItems.sort((a, b) => {
+    const severityDiff = riskSeverityRank(b.severity) - riskSeverityRank(a.severity);
+    if (severityDiff !== 0) return severityDiff;
+    if (b.riskScore !== a.riskScore) return b.riskScore - a.riskScore;
+    return b._recencyTs - a._recencyTs;
+  });
+
+  return res.json({
+    items: rankedItems.slice(0, parsed.data.limit).map((item) => {
+      const { _recencyTs: _dropRecencyTs, ...publicItem } = item;
+      return publicItem;
+    }),
+    summary,
+    evaluatedAt: new Date().toISOString()
   });
 });
 

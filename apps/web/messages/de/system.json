@@ -545,6 +545,31 @@
       "delete": "Löschen"
     }
   },
+  "settingsRisk": {
+    "title": "Risk-Profile",
+    "subtitle": "Account-spezifische Hybrid-Limits fuer Tagesverlust und Margin (nur Analyse).",
+    "loading": "Risk-Profile werden geladen...",
+    "empty": "Keine Exchange-Accounts gefunden.",
+    "save": "Speichern",
+    "saved": "Gespeichert.",
+    "reset": "Zuruecksetzen",
+    "columns": {
+      "account": "Account",
+      "dailyWarnPct": "Daily Warn %",
+      "dailyWarnUsd": "Daily Warn $",
+      "dailyCriticalPct": "Daily Critical %",
+      "dailyCriticalUsd": "Daily Critical $",
+      "marginWarnPct": "Margin Warn %",
+      "marginWarnUsd": "Margin Warn $",
+      "marginCriticalPct": "Margin Critical %",
+      "marginCriticalUsd": "Margin Critical $",
+      "actions": "Aktionen"
+    },
+    "errors": {
+      "load": "Ladefehler:",
+      "invalidNumber": "Bitte gueltige, nicht-negative Zahlen eingeben."
+    }
+  },
   "trade": {
     "title": "Manuelles Trading Desk",
     "subtitle": "Chart + Futures-Order-Steuerung.",

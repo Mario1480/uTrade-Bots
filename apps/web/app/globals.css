@@ -4285,6 +4285,44 @@ a { color: inherit; }
   gap: 6px;
 }
 
+.appSidebarSnapshot {
+  border: 1px solid rgba(255, 193, 7, 0.22);
+  border-radius: 10px;
+  padding: 8px;
+  background:
+    radial-gradient(circle at 100% -20%, rgba(20, 129, 192, 0.2), transparent 52%),
+    linear-gradient(180deg, rgba(8, 18, 30, 0.9), rgba(6, 14, 24, 0.95));
+}
+
+.appSidebarSnapshotGrid {
+  display: grid;
+  gap: 6px;
+}
+
+.appSidebarSnapshotItem {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.02);
+  padding: 6px 8px;
+}
+
+.appSidebarSnapshotLabel {
+  font-size: 11px;
+  color: var(--muted);
+  line-height: 1.2;
+}
+
+.appSidebarSnapshotValue {
+  font-size: 17px;
+  font-weight: 700;
+  line-height: 1;
+  font-variant-numeric: tabular-nums;
+}
+
 .appSidebarSectionTitle {
   font-size: 11px;
   letter-spacing: 0.08em;
@@ -4782,6 +4820,10 @@ a { color: inherit; }
   grid-column: span 2;
 }
 
+.dashboardInsightSpan3 {
+  grid-column: 1 / -1;
+}
+
 /* Dashboard performance panel */
 .dashboardPerformanceProCard {
   border-radius: 12px;
@@ -4801,6 +4843,18 @@ a { color: inherit; }
   align-items: flex-start;
   gap: 10px;
   flex-wrap: wrap;
+}
+
+.dashboardPerformanceBody {
+  display: grid;
+  grid-template-columns: minmax(0, 2.2fr) minmax(320px, 1fr);
+  gap: 12px;
+}
+
+.dashboardPerformanceMain {
+  min-width: 0;
+  display: grid;
+  gap: 10px;
 }
 
 .dashboardPerformanceTitle {
@@ -4849,11 +4903,11 @@ a { color: inherit; }
 }
 
 .dashboardPerformanceChartWrap {
-  min-height: 230px;
+  min-height: 270px;
 }
 
 .dashboardPerformanceState {
-  min-height: 230px;
+  min-height: 270px;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -4889,6 +4943,22 @@ a { color: inherit; }
   line-height: 1.1;
   color: var(--text);
   letter-spacing: 0.01em;
+  display: inline-flex;
+  align-items: baseline;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.dashboardPerformanceMetricValueNumber {
+  font-variant-numeric: tabular-nums;
+}
+
+.dashboardPerformanceMetricValueUnit {
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  color: var(--muted);
+  text-transform: uppercase;
 }
 
 .dashboardPerformanceMetricValuePositive {
@@ -4897,6 +4967,149 @@ a { color: inherit; }
 
 .dashboardPerformanceMetricValueNegative {
   color: #fca5a5;
+}
+
+.dashboardLossAnalysisCard {
+  border: 1px solid rgba(255, 193, 7, 0.28);
+  border-radius: 12px;
+  background:
+    radial-gradient(circle at 100% -30%, rgba(20, 129, 192, 0.25), transparent 48%),
+    linear-gradient(180deg, rgba(6, 14, 24, 0.92), rgba(5, 10, 19, 0.98));
+  padding: 10px;
+  display: grid;
+  gap: 10px;
+  align-content: start;
+}
+
+.dashboardLossAnalysisHead {
+  display: grid;
+  gap: 6px;
+}
+
+.dashboardLossAnalysisTitle {
+  font-weight: 700;
+  font-size: 14px;
+}
+
+.dashboardLossAnalysisSubtitle {
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.dashboardLossSummary {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.dashboardLossAnalysisList {
+  display: grid;
+  gap: 8px;
+}
+
+.dashboardLossRow {
+  border: 1px solid rgba(255, 193, 7, 0.2);
+  border-radius: 10px;
+  background: rgba(7, 13, 22, 0.8);
+  padding: 8px 9px;
+  display: grid;
+  gap: 7px;
+}
+
+.dashboardLossRowTop {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 8px;
+}
+
+.dashboardLossRowAccount {
+  font-size: 13px;
+  font-weight: 700;
+  line-height: 1.3;
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  overflow: hidden;
+}
+
+.dashboardLossSeverity {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 24px;
+  border-radius: 999px;
+  border: 1px solid rgba(148, 163, 184, 0.5);
+  padding: 3px 9px;
+  font-size: 11px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.dashboardLossSeverityCritical {
+  border-color: rgba(239, 68, 68, 0.85);
+  color: #fca5a5;
+}
+
+.dashboardLossSeverityWarning {
+  border-color: rgba(245, 158, 11, 0.85);
+  color: #fcd34d;
+}
+
+.dashboardLossSeverityOk {
+  border-color: rgba(16, 185, 199, 0.85);
+  color: #67e8f9;
+}
+
+.dashboardLossTriggerRow {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.dashboardLossTriggerChip {
+  display: inline-flex;
+  align-items: center;
+  min-height: 22px;
+  border-radius: 999px;
+  border: 1px solid rgba(20, 129, 192, 0.6);
+  color: #7dd3fc;
+  background: rgba(20, 129, 192, 0.12);
+  font-size: 11px;
+  padding: 2px 8px;
+}
+
+.dashboardLossMeta {
+  display: grid;
+  gap: 4px;
+  font-size: 12px;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.dashboardLossRowAction {
+  width: fit-content;
+  font-size: 12px;
+  text-decoration: none;
+  color: #fff;
+  border: 1px solid rgba(255, 193, 7, 0.36);
+  border-radius: 8px;
+  padding: 5px 9px;
+  background: rgba(255, 255, 255, 0.02);
+}
+
+.dashboardLossRowAction:hover {
+  border-color: rgba(255, 193, 7, 0.62);
+}
+
+.dashboardLossRowAction:focus-visible {
+  outline: 2px solid rgba(255, 193, 7, 0.9);
+  outline-offset: 2px;
+}
+
+.dashboardLossAnalysisFooter {
+  display: flex;
+  justify-content: flex-end;
 }
 
 /* Dashboard calendar card alignment */
@@ -5192,6 +5405,124 @@ a { color: inherit; }
   color: var(--muted);
 }
 
+.settingsRiskPage {
+  display: grid;
+  gap: 12px;
+}
+
+.settingsRiskHead {
+  display: grid;
+  gap: 4px;
+}
+
+.settingsRiskState {
+  color: var(--muted);
+}
+
+.settingsRiskTable {
+  display: grid;
+  gap: 8px;
+}
+
+.settingsRiskRow {
+  display: grid;
+  grid-template-columns: minmax(170px, 1.2fr) repeat(8, minmax(92px, 0.72fr)) minmax(200px, 1fr);
+  gap: 8px;
+  border: 1px solid rgba(255, 193, 7, 0.18);
+  border-radius: 10px;
+  background: rgba(7, 14, 22, 0.84);
+  padding: 9px;
+  align-items: start;
+}
+
+.settingsRiskRowHead {
+  border-color: rgba(255, 193, 7, 0.32);
+  background: rgba(255, 193, 7, 0.06);
+  font-size: 12px;
+  color: var(--muted);
+  font-weight: 600;
+}
+
+.settingsRiskAccountCell {
+  min-width: 0;
+}
+
+.settingsRiskAccountLabel {
+  font-size: 13px;
+  font-weight: 700;
+  line-height: 1.3;
+}
+
+.settingsRiskAccountMeta {
+  color: var(--muted);
+  font-size: 12px;
+  margin-top: 2px;
+}
+
+.settingsRiskCell {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+}
+
+.settingsRiskCellLabel {
+  display: none;
+  font-size: 11px;
+  color: var(--muted);
+}
+
+.settingsRiskInput {
+  min-height: 36px;
+  padding: 7px 8px;
+}
+
+.settingsRiskActions {
+  display: grid;
+  gap: 6px;
+  align-content: start;
+}
+
+.settingsRiskActions .btn {
+  min-height: 34px;
+  padding: 7px 10px;
+}
+
+.settingsRiskRowMessage {
+  font-size: 12px;
+  color: var(--muted);
+  line-height: 1.3;
+  overflow-wrap: anywhere;
+}
+
+@media (max-width: 1200px) {
+  .settingsRiskRow {
+    grid-template-columns: minmax(170px, 1.2fr) repeat(4, minmax(96px, 1fr));
+  }
+
+  .settingsRiskRowHead {
+    display: none;
+  }
+
+  .settingsRiskCellLabel {
+    display: block;
+  }
+
+  .settingsRiskActions {
+    grid-column: 1 / -1;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .settingsRiskRowMessage {
+    grid-column: 1 / -1;
+  }
+}
+
+@media (max-width: 1000px) {
+  .dashboardPerformanceBody {
+    grid-template-columns: 1fr;
+  }
+}
+
 @media (max-width: 767px) {
   .calendarProFilterGrid {
     grid-template-columns: 1fr;
@@ -5226,9 +5557,13 @@ a { color: inherit; }
     grid-column: span 1;
   }
 
+  .dashboardInsightSpan3 {
+    grid-column: span 1;
+  }
+
   .dashboardPerformanceChartWrap,
   .dashboardPerformanceState {
-    min-height: 200px;
+    min-height: 220px;
   }
 
   .dashboardPerformanceMetrics {
@@ -5258,5 +5593,18 @@ a { color: inherit; }
     -webkit-line-clamp: 2;
     -webkit-box-orient: vertical;
     overflow: hidden;
+  }
+
+  .settingsRiskRow {
+    grid-template-columns: 1fr;
+  }
+
+  .settingsRiskAccountCell {
+    padding-bottom: 4px;
+    border-bottom: 1px dashed rgba(255, 255, 255, 0.08);
+  }
+
+  .settingsRiskActions {
+    grid-template-columns: 1fr;
   }
 }

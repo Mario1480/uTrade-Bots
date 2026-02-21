@@ -6,7 +6,7 @@
     "calendar": "Kalender",
     "news": "News",
     "manualTrading": "Manuelles Trading",
-    "newFuturesBot": "Neuer Futures Bot"
+    "Bots": "Bots"
   },
   "stats": {
     "exchangeAccounts": "Exchange-Accounts",
@@ -57,6 +57,24 @@
       "margin": "Verfügbare Margin",
       "pnl": "Heutiges PnL",
       "bots": "Laufende / Fehler-Bots"
+    }
+  },
+  "lossAnalysis": {
+    "title": "Account Loss Analysis",
+    "subtitle": "Top-Risiko-Accounts nach Hybrid-Triggern fuer Tagesverlust und Margin.",
+    "openRiskSettings": "Risk-Einstellungen oeffnen",
+    "loading": "Risikoanalyse wird geladen...",
+    "unavailable": "Risikoanalyse aktuell nicht verfuegbar.",
+    "none": "Keine Accounts fuer die Risikoanalyse verfuegbar.",
+    "severity": {
+      "critical": "Kritisch",
+      "warning": "Warnung",
+      "ok": "OK"
+    },
+    "triggers": {
+      "dailyLoss": "Tagesverlust",
+      "margin": "Margin",
+      "insufficientData": "Zu wenig Daten"
     }
   },
   "fearGreed": {

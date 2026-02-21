@@ -6,7 +6,7 @@
     "calendar": "Calendar",
     "news": "News",
     "manualTrading": "Manual Trading",
-    "newFuturesBot": "New Futures Bot"
+    "Bots": "Bots"
   },
   "stats": {
     "exchangeAccounts": "Exchange Accounts",
@@ -57,6 +57,24 @@
       "margin": "Available Margin",
       "pnl": "Today PnL",
       "bots": "Running / Error Bots"
+    }
+  },
+  "lossAnalysis": {
+    "title": "Account Loss Analysis",
+    "subtitle": "Top risky accounts by hybrid daily-loss and margin triggers.",
+    "openRiskSettings": "Open Risk Settings",
+    "loading": "Loading account risk analysis...",
+    "unavailable": "Risk analysis currently unavailable.",
+    "none": "No accounts available for risk analysis.",
+    "severity": {
+      "critical": "Critical",
+      "warning": "Warning",
+      "ok": "OK"
+    },
+    "triggers": {
+      "dailyLoss": "Daily Loss",
+      "margin": "Margin",
+      "insufficientData": "Insufficient Data"
     }
   },
   "fearGreed": {

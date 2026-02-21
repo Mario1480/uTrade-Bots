@@ -17,7 +17,7 @@ import ExchangeAccountOverviewCard, {
 type ExchangeAccountOverview
 } from "./components/ExchangeAccountOverviewCard";
 import AlertsFeed, { type DashboardAlert } from "../components/dashboard/AlertsFeed";
-import TotalsBar, { type DashboardTotals } from "../components/dashboard/TotalsBar";
+import type { DashboardTotals } from "../components/dashboard/TotalsBar";
 import { ApiError, apiGet } from "../lib/api";
 import { withLocalePath, type AppLocale } from "../i18n/config";
 import {
@@ -82,6 +82,36 @@ type DashboardPerformanceChartPoint = {
   totalEquity: number;
 };
 
+type DashboardRiskAnalysisTrigger = "dailyLoss" | "margin" | "insufficientData";
+type DashboardRiskAnalysisSeverity = "critical" | "warning" | "ok";
+
+type DashboardRiskAnalysisItem = {
+  exchangeAccountId: string;
+  exchange: string;
+  label: string;
+  severity: DashboardRiskAnalysisSeverity;
+  triggers: DashboardRiskAnalysisTrigger[];
+  riskScore: number;
+  insufficientData: boolean;
+  lossUsd: number;
+  lossPct: number | null;
+  marginPct: number | null;
+  availableMarginUsd: number | null;
+  pnlTodayUsd: number | null;
+  lastSyncAt: string | null;
+  runtimeUpdatedAt: string | null;
+};
+
+type DashboardRiskAnalysisResponse = {
+  items: DashboardRiskAnalysisItem[];
+  summary: {
+    critical: number;
+    warning: number;
+    ok: number;
+  };
+  evaluatedAt: string;
+};
+
 const PERFORMANCE_RANGES: PerformanceRange[] = ["24h", "7d", "30d"];
 
 function errMsg(e: unknown): string {
@@ -100,6 +130,32 @@ function formatUsdt(value: number | null | undefined, locale: AppLocale, decimal
     minimumFractionDigits: decimals,
     maximumFractionDigits: decimals
   }).format(Number(value))} USDT`;
+}
+
+function formatAmount(value: number | null | undefined, locale: AppLocale, decimals = 2): string {
+  if (!Number.isFinite(Number(value))) return "—";
+  return new Intl.NumberFormat(resolveIntlLocale(locale), {
+    minimumFractionDigits: decimals,
+    maximumFractionDigits: decimals
+  }).format(Number(value));
+}
+
+function formatSignedUsdt(value: number | null | undefined, locale: AppLocale, decimals = 2): string {
+  if (!Number.isFinite(Number(value))) return "—";
+  const numeric = Number(value);
+  const sign = numeric > 0 ? "+" : "";
+  return `${sign}${new Intl.NumberFormat(resolveIntlLocale(locale), {
+    minimumFractionDigits: decimals,
+    maximumFractionDigits: decimals
+  }).format(numeric)} USDT`;
+}
+
+function formatPct(value: number | null | undefined, locale: AppLocale, decimals = 2): string {
+  if (!Number.isFinite(Number(value))) return "—";
+  return `${new Intl.NumberFormat(resolveIntlLocale(locale), {
+    minimumFractionDigits: decimals,
+    maximumFractionDigits: decimals
+  }).format(Number(value))}%`;
 }
 
 function formatPerformanceAxisTick(ts: number, range: PerformanceRange, locale: AppLocale): string {
@@ -149,6 +205,13 @@ export default function Page() {
   const [performanceRange, setPerformanceRange] = useState<PerformanceRange>("24h");
   const [performancePoints, setPerformancePoints] = useState<DashboardPerformancePoint[]>([]);
   const [performanceLoadError, setPerformanceLoadError] = useState(false);
+  const [riskItems, setRiskItems] = useState<DashboardRiskAnalysisItem[]>([]);
+  const [riskSummary, setRiskSummary] = useState<DashboardRiskAnalysisResponse["summary"]>({
+    critical: 0,
+    warning: 0,
+    ok: 0
+  });
+  const [riskLoadError, setRiskLoadError] = useState(false);
   const [accessVisibility, setAccessVisibility] = useState<AccessSectionVisibility>(
     DEFAULT_ACCESS_SECTION_VISIBILITY
   );
@@ -169,6 +232,7 @@ export default function Page() {
           calendarResult,
           newsResult,
           performanceResult,
+          riskResult,
           accessResult
         ] = await Promise.allSettled([
           apiGet<DashboardOverviewResponse | ExchangeAccountOverview[]>("/dashboard/overview"),
@@ -178,6 +242,7 @@ export default function Page() {
           ),
           apiGet<DashboardNewsResponse>("/news?mode=all&limit=3&page=0"),
           apiGet<DashboardPerformanceResponse>(`/dashboard/performance?range=${performanceRange}`),
+          apiGet<DashboardRiskAnalysisResponse>("/dashboard/risk-analysis?limit=3"),
           apiGet<{ visibility?: AccessSectionVisibility }>("/settings/access-section")
         ]);
         if (!mounted) return;
@@ -222,6 +287,24 @@ export default function Page() {
           setPerformancePoints([]);
           setPerformanceLoadError(true);
         }
+        if (riskResult.status === "fulfilled") {
+          const items = Array.isArray(riskResult.value?.items) ? riskResult.value.items : [];
+          setRiskItems(items);
+          setRiskSummary(
+            riskResult.value?.summary && typeof riskResult.value.summary === "object"
+              ? {
+                  critical: Number(riskResult.value.summary.critical ?? 0) || 0,
+                  warning: Number(riskResult.value.summary.warning ?? 0) || 0,
+                  ok: Number(riskResult.value.summary.ok ?? 0) || 0
+                }
+              : { critical: 0, warning: 0, ok: 0 }
+          );
+          setRiskLoadError(false);
+        } else {
+          setRiskItems([]);
+          setRiskSummary({ critical: 0, warning: 0, ok: 0 });
+          setRiskLoadError(true);
+        }
         if (accessResult.status === "fulfilled" && accessResult.value?.visibility) {
           setAccessVisibility({
             tradingDesk: accessResult.value.visibility.tradingDesk !== false,
@@ -238,6 +321,9 @@ export default function Page() {
         setError(errMsg(e));
         setPerformancePoints([]);
         setPerformanceLoadError(true);
+        setRiskItems([]);
+        setRiskSummary({ critical: 0, warning: 0, ok: 0 });
+        setRiskLoadError(true);
       } finally {
         if (mounted) setLoading(false);
       }
@@ -329,12 +415,16 @@ export default function Page() {
     return performancePoints.length > 0 ? performancePoints[performancePoints.length - 1] : null;
   }, [performancePoints]);
 
+  const visibleAlerts = useMemo(() => {
+    return alerts.filter((item) => item.severity === "critical" || item.severity === "warning");
+  }, [alerts]);
+
   const fallbackPerformanceTotals = useMemo(() => {
     return {
       totalEquity: latestPerformancePoint?.totalEquity ?? resolvedTotals?.totalEquity ?? null,
       totalAvailableMargin:
         latestPerformancePoint?.totalAvailableMargin ?? resolvedTotals?.totalAvailableMargin ?? null,
-      totalTodayPnl: latestPerformancePoint?.totalTodayPnl ?? resolvedTotals?.totalTodayPnl ?? null
+      totalTodayPnl: resolvedTotals?.totalTodayPnl ?? latestPerformancePoint?.totalTodayPnl ?? null
     };
   }, [latestPerformancePoint, resolvedTotals]);
 
@@ -349,48 +439,32 @@ export default function Page() {
             </div>
           </div>
           <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+            {accessVisibility.tradingDesk ? (
+              <Link href={withLocalePath("/trade", locale)} className="btn">{t("actions.manualTrading")}</Link>
+            ) : null}            
             {accessVisibility.predictionsDashboard ? (
               <Link href={withLocalePath("/predictions", locale)} className="btn">{t("actions.predictions")}</Link>
             ) : null}
+            {accessVisibility.bots ? (
+              <Link href={withLocalePath("/bots", locale)} className="btn">{t("actions.Bots")}</Link>
+            ) : null}            
             {accessVisibility.economicCalendar ? (
               <Link href={withLocalePath("/calendar", locale)} className="btn">{t("actions.calendar")}</Link>
             ) : null}
             {accessVisibility.news ? (
               <Link href={withLocalePath("/news", locale)} className="btn">{t("actions.news")}</Link>
             ) : null}
-            {accessVisibility.tradingDesk ? (
-              <Link href={withLocalePath("/trade", locale)} className="btn">{t("actions.manualTrading")}</Link>
-            ) : null}
-            {accessVisibility.bots ? (
-              <Link href={withLocalePath("/bots/new", locale)} className="btn btnPrimary">{t("actions.newFuturesBot")}</Link>
-            ) : null}
           </div>
         </div>
-        <div className="statGrid">
-          <div className="card statCard">
-            <div className="statLabel">{t("stats.exchangeAccounts")}</div>
-            <div className="statValue">{loading ? "…" : headlineStats.accounts}</div>
-          </div>
-          <div className="card statCard">
-            <div className="statLabel">{t("stats.runningBots")}</div>
-            <div className="statValue">{loading ? "…" : headlineStats.running}</div>
-          </div>
-          <div className="card statCard">
-            <div className="statLabel">{t("stats.botsInError")}</div>
-            <div className="statValue">{loading ? "…" : headlineStats.errors}</div>
-          </div>
-        </div>
-
-        <TotalsBar totals={resolvedTotals} />
       </section>
 
       <section id="risk-alerts" className="dashboardSectionAnchor">
-        <AlertsFeed alerts={alerts} />
+        {visibleAlerts.length > 0 ? <AlertsFeed alerts={visibleAlerts} /> : null}
       </section>
 
       <section id="market-context" className="dashboardSectionAnchor">
         <div className="dashboardInsightsGrid">
-          <div className="card dashboardInsightCard dashboardPerformanceProCard dashboardInsightSpan2">
+          <div className="card dashboardInsightCard dashboardPerformanceProCard dashboardInsightSpan3">
             <div className="dashboardPerformanceHead">
               <div>
                 <div className="dashboardPerformanceTitle">{t("performance.title")}</div>
@@ -417,106 +491,205 @@ export default function Page() {
                 ))}
               </div>
             </div>
+            <div className="dashboardPerformanceBody">
+              <div className="dashboardPerformanceMain">
+                {performanceLoadError ? (
+                  <div className="dashboardPerformanceState">{t("performance.unavailable")}</div>
+                ) : loading && performanceChartData.length === 0 ? (
+                  <div className="dashboardPerformanceState">{t("performance.loading")}</div>
+                ) : performanceChartData.length === 0 ? (
+                  <div className="dashboardPerformanceState">{t("performance.none")}</div>
+                ) : (
+                  <div className="dashboardPerformanceChartWrap">
+                    <ResponsiveContainer width="100%" height={270}>
+                      <AreaChart data={performanceChartData} margin={{ top: 6, right: 10, left: 0, bottom: 0 }}>
+                        <defs>
+                          <linearGradient id="dashboardPerformanceAreaFill" x1="0" y1="0" x2="0" y2="1">
+                            <stop offset="5%" stopColor="rgba(16, 185, 199, 0.78)" />
+                            <stop offset="95%" stopColor="rgba(16, 185, 199, 0.05)" />
+                          </linearGradient>
+                        </defs>
+                        <CartesianGrid stroke="rgba(255,255,255,0.06)" vertical={false} />
+                        <XAxis
+                          dataKey="ts"
+                          type="number"
+                          domain={["dataMin", "dataMax"]}
+                          tickFormatter={(value) =>
+                            formatPerformanceAxisTick(Number(value), performanceRange, locale)
+                          }
+                          stroke="rgba(255,255,255,0.48)"
+                          tickLine={false}
+                          axisLine={false}
+                          minTickGap={24}
+                        />
+                        <YAxis
+                          tickFormatter={(value) => formatUsdt(Number(value), locale, 0)}
+                          stroke="rgba(255,255,255,0.48)"
+                          tickLine={false}
+                          axisLine={false}
+                          width={86}
+                        />
+                        <Tooltip
+                          formatter={(value: number) => [formatUsdt(value, locale), t("performance.metrics.equity")]}
+                          labelFormatter={(value) =>
+                            new Date(Number(value)).toLocaleString(resolveIntlLocale(locale), {
+                              month: "2-digit",
+                              day: "2-digit",
+                              hour: "2-digit",
+                              minute: "2-digit"
+                            })
+                          }
+                          contentStyle={{
+                            border: "1px solid rgba(255,193,7,0.34)",
+                            background: "rgba(7, 17, 26, 0.95)",
+                            borderRadius: 10
+                          }}
+                          labelStyle={{ color: "var(--muted)" }}
+                          itemStyle={{ color: "var(--text)" }}
+                        />
+                        <Area
+                          type="monotone"
+                          dataKey="totalEquity"
+                          stroke="rgba(16, 185, 199, 0.95)"
+                          strokeWidth={2}
+                          fill="url(#dashboardPerformanceAreaFill)"
+                          dot={false}
+                          activeDot={{ r: 4 }}
+                        />
+                      </AreaChart>
+                    </ResponsiveContainer>
+                  </div>
+                )}
 
-            {performanceLoadError ? (
-              <div className="dashboardPerformanceState">{t("performance.unavailable")}</div>
-            ) : loading && performanceChartData.length === 0 ? (
-              <div className="dashboardPerformanceState">{t("performance.loading")}</div>
-            ) : performanceChartData.length === 0 ? (
-              <div className="dashboardPerformanceState">{t("performance.none")}</div>
-            ) : (
-              <div className="dashboardPerformanceChartWrap">
-                <ResponsiveContainer width="100%" height={230}>
-                  <AreaChart data={performanceChartData} margin={{ top: 6, right: 10, left: 0, bottom: 0 }}>
-                    <defs>
-                      <linearGradient id="dashboardPerformanceAreaFill" x1="0" y1="0" x2="0" y2="1">
-                        <stop offset="5%" stopColor="rgba(16, 185, 199, 0.78)" />
-                        <stop offset="95%" stopColor="rgba(16, 185, 199, 0.05)" />
-                      </linearGradient>
-                    </defs>
-                    <CartesianGrid stroke="rgba(255,255,255,0.06)" vertical={false} />
-                    <XAxis
-                      dataKey="ts"
-                      type="number"
-                      domain={["dataMin", "dataMax"]}
-                      tickFormatter={(value) =>
-                        formatPerformanceAxisTick(Number(value), performanceRange, locale)
-                      }
-                      stroke="rgba(255,255,255,0.48)"
-                      tickLine={false}
-                      axisLine={false}
-                      minTickGap={24}
-                    />
-                    <YAxis
-                      tickFormatter={(value) => formatUsdt(Number(value), locale, 0)}
-                      stroke="rgba(255,255,255,0.48)"
-                      tickLine={false}
-                      axisLine={false}
-                      width={86}
-                    />
-                    <Tooltip
-                      formatter={(value: number) => [formatUsdt(value, locale), t("performance.metrics.equity")]}
-                      labelFormatter={(value) =>
-                        new Date(Number(value)).toLocaleString(resolveIntlLocale(locale), {
-                          month: "2-digit",
-                          day: "2-digit",
-                          hour: "2-digit",
-                          minute: "2-digit"
-                        })
-                      }
-                      contentStyle={{
-                        border: "1px solid rgba(255,193,7,0.34)",
-                        background: "rgba(7, 17, 26, 0.95)",
-                        borderRadius: 10
-                      }}
-                      labelStyle={{ color: "var(--muted)" }}
-                      itemStyle={{ color: "var(--text)" }}
-                    />
-                    <Area
-                      type="monotone"
-                      dataKey="totalEquity"
-                      stroke="rgba(16, 185, 199, 0.95)"
-                      strokeWidth={2}
-                      fill="url(#dashboardPerformanceAreaFill)"
-                      dot={false}
-                      activeDot={{ r: 4 }}
-                    />
-                  </AreaChart>
-                </ResponsiveContainer>
+                <div className="dashboardPerformanceMetrics">
+                  <div className="dashboardPerformanceMetricCard">
+                    <div className="dashboardPerformanceMetricLabel">{t("performance.metrics.equity")}</div>
+                    <div className="dashboardPerformanceMetricValue">
+                      <span className="dashboardPerformanceMetricValueNumber">
+                        {formatAmount(fallbackPerformanceTotals.totalEquity, locale)}
+                      </span>
+                      <span className="dashboardPerformanceMetricValueUnit">USDT</span>
+                    </div>
+                  </div>
+                  <div className="dashboardPerformanceMetricCard">
+                    <div className="dashboardPerformanceMetricLabel">{t("performance.metrics.margin")}</div>
+                    <div className="dashboardPerformanceMetricValue">
+                      <span className="dashboardPerformanceMetricValueNumber">
+                        {formatAmount(fallbackPerformanceTotals.totalAvailableMargin, locale)}
+                      </span>
+                      <span className="dashboardPerformanceMetricValueUnit">USDT</span>
+                    </div>
+                  </div>
+                  <div className="dashboardPerformanceMetricCard">
+                    <div className="dashboardPerformanceMetricLabel">{t("performance.metrics.pnl")}</div>
+                    <div
+                      className={`dashboardPerformanceMetricValue ${
+                        Number(fallbackPerformanceTotals.totalTodayPnl ?? 0) < 0
+                        ? "dashboardPerformanceMetricValueNegative"
+                        : "dashboardPerformanceMetricValuePositive"
+                    }`}
+                  >
+                      <span className="dashboardPerformanceMetricValueNumber">
+                        {formatAmount(fallbackPerformanceTotals.totalTodayPnl, locale)}
+                      </span>
+                      <span className="dashboardPerformanceMetricValueUnit">USDT</span>
+                    </div>
+                  </div>
+                  <div className="dashboardPerformanceMetricCard">
+                    <div className="dashboardPerformanceMetricLabel">{t("performance.metrics.bots")}</div>
+                    <div className="dashboardPerformanceMetricValue">
+                      {headlineStats.running} / {headlineStats.errors}
+                    </div>
+                  </div>
+                </div>
               </div>
-            )}
 
-            <div className="dashboardPerformanceMetrics">
-              <div className="dashboardPerformanceMetricCard">
-                <div className="dashboardPerformanceMetricLabel">{t("performance.metrics.equity")}</div>
-                <div className="dashboardPerformanceMetricValue">
-                  {formatUsdt(fallbackPerformanceTotals.totalEquity, locale)}
+              <aside className="dashboardLossAnalysisCard">
+                <div className="dashboardLossAnalysisHead">
+                  <div className="dashboardLossAnalysisTitle">{t("lossAnalysis.title")}</div>
+                  <div className="dashboardLossAnalysisSubtitle">{t("lossAnalysis.subtitle")}</div>
+                  <div className="dashboardLossSummary">
+                    <span className="dashboardLossSeverity dashboardLossSeverityCritical">
+                      {t("lossAnalysis.severity.critical")}: {riskSummary.critical}
+                    </span>
+                    <span className="dashboardLossSeverity dashboardLossSeverityWarning">
+                      {t("lossAnalysis.severity.warning")}: {riskSummary.warning}
+                    </span>
+                    <span className="dashboardLossSeverity dashboardLossSeverityOk">
+                      {t("lossAnalysis.severity.ok")}: {riskSummary.ok}
+                    </span>
+                  </div>
                 </div>
-              </div>
-              <div className="dashboardPerformanceMetricCard">
-                <div className="dashboardPerformanceMetricLabel">{t("performance.metrics.margin")}</div>
-                <div className="dashboardPerformanceMetricValue">
-                  {formatUsdt(fallbackPerformanceTotals.totalAvailableMargin, locale)}
+
+                {riskLoadError ? (
+                  <div className="dashboardPerformanceState">{t("lossAnalysis.unavailable")}</div>
+                ) : loading && riskItems.length === 0 ? (
+                  <div className="dashboardPerformanceState">{t("lossAnalysis.loading")}</div>
+                ) : riskItems.length === 0 ? (
+                  <div className="dashboardPerformanceState">{t("lossAnalysis.none")}</div>
+                ) : (
+                  <div className="dashboardLossAnalysisList">
+                    {riskItems.map((item) => (
+                      <div key={item.exchangeAccountId} className="dashboardLossRow">
+                        <div className="dashboardLossRowTop">
+                          <div className="dashboardLossRowAccount">
+                            {item.label} · {item.exchange.toUpperCase()}
+                          </div>
+                          <span
+                            className={`dashboardLossSeverity ${
+                              item.severity === "critical"
+                                ? "dashboardLossSeverityCritical"
+                                : item.severity === "warning"
+                                  ? "dashboardLossSeverityWarning"
+                                  : "dashboardLossSeverityOk"
+                            }`}
+                          >
+                            {item.severity === "critical"
+                              ? t("lossAnalysis.severity.critical")
+                              : item.severity === "warning"
+                                ? t("lossAnalysis.severity.warning")
+                                : t("lossAnalysis.severity.ok")}
+                          </span>
+                        </div>
+                        <div className="dashboardLossTriggerRow">
+                          {item.triggers.map((trigger) => (
+                            <span key={`${item.exchangeAccountId}-${trigger}`} className="dashboardLossTriggerChip">
+                              {trigger === "dailyLoss"
+                                ? t("lossAnalysis.triggers.dailyLoss")
+                                : trigger === "margin"
+                                  ? t("lossAnalysis.triggers.margin")
+                                  : t("lossAnalysis.triggers.insufficientData")}
+                            </span>
+                          ))}
+                        </div>
+                        <div className="dashboardLossMeta">
+                          <span>
+                            {t("performance.metrics.pnl")}: {formatSignedUsdt(item.pnlTodayUsd, locale)}
+                          </span>
+                          <span>
+                            {t("lossAnalysis.triggers.dailyLoss")}: {formatUsdt(item.lossUsd, locale)} ({formatPct(item.lossPct, locale)})
+                          </span>
+                          <span>
+                            {t("lossAnalysis.triggers.margin")}: {formatPct(item.marginPct, locale)}
+                          </span>
+                        </div>
+                        <Link
+                          href={`${withLocalePath("/trade", locale)}?exchangeAccountId=${encodeURIComponent(item.exchangeAccountId)}`}
+                          className="dashboardLossRowAction"
+                        >
+                          {t("actions.manualTrading")}
+                        </Link>
+                      </div>
+                    ))}
+                  </div>
+                )}
+
+                <div className="dashboardLossAnalysisFooter">
+                  <Link href={withLocalePath("/settings/risk", locale)} className="btn">
+                    {t("lossAnalysis.openRiskSettings")}
+                  </Link>
                 </div>
-              </div>
-              <div className="dashboardPerformanceMetricCard">
-                <div className="dashboardPerformanceMetricLabel">{t("performance.metrics.pnl")}</div>
-                <div
-                  className={`dashboardPerformanceMetricValue ${
-                    Number(fallbackPerformanceTotals.totalTodayPnl ?? 0) < 0
-                      ? "dashboardPerformanceMetricValueNegative"
-                      : "dashboardPerformanceMetricValuePositive"
-                  }`}
-                >
-                  {formatUsdt(fallbackPerformanceTotals.totalTodayPnl, locale)}
-                </div>
-              </div>
-              <div className="dashboardPerformanceMetricCard">
-                <div className="dashboardPerformanceMetricLabel">{t("performance.metrics.bots")}</div>
-                <div className="dashboardPerformanceMetricValue">
-                  {headlineStats.running} / {headlineStats.errors}
-                </div>
-              </div>
+              </aside>
             </div>
           </div>
 

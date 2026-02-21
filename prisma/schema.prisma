@@ -99,8 +99,27 @@ model ExchangeAccount {
   lastSyncErrorAt              DateTime?
   lastSyncErrorMessage         String?
   bots                         Bot[]
+  riskProfile                  ExchangeAccountRiskProfile?
 
   @@index([userId, exchange])
+}
+
+model ExchangeAccountRiskProfile {
+  id                     String          @id @default(cuid())
+  exchangeAccountId      String          @unique @map("exchange_account_id")
+  exchangeAccount        ExchangeAccount @relation(fields: [exchangeAccountId], references: [id], onDelete: Cascade)
+  dailyLossWarnPct       Float           @map("daily_loss_warn_pct")
+  dailyLossWarnUsd       Float           @map("daily_loss_warn_usd")
+  dailyLossCriticalPct   Float           @map("daily_loss_critical_pct")
+  dailyLossCriticalUsd   Float           @map("daily_loss_critical_usd")
+  marginWarnPct          Float           @map("margin_warn_pct")
+  marginWarnUsd          Float           @map("margin_warn_usd")
+  marginCriticalPct      Float           @map("margin_critical_pct")
+  marginCriticalUsd      Float           @map("margin_critical_usd")
+  createdAt              DateTime        @default(now()) @map("created_at")
+  updatedAt              DateTime        @updatedAt @map("updated_at")
+
+  @@map("exchange_account_risk_profiles")
 }
 
 model MarketMakingConfig {
