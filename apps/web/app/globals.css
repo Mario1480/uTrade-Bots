@@ -201,12 +201,6 @@ a { color: inherit; }
   display: flex;
   align-items: center;
   justify-content: center;
-  border-radius: 12px;
-  border-color: var(--calendar-pro-border);
-  background:
-    radial-gradient(circle at 100% -20%, rgba(20, 129, 192, 0.2), transparent 45%),
-    radial-gradient(circle at 0% 120%, rgba(255, 193, 7, 0.14), transparent 45%),
-    linear-gradient(180deg, rgba(8, 20, 30, 0.94), rgba(6, 14, 24, 0.96));
 }
 
 .dashboardFearGreedImage {
@@ -221,12 +215,6 @@ a { color: inherit; }
 .dashboardUttCard {
   display: flex;
   align-items: center;
-  border-radius: 12px;
-  border-color: var(--calendar-pro-border);
-  background:
-    radial-gradient(circle at 100% -20%, rgba(20, 129, 192, 0.2), transparent 45%),
-    radial-gradient(circle at 0% 120%, rgba(255, 193, 7, 0.14), transparent 45%),
-    linear-gradient(180deg, rgba(8, 20, 30, 0.94), rgba(6, 14, 24, 0.96));
 }
 
 .dashboardUttWidgetHost {
@@ -1248,12 +1236,6 @@ a { color: inherit; }
   padding: 14px;
   display: grid;
   gap: 12px;
-  border-radius: 12px;
-  border-color: var(--calendar-pro-border);
-  background:
-    radial-gradient(circle at 100% -20%, rgba(20, 129, 192, 0.2), transparent 45%),
-    radial-gradient(circle at 0% 120%, rgba(255, 193, 7, 0.14), transparent 45%),
-    linear-gradient(180deg, rgba(8, 20, 30, 0.94), rgba(6, 14, 24, 0.96));
 }
 
 .exchangeOverviewHeader {
