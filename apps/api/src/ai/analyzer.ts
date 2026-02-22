@@ -61,6 +61,7 @@ export type AiAnalyzeResult<T> = {
   cacheHit: boolean;
   fallbackUsed: boolean;
   rateLimited: boolean;
+  fallbackReason: string | null;
 };
 
 export async function analyzeWithAiGuards<T>(options: AiAnalyzeOptions<T>): Promise<AiAnalyzeResult<T>> {
@@ -78,7 +79,8 @@ export async function analyzeWithAiGuards<T>(options: AiAnalyzeOptions<T>): Prom
       value: cached.value,
       cacheHit: true,
       fallbackUsed: false,
-      rateLimited: false
+      rateLimited: false,
+      fallbackReason: null
     };
   }
 
@@ -97,7 +99,8 @@ export async function analyzeWithAiGuards<T>(options: AiAnalyzeOptions<T>): Prom
       value: fallbackValue,
       cacheHit: false,
       fallbackUsed: true,
-      rateLimited: true
+      rateLimited: true,
+      fallbackReason: "rate_limited"
     };
   }
 
@@ -120,9 +123,14 @@ export async function analyzeWithAiGuards<T>(options: AiAnalyzeOptions<T>): Prom
       value,
       cacheHit: false,
       fallbackUsed: false,
-      rateLimited: false
+      rateLimited: false,
+      fallbackReason: null
     };
   } catch (error) {
+    const fallbackReasonRaw = String(error ?? "").trim();
+    const fallbackReason = fallbackReasonRaw.startsWith("Error: ")
+      ? fallbackReasonRaw.slice(7)
+      : fallbackReasonRaw;
     const fallbackValue = await options.fallback();
     aiCache.set(options.cacheKey, {
       value: fallbackValue,
@@ -138,8 +146,8 @@ export async function analyzeWithAiGuards<T>(options: AiAnalyzeOptions<T>): Prom
       value: fallbackValue,
       cacheHit: false,
       fallbackUsed: true,
-      rateLimited: false
+      rateLimited: false,
+      fallbackReason: fallbackReason || null
     };
   }
 }
-

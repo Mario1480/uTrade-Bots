@@ -565,6 +565,121 @@ function stripCodeFenceJson(raw: string): string {
   return trimmed.replace(/^```[a-zA-Z]*\s*/, "").replace(/```$/, "").trim();
 }
 
+function extractFirstJsonObject(raw: string): string | null {
+  let start = -1;
+  let depth = 0;
+  let inString = false;
+  let escaped = false;
+
+  for (let i = 0; i < raw.length; i += 1) {
+    const ch = raw[i];
+
+    if (start >= 0) {
+      if (escaped) {
+        escaped = false;
+        continue;
+      }
+      if (ch === "\\") {
+        escaped = true;
+        continue;
+      }
+      if (ch === "\"") {
+        inString = !inString;
+        continue;
+      }
+      if (inString) continue;
+      if (ch === "{") {
+        depth += 1;
+        continue;
+      }
+      if (ch === "}") {
+        depth -= 1;
+        if (depth === 0) {
+          return raw.slice(start, i + 1);
+        }
+      }
+      continue;
+    }
+
+    if (ch === "{") {
+      start = i;
+      depth = 1;
+      inString = false;
+      escaped = false;
+    }
+  }
+  return null;
+}
+
+function normalizeJsonCandidate(raw: string): string {
+  return raw
+    .replace(/[“”]/g, "\"")
+    .replace(/[‘’]/g, "'")
+    .replace(/,\s*([}\]])/g, "$1")
+    .trim();
+}
+
+function countUnclosedBrackets(raw: string): { curlies: number; squares: number } {
+  let curlies = 0;
+  let squares = 0;
+  let inString = false;
+  let escaped = false;
+
+  for (let i = 0; i < raw.length; i += 1) {
+    const ch = raw[i];
+    if (escaped) {
+      escaped = false;
+      continue;
+    }
+    if (ch === "\\") {
+      escaped = true;
+      continue;
+    }
+    if (ch === "\"") {
+      inString = !inString;
+      continue;
+    }
+    if (inString) continue;
+    if (ch === "{") curlies += 1;
+    else if (ch === "}" && curlies > 0) curlies -= 1;
+    else if (ch === "[") squares += 1;
+    else if (ch === "]" && squares > 0) squares -= 1;
+  }
+
+  return { curlies, squares };
+}
+
+function appendMissingClosers(raw: string): string {
+  const unclosed = countUnclosedBrackets(raw);
+  if (unclosed.curlies <= 0 && unclosed.squares <= 0) return raw;
+  return `${raw}${"]".repeat(Math.max(0, unclosed.squares))}${"}".repeat(Math.max(0, unclosed.curlies))}`;
+}
+
+function parseAiResponseJson(raw: string): unknown {
+  const stripped = stripCodeFenceJson(raw);
+  const extracted = extractFirstJsonObject(stripped);
+  const candidates = [
+    stripped,
+    extracted,
+    normalizeJsonCandidate(stripped),
+    extracted ? normalizeJsonCandidate(extracted) : null
+  ].filter((value): value is string => typeof value === "string" && value.trim().length > 0);
+  const uniqueCandidates = [...new Set(candidates)];
+
+  let lastError: unknown = null;
+  for (const candidate of uniqueCandidates) {
+    const variants = [candidate, appendMissingClosers(candidate)];
+    for (const variant of variants) {
+      try {
+        return JSON.parse(variant);
+      } catch (error) {
+        lastError = error;
+      }
+    }
+  }
+  throw (lastError instanceof Error ? lastError : new SyntaxError("invalid_json"));
+}
+
 function collectFeaturePaths(
   value: unknown,
   prefix = "",
@@ -1012,6 +1127,17 @@ function normalizeContextString(value: unknown): string | null {
   return trimmed.length > 0 ? trimmed : null;
 }
 
+function isGpt5Model(model: string): boolean {
+  return model.startsWith("gpt-5");
+}
+
+function resolveExplainerFallbackModel(primaryModel: string): string | null {
+  if (!isGpt5Model(primaryModel)) return null;
+  const fallback = (process.env.AI_FALLBACK_MODEL ?? "gpt-4o-mini").trim();
+  if (!fallback || fallback === primaryModel) return null;
+  return fallback;
+}
+
 function deriveScopeContext(
   input: ExplainerInput,
   explicitContext: AiPromptScopeContext | undefined
@@ -1097,6 +1223,7 @@ export async function generatePredictionExplanation(
   } = preview;
   const fallback = () => fallbackExplain(promptInput);
   const aiModel = await getAiModelAsync();
+  const aiFallbackModel = resolveExplainerFallbackModel(aiModel);
   const callAiFn = deps.callAiFn ?? callAi;
   const traceBase = {
     scope: "prediction_explainer",
@@ -1150,57 +1277,82 @@ export async function generatePredictionExplanation(
       const startedAt = Date.now();
       let raw: string | null = null;
       let parsedJson: unknown = null;
-      let attemptsUsed = 0;
+      let totalCalls = 0;
+      const modelCandidates = aiFallbackModel ? [aiModel, aiFallbackModel] : [aiModel];
       try {
-        let validated: ExplainerOutput | null = null;
-        for (let attempt = 1; attempt <= 2; attempt += 1) {
-          attemptsUsed = attempt;
-          aiAttemptsUsed = attempt;
-          raw = await callAiFn(JSON.stringify(userPayload), {
-            systemMessage,
-            model: aiModel,
-            temperature: 0,
-            timeoutMs: EXPLAINER_TIMEOUT_MS,
-            maxTokens: attempt === 1 ? EXPLAINER_MAX_TOKENS : EXPLAINER_RETRY_MAX_TOKENS
-          });
-
-          try {
-            parsedJson = JSON.parse(stripCodeFenceJson(raw));
-            validated = validateExplainerOutput(
-              parsedJson,
-              promptInput.featureSnapshot,
-              promptInput.prediction
-            );
-            break;
-          } catch (error) {
-            const isInvalidJson = error instanceof SyntaxError;
-            if (isInvalidJson && attempt < 2) {
-              continue;
+        for (let modelIndex = 0; modelIndex < modelCandidates.length; modelIndex += 1) {
+          const currentModel = modelCandidates[modelIndex];
+          let validated: ExplainerOutput | null = null;
+          let modelError: unknown = null;
+          for (let attempt = 1; attempt <= 2; attempt += 1) {
+            totalCalls += 1;
+            aiAttemptsUsed = totalCalls;
+            const callPayload =
+              attempt === 1
+                ? JSON.stringify(userPayload)
+                : [
+                    "Your previous response was not valid JSON.",
+                    "Return only one valid JSON object.",
+                    "Do not use markdown, code fences, or extra text.",
+                    "Use this exact payload:",
+                    JSON.stringify(userPayload)
+                  ].join("\n");
+            try {
+              raw = await callAiFn(callPayload, {
+                systemMessage,
+                model: currentModel,
+                temperature: 0,
+                timeoutMs: EXPLAINER_TIMEOUT_MS,
+                maxTokens: attempt === 1 ? EXPLAINER_MAX_TOKENS : EXPLAINER_RETRY_MAX_TOKENS
+              });
+              parsedJson = parseAiResponseJson(raw);
+              validated = validateExplainerOutput(
+                parsedJson,
+                promptInput.featureSnapshot,
+                promptInput.prediction
+              );
+              break;
+            } catch (error) {
+              modelError = error;
+              if (attempt < 2) {
+                continue;
+              }
             }
-            throw error;
           }
-        }
 
-        if (!validated) {
-          throw new Error("invalid_json");
+          if (validated) {
+            const retryCount = Math.max(0, totalCalls - 1);
+            const retryUsed = retryCount > 0;
+            await recordAiTraceLog({
+              ...traceBase,
+              model: currentModel,
+              userPayload: withTraceMetaPayload(userPayload, retryUsed, retryCount),
+              rawResponse: raw ?? null,
+              parsedResponse: validated,
+              success: true,
+              fallbackUsed: false,
+              cacheHit: false,
+              rateLimited: false,
+              latencyMs: Date.now() - startedAt
+            });
+            return validated;
+          }
+
+          if (modelIndex < modelCandidates.length - 1) {
+            logger.warn("ai_model_fallback_retry", {
+              primary_model: currentModel,
+              fallback_model: modelCandidates[modelIndex + 1],
+              reason: String(modelError ?? "unknown")
+            });
+            continue;
+          }
+
+          throw modelError ?? new Error("invalid_json");
         }
-        const retryCount = Math.max(0, attemptsUsed - 1);
-        const retryUsed = retryCount > 0;
-        await recordAiTraceLog({
-          ...traceBase,
-          userPayload: withTraceMetaPayload(userPayload, retryUsed, retryCount),
-          rawResponse: raw ?? null,
-          parsedResponse: validated,
-          success: true,
-          fallbackUsed: false,
-          cacheHit: false,
-          rateLimited: false,
-          latencyMs: Date.now() - startedAt
-        });
-        return validated;
+        throw new Error("invalid_json");
       } catch (error) {
         const isInvalidJson = error instanceof SyntaxError;
-        const retryCount = Math.max(0, attemptsUsed - 1);
+        const retryCount = Math.max(0, totalCalls - 1);
         const retryUsed = retryCount > 0;
         logger.warn("ai_validation_failed", {
           ai_validation_failed: true,
@@ -1236,9 +1388,15 @@ export async function generatePredictionExplanation(
 
   if (result.fallbackUsed) {
     if (deps.requireSuccessfulAi) {
+      const fallbackReason =
+        typeof result.fallbackReason === "string" && result.fallbackReason.trim()
+          ? result.fallbackReason.trim().replace(/\s+/g, " ").slice(0, 220)
+          : "";
       const reason = result.rateLimited
         ? "rate_limited"
-        : "provider_unavailable_or_invalid_response";
+        : fallbackReason
+          ? `provider_unavailable_or_invalid_response:${fallbackReason}`
+          : "provider_unavailable_or_invalid_response";
       throw new Error(`ai_required_but_unavailable:${reason}`);
     }
     logger.info("ai_fallback_used", {

@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { resetAiAnalyzerState } from "./analyzer.js";
+import { invalidateAiModelCache } from "./provider.js";
 import {
   buildPredictionExplainerPromptPreview,
   fallbackExplain,
@@ -338,6 +339,117 @@ test("fallback path is used on bad JSON", async () => {
   assert.equal(output.disclaimer, "grounded_features_only");
   assert.equal(output.explanation.length <= 1000, true);
   assert.equal(Array.isArray(output.tags), true);
+});
+
+test("embedded JSON in model text is recovered and accepted for ai_only", async () => {
+  resetAiAnalyzerState();
+  const output = await generatePredictionExplanation(
+    {
+      ...baseInput,
+      tsCreated: "2026-02-09T10:00:01.500Z"
+    },
+    {
+      requireSuccessfulAi: true,
+      callAiFn: async () =>
+        [
+          "Sure, here is the result:",
+          JSON.stringify({
+            explanation: "Signal up with moderate confidence and positive trend context.",
+            tags: ["trend_up"],
+            keyDrivers: [{ name: "rsi", value: 57.2 }],
+            aiPrediction: {
+              signal: "up",
+              expectedMovePct: 1.1,
+              confidence: 0.72
+            },
+            disclaimer: "grounded_features_only"
+          }),
+          "done"
+        ].join("\n")
+    }
+  );
+
+  assert.equal(output.disclaimer, "grounded_features_only");
+  assert.equal(output.aiPrediction.signal, "up");
+  assert.equal(output.tags.includes("trend_up"), true);
+});
+
+test("near-valid JSON with trailing comma and missing brace is repaired for ai_only", async () => {
+  resetAiAnalyzerState();
+  const output = await generatePredictionExplanation(
+    {
+      ...baseInput,
+      tsCreated: "2026-02-09T10:00:01.700Z"
+    },
+    {
+      requireSuccessfulAi: true,
+      callAiFn: async () =>
+        [
+          "```json",
+          "{",
+          '  "explanation": "Signal up with moderate confidence.",',
+          '  "tags": ["trend_up",],',
+          '  "keyDrivers": [{"name":"rsi","value":57.2}],',
+          '  "aiPrediction": {"signal":"up","expectedMovePct":1.1,"confidence":0.72},',
+          '  "disclaimer": "grounded_features_only"',
+          "",
+          "```"
+        ].join("\n")
+    }
+  );
+
+  assert.equal(output.disclaimer, "grounded_features_only");
+  assert.equal(output.aiPrediction.signal, "up");
+  assert.equal(output.tags.includes("trend_up"), true);
+});
+
+test("gpt-5 invalid_json retries on fallback model before failing ai_only", async () => {
+  const previousModel = process.env.AI_MODEL;
+  const previousFallbackModel = process.env.AI_FALLBACK_MODEL;
+  process.env.AI_MODEL = "gpt-5-nano";
+  process.env.AI_FALLBACK_MODEL = "gpt-4o-mini";
+  invalidateAiModelCache();
+  resetAiAnalyzerState();
+
+  const usedModels: string[] = [];
+  try {
+    const output = await generatePredictionExplanation(
+      {
+        ...baseInput,
+        tsCreated: "2026-02-09T10:00:01.900Z"
+      },
+      {
+        requireSuccessfulAi: true,
+        callAiFn: async (_payload, options) => {
+          usedModels.push(options?.model ?? "unknown");
+          if (options?.model?.startsWith("gpt-5")) {
+            return "not valid json";
+          }
+          return JSON.stringify({
+            explanation: "Signal up with moderate confidence and positive trend context.",
+            tags: ["trend_up"],
+            keyDrivers: [{ name: "rsi", value: 57.2 }],
+            aiPrediction: {
+              signal: "up",
+              expectedMovePct: 1.1,
+              confidence: 0.72
+            },
+            disclaimer: "grounded_features_only"
+          });
+        }
+      }
+    );
+
+    assert.equal(output.aiPrediction.signal, "up");
+    assert.equal(usedModels[0], "gpt-5-nano");
+    assert.equal(usedModels.includes("gpt-4o-mini"), true);
+  } finally {
+    if (previousModel === undefined) delete process.env.AI_MODEL;
+    else process.env.AI_MODEL = previousModel;
+    if (previousFallbackModel === undefined) delete process.env.AI_FALLBACK_MODEL;
+    else process.env.AI_FALLBACK_MODEL = previousFallbackModel;
+    invalidateAiModelCache();
+  }
 });
 
 test("fallback path is used on timeout error", async () => {
