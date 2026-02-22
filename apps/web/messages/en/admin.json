@@ -583,6 +583,13 @@
     "openAi": {
       "sectionTitle": "OpenAI Key (Global)",
       "statusLabel": "OpenAI status",
+      "modelLabel": "OpenAI model",
+      "modelPlaceholder": "Select model",
+      "modelSave": "Save model",
+      "modelReset": "Reset model",
+      "currentModel": "Current effective model",
+      "currentModelSource": "Model source",
+      "modelOptionsHint": "Model setting is global and applies immediately.",
       "newKey": "New OpenAI API key",
       "save": "Save OpenAI key",
       "envOverrideHint": "ENV `AI_API_KEY` is still set. Remove it from `.env.prod` if you want DB-only key handling."
@@ -599,6 +606,9 @@
       "openAiKeyRequired": "Please enter an OpenAI API key.",
       "openAiKeySaved": "OpenAI API key saved.",
       "openAiKeyRemoved": "OpenAI API key removed.",
+      "openAiModelRequired": "Please select an OpenAI model.",
+      "openAiModelSaved": "OpenAI model saved.",
+      "openAiModelReset": "OpenAI model reset to ENV/default fallback.",
       "confirmClearOpenAi": "Remove the stored OpenAI API key?",
       "fmpKeyRequired": "Please enter an FMP API key.",
       "fmpKeySaved": "FMP API key saved.",

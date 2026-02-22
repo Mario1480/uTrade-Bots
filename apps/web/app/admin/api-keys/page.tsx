@@ -17,6 +17,10 @@ type ApiKeysSettingsResponse = {
   hasOpenAiApiKey: boolean;
   fmpApiKeyMasked: string | null;
   hasFmpApiKey: boolean;
+  openaiModel: string | null;
+  effectiveOpenaiModel: string;
+  effectiveOpenaiModelSource: "db" | "env" | "default";
+  modelOptions: string[];
   updatedAt: string | null;
   envOverride: boolean;
   envOverrideFmp: boolean;
@@ -30,6 +34,7 @@ type ApiKeyHealthResponse = {
   latencyMs?: number;
   httpStatus?: number;
   message: string;
+  model?: string;
 };
 
 export default function AdminApiKeysPage() {
@@ -44,6 +49,15 @@ export default function AdminApiKeysPage() {
   const [openaiApiKey, setOpenaiApiKey] = useState("");
   const [openaiApiKeyMasked, setOpenaiApiKeyMasked] = useState<string | null>(null);
   const [hasOpenAiApiKey, setHasOpenAiApiKey] = useState(false);
+  const [openaiModel, setOpenaiModel] = useState<string>("");
+  const [effectiveOpenaiModel, setEffectiveOpenaiModel] = useState<string>("gpt-4o-mini");
+  const [effectiveOpenaiModelSource, setEffectiveOpenaiModelSource] = useState<"db" | "env" | "default">("default");
+  const [modelOptions, setModelOptions] = useState<string[]>([
+    "gpt-5-nano",
+    "gpt-5-mini",
+    "gpt-4.1-nano",
+    "gpt-4o-mini"
+  ]);
   const [fmpApiKey, setFmpApiKey] = useState("");
   const [fmpApiKeyMasked, setFmpApiKeyMasked] = useState<string | null>(null);
   const [hasFmpApiKey, setHasFmpApiKey] = useState(false);
@@ -54,6 +68,36 @@ export default function AdminApiKeysPage() {
   const [health, setHealth] = useState<ApiKeyHealthResponse | null>(null);
   const [fmpHealthLoading, setFmpHealthLoading] = useState(false);
   const [fmpHealth, setFmpHealth] = useState<ApiKeyHealthResponse | null>(null);
+  const modelSourceBadgeClass =
+    effectiveOpenaiModelSource === "db"
+      ? "badgeOk"
+      : effectiveOpenaiModelSource === "env"
+        ? "badgeWarn"
+        : "badge";
+  const modelSourceBadgeLabel =
+    effectiveOpenaiModelSource === "db"
+      ? "DB"
+      : effectiveOpenaiModelSource === "env"
+        ? "ENV"
+        : "DEFAULT";
+
+  function applyApiKeysSettings(res: ApiKeysSettingsResponse) {
+    setOpenaiApiKeyMasked(res.openaiApiKeyMasked ?? null);
+    setHasOpenAiApiKey(Boolean(res.hasOpenAiApiKey));
+    setFmpApiKeyMasked(res.fmpApiKeyMasked ?? null);
+    setHasFmpApiKey(Boolean(res.hasFmpApiKey));
+    setUpdatedAt(res.updatedAt ?? null);
+    setEnvOverride(Boolean(res.envOverride));
+    setEnvOverrideFmp(Boolean(res.envOverrideFmp));
+    setOpenaiModel(res.openaiModel ?? "");
+    setEffectiveOpenaiModel(res.effectiveOpenaiModel);
+    setEffectiveOpenaiModelSource(res.effectiveOpenaiModelSource);
+    setModelOptions(
+      Array.isArray(res.modelOptions) && res.modelOptions.length > 0
+        ? res.modelOptions
+        : ["gpt-5-nano", "gpt-5-mini", "gpt-4.1-nano", "gpt-4o-mini"]
+    );
+  }
 
   async function loadHealthStatus() {
     setHealthLoading(true);
@@ -104,13 +148,7 @@ export default function AdminApiKeysPage() {
       setIsSuperadmin(true);
 
       const res = await apiGet<ApiKeysSettingsResponse>("/admin/settings/api-keys");
-      setOpenaiApiKeyMasked(res.openaiApiKeyMasked ?? null);
-      setHasOpenAiApiKey(Boolean(res.hasOpenAiApiKey));
-      setFmpApiKeyMasked(res.fmpApiKeyMasked ?? null);
-      setHasFmpApiKey(Boolean(res.hasFmpApiKey));
-      setUpdatedAt(res.updatedAt ?? null);
-      setEnvOverride(Boolean(res.envOverride));
-      setEnvOverrideFmp(Boolean(res.envOverrideFmp));
+      applyApiKeysSettings(res);
       setOpenaiApiKey("");
       setFmpApiKey("");
       await loadHealthStatus();
@@ -140,11 +178,7 @@ export default function AdminApiKeysPage() {
         clearOpenaiApiKey: false
       });
       setOpenaiApiKey("");
-      setOpenaiApiKeyMasked(res.openaiApiKeyMasked ?? null);
-      setHasOpenAiApiKey(Boolean(res.hasOpenAiApiKey));
-      setFmpApiKeyMasked(res.fmpApiKeyMasked ?? null);
-      setHasFmpApiKey(Boolean(res.hasFmpApiKey));
-      setUpdatedAt(res.updatedAt ?? null);
+      applyApiKeysSettings(res);
       setNotice(t("messages.openAiKeySaved"));
       await loadHealthStatus();
     } catch (e) {
@@ -162,11 +196,7 @@ export default function AdminApiKeysPage() {
         clearOpenaiApiKey: true
       });
       setOpenaiApiKey("");
-      setOpenaiApiKeyMasked(res.openaiApiKeyMasked ?? null);
-      setHasOpenAiApiKey(Boolean(res.hasOpenAiApiKey));
-      setFmpApiKeyMasked(res.fmpApiKeyMasked ?? null);
-      setHasFmpApiKey(Boolean(res.hasFmpApiKey));
-      setUpdatedAt(res.updatedAt ?? null);
+      applyApiKeysSettings(res);
       setNotice(t("messages.openAiKeyRemoved"));
       await loadHealthStatus();
     } catch (e) {
@@ -188,11 +218,7 @@ export default function AdminApiKeysPage() {
         clearFmpApiKey: false
       });
       setFmpApiKey("");
-      setOpenaiApiKeyMasked(res.openaiApiKeyMasked ?? null);
-      setHasOpenAiApiKey(Boolean(res.hasOpenAiApiKey));
-      setFmpApiKeyMasked(res.fmpApiKeyMasked ?? null);
-      setHasFmpApiKey(Boolean(res.hasFmpApiKey));
-      setUpdatedAt(res.updatedAt ?? null);
+      applyApiKeysSettings(res);
       setNotice(t("messages.fmpKeySaved"));
       await loadFmpHealthStatus();
     } catch (e) {
@@ -210,13 +236,44 @@ export default function AdminApiKeysPage() {
         clearFmpApiKey: true
       });
       setFmpApiKey("");
-      setOpenaiApiKeyMasked(res.openaiApiKeyMasked ?? null);
-      setHasOpenAiApiKey(Boolean(res.hasOpenAiApiKey));
-      setFmpApiKeyMasked(res.fmpApiKeyMasked ?? null);
-      setHasFmpApiKey(Boolean(res.hasFmpApiKey));
-      setUpdatedAt(res.updatedAt ?? null);
+      applyApiKeysSettings(res);
       setNotice(t("messages.fmpKeyRemoved"));
       await loadFmpHealthStatus();
+    } catch (e) {
+      setError(errMsg(e));
+    }
+  }
+
+  async function saveOpenAiModel() {
+    if (!openaiModel) {
+      setError(t("messages.openAiModelRequired"));
+      return;
+    }
+    setError(null);
+    setNotice(null);
+    try {
+      const res = await apiPut<ApiKeysSettingsResponse>("/admin/settings/api-keys", {
+        openaiModel,
+        clearOpenaiModel: false
+      });
+      applyApiKeysSettings(res);
+      setNotice(t("messages.openAiModelSaved"));
+      await loadHealthStatus();
+    } catch (e) {
+      setError(errMsg(e));
+    }
+  }
+
+  async function resetOpenAiModel() {
+    setError(null);
+    setNotice(null);
+    try {
+      const res = await apiPut<ApiKeysSettingsResponse>("/admin/settings/api-keys", {
+        clearOpenaiModel: true
+      });
+      applyApiKeysSettings(res);
+      setNotice(t("messages.openAiModelReset"));
+      await loadHealthStatus();
     } catch (e) {
       setError(errMsg(e));
     }
@@ -296,6 +353,41 @@ export default function AdminApiKeysPage() {
               {health.message}
             </div>
           ) : null}
+          <div style={{ fontSize: 12, color: "var(--muted)", marginBottom: 8 }}>
+            {t("openAi.currentModel")}: {health?.model ?? effectiveOpenaiModel}
+          </div>
+          <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 10 }}>
+            <span style={{ fontSize: 12, color: "var(--muted)" }}>
+              {t("openAi.currentModelSource")}:
+            </span>
+            <span className={`badge ${modelSourceBadgeClass}`}>{modelSourceBadgeLabel}</span>
+          </div>
+          <label style={{ display: "grid", gap: 6, marginBottom: 10 }}>
+            <span style={{ fontSize: 12, color: "var(--muted)" }}>{t("openAi.modelLabel")}</span>
+            <select
+              className="select"
+              value={openaiModel}
+              onChange={(e) => setOpenaiModel(e.target.value)}
+            >
+              <option value="">{t("openAi.modelPlaceholder")}</option>
+              {modelOptions.map((model) => (
+                <option key={model} value={model}>
+                  {model}
+                </option>
+              ))}
+            </select>
+          </label>
+          <div style={{ fontSize: 12, color: "var(--muted)", marginBottom: 10 }}>
+            {t("openAi.modelOptionsHint")}
+          </div>
+          <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 10 }}>
+            <button className="btn btnPrimary" onClick={() => void saveOpenAiModel()}>
+              {t("openAi.modelSave")}
+            </button>
+            <button className="btn" onClick={() => void resetOpenAiModel()}>
+              {t("openAi.modelReset")}
+            </button>
+          </div>
           {envOverride ? (
             <div style={{ fontSize: 12, color: "#f59e0b", marginBottom: 10 }}>
               {t("openAi.envOverrideHint")}

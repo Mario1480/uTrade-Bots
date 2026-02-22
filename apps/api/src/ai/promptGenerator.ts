@@ -1,4 +1,4 @@
-import { callAi, getAiModel, type CallAiOptions } from "./provider.js";
+import { callAi, getAiModelAsync, type CallAiOptions } from "./provider.js";
 import {
   AI_PROMPT_INDICATOR_OPTIONS,
   type AiPromptDirectionPreference,
@@ -405,7 +405,7 @@ async function summarizeStrategyWithAi(params: {
 export async function generateHybridPromptText(
   input: GenerateHybridPromptTextInput
 ): Promise<GenerateHybridPromptTextResult> {
-  const model = getAiModel();
+  const model = await getAiModelAsync();
   const timeframes = uniqueTimeframes(input.timeframes);
   const runTimeframe = normalizeRunTimeframe(timeframes, input.runTimeframe);
   const callAiFn = input.callAiFn ?? callAi;

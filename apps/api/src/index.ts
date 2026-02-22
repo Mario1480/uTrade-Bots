@@ -42,7 +42,14 @@ import {
 } from "./orchestration.js";
 import { ExchangeSyncError, syncExchangeAccount } from "./exchange-sync.js";
 import { recoverRunningBotJobs } from "./bot-run-recovery.js";
-import { getAiModel, invalidateAiApiKeyCache } from "./ai/provider.js";
+import {
+  OPENAI_ADMIN_MODEL_OPTIONS,
+  getAiModelAsync,
+  invalidateAiApiKeyCache,
+  invalidateAiModelCache,
+  resolveAiModelFromConfig,
+  type OpenAiAdminModel
+} from "./ai/provider.js";
 import {
   buildPredictionExplainerPromptPreview,
   fallbackExplain,
@@ -566,19 +573,25 @@ const adminSmtpTestSchema = z.object({
   to: z.string().trim().email()
 });
 
+const openAiModelSchema = z.enum(OPENAI_ADMIN_MODEL_OPTIONS);
+
 const adminApiKeysSchema = z.object({
   openaiApiKey: z.string().trim().min(10).max(500).optional(),
   clearOpenaiApiKey: z.boolean().default(false),
   fmpApiKey: z.string().trim().min(10).max(500).optional(),
-  clearFmpApiKey: z.boolean().default(false)
+  clearFmpApiKey: z.boolean().default(false),
+  openaiModel: openAiModelSchema.optional(),
+  clearOpenaiModel: z.boolean().default(false)
 }).refine(
   (value) =>
     value.clearOpenaiApiKey ||
     Boolean(value.openaiApiKey) ||
     value.clearFmpApiKey ||
-    Boolean(value.fmpApiKey),
+    Boolean(value.fmpApiKey) ||
+    value.clearOpenaiModel ||
+    Boolean(value.openaiModel),
   {
-    message: "Provide openaiApiKey/fmpApiKey or set a clear flag."
+    message: "Provide openaiApiKey/fmpApiKey/openaiModel or set a clear flag."
   }
 );
 
@@ -2222,6 +2235,7 @@ type StoredSecurityUserOverrides = {
 type StoredApiKeysSettings = {
   openaiApiKeyEnc: string | null;
   fmpApiKeyEnc: string | null;
+  openaiModel: OpenAiAdminModel | null;
 };
 
 type StoredPredictionRefreshSettings = {
@@ -2251,6 +2265,15 @@ type PredictionDefaultsSettingsPublic = {
 };
 
 type ApiKeySource = "env" | "db" | "none";
+type EffectiveOpenAiModelSource = "db" | "env" | "default";
+const OPENAI_ADMIN_MODEL_OPTION_SET = new Set<string>(OPENAI_ADMIN_MODEL_OPTIONS);
+
+function normalizeOpenAiAdminModel(value: unknown): OpenAiAdminModel | null {
+  if (typeof value !== "string") return null;
+  const trimmed = value.trim();
+  if (!OPENAI_ADMIN_MODEL_OPTION_SET.has(trimmed)) return null;
+  return trimmed as OpenAiAdminModel;
+}
 
 function parseStoredSmtpSettings(value: unknown): StoredSmtpSettings {
   const record = parseJsonObject(value);
@@ -2298,9 +2321,11 @@ function parseStoredApiKeysSettings(value: unknown): StoredApiKeysSettings {
     typeof record.fmpApiKeyEnc === "string" && record.fmpApiKeyEnc.trim()
       ? record.fmpApiKeyEnc.trim()
       : null;
+  const openaiModel = normalizeOpenAiAdminModel(record.openaiModel);
   return {
     openaiApiKeyEnc,
-    fmpApiKeyEnc
+    fmpApiKeyEnc,
+    openaiModel
   };
 }
 
@@ -2395,7 +2420,22 @@ function toPublicApiKeysSettings(value: StoredApiKeysSettings) {
     openaiApiKeyMasked,
     hasOpenAiApiKey: Boolean(value.openaiApiKeyEnc),
     fmpApiKeyMasked,
-    hasFmpApiKey: Boolean(value.fmpApiKeyEnc)
+    hasFmpApiKey: Boolean(value.fmpApiKeyEnc),
+    openaiModel: value.openaiModel
+  };
+}
+
+function resolveEffectiveOpenAiModel(settings: StoredApiKeysSettings): {
+  model: string;
+  source: EffectiveOpenAiModelSource;
+} {
+  const resolved = resolveAiModelFromConfig({
+    dbModel: settings.openaiModel,
+    envModel: process.env.AI_MODEL
+  });
+  return {
+    model: resolved.model,
+    source: resolved.source
   };
 }
 
@@ -3685,7 +3725,7 @@ async function generateAutoPredictionForUser(
       entitlements: strategyEntitlements,
       kind: selectedKind,
       strategyId: selectedId,
-      aiModel: selectedKind === "ai" ? getAiModel() : null,
+      aiModel: selectedKind === "ai" ? await getAiModelAsync() : null,
       compositeNodes:
         selectedKind === "composite"
           ? countCompositeStrategyNodes(selectedCompositeStrategy)
@@ -7455,7 +7495,7 @@ async function refreshPredictionStateForTemplate(params: {
       entitlements: strategyEntitlements,
       kind: requestedStrategyKindForAccess,
       strategyId: requestedStrategyIdForAccess,
-      aiModel: requestedStrategyKindForAccess === "ai" ? getAiModel() : null,
+      aiModel: requestedStrategyKindForAccess === "ai" ? await getAiModelAsync() : null,
       compositeNodes:
         requestedStrategyKindForAccess === "composite"
           ? countCompositeStrategyNodes(selectedCompositeStrategy)
@@ -9641,12 +9681,16 @@ app.get("/admin/settings/api-keys", requireAuth, async (_req, res) => {
   const settings = parseStoredApiKeysSettings(row?.value);
   const envConfigured = Boolean(process.env.AI_API_KEY?.trim());
   const fmpEnvConfigured = Boolean(process.env.FMP_API_KEY?.trim());
+  const effectiveModel = resolveEffectiveOpenAiModel(settings);
 
   return res.json({
     ...toPublicApiKeysSettings(settings),
     updatedAt: row?.updatedAt ?? null,
     envOverride: envConfigured,
-    envOverrideFmp: fmpEnvConfigured
+    envOverrideFmp: fmpEnvConfigured,
+    effectiveOpenaiModel: effectiveModel.model,
+    effectiveOpenaiModelSource: effectiveModel.source,
+    modelOptions: [...OPENAI_ADMIN_MODEL_OPTIONS]
   });
 });
 
@@ -9659,6 +9703,7 @@ app.get("/admin/settings/api-keys/status", requireAuth, async (_req, res) => {
   });
   const settings = parseStoredApiKeysSettings(row?.value);
   const resolved = resolveEffectiveOpenAiApiKey(settings);
+  const effectiveModel = resolveEffectiveOpenAiModel(settings);
   const checkedAt = new Date().toISOString();
 
   if (resolved.decryptError) {
@@ -9667,7 +9712,8 @@ app.get("/admin/settings/api-keys/status", requireAuth, async (_req, res) => {
       status: "error",
       source: resolved.source,
       checkedAt,
-      message: "Stored OpenAI key could not be decrypted."
+      message: "Stored OpenAI key could not be decrypted.",
+      model: effectiveModel.model
     });
   }
 
@@ -9677,7 +9723,8 @@ app.get("/admin/settings/api-keys/status", requireAuth, async (_req, res) => {
       status: "missing_key",
       source: resolved.source,
       checkedAt,
-      message: "No OpenAI API key configured."
+      message: "No OpenAI API key configured.",
+      model: effectiveModel.model
     });
   }
 
@@ -9708,7 +9755,8 @@ app.get("/admin/settings/api-keys/status", requireAuth, async (_req, res) => {
         source: resolved.source,
         checkedAt,
         latencyMs: Date.now() - startedAt,
-        message: "OpenAI connection is healthy."
+        message: "OpenAI connection is healthy.",
+        model: effectiveModel.model
       });
     }
 
@@ -9724,7 +9772,8 @@ app.get("/admin/settings/api-keys/status", requireAuth, async (_req, res) => {
       checkedAt,
       latencyMs: Date.now() - startedAt,
       httpStatus: response.status,
-      message: providerMessage
+      message: providerMessage,
+      model: effectiveModel.model
     });
   } catch (error) {
     const isAbort = error instanceof Error && error.name === "AbortError";
@@ -9734,7 +9783,8 @@ app.get("/admin/settings/api-keys/status", requireAuth, async (_req, res) => {
       source: resolved.source,
       checkedAt,
       latencyMs: Date.now() - startedAt,
-      message: isAbort ? "Connection timed out." : String(error)
+      message: isAbort ? "Connection timed out." : String(error),
+      model: effectiveModel.model
     });
   } finally {
     clearTimeout(timeout);
@@ -9847,16 +9897,26 @@ app.put("/admin/settings/api-keys", requireAuth, async (req, res) => {
       ? null
       : parsed.data.fmpApiKey
         ? encryptSecret(parsed.data.fmpApiKey)
-        : existing.fmpApiKeyEnc
+        : existing.fmpApiKeyEnc,
+    openaiModel: parsed.data.clearOpenaiModel
+      ? null
+      : parsed.data.openaiModel ?? existing.openaiModel
   };
 
   const updated = await setGlobalSettingValue(GLOBAL_SETTING_API_KEYS_KEY, nextValue);
   const settings = parseStoredApiKeysSettings(updated.value);
+  const effectiveModel = resolveEffectiveOpenAiModel(settings);
   invalidateAiApiKeyCache();
+  invalidateAiModelCache();
 
   return res.json({
     ...toPublicApiKeysSettings(settings),
-    updatedAt: updated.updatedAt
+    updatedAt: updated.updatedAt,
+    envOverride: Boolean(process.env.AI_API_KEY?.trim()),
+    envOverrideFmp: Boolean(process.env.FMP_API_KEY?.trim()),
+    effectiveOpenaiModel: effectiveModel.model,
+    effectiveOpenaiModelSource: effectiveModel.source,
+    modelOptions: [...OPENAI_ADMIN_MODEL_OPTIONS]
   });
 });
 
@@ -12081,7 +12141,7 @@ app.post("/api/predictions/generate", requireAuth, async (req, res) => {
     entitlements: strategyEntitlements,
     kind: selectedKind,
     strategyId: selectedId,
-    aiModel: selectedKind === "ai" ? getAiModel() : null,
+    aiModel: selectedKind === "ai" ? await getAiModelAsync() : null,
     compositeNodes:
       selectedKind === "composite"
         ? countCompositeStrategyNodes(selectedCompositeStrategy)

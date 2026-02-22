@@ -25,11 +25,30 @@ const OPENAI_ENDPOINT = "https://api.openai.com/v1/chat/completions";
 const AI_API_KEYS_GLOBAL_SETTING_KEY = "admin.apiKeys";
 const AI_DB_KEY_CACHE_TTL_MS =
   Math.max(5, Number(process.env.AI_DB_KEY_CACHE_TTL_SEC ?? "30")) * 1000;
+const AI_DB_MODEL_CACHE_TTL_MS =
+  Math.max(
+    5,
+    Number(process.env.AI_DB_MODEL_CACHE_TTL_SEC ?? process.env.AI_DB_KEY_CACHE_TTL_SEC ?? "30")
+  ) * 1000;
+
+export const OPENAI_ADMIN_MODEL_OPTIONS = [
+  "gpt-5-nano",
+  "gpt-5-mini",
+  "gpt-4.1-nano",
+  "gpt-4o-mini"
+] as const;
+export type OpenAiAdminModel = (typeof OPENAI_ADMIN_MODEL_OPTIONS)[number];
+export type AiModelSource = "db" | "env" | "default";
+const OPENAI_DEFAULT_MODEL: OpenAiAdminModel = "gpt-4o-mini";
+const OPENAI_ADMIN_MODEL_OPTION_SET = new Set<string>(OPENAI_ADMIN_MODEL_OPTIONS);
 
 const db = prisma as any;
 let dbApiKeyCacheUntil = 0;
 let dbApiKeyCached: string | null = null;
 let dbApiKeyInFlight: Promise<string | null> | null = null;
+let dbModelCacheUntil = 0;
+let dbModelCached: OpenAiAdminModel | null = null;
+let dbModelInFlight: Promise<OpenAiAdminModel | null> | null = null;
 
 function resolveProvider(value: string | undefined): "openai" | "disabled" {
   const normalized = (value ?? "openai").trim().toLowerCase();
@@ -60,6 +79,21 @@ function parseStoredOpenAiKeyEnc(value: unknown): string | null {
   return trimmed.length > 0 ? trimmed : null;
 }
 
+function normalizeConfiguredOpenAiModel(value: unknown): OpenAiAdminModel | null {
+  if (typeof value !== "string") return null;
+  const trimmed = value.trim();
+  if (!OPENAI_ADMIN_MODEL_OPTION_SET.has(trimmed)) {
+    return null;
+  }
+  return trimmed as OpenAiAdminModel;
+}
+
+function parseStoredOpenAiModel(value: unknown): OpenAiAdminModel | null {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  const raw = (value as Record<string, unknown>).openaiModel;
+  return normalizeConfiguredOpenAiModel(raw);
+}
+
 async function loadDbOpenAiApiKey(): Promise<string | null> {
   const row = await db.globalSetting.findUnique({
     where: { key: AI_API_KEYS_GLOBAL_SETTING_KEY },
@@ -69,6 +103,14 @@ async function loadDbOpenAiApiKey(): Promise<string | null> {
   if (!openaiApiKeyEnc) return null;
   const decrypted = decryptSecret(openaiApiKeyEnc).trim();
   return decrypted.length > 0 ? decrypted : null;
+}
+
+async function loadDbOpenAiModel(): Promise<OpenAiAdminModel | null> {
+  const row = await db.globalSetting.findUnique({
+    where: { key: AI_API_KEYS_GLOBAL_SETTING_KEY },
+    select: { value: true }
+  });
+  return parseStoredOpenAiModel(row?.value);
 }
 
 async function resolveOpenAiApiKey(): Promise<string | null> {
@@ -104,8 +146,73 @@ export function invalidateAiApiKeyCache() {
   dbApiKeyInFlight = null;
 }
 
-export function getAiModel(): string {
-  return process.env.AI_MODEL?.trim() || "gpt-4o-mini";
+export function invalidateAiModelCache() {
+  dbModelCacheUntil = 0;
+  dbModelCached = null;
+  dbModelInFlight = null;
+}
+
+async function resolveDbConfiguredOpenAiModel(): Promise<OpenAiAdminModel | null> {
+  const now = Date.now();
+  if (now < dbModelCacheUntil) {
+    return dbModelCached;
+  }
+
+  if (!dbModelInFlight) {
+    dbModelInFlight = (async () => {
+      try {
+        return await loadDbOpenAiModel();
+      } catch (error) {
+        logger.warn("ai_provider_model_lookup_failed", {
+          reason: String(error)
+        });
+        return null;
+      } finally {
+        dbModelInFlight = null;
+      }
+    })();
+  }
+
+  dbModelCached = await dbModelInFlight;
+  dbModelCacheUntil = Date.now() + AI_DB_MODEL_CACHE_TTL_MS;
+  return dbModelCached;
+}
+
+export function resolveAiModelFromConfig(input: {
+  dbModel?: string | null;
+  envModel?: string | null | undefined;
+}): { model: OpenAiAdminModel; source: AiModelSource } {
+  const dbModel = normalizeConfiguredOpenAiModel(input.dbModel);
+  if (dbModel) {
+    return { model: dbModel, source: "db" };
+  }
+  const envModel = normalizeConfiguredOpenAiModel(input.envModel);
+  if (envModel) {
+    return { model: envModel, source: "env" };
+  }
+  return { model: OPENAI_DEFAULT_MODEL, source: "default" };
+}
+
+export async function resolveAiModelWithSource(): Promise<{
+  model: OpenAiAdminModel;
+  source: AiModelSource;
+}> {
+  const dbModel = await resolveDbConfiguredOpenAiModel();
+  return resolveAiModelFromConfig({
+    dbModel,
+    envModel: process.env.AI_MODEL
+  });
+}
+
+export async function getAiModelAsync(): Promise<OpenAiAdminModel> {
+  const resolved = await resolveAiModelWithSource();
+  return resolved.model;
+}
+
+export function getAiModel(): OpenAiAdminModel {
+  return resolveAiModelFromConfig({
+    envModel: process.env.AI_MODEL
+  }).model;
 }
 
 export async function callAi(prompt: string, options: CallAiOptions = {}): Promise<string> {
@@ -115,7 +222,7 @@ export async function callAi(prompt: string, options: CallAiOptions = {}): Promi
   const apiKey = await resolveOpenAiApiKey();
   if (!apiKey) throw new Error("ai_api_key_missing");
 
-  const model = options.model ?? getAiModel();
+  const model = options.model ?? (await getAiModelAsync());
   const timeoutMs = Number(options.timeoutMs ?? process.env.AI_TIMEOUT_MS ?? "15000");
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), Math.max(1000, timeoutMs));

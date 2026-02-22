@@ -1,7 +1,7 @@
 import { z } from "zod";
 import { logger } from "../logger.js";
 import { analyzeWithAiGuards, hashStableObject } from "./analyzer.js";
-import { callAi, getAiModel } from "./provider.js";
+import { callAi, getAiModelAsync } from "./provider.js";
 import {
   filterFeatureSnapshotForAiPrompt,
   getAiPromptRuntimeSettings,
@@ -1059,8 +1059,9 @@ export async function buildPredictionExplainerPromptPreview(
   const userPayload = payloadBudget.payload;
   const systemMessage = buildSystemMessage(runtimeSettings.promptText);
   const featureSnapshot = asObject(userPayload.featureSnapshot) ?? {};
+  const resolvedModel = await getAiModelAsync();
   const cacheKey = buildPredictionExplainerCacheKey({
-    model: getAiModel(),
+    model: resolvedModel,
     promptVersion: buildPromptVersion(runtimeSettings),
     symbol: promptInput.symbol,
     timeframe: promptInput.timeframe,
@@ -1095,7 +1096,7 @@ export async function generatePredictionExplanation(
     cacheKey
   } = preview;
   const fallback = () => fallbackExplain(promptInput);
-  const aiModel = getAiModel();
+  const aiModel = await getAiModelAsync();
   const callAiFn = deps.callAiFn ?? callAi;
   const traceBase = {
     scope: "prediction_explainer",
