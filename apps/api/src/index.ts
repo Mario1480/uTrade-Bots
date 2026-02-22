@@ -2955,6 +2955,43 @@ function timeframeToIntervalMs(timeframe: PredictionTimeframe): number {
   return 24 * 60 * 60 * 1000;
 }
 
+const SESSION_LOOKBACK_BUFFER_BARS = Math.max(
+  1,
+  Number(process.env.PRED_SESSION_LOOKBACK_BUFFER_BARS ?? 6)
+);
+
+function resolvePredictionCandleLookback(params: {
+  timeframe: PredictionTimeframe;
+  indicatorSettings: Parameters<typeof minimumCandlesForIndicatorsWithSettings>[1];
+  baseMinBars: number;
+  nowMs?: number;
+}): number {
+  const indicatorMinBars = minimumCandlesForIndicatorsWithSettings(
+    params.timeframe,
+    params.indicatorSettings
+  );
+  if (params.timeframe === "1d") {
+    return Math.max(params.baseMinBars, indicatorMinBars);
+  }
+  const nowMs = params.nowMs ?? Date.now();
+  const now = new Date(nowMs);
+  const sessionStartUtcMs = Date.UTC(
+    now.getUTCFullYear(),
+    now.getUTCMonth(),
+    now.getUTCDate(),
+    0,
+    0,
+    0,
+    0
+  );
+  const intervalMs = timeframeToIntervalMs(params.timeframe);
+  const elapsedMs = Math.max(0, nowMs - sessionStartUtcMs);
+  const barsSinceSessionStart = Math.floor(elapsedMs / intervalMs) + 1;
+  const sessionCoverageBars = barsSinceSessionStart + SESSION_LOOKBACK_BUFFER_BARS;
+
+  return Math.max(params.baseMinBars, indicatorMinBars, sessionCoverageBars);
+}
+
 function normalizePredictionTimeframeCandidate(value: unknown): PredictionTimeframe | null {
   if (typeof value !== "string") return null;
   const trimmed = value.trim() as PredictionTimeframe;
@@ -3059,10 +3096,11 @@ async function buildMtfFramesForPrediction(params: {
       const advancedIndicatorSettings = toAdvancedIndicatorComputeSettings(
         indicatorSettingsResolution.config
       );
-      const candleLookback = Math.max(
-        120,
-        minimumCandlesForIndicatorsWithSettings(timeframe, indicatorComputeSettings)
-      );
+      const candleLookback = resolvePredictionCandleLookback({
+        timeframe,
+        indicatorSettings: indicatorComputeSettings,
+        baseMinBars: 120
+      });
       const candlesRaw = await params.adapter.marketApi.getCandles({
         symbol: exchangeSymbol,
         productType: params.adapter.productType,
@@ -3931,10 +3969,11 @@ async function generateAutoPredictionForUser(
     const advancedIndicatorSettings = toAdvancedIndicatorComputeSettings(indicatorSettingsResolution.config);
 
     const exchangeSymbol = await adapter.toExchangeSymbol(canonicalSymbol);
-    const candleLookback = Math.max(
-      120,
-      minimumCandlesForIndicatorsWithSettings(effectiveTimeframe, indicatorComputeSettings)
-    );
+    const candleLookback = resolvePredictionCandleLookback({
+      timeframe: effectiveTimeframe,
+      indicatorSettings: indicatorComputeSettings,
+      baseMinBars: 120
+    });
     const [tickerRaw, candlesRaw] = await Promise.all([
       adapter.marketApi.getTicker(exchangeSymbol, adapter.productType),
       adapter.marketApi.getCandles({
@@ -7217,10 +7256,11 @@ async function probePredictionRefreshTrigger(
     const indicatorComputeSettings = toIndicatorComputeSettings(indicatorSettingsResolution.config);
 
     const exchangeSymbol = await adapter.toExchangeSymbol(template.symbol);
-    const lookback = Math.max(
-      80,
-      minimumCandlesForIndicatorsWithSettings(template.timeframe, indicatorComputeSettings)
-    );
+    const lookback = resolvePredictionCandleLookback({
+      timeframe: template.timeframe,
+      indicatorSettings: indicatorComputeSettings,
+      baseMinBars: 80
+    });
     const candlesRaw = await adapter.marketApi.getCandles({
       symbol: exchangeSymbol,
       productType: adapter.productType,
@@ -7323,10 +7363,11 @@ async function refreshPredictionStateForTemplate(params: {
     const advancedIndicatorSettings = toAdvancedIndicatorComputeSettings(indicatorSettingsResolution.config);
 
     const exchangeSymbol = await adapter.toExchangeSymbol(template.symbol);
-    const candleLookback = Math.max(
-      160,
-      minimumCandlesForIndicatorsWithSettings(template.timeframe, indicatorComputeSettings)
-    );
+    const candleLookback = resolvePredictionCandleLookback({
+      timeframe: template.timeframe,
+      indicatorSettings: indicatorComputeSettings,
+      baseMinBars: 160
+    });
     const [tickerRaw, candlesRaw] = await Promise.all([
       adapter.marketApi.getTicker(exchangeSymbol, adapter.productType),
       adapter.marketApi.getCandles({

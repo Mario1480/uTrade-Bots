@@ -43,9 +43,9 @@ test("advancedIndicators computes EMA set + cloud with bounded cloud position", 
   assert.ok(snapshot.smartMoneyConcepts.swing.bearishBreaks >= 0);
 });
 
-test("advancedIndicators marks data gap when ema_800 cannot be computed", () => {
+test("advancedIndicators keeps data gap false when core EMA set is available", () => {
   const snapshot = computeAdvancedIndicators(buildCandles(300), "15m");
-  assert.equal(snapshot.dataGap, true);
+  assert.equal(snapshot.dataGap, false);
   assert.equal(snapshot.emas.ema_800, null);
 });
 

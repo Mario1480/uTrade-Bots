@@ -17,10 +17,8 @@ export function computeEmaCloudSnapshot(candles: Candle[]): {
   const cloud = computeCloud(closes, ema.ema50.latest, lastClose);
 
   const dataGap =
-    closes.length < 900 ||
     ema.ema50.latest === null ||
-    ema.ema200.latest === null ||
-    ema.ema800.latest === null;
+    ema.ema200.latest === null;
 
   return {
     emas: {
