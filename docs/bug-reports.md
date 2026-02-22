@@ -30,4 +30,7 @@ Erledigt - Bot Trade wird nach kurzer Zeit wieder automatisch geschlossen
 
 Erledigt - Die Cards im Bot mit Akkodenonsections versehen und "Last Events" und "Futures-Konfikuration" default geschlossen.
 
-- Total Today PnL (USDT) im Dashboard zeigt nichts an. Muss noch mit den Bots verdratet werden
+Erledigt - Total Today PnL (USDT) im Dashboard zeigt nichts an. Muss noch mit den Bots verdratet werden
+
+- Geschätzter Liquidation Preis wird bei cross falsch berechnet.
+

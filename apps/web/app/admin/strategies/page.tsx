@@ -22,6 +22,7 @@ export default function AdminStrategiesIndexPage() {
         <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
           <Link href={withLocalePath("/admin/strategies/local", locale)} className="btn btnPrimary">{t("local")}</Link>
           <Link href={withLocalePath("/admin/strategies/ai", locale)} className="btn">{t("ai")}</Link>
+          <Link href={withLocalePath("/admin/strategies/ai-generator", locale)} className="btn">{t("aiGenerator")}</Link>
           <Link href={withLocalePath("/admin/strategies/builder", locale)} className="btn">{t("builder")}</Link>
         </div>
       </section>

@@ -83,6 +83,11 @@ const ADMIN_LINKS: AdminLinkItem[] = [
     category: "Strategy"
   },
   {
+    href: "/admin/strategies/ai-generator",
+    i18nKey: "aiPromptGenerator",
+    category: "Strategy"
+  },
+  {
     href: "/admin/prediction-refresh",
     i18nKey: "predictionRefresh",
     category: "Strategy"

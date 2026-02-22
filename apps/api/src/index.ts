@@ -50,6 +50,10 @@ import {
   type ExplainerOutput
 } from "./ai/predictionExplainer.js";
 import {
+  createGeneratedPromptDraft,
+  generateHybridPromptText
+} from "./ai/promptGenerator.js";
+import {
   buildAndAttachHistoryContext
 } from "./ai/historyContext.js";
 import {
@@ -689,6 +693,48 @@ const adminAiPromptsPreviewSchema = z.object({
   }).optional(),
   featureSnapshot: z.record(z.any()).default({}),
   settingsDraft: z.unknown().optional()
+});
+
+const adminAiPromptsGenerateSaveSchema = z.object({
+  name: z.string().trim().min(1).max(64),
+  strategyDescription: z.string().trim().min(1).max(8000),
+  indicatorKeys: z.array(z.string().trim().min(1)).max(128).default([]),
+  ohlcvBars: z.number().int().min(20).max(500).default(100),
+  timeframes: z.array(z.enum(["5m", "15m", "1h", "4h", "1d"])).max(4).default([]),
+  runTimeframe: z.enum(["5m", "15m", "1h", "4h", "1d"]).nullable().optional(),
+  directionPreference: z.enum(["long", "short", "either"]).default("either"),
+  confidenceTargetPct: z.number().min(0).max(100).default(60),
+  slTpSource: z.enum(["local", "ai", "hybrid"]).default("local"),
+  newsRiskMode: z.enum(["off", "block"]).default("off"),
+  setActive: z.boolean().default(false),
+  isPublic: z.boolean().default(false)
+}).superRefine((value, ctx) => {
+  const seen = new Set<string>();
+  for (const [index, timeframe] of value.timeframes.entries()) {
+    if (seen.has(timeframe)) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "timeframes must be unique",
+        path: ["timeframes", index]
+      });
+      continue;
+    }
+    seen.add(timeframe);
+  }
+
+  if (value.timeframes.length === 0 && value.runTimeframe) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: "runTimeframe requires at least one selected timeframe",
+      path: ["runTimeframe"]
+    });
+  } else if (value.timeframes.length > 0 && value.runTimeframe && !value.timeframes.includes(value.runTimeframe)) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: "runTimeframe must be included in timeframes",
+      path: ["runTimeframe"]
+    });
+  }
 });
 
 type AdminAiPromptsPayload = z.infer<typeof adminAiPromptsSchema>;
@@ -10659,6 +10705,130 @@ app.put("/admin/settings/ai-prompts", requireAuth, async (req, res) => {
     updatedAt: updated.updatedAt,
     source: "db",
     defaults: DEFAULT_AI_PROMPT_SETTINGS
+  });
+});
+
+app.post("/admin/settings/ai-prompts/generate-save", requireAuth, async (req, res) => {
+  if (!(await requireSuperadmin(res))) return;
+  const parsed = adminAiPromptsGenerateSaveSchema.safeParse(req.body ?? {});
+  if (!parsed.success) {
+    return res.status(400).json({ error: "invalid_payload", details: parsed.error.flatten() });
+  }
+
+  const availableIndicators = getAiPromptIndicatorOptionsPublic();
+  const indicatorByKey = new Map(availableIndicators.map((item) => [item.key, item] as const));
+  const selectedIndicators: Array<{
+    key: AiPromptIndicatorKey;
+    label: string;
+    description: string;
+  }> = [];
+  const invalidKeys = new Set<string>();
+
+  for (const rawKey of parsed.data.indicatorKeys) {
+    const key = rawKey.trim();
+    if (!key) continue;
+    const found = indicatorByKey.get(key as AiPromptIndicatorKey);
+    if (!found) {
+      invalidKeys.add(key);
+      continue;
+    }
+    if (selectedIndicators.some((item) => item.key === found.key)) continue;
+    selectedIndicators.push({
+      key: found.key,
+      label: found.label,
+      description: found.description
+    });
+  }
+
+  if (invalidKeys.size > 0) {
+    return res.status(400).json({
+      error: "invalid_indicator_keys",
+      details: { invalidKeys: [...invalidKeys] }
+    });
+  }
+
+  const nowIso = new Date().toISOString();
+  const row = await db.globalSetting.findUnique({
+    where: { key: GLOBAL_SETTING_AI_PROMPTS_KEY },
+    select: { value: true }
+  });
+  const existingSettings = parseStoredAiPromptSettings(row?.value);
+
+  const generation = await generateHybridPromptText({
+    strategyDescription: parsed.data.strategyDescription,
+    selectedIndicators,
+    timeframes: parsed.data.timeframes,
+    runTimeframe: parsed.data.runTimeframe ?? null
+  }).catch(() => null);
+
+  if (!generation) {
+    return res.status(500).json({ error: "generation_failed" });
+  }
+
+  let draftPayload: {
+    activePromptId: string | null;
+    prompts: AiPromptTemplate[];
+  };
+  let promptId = "";
+  try {
+    const draft = createGeneratedPromptDraft({
+      existingSettings,
+      name: parsed.data.name,
+      promptText: generation.promptText,
+      indicatorKeys: selectedIndicators.map((item) => item.key),
+      ohlcvBars: parsed.data.ohlcvBars,
+      timeframes: parsed.data.timeframes,
+      runTimeframe: parsed.data.runTimeframe ?? null,
+      directionPreference: parsed.data.directionPreference,
+      confidenceTargetPct: parsed.data.confidenceTargetPct,
+      slTpSource: parsed.data.slTpSource,
+      newsRiskMode: parsed.data.newsRiskMode,
+      setActive: parsed.data.setActive,
+      isPublic: parsed.data.isPublic,
+      nowIso
+    });
+    promptId = draft.promptId;
+    draftPayload = draft.payload;
+  } catch (error) {
+    return res.status(400).json({
+      error: "invalid_payload",
+      details: { reason: String(error) }
+    });
+  }
+
+  const normalized = normalizeAiPromptSettingsPayload(draftPayload, nowIso);
+  if (normalized.invalidKeys.length > 0) {
+    return res.status(400).json({
+      error: "invalid_indicator_keys",
+      details: { invalidKeys: normalized.invalidKeys }
+    });
+  }
+  if (normalized.duplicatePromptIds.length > 0) {
+    return res.status(409).json({
+      error: "duplicate_prompt_id",
+      details: { duplicatePromptIds: normalized.duplicatePromptIds }
+    });
+  }
+
+  const sanitized = parseStoredAiPromptSettings(normalized.settings);
+  const updated = await setGlobalSettingValue(GLOBAL_SETTING_AI_PROMPTS_KEY, sanitized);
+  const settings = parseStoredAiPromptSettings(updated.value);
+  invalidateAiPromptSettingsCache();
+
+  const savedPrompt = settings.prompts.find((item) => item.id === promptId) ?? null;
+  if (!savedPrompt) {
+    return res.status(500).json({ error: "generation_failed" });
+  }
+
+  return res.json({
+    prompt: savedPrompt,
+    activePromptId: settings.activePromptId,
+    generatedPromptText: savedPrompt.promptText,
+    generationMeta: {
+      mode: generation.mode,
+      model: generation.model
+    },
+    updatedAt: updated.updatedAt
   });
 });
 

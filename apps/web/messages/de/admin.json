@@ -25,6 +25,7 @@
     "subtitle": "Lokale, AI- und Composite-Strategien verwalten.",
     "local": "Lokale Strategien",
     "ai": "AI-Strategien",
+    "aiGenerator": "AI Prompt Generator",
     "builder": "Composite Builder"
   },
   "predictionDefaults": {
@@ -308,6 +309,54 @@
       "featureSnapshotObject": "featureSnapshot muss ein JSON-Objekt sein.",
       "invalidFeatureSnapshotJson": "Ungültiges featureSnapshot-JSON: {err}",
       "previewGenerated": "Vorschau erzeugt."
+    }
+  },
+  "aiPromptGenerator": {
+    "title": "Admin · AI Prompt Generator",
+    "subtitle": "Strategie beschreiben und einen sofort nutzbaren englischen AI-Prompt mit Indikator-/Timeframe-Scope erzeugen.",
+    "loading": "Lädt...",
+    "backToStrategies": "Zurück zu Strategien",
+    "backToAiPrompts": "Zurück zu AI-Prompts",
+    "formTitle": "Prompt erzeugen und speichern",
+    "promptName": "Prompt-Name",
+    "promptNamePlaceholder": "z. B. Trend Pullback Continuation",
+    "setActive": "Diesen Prompt nach dem Speichern aktiv setzen",
+    "publicPrompt": "Öffentlicher Prompt (für User sichtbar)",
+    "strategyDescription": "Strategie-Beschreibung",
+    "strategyPlaceholder": "Beschreibe deine Strategie in Klartext. Der Generator erstellt daraus einen englischen Hybrid-AI-Prompt.",
+    "characters": "Zeichen: {count}/8000",
+    "timeframes": "Timeframe-Set",
+    "maxTimeframesHint": "Bis zu 4 Timeframes auswählen. Leer bedeutet nur Payload-Timeframe.",
+    "runTimeframe": "Run-Timeframe",
+    "directionPreference": "Richtungspräferenz",
+    "directionEither": "Beide",
+    "directionLong": "Nur Long",
+    "directionShort": "Nur Short",
+    "confidenceTargetPct": "Confidence-Ziel (%)",
+    "slTpSource": "SL/TP Quelle",
+    "slTpSourceLocal": "Lokal (Standard)",
+    "slTpSourceAi": "AI",
+    "slTpSourceHybrid": "Hybrid (AI falls vorhanden)",
+    "newsRiskMode": "News-Risiko-Modus",
+    "newsRiskModeOff": "Aus",
+    "newsRiskModeBlock": "Bei News-Risiko blockieren",
+    "ohlcvBars": "OHLCV-Bars für AI",
+    "noTimeframeLock": "Kein Lock",
+    "selectAllIndicators": "Alle Indikatoren wählen",
+    "clearIndicators": "Indikatoren leeren",
+    "saving": "Erzeuge und speichere...",
+    "generateSave": "Generate & Save",
+    "resultTitle": "Generierter Prompt",
+    "resultMeta": "Generierungsmodus: {mode} · Modell: {model} · Prompt-ID: {promptId}",
+    "messages": {
+      "accessRequired": "Admin-Backend-Zugriff erforderlich.",
+      "promptNameRequired": "Bitte einen Prompt-Namen eingeben.",
+      "strategyRequired": "Bitte eine Strategie-Beschreibung eingeben.",
+      "runTimeframeRequired": "Run-Timeframe ist erforderlich, wenn ein Timeframe-Set konfiguriert ist.",
+      "runTimeframeMustBeInSet": "Run-Timeframe muss im ausgewählten Timeframe-Set enthalten sein.",
+      "confidenceRange": "Confidence-Ziel muss zwischen 0 und 100 liegen.",
+      "ohlcvRange": "OHLCV-Bars müssen zwischen 20 und 500 liegen.",
+      "generatedSaved": "Prompt erzeugt und gespeichert. Modus: {mode}, Modell: {model}."
     }
   },
   "aiTrace": {
@@ -601,6 +650,10 @@
     "aiStrategies": {
       "title": "AI-Strategien",
       "description": "AI-Prompt-Strategien und Prompt-Runtime-Defaults verwalten."
+    },
+    "aiPromptGenerator": {
+      "title": "AI Prompt Generator",
+      "description": "AI-Prompt-Templates direkt aus natürlicher Strategiebeschreibung erzeugen und speichern."
     },
     "predictionRefresh": {
       "title": "Prediction Refresh",

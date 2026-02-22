@@ -25,6 +25,7 @@
     "subtitle": "Manage local, AI, and composite strategies.",
     "local": "Local Strategies",
     "ai": "AI Strategies",
+    "aiGenerator": "AI Prompt Generator",
     "builder": "Composite Builder"
   },
   "predictionDefaults": {
@@ -308,6 +309,54 @@
       "featureSnapshotObject": "featureSnapshot must be a JSON object.",
       "invalidFeatureSnapshotJson": "Invalid featureSnapshot JSON: {err}",
       "previewGenerated": "Preview generated."
+    }
+  },
+  "aiPromptGenerator": {
+    "title": "Admin · AI Prompt Generator",
+    "subtitle": "Describe a strategy and generate a ready-to-use English AI prompt with indicator/timeframe scope.",
+    "loading": "Loading...",
+    "backToStrategies": "Back to strategies",
+    "backToAiPrompts": "Back to AI prompts",
+    "formTitle": "Generate and save prompt",
+    "promptName": "Prompt name",
+    "promptNamePlaceholder": "e.g. Trend pullback continuation",
+    "setActive": "Set this prompt as active after save",
+    "publicPrompt": "Public prompt (visible to users)",
+    "strategyDescription": "Strategy description",
+    "strategyPlaceholder": "Explain your strategy in plain language. The generator will convert this into an English hybrid AI prompt.",
+    "characters": "Characters: {count}/8000",
+    "timeframes": "Timeframe set",
+    "maxTimeframesHint": "Select up to 4 timeframes. Empty means payload timeframe only.",
+    "runTimeframe": "Run timeframe",
+    "directionPreference": "Direction preference",
+    "directionEither": "Either",
+    "directionLong": "Long only",
+    "directionShort": "Short only",
+    "confidenceTargetPct": "Confidence target (%)",
+    "slTpSource": "SL/TP source",
+    "slTpSourceLocal": "Local (default)",
+    "slTpSourceAi": "AI",
+    "slTpSourceHybrid": "Hybrid (AI if present)",
+    "newsRiskMode": "News risk mode",
+    "newsRiskModeOff": "Off",
+    "newsRiskModeBlock": "Block on news risk",
+    "ohlcvBars": "OHLCV bars for AI",
+    "noTimeframeLock": "No lock",
+    "selectAllIndicators": "Select all indicators",
+    "clearIndicators": "Clear indicators",
+    "saving": "Generating and saving...",
+    "generateSave": "Generate & Save",
+    "resultTitle": "Generated prompt",
+    "resultMeta": "Generation mode: {mode} · Model: {model} · Prompt ID: {promptId}",
+    "messages": {
+      "accessRequired": "Admin backend access required.",
+      "promptNameRequired": "Please enter a prompt name.",
+      "strategyRequired": "Please enter a strategy description.",
+      "runTimeframeRequired": "Run timeframe is required when timeframe set is configured.",
+      "runTimeframeMustBeInSet": "Run timeframe must be one of the selected timeframes.",
+      "confidenceRange": "Confidence target must be between 0 and 100.",
+      "ohlcvRange": "OHLCV bars must be between 20 and 500.",
+      "generatedSaved": "Prompt generated and saved. Mode: {mode}, model: {model}."
     }
   },
   "aiTrace": {
@@ -601,6 +650,10 @@
     "aiStrategies": {
       "title": "AI Strategies",
       "description": "Manage AI prompt strategies and prompt-level runtime defaults."
+    },
+    "aiPromptGenerator": {
+      "title": "AI Prompt Generator",
+      "description": "Generate and save AI prompt templates directly from natural-language strategy input."
     },
     "predictionRefresh": {
       "title": "Prediction Refresh",
