@@ -303,6 +303,7 @@ async function listEventsFromDb(params: {
   from: Date;
   to: Date;
   currency?: string;
+  currencies?: string[];
   impactMin?: EconomicImpact;
   impacts?: EconomicImpact[];
 }): Promise<EconomicEventView[]> {
@@ -313,7 +314,11 @@ async function listEventsFromDb(params: {
       lte: params.to
     }
   };
-  if (params.currency) {
+  if (params.currencies && params.currencies.length > 1) {
+    where.currency = { in: params.currencies };
+  } else if (params.currencies && params.currencies.length === 1) {
+    where.currency = params.currencies[0];
+  } else if (params.currency) {
     where.currency = params.currency.toUpperCase();
   }
 
@@ -355,6 +360,7 @@ export async function listEconomicEvents(params: {
   from?: string | null;
   to?: string | null;
   currency?: string | null;
+  currencies?: string[] | null;
   impactMin?: EconomicImpact | null;
   impacts?: EconomicImpact[] | null;
 }): Promise<EconomicEventView[]> {
@@ -364,7 +370,14 @@ export async function listEconomicEvents(params: {
     defaultDays: 3
   });
 
-  const currency = params.currency ? params.currency.trim().toUpperCase() : undefined;
+  const currencies = (params.currencies ?? [])
+    .map((entry) => String(entry).trim().toUpperCase())
+    .filter((entry) => /^[A-Z0-9]{2,10}$/.test(entry))
+    .filter((entry, index, list) => list.indexOf(entry) === index)
+    .slice(0, 16);
+  const currency = currencies.length === 0 && params.currency
+    ? params.currency.trim().toUpperCase()
+    : undefined;
   const impact = params.impactMin ? normalizeImpact(params.impactMin) : "low";
   const impacts = (params.impacts ?? [])
     .map((entry) => normalizeImpact(entry))
@@ -374,6 +387,7 @@ export async function listEconomicEvents(params: {
     from: range.from,
     to: range.to,
     currency,
+    currencies,
     impactMin: impact,
     impacts
   });

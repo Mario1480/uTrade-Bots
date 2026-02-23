@@ -4605,10 +4605,17 @@ a { color: inherit; }
 }
 
 .calendarProTab:focus-visible,
+.calendarProTabRefresh:focus-visible,
 .calendarProImpactToggleActive:focus-visible,
 .calendarProImpactToggleInactive:focus-visible {
   outline: 2px solid rgba(255, 193, 7, 0.9);
   outline-offset: 2px;
+}
+
+.calendarProTabRefresh {
+  min-height: 34px;
+  padding: 7px 12px;
+  border-radius: 999px;
 }
 
 .calendarProFilterGrid {
@@ -4640,6 +4647,43 @@ a { color: inherit; }
   background: transparent;
   opacity: 0.62;
   cursor: pointer;
+}
+
+.calendarCurrencyToggleRow {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.calendarCurrencyToggle {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  min-height: 28px;
+  padding: 4px 9px;
+  border-radius: 999px;
+  white-space: nowrap;
+}
+
+.calendarCurrencyToggleFlag {
+  font-size: 13px;
+  line-height: 1;
+}
+
+.calendarCurrencyToggleCode {
+  font-size: 10px;
+  line-height: 1;
+}
+
+.calendarFilterFieldCurrency {
+  grid-column: span 2;
+}
+
+@media (max-width: 767px) {
+  .calendarFilterFieldCurrency {
+    grid-column: auto;
+  }
 }
 
 .calendarProFilterActions {
@@ -5355,6 +5399,14 @@ a { color: inherit; }
     linear-gradient(180deg, rgba(8, 20, 30, 0.94), rgba(6, 14, 24, 0.96));
 }
 
+/* Bots detail: keep inner info cells neutral (no pro-panel glow) */
+.botsDetailPage .botDetailGrid > .card,
+.botsDetailPage .botOpsGrid > .card {
+  border-radius: 8px;
+  border-color: rgba(255, 193, 7, 0.2);
+  background: rgba(8, 16, 26, 0.82);
+}
+
 /* Keep semantic warning/error cards highly visible */
 .tradeDeskWrap .tradeDeskNoticeError {
   border-color: rgba(239, 68, 68, 0.92);
@@ -5407,6 +5459,13 @@ a { color: inherit; }
   background:
     radial-gradient(circle at 90% -30%, rgba(20, 129, 192, 0.14), transparent 44%),
     linear-gradient(180deg, rgba(8, 18, 28, 0.9), rgba(6, 13, 22, 0.96));
+}
+
+/* Predictions performance mini metrics should stay compact/neutral */
+.predictionsWrap .predictionsQualityGrid > .card {
+  border-radius: 8px;
+  border-color: rgba(255, 193, 7, 0.2);
+  background: rgba(8, 16, 26, 0.82);
 }
 
 /* Dashboard calendar card alignment */
