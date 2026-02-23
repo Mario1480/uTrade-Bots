@@ -34,3 +34,4 @@ Erledigt - Total Today PnL (USDT) im Dashboard zeigt nichts an. Muss noch mit de
 
 Erledigt - Geschätzter Liquidation Preis wird bei cross falsch berechnet.
 
+Erledigt - Bot Detail page bei manuellem Close keine PnL berechnung.
