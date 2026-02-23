@@ -346,7 +346,6 @@ export default function BotSettingsPage() {
     <div className="container botsSettingsPage" style={{ maxWidth: 900 }}>
       <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 12 }}>
         <Link href={withLocalePath(`/bots/${id}`, locale)} className="btn">{t("backToBot")}</Link>
-        <Link href={withLocalePath("/", locale)} className="btn">{t("dashboard")}</Link>
       </div>
 
       <form onSubmit={onSave} className="card" style={{ padding: 16, display: "grid", gap: 12 }}>
@@ -442,13 +441,13 @@ export default function BotSettingsPage() {
                 <label style={{ display: "grid", gap: 6 }}><span style={{ fontSize: 12, color: "var(--muted)" }}>{t("fields.stopLossPct")}</span><input className="input" type="number" min={0} step="0.1" value={riskStopLossPct} onChange={(e) => setRiskStopLossPct(e.target.value)} /></label>
                 <label style={{ display: "grid", gap: 6 }}><span style={{ fontSize: 12, color: "var(--muted)" }}>{t("fields.takeProfitPct")}</span><input className="input" type="number" min={0} step="0.1" value={riskTakeProfitPct} onChange={(e) => setRiskTakeProfitPct(e.target.value)} /></label>
                 <label style={{ display: "grid", gap: 6 }}><span style={{ fontSize: 12, color: "var(--muted)" }}>{t("fields.timeStopMin")}</span><input className="input" type="number" min={0} step="1" value={riskTimeStopMin} onChange={(e) => setRiskTimeStopMin(e.target.value)} /></label>
-                <label style={{ display: "grid", gap: 6 }}>
-                  <span style={{ fontSize: 12, color: "var(--muted)" }}>{t("fields.exitOnSignalFlip")}</span>
-                  <input type="checkbox" checked={exitOnSignalFlip} onChange={(e) => setExitOnSignalFlip(e.target.checked)} />
+                <label className="botsNewCheckField">
+                  <span className="botsNewCheckFieldLabel">{t("fields.exitOnSignalFlip")}</span>
+                  <input className="botsNewCheckInput" type="checkbox" checked={exitOnSignalFlip} onChange={(e) => setExitOnSignalFlip(e.target.checked)} />
                 </label>
-                <label style={{ display: "grid", gap: 6 }}>
-                  <span style={{ fontSize: 12, color: "var(--muted)" }}>{t("fields.exitOnConfidenceDrop")}</span>
-                  <input type="checkbox" checked={exitOnConfidenceDrop} onChange={(e) => setExitOnConfidenceDrop(e.target.checked)} />
+                <label className="botsNewCheckField">
+                  <span className="botsNewCheckFieldLabel">{t("fields.exitOnConfidenceDrop")}</span>
+                  <input className="botsNewCheckInput" type="checkbox" checked={exitOnConfidenceDrop} onChange={(e) => setExitOnConfidenceDrop(e.target.checked)} />
                 </label>
               </div>
             </div>
@@ -465,15 +464,26 @@ export default function BotSettingsPage() {
                 <label style={{ display: "grid", gap: 6 }}><span style={{ fontSize: 12, color: "var(--muted)" }}>{t("fields.minConfidence")}</span><input className="input" type="number" min={0} max={100} value={copierMinConfidence} onChange={(e) => setCopierMinConfidence(Number(e.target.value || 0))} /></label>
                 <label style={{ display: "grid", gap: 6 }}><span style={{ fontSize: 12, color: "var(--muted)" }}>{t("fields.maxPredictionAge")}</span><input className="input" type="number" min={30} max={86400} value={copierMaxPredictionAgeSec} onChange={(e) => setCopierMaxPredictionAgeSec(Number(e.target.value || 600))} /></label>
                 <label style={{ display: "grid", gap: 6 }}><span style={{ fontSize: 12, color: "var(--muted)" }}>{t("fields.limitOffsetBps")}</span><input className="input" type="number" min={0} max={500} value={executionLimitOffsetBps} onChange={(e) => setExecutionLimitOffsetBps(Number(e.target.value || 0))} /></label>
-                <label style={{ display: "grid", gap: 6 }}><span style={{ fontSize: 12, color: "var(--muted)" }}>{t("fields.newsRiskBlockEnabled")}</span><input type="checkbox" checked={filtersNewsRiskBlockEnabled} onChange={(e) => setFiltersNewsRiskBlockEnabled(e.target.checked)} /></label>
-                <label style={{ display: "grid", gap: 6 }}><span style={{ fontSize: 12, color: "var(--muted)" }}>{t("fields.reduceOnlyOnExit")}</span><input type="checkbox" checked={executionReduceOnlyOnExit} onChange={(e) => setExecutionReduceOnlyOnExit(e.target.checked)} /></label>
+                <label className="botsNewCheckField"><span className="botsNewCheckFieldLabel">{t("fields.newsRiskBlockEnabled")}</span><input className="botsNewCheckInput" type="checkbox" checked={filtersNewsRiskBlockEnabled} onChange={(e) => setFiltersNewsRiskBlockEnabled(e.target.checked)} /></label>
+                <label className="botsNewCheckField"><span className="botsNewCheckFieldLabel">{t("fields.reduceOnlyOnExit")}</span><input className="botsNewCheckInput" type="checkbox" checked={executionReduceOnlyOnExit} onChange={(e) => setExecutionReduceOnlyOnExit(e.target.checked)} /></label>
               </div>
 
-              <div style={{ display: "flex", gap: 12, alignItems: "center", flexWrap: "wrap", fontSize: 12 }}>
-                <span style={{ color: "var(--muted)" }}>{t("fields.allowSignals")}</span>
-                <label><input type="checkbox" checked={allowSignalUp} onChange={(e) => setAllowSignalUp(e.target.checked)} /> up</label>
-                <label><input type="checkbox" checked={allowSignalDown} onChange={(e) => setAllowSignalDown(e.target.checked)} /> down</label>
-                <label><input type="checkbox" checked={allowSignalNeutral} onChange={(e) => setAllowSignalNeutral(e.target.checked)} /> neutral</label>
+              <div className="botsNewSignalRow">
+                <span className="botsNewSignalLabel">{t("fields.allowSignals")}</span>
+                <div className="botsNewSignalOptions">
+                  <label className="botsNewSignalOption">
+                    <input className="botsNewCheckInput" type="checkbox" checked={allowSignalUp} onChange={(e) => setAllowSignalUp(e.target.checked)} />
+                    <span>up</span>
+                  </label>
+                  <label className="botsNewSignalOption">
+                    <input className="botsNewCheckInput" type="checkbox" checked={allowSignalDown} onChange={(e) => setAllowSignalDown(e.target.checked)} />
+                    <span>down</span>
+                  </label>
+                  <label className="botsNewSignalOption">
+                    <input className="botsNewCheckInput" type="checkbox" checked={allowSignalNeutral} onChange={(e) => setAllowSignalNeutral(e.target.checked)} />
+                    <span>neutral</span>
+                  </label>
+                </div>
               </div>
             </div>
           </>
