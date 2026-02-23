@@ -14255,6 +14255,26 @@ app.post("/api/positions/close", requireAuth, async (req, res) => {
       if (!symbol) {
         return res.status(400).json({ error: "symbol_required" });
       }
+      const preCloseRows = isPaperTradingAccount(resolved.selectedAccount)
+        ? await listPaperPositions(resolved.selectedAccount, adapter, symbol)
+        : await listPositions(adapter, symbol);
+      const exitPriceBySide = new Map<"long" | "short", number>();
+      for (const row of preCloseRows) {
+        if (normalizeSymbolInput(row.symbol) !== symbol) continue;
+        if (!(Number.isFinite(Number(row.size)) && Number(row.size) > 0)) continue;
+        if (parsed.data.side && row.side !== parsed.data.side) continue;
+        const markPrice = Number(row.markPrice);
+        const entryPrice = Number(row.entryPrice);
+        const exitPrice =
+          Number.isFinite(markPrice) && markPrice > 0
+            ? markPrice
+            : Number.isFinite(entryPrice) && entryPrice > 0
+              ? entryPrice
+              : null;
+        if (exitPrice !== null && !exitPriceBySide.has(row.side)) {
+          exitPriceBySide.set(row.side, exitPrice);
+        }
+      }
       const orderIds = isPaperTradingAccount(resolved.selectedAccount)
         ? await closePaperPosition(resolved.selectedAccount, adapter, symbol, parsed.data.side)
         : await closePositionsMarket(adapter, symbol, parsed.data.side);
@@ -14333,26 +14353,78 @@ app.post("/api/positions/close", requireAuth, async (req, res) => {
                 status: "open",
                 ...(parsed.data.side ? { side: parsed.data.side } : {})
               },
-              select: { id: true, symbol: true }
+              select: {
+                id: true,
+                symbol: true,
+                side: true,
+                entryPrice: true,
+                entryQty: true,
+                entryNotionalUsd: true
+              }
             }));
             const openHistoryRows = Array.isArray(openHistoryRowsRaw) ? openHistoryRowsRaw : [];
-            const historyIds = openHistoryRows
+            const historyRows = openHistoryRows
               .filter((row: any) => normalizeSymbolInput(row.symbol) === symbol)
-              .map((row: any) => String(row.id))
-              .filter((id: string) => id.length > 0);
-            if (historyIds.length > 0) {
-              const closedHistory = await ignoreMissingTable(() => db.botTradeHistory.updateMany({
-                where: {
-                  id: { in: historyIds }
-                },
-                data: {
-                  status: "closed",
-                  outcome: "manual_exit",
-                  exitReason: "manual_close",
-                  exitTs: new Date()
-                }
-              }));
-              stateSync.closedHistoryRows = Number((closedHistory as any)?.count ?? 0);
+              .map((row: any) => ({
+                id: String(row.id),
+                side: String(row.side ?? "").trim().toLowerCase(),
+                entryPrice: Number(row.entryPrice),
+                entryQty: Number(row.entryQty),
+                entryNotionalUsd: Number(row.entryNotionalUsd)
+              }))
+              .filter((row) => row.id.length > 0);
+            if (historyRows.length > 0) {
+              const exitTs = new Date();
+              const exitOrderId = orderIds.length > 0 ? orderIds[0] : null;
+              const updates = historyRows.map((row) => {
+                const closeSide: "long" | "short" | null = row.side === "short"
+                  ? "short"
+                  : row.side === "long"
+                    ? "long"
+                    : null;
+                const exitPrice = closeSide ? (exitPriceBySide.get(closeSide) ?? null) : null;
+                const qty = Math.abs(Number(row.entryQty));
+                const entryPrice = Number(row.entryPrice);
+                const entryNotionalUsd = Number(row.entryNotionalUsd);
+                const exitNotionalUsd =
+                  exitPrice !== null && Number.isFinite(qty) && qty > 0
+                    ? Number((exitPrice * qty).toFixed(8))
+                    : null;
+                const realizedPnlUsd =
+                  exitPrice !== null &&
+                  Number.isFinite(entryPrice) &&
+                  entryPrice > 0 &&
+                  Number.isFinite(qty) &&
+                  qty > 0
+                    ? Number((
+                        closeSide === "short"
+                          ? (entryPrice - exitPrice) * qty
+                          : (exitPrice - entryPrice) * qty
+                      ).toFixed(4))
+                    : null;
+                const realizedPnlPct =
+                  realizedPnlUsd !== null &&
+                  Number.isFinite(entryNotionalUsd) &&
+                  entryNotionalUsd > 0
+                    ? Number(((realizedPnlUsd / entryNotionalUsd) * 100).toFixed(6))
+                    : null;
+                return db.botTradeHistory.update({
+                  where: { id: row.id },
+                  data: {
+                    status: "closed",
+                    outcome: "manual_exit",
+                    exitReason: "manual_close",
+                    exitTs,
+                    exitPrice,
+                    exitNotionalUsd,
+                    realizedPnlUsd,
+                    realizedPnlPct,
+                    exitOrderId
+                  }
+                });
+              });
+              await ignoreMissingTable(() => db.$transaction(updates));
+              stateSync.closedHistoryRows = updates.length;
             }
           }
         }

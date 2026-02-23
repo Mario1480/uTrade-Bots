@@ -546,13 +546,6 @@ export default function BotDetailsPage() {
         <div className="botTradeHistorySummary" style={{ marginBottom: 10 }}>
           <span>{t("openTrades.consistencyLabel")}: {consistencyLabel}</span>
           <span>{t("openTrades.updated")}: {formatDateTime(openTrades?.updatedAt ?? null)}</span>
-          <button
-            className="btn"
-            onClick={() => void closeOpenPositionManually()}
-            disabled={!hasOpenPosition || closingPosition}
-          >
-            {closingPosition ? t("openTrades.closingAction") : t("openTrades.closeAction")}
-          </button>
         </div>
         <div className="botReasonText" style={{ marginBottom: 10, fontSize: 12 }}>
           {t("decision.title")}: {latestDecisionText}
