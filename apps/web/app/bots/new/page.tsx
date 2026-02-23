@@ -87,7 +87,6 @@ export default function NewBotPage() {
   const [riskCooldownSec, setRiskCooldownSec] = useState(120);
   const [riskMaxNotionalSymbol, setRiskMaxNotionalSymbol] = useState(500);
   const [riskMaxNotionalTotal, setRiskMaxNotionalTotal] = useState(1500);
-  const [riskMaxLeverage, setRiskMaxLeverage] = useState(3);
   const [riskStopLossPct, setRiskStopLossPct] = useState("");
   const [riskTakeProfitPct, setRiskTakeProfitPct] = useState("");
   const [riskTimeStopMin, setRiskTimeStopMin] = useState("");
@@ -264,7 +263,6 @@ export default function NewBotPage() {
                 cooldownSecAfterTrade: riskCooldownSec,
                 maxNotionalPerSymbolUsd: riskMaxNotionalSymbol,
                 maxTotalNotionalUsd: riskMaxNotionalTotal,
-                maxLeverage: riskMaxLeverage,
                 stopLossPct: riskStopLossPct.trim() ? Number(riskStopLossPct) : null,
                 takeProfitPct: riskTakeProfitPct.trim() ? Number(riskTakeProfitPct) : null,
                 timeStopMin: riskTimeStopMin.trim() ? Number(riskTimeStopMin) : null
@@ -314,7 +312,7 @@ export default function NewBotPage() {
   return (
     <div className="container botsNewPage" style={{ maxWidth: 860 }}>
       <div style={{ marginBottom: 12 }}>
-        <Link href={withLocalePath("/", locale)} className="btn">{t("actions.back")}</Link>
+        <Link href={withLocalePath("/bots", locale)} className="btn">{t("actions.back")}</Link>
       </div>
 
       <div className="card" style={{ padding: 18 }}>
@@ -497,17 +495,16 @@ export default function NewBotPage() {
                     <label style={{ display: "grid", gap: 6 }}><span style={{ fontSize: 12, color: "var(--muted)" }}>{t("copier.fields.cooldownSec")}</span><input className="input" type="number" min={0} value={riskCooldownSec} onChange={(e) => setRiskCooldownSec(Number(e.target.value || 0))} /></label>
                     <label style={{ display: "grid", gap: 6 }}><span style={{ fontSize: 12, color: "var(--muted)" }}>{t("copier.fields.maxNotionalPerSymbol")}</span><input className="input" type="number" min={1} value={riskMaxNotionalSymbol} onChange={(e) => setRiskMaxNotionalSymbol(Number(e.target.value || 1))} /></label>
                     <label style={{ display: "grid", gap: 6 }}><span style={{ fontSize: 12, color: "var(--muted)" }}>{t("copier.fields.maxNotionalTotal")}</span><input className="input" type="number" min={1} value={riskMaxNotionalTotal} onChange={(e) => setRiskMaxNotionalTotal(Number(e.target.value || 1))} /></label>
-                    <label style={{ display: "grid", gap: 6 }}><span style={{ fontSize: 12, color: "var(--muted)" }}>{t("copier.fields.maxLeverage")}</span><input className="input" type="number" min={1} max={125} value={riskMaxLeverage} onChange={(e) => setRiskMaxLeverage(Number(e.target.value || 1))} /></label>
                     <label style={{ display: "grid", gap: 6 }}><span style={{ fontSize: 12, color: "var(--muted)" }}>{t("copier.fields.stopLossPct")}</span><input className="input" type="number" min={0} step="0.1" value={riskStopLossPct} onChange={(e) => setRiskStopLossPct(e.target.value)} /></label>
                     <label style={{ display: "grid", gap: 6 }}><span style={{ fontSize: 12, color: "var(--muted)" }}>{t("copier.fields.takeProfitPct")}</span><input className="input" type="number" min={0} step="0.1" value={riskTakeProfitPct} onChange={(e) => setRiskTakeProfitPct(e.target.value)} /></label>
                     <label style={{ display: "grid", gap: 6 }}><span style={{ fontSize: 12, color: "var(--muted)" }}>{t("copier.fields.timeStopMin")}</span><input className="input" type="number" min={0} step="1" value={riskTimeStopMin} onChange={(e) => setRiskTimeStopMin(e.target.value)} /></label>
-                    <label style={{ display: "grid", gap: 6 }}>
-                      <span style={{ fontSize: 12, color: "var(--muted)" }}>{t("copier.fields.exitOnSignalFlip")}</span>
-                      <input type="checkbox" checked={exitOnSignalFlip} onChange={(e) => setExitOnSignalFlip(e.target.checked)} />
+                    <label className="botsNewCheckField">
+                      <span className="botsNewCheckFieldLabel">{t("copier.fields.exitOnSignalFlip")}</span>
+                      <input className="botsNewCheckInput" type="checkbox" checked={exitOnSignalFlip} onChange={(e) => setExitOnSignalFlip(e.target.checked)} />
                     </label>
-                    <label style={{ display: "grid", gap: 6 }}>
-                      <span style={{ fontSize: 12, color: "var(--muted)" }}>{t("copier.fields.exitOnConfidenceDrop")}</span>
-                      <input type="checkbox" checked={exitOnConfidenceDrop} onChange={(e) => setExitOnConfidenceDrop(e.target.checked)} />
+                    <label className="botsNewCheckField">
+                      <span className="botsNewCheckFieldLabel">{t("copier.fields.exitOnConfidenceDrop")}</span>
+                      <input className="botsNewCheckInput" type="checkbox" checked={exitOnConfidenceDrop} onChange={(e) => setExitOnConfidenceDrop(e.target.checked)} />
                     </label>
                   </div>
                 </div>
@@ -527,20 +524,31 @@ export default function NewBotPage() {
                       <span style={{ fontSize: 12, color: "var(--muted)" }}>{t("copier.fields.minExpectedMove")}</span>
                       <input className="input" type="number" min={0} step="0.01" value={filtersMinExpectedMove} onChange={(e) => setFiltersMinExpectedMove(e.target.value)} />
                     </label>
-                    <label style={{ display: "grid", gap: 6 }}>
-                      <span style={{ fontSize: 12, color: "var(--muted)" }}>{t("copier.fields.newsRiskBlockEnabled")}</span>
-                      <input type="checkbox" checked={filtersNewsRiskBlockEnabled} onChange={(e) => setFiltersNewsRiskBlockEnabled(e.target.checked)} />
+                    <label className="botsNewCheckField">
+                      <span className="botsNewCheckFieldLabel">{t("copier.fields.newsRiskBlockEnabled")}</span>
+                      <input className="botsNewCheckInput" type="checkbox" checked={filtersNewsRiskBlockEnabled} onChange={(e) => setFiltersNewsRiskBlockEnabled(e.target.checked)} />
                     </label>
-                    <label style={{ display: "grid", gap: 6 }}>
-                      <span style={{ fontSize: 12, color: "var(--muted)" }}>{t("copier.fields.reduceOnlyOnExit")}</span>
-                      <input type="checkbox" checked={executionReduceOnlyOnExit} onChange={(e) => setExecutionReduceOnlyOnExit(e.target.checked)} />
+                    <label className="botsNewCheckField">
+                      <span className="botsNewCheckFieldLabel">{t("copier.fields.reduceOnlyOnExit")}</span>
+                      <input className="botsNewCheckInput" type="checkbox" checked={executionReduceOnlyOnExit} onChange={(e) => setExecutionReduceOnlyOnExit(e.target.checked)} />
                     </label>
                   </div>
-                  <div style={{ display: "flex", gap: 12, alignItems: "center", flexWrap: "wrap", fontSize: 12 }}>
-                    <span style={{ color: "var(--muted)" }}>{t("copier.fields.allowSignals")}</span>
-                    <label><input type="checkbox" checked={allowSignalUp} onChange={(e) => setAllowSignalUp(e.target.checked)} /> up</label>
-                    <label><input type="checkbox" checked={allowSignalDown} onChange={(e) => setAllowSignalDown(e.target.checked)} /> down</label>
-                    <label><input type="checkbox" checked={allowSignalNeutral} onChange={(e) => setAllowSignalNeutral(e.target.checked)} /> neutral</label>
+                  <div className="botsNewSignalRow">
+                    <span className="botsNewSignalLabel">{t("copier.fields.allowSignals")}</span>
+                    <div className="botsNewSignalOptions">
+                      <label className="botsNewSignalOption">
+                        <input className="botsNewCheckInput" type="checkbox" checked={allowSignalUp} onChange={(e) => setAllowSignalUp(e.target.checked)} />
+                        <span>up</span>
+                      </label>
+                      <label className="botsNewSignalOption">
+                        <input className="botsNewCheckInput" type="checkbox" checked={allowSignalDown} onChange={(e) => setAllowSignalDown(e.target.checked)} />
+                        <span>down</span>
+                      </label>
+                      <label className="botsNewSignalOption">
+                        <input className="botsNewCheckInput" type="checkbox" checked={allowSignalNeutral} onChange={(e) => setAllowSignalNeutral(e.target.checked)} />
+                        <span>neutral</span>
+                      </label>
+                    </div>
                   </div>
                 </div>
               </>

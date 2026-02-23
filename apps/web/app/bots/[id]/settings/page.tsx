@@ -110,7 +110,6 @@ export default function BotSettingsPage() {
   const [riskCooldownSec, setRiskCooldownSec] = useState(120);
   const [riskMaxNotionalSymbol, setRiskMaxNotionalSymbol] = useState(500);
   const [riskMaxNotionalTotal, setRiskMaxNotionalTotal] = useState(1500);
-  const [riskMaxLeverage, setRiskMaxLeverage] = useState(3);
   const [riskStopLossPct, setRiskStopLossPct] = useState("");
   const [riskTakeProfitPct, setRiskTakeProfitPct] = useState("");
   const [riskTimeStopMin, setRiskTimeStopMin] = useState("");
@@ -165,7 +164,6 @@ export default function BotSettingsPage() {
         setRiskCooldownSec(Number(root.risk?.cooldownSecAfterTrade ?? 120));
         setRiskMaxNotionalSymbol(Number(root.risk?.maxNotionalPerSymbolUsd ?? 500));
         setRiskMaxNotionalTotal(Number(root.risk?.maxTotalNotionalUsd ?? 1500));
-        setRiskMaxLeverage(Number(root.risk?.maxLeverage ?? 3));
         setRiskStopLossPct(root.risk?.stopLossPct == null ? "" : String(root.risk.stopLossPct));
         setRiskTakeProfitPct(root.risk?.takeProfitPct == null ? "" : String(root.risk.takeProfitPct));
         setRiskTimeStopMin(root.risk?.timeStopMin == null ? "" : String(root.risk.timeStopMin));
@@ -302,7 +300,6 @@ export default function BotSettingsPage() {
                   cooldownSecAfterTrade: riskCooldownSec,
                   maxNotionalPerSymbolUsd: riskMaxNotionalSymbol,
                   maxTotalNotionalUsd: riskMaxNotionalTotal,
-                  maxLeverage: riskMaxLeverage,
                   stopLossPct: riskStopLossPct.trim() ? Number(riskStopLossPct) : null,
                   takeProfitPct: riskTakeProfitPct.trim() ? Number(riskTakeProfitPct) : null,
                   timeStopMin: riskTimeStopMin.trim() ? Number(riskTimeStopMin) : null
@@ -442,7 +439,6 @@ export default function BotSettingsPage() {
                 <label style={{ display: "grid", gap: 6 }}><span style={{ fontSize: 12, color: "var(--muted)" }}>{t("fields.cooldownSec")}</span><input className="input" type="number" min={0} value={riskCooldownSec} onChange={(e) => setRiskCooldownSec(Number(e.target.value || 0))} /></label>
                 <label style={{ display: "grid", gap: 6 }}><span style={{ fontSize: 12, color: "var(--muted)" }}>{t("fields.maxNotionalPerSymbol")}</span><input className="input" type="number" min={1} value={riskMaxNotionalSymbol} onChange={(e) => setRiskMaxNotionalSymbol(Number(e.target.value || 1))} /></label>
                 <label style={{ display: "grid", gap: 6 }}><span style={{ fontSize: 12, color: "var(--muted)" }}>{t("fields.maxNotionalTotal")}</span><input className="input" type="number" min={1} value={riskMaxNotionalTotal} onChange={(e) => setRiskMaxNotionalTotal(Number(e.target.value || 1))} /></label>
-                <label style={{ display: "grid", gap: 6 }}><span style={{ fontSize: 12, color: "var(--muted)" }}>{t("fields.maxLeverage")}</span><input className="input" type="number" min={1} max={125} value={riskMaxLeverage} onChange={(e) => setRiskMaxLeverage(Number(e.target.value || 1))} /></label>
                 <label style={{ display: "grid", gap: 6 }}><span style={{ fontSize: 12, color: "var(--muted)" }}>{t("fields.stopLossPct")}</span><input className="input" type="number" min={0} step="0.1" value={riskStopLossPct} onChange={(e) => setRiskStopLossPct(e.target.value)} /></label>
                 <label style={{ display: "grid", gap: 6 }}><span style={{ fontSize: 12, color: "var(--muted)" }}>{t("fields.takeProfitPct")}</span><input className="input" type="number" min={0} step="0.1" value={riskTakeProfitPct} onChange={(e) => setRiskTakeProfitPct(e.target.value)} /></label>
                 <label style={{ display: "grid", gap: 6 }}><span style={{ fontSize: 12, color: "var(--muted)" }}>{t("fields.timeStopMin")}</span><input className="input" type="number" min={0} step="1" value={riskTimeStopMin} onChange={(e) => setRiskTimeStopMin(e.target.value)} /></label>

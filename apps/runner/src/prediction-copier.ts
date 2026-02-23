@@ -57,7 +57,6 @@ export type PredictionCopierConfig = {
     cooldownSecAfterTrade: number;
     maxNotionalPerSymbolUsd: number;
     maxTotalNotionalUsd: number;
-    maxLeverage: number;
     stopLossPct: number | null;
     takeProfitPct: number | null;
     timeStopMin: number | null;
@@ -112,6 +111,10 @@ export type PredictionCopierTickResult = {
     timeframe: "5m" | "15m" | "1h" | "4h" | "1d" | null;
   };
 };
+
+export function resolvePredictionCopierLeverage(botLeverage: number): number {
+  return Math.max(1, Math.trunc(botLeverage));
+}
 
 type AnyObject = Record<string, unknown>;
 
@@ -266,7 +269,6 @@ export function readPredictionCopierConfig(bot: ActiveFuturesBot): PredictionCop
       cooldownSecAfterTrade: Math.max(0, Math.trunc(toNumber(riskRaw.cooldownSecAfterTrade) ?? 120)),
       maxNotionalPerSymbolUsd: Math.max(1, toNumber(riskRaw.maxNotionalPerSymbolUsd) ?? 500),
       maxTotalNotionalUsd: Math.max(1, toNumber(riskRaw.maxTotalNotionalUsd) ?? 1500),
-      maxLeverage: Math.max(1, Math.trunc(toNumber(riskRaw.maxLeverage) ?? 3)),
       stopLossPct: toNumber(riskRaw.stopLossPct),
       takeProfitPct: toNumber(riskRaw.takeProfitPct),
       timeStopMin: timeStopMin !== null && timeStopMin > 0 ? timeStopMin : null
@@ -1265,7 +1267,7 @@ export async function runPredictionCopierTick(
     };
   }
 
-  const leverage = Math.max(1, Math.min(bot.leverage, config.risk.maxLeverage));
+  const leverage = resolvePredictionCopierLeverage(bot.leverage);
   if (executionExchange !== "paper") {
     await adapter.setLeverage(symbol, leverage, bot.marginMode);
   }

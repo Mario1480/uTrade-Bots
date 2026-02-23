@@ -6,6 +6,7 @@ import {
   evaluatePredictionCopierDecision,
   inferExternalCloseOutcome,
   readPredictionCopierConfig,
+  resolvePredictionCopierLeverage,
   resolveEntryTpSlPrices,
   type PredictionCopierConfig
 } from "./prediction-copier.js";
@@ -100,7 +101,6 @@ function makeConfig(overrides: Partial<PredictionCopierConfig> = {}): Prediction
       cooldownSecAfterTrade: 120,
       maxNotionalPerSymbolUsd: 500,
       maxTotalNotionalUsd: 1500,
-      maxLeverage: 3,
       stopLossPct: null,
       takeProfitPct: null,
       timeStopMin: null
@@ -195,6 +195,23 @@ test("readPredictionCopierConfig reads explicit exit toggles", () => {
   );
   assert.equal(cfg.exit.onSignalFlip, true);
   assert.equal(cfg.exit.onConfidenceDrop, true);
+});
+
+test("base leverage remains effective even when legacy risk.maxLeverage is present", () => {
+  const bot = makeBot({
+    leverage: 10,
+    paramsJson: {
+      predictionCopier: {
+        risk: {
+          maxLeverage: 2
+        }
+      }
+    }
+  });
+
+  const cfg = readPredictionCopierConfig(bot);
+  assert.equal(cfg.risk.maxOpenPositions, 3);
+  assert.equal(resolvePredictionCopierLeverage(bot.leverage), 10);
 });
 
 test("buildPredictionHash is deterministic", () => {
