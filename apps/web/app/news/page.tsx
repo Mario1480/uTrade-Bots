@@ -52,10 +52,10 @@ function addDays(value: Date, days: number): Date {
 export default function NewsPage() {
   const t = useTranslations("system.news");
   const locale = useLocale();
-  const dateLocale = locale === "de" ? "de-DE" : "en-GB";
+  void locale;
   const [mode, setMode] = useState<NewsMode>("all");
   const [limit, setLimit] = useState(20);
-  const [page, setPage] = useState(0);
+  const [page, setPage] = useState(1);
   const [search, setSearch] = useState("");
   const [symbols, setSymbols] = useState("");
   const [from, setFrom] = useState(() => toDateInput(addDays(new Date(), -1)));
@@ -80,6 +80,18 @@ export default function NewsPage() {
     }
     return params.toString();
   }, [mode, limit, page, search, symbols, from, to]);
+
+  function formatLocalDateTime(value: string): string {
+    const parsed = new Date(value);
+    if (Number.isNaN(parsed.getTime())) return value;
+    return parsed.toLocaleString(undefined, {
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+      hour: "2-digit",
+      minute: "2-digit"
+    });
+  }
 
   async function load() {
     setLoading(true);
@@ -118,7 +130,7 @@ export default function NewsPage() {
             className={`newsProTab ${mode === "all" ? "newsProTabActive" : ""}`}
             onClick={() => {
               setMode("all");
-              setPage(0);
+              setPage(1);
             }}
             aria-pressed={mode === "all"}
           >
@@ -129,7 +141,7 @@ export default function NewsPage() {
             className={`newsProTab ${mode === "crypto" ? "newsProTabActive" : ""}`}
             onClick={() => {
               setMode("crypto");
-              setPage(0);
+              setPage(1);
             }}
             aria-pressed={mode === "crypto"}
           >
@@ -140,11 +152,18 @@ export default function NewsPage() {
             className={`newsProTab ${mode === "general" ? "newsProTabActive" : ""}`}
             onClick={() => {
               setMode("general");
-              setPage(0);
+              setPage(1);
             }}
             aria-pressed={mode === "general"}
           >
             {t("tabs.general")}
+          </button>
+          <button
+            type="button"
+            className="btn newsProTabRefresh"
+            onClick={() => void load()}
+          >
+            {t("actions.refresh")}
           </button>
         </div>
 
@@ -156,7 +175,7 @@ export default function NewsPage() {
               value={limit}
               onChange={(event) => {
                 setLimit(Number(event.target.value));
-                setPage(0);
+                setPage(1);
               }}
             >
               <option value={10}>10</option>
@@ -170,8 +189,8 @@ export default function NewsPage() {
             <div className="newsProFilterLabel">{t("filters.page")}</div>
             <select className="input" value={page} onChange={(event) => setPage(Number(event.target.value))}>
               {Array.from({ length: 6 }).map((_, index) => (
-                <option key={index} value={index}>
-                  {index}
+                <option key={index + 1} value={index + 1}>
+                  {index + 1}
                 </option>
               ))}
             </select>
@@ -186,7 +205,7 @@ export default function NewsPage() {
                 value={search}
                 onChange={(event) => {
                   setSearch(event.target.value);
-                  setPage(0);
+                  setPage(1);
                 }}
               />
             </label>
@@ -201,7 +220,7 @@ export default function NewsPage() {
                 value={symbols}
                 onChange={(event) => {
                   setSymbols(event.target.value);
-                  setPage(0);
+                  setPage(1);
                 }}
               />
             </label>
@@ -217,7 +236,7 @@ export default function NewsPage() {
                   value={from}
                   onChange={(event) => {
                     setFrom(event.target.value);
-                    setPage(0);
+                    setPage(1);
                   }}
                 />
               </label>
@@ -229,18 +248,12 @@ export default function NewsPage() {
                   value={to}
                   onChange={(event) => {
                     setTo(event.target.value);
-                    setPage(0);
+                    setPage(1);
                   }}
                 />
               </label>
             </>
           ) : null}
-
-          <div className="newsFilterActions newsProFilterActions">
-            <button className="btn" type="button" onClick={() => void load()}>
-              {t("actions.refresh")}
-            </button>
-          </div>
         </div>
       </div>
 
@@ -256,7 +269,7 @@ export default function NewsPage() {
               <span className="newsProStatusTag">{t("meta.searchFallback")}</span>
             ) : null}
             <span className="newsProStatusTag">
-              {t("meta.fetchedAt")}: {new Date(meta.fetchedAt).toLocaleString(dateLocale)}
+              {t("meta.fetchedAt")}: {formatLocalDateTime(meta.fetchedAt)}
             </span>
             {meta.partial ? (
               <span className="newsProStatusTag">{t("meta.partial")}</span>
@@ -285,7 +298,7 @@ export default function NewsPage() {
                     </span>
                     {item.symbol ? <span className="badge">{item.symbol}</span> : null}
                     <span className="newsItemTime newsProItemTime">
-                      {new Date(item.publishedAt).toLocaleString(dateLocale)}
+                      {formatLocalDateTime(item.publishedAt)}
                     </span>
                   </div>
                   <a href={item.url} target="_blank" rel="noreferrer" className="newsItemTitle newsProItemTitle">

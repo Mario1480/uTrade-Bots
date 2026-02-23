@@ -8,7 +8,7 @@ const newsModeSchema = z.enum(["all", "crypto", "general"]);
 const newsQuerySchema = z.object({
   mode: newsModeSchema.default("all"),
   limit: z.coerce.number().int().min(1).max(50).default(20),
-  page: z.coerce.number().int().min(0).max(5).default(0),
+  page: z.coerce.number().int().min(0).max(6).default(1),
   q: z.string().trim().max(120).optional(),
   symbols: z.string().trim().max(300).optional(),
   from: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
@@ -50,7 +50,7 @@ export function registerNewsRoutes(app: Express, deps: { db: any }) {
         db: deps.db,
         mode: parsed.data.mode,
         limit: parsed.data.limit,
-        page: parsed.data.page,
+        page: Math.max(1, parsed.data.page),
         q: parsed.data.q ?? null,
         symbols: parseSymbols(parsed.data.symbols),
         from: parsed.data.from ?? null,

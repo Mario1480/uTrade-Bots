@@ -214,12 +214,13 @@ function splitFeedsByMode(mode: NewsMode, hasQuery: boolean): NewsFeed[] {
 }
 
 export async function listNews(params: ListNewsParams): Promise<ListNewsResult> {
+  const page = Math.max(1, Math.trunc(Number(params.page) || 1));
   const query = normalizeQuery(params.q);
   const queryApplies = Boolean(query) && params.mode !== "general";
   const symbols = normalizeSymbols(params.symbols);
   const key = buildCacheKey({
     mode: params.mode,
-    page: params.page,
+    page,
     limit: params.limit,
     q: query,
     symbols,
@@ -244,9 +245,9 @@ export async function listNews(params: ListNewsParams): Promise<ListNewsResult> 
 
   const feeds = splitFeedsByMode(params.mode, queryApplies);
   const allMode = params.mode === "all";
-  const fetchPage = allMode ? 0 : params.page;
+  const fetchPage = allMode ? 0 : (page - 1);
   const fetchLimit = allMode
-    ? Math.min(50, Math.max(params.limit * (params.page + 1) * 2, params.limit))
+    ? Math.min(50, Math.max(params.limit * page * 2, params.limit))
     : params.limit;
   let searchFallbackUsed = false;
 
@@ -312,7 +313,7 @@ export async function listNews(params: ListNewsParams): Promise<ListNewsResult> 
   const merged = dedupNews(filterCryptoBySymbols(filterCryptoByQuery(collected, query), symbols));
   let sliced = merged;
   if (allMode) {
-    const start = params.page * params.limit;
+    const start = (page - 1) * params.limit;
     sliced = merged.slice(start, start + params.limit);
   } else {
     sliced = merged.slice(0, params.limit);
@@ -322,7 +323,7 @@ export async function listNews(params: ListNewsParams): Promise<ListNewsResult> 
     items: toView(sliced),
     meta: {
       mode: params.mode,
-      page: params.page,
+      page,
       limit: params.limit,
       cache: "miss",
       fetchedAt: new Date().toISOString(),

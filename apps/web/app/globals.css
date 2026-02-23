@@ -5580,9 +5580,16 @@ a { color: inherit; }
   background: linear-gradient(125deg, rgba(20, 129, 192, 0.42), rgba(255, 193, 7, 0.28));
 }
 
-.newsProTab:focus-visible {
+.newsProTab:focus-visible,
+.newsProTabRefresh:focus-visible {
   outline: 2px solid rgba(255, 193, 7, 0.9);
   outline-offset: 2px;
+}
+
+.newsProTabRefresh {
+  min-height: 34px;
+  padding: 7px 12px;
+  border-radius: 999px;
 }
 
 .newsProFilterGrid {

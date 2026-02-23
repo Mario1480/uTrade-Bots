@@ -31,7 +31,7 @@ export type ListNewsParams = {
   db: any;
   mode: NewsMode;
   limit: number;
-  page: number;
+  page: number; // 1-based page index
   q?: string | null;
   symbols?: string[];
   from?: string | null;
