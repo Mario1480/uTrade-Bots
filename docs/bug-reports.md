@@ -14,9 +14,9 @@ Erledigt - Manual Trading Button in Bots löschen dafür Start/Stop einbauen
 
 Erledigt - Bots Übersicht mit laufenden Trades, kleines Metrix Set, UI Mobil anpassen, Fehlermeldungen/Logs warum z.B. Bot gestoppt hat.
 
-- Überprüfen des Wirtschaftskalender 
+Erledigt - Überprüfen des Wirtschaftskalender 
 
-- News Page beginnt mit Seite 0 anstelle 1
+Erledigt - News Page beginnt mit Seite 0 anstelle 1
 
 Erledigt - Es lässt sich keine Lokale Strategie mehr erstellen
 
@@ -32,5 +32,5 @@ Erledigt - Die Cards im Bot mit Akkodenonsections versehen und "Last Events" und
 
 Erledigt - Total Today PnL (USDT) im Dashboard zeigt nichts an. Muss noch mit den Bots verdratet werden
 
-- Geschätzter Liquidation Preis wird bei cross falsch berechnet.
+Erledigt - Geschätzter Liquidation Preis wird bei cross falsch berechnet.
 
