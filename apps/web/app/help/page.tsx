@@ -26,7 +26,7 @@ export default function HelpPage() {
   }));
 
   return (
-    <div>
+    <div className="helpPage">
       <div className="dashboardHeader">
         <div>
           <h2 style={{ margin: 0 }}>{t("title")}</h2>

@@ -451,8 +451,10 @@ export default function BotDetailsPage() {
 
   if (!bot) {
     return (
-      <div className="card" style={{ padding: 14 }}>
-        {error ? `${t("loadError")}: ${error}` : t("loading")}
+      <div className="botsDetailPage">
+        <div className="card" style={{ padding: 14 }}>
+          {error ? `${t("loadError")}: ${error}` : t("loading")}
+        </div>
       </div>
     );
   }
@@ -465,7 +467,7 @@ export default function BotDetailsPage() {
   });
 
   return (
-    <div>
+    <div className="botsDetailPage">
       <div style={{ display: "flex", justifyContent: "space-between", gap: 12, marginBottom: 12, flexWrap: "wrap" }}>
         <div>
           <h2 style={{ margin: 0 }}>{bot.name}</h2>

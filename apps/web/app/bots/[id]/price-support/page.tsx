@@ -10,7 +10,7 @@ export default function PriceSupportPage() {
   const id = params.id;
 
   return (
-    <div>
+    <div className="botsPriceSupportPage">
       <h2 style={{ marginTop: 0 }}>{t("title")}</h2>
       <div className="card" style={{ padding: 14 }}>
         <p style={{ marginTop: 0 }}>

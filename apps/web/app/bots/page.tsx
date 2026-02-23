@@ -161,7 +161,7 @@ function BotsPageContent() {
   }
 
   return (
-    <div>
+    <div className="botsPage">
       <div className="dashboardHeader">
         <div>
           <h2 style={{ margin: 0 }}>{t("title")}{titleSuffix}</h2>

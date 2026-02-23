@@ -338,11 +338,15 @@ export default function BotSettingsPage() {
   }
 
   if (loading) {
-    return <div className="card" style={{ padding: 14 }}>{t("loading")}</div>;
+    return (
+      <div className="container botsSettingsPage" style={{ maxWidth: 900 }}>
+        <div className="card" style={{ padding: 14 }}>{t("loading")}</div>
+      </div>
+    );
   }
 
   return (
-    <div className="container" style={{ maxWidth: 900 }}>
+    <div className="container botsSettingsPage" style={{ maxWidth: 900 }}>
       <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 12 }}>
         <Link href={withLocalePath(`/bots/${id}`, locale)} className="btn">{t("backToBot")}</Link>
         <Link href={withLocalePath("/", locale)} className="btn">{t("dashboard")}</Link>

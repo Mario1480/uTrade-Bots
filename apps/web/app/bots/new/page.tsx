@@ -312,7 +312,7 @@ export default function NewBotPage() {
   }
 
   return (
-    <div className="container" style={{ maxWidth: 860 }}>
+    <div className="container botsNewPage" style={{ maxWidth: 860 }}>
       <div style={{ marginBottom: 12 }}>
         <Link href={withLocalePath("/", locale)} className="btn">{t("actions.back")}</Link>
       </div>

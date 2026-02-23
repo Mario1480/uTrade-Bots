@@ -5328,6 +5328,87 @@ a { color: inherit; }
     linear-gradient(180deg, rgba(8, 20, 30, 0.94), rgba(6, 14, 24, 0.96)) !important;
 }
 
+/* Pro-panel cards scoped to selected routes */
+.tradeDeskWrap .card,
+.botsPage .card,
+.botsNewPage .card,
+.botsSettingsPage .card,
+.botsPriceSupportPage .card,
+.predictionsWrap .card,
+.helpPage .card {
+  border-radius: 12px;
+  border-color: var(--calendar-pro-border);
+  background:
+    radial-gradient(circle at 100% -20%, rgba(20, 129, 192, 0.2), transparent 45%),
+    radial-gradient(circle at 0% 120%, rgba(255, 193, 7, 0.14), transparent 45%),
+    linear-gradient(180deg, rgba(8, 20, 30, 0.94), rgba(6, 14, 24, 0.96));
+}
+
+/* Bots detail page: only main containers in pro style, not inner info mini-cards */
+.botsDetailPage > .card,
+.botsDetailPage .botAccordionCard {
+  border-radius: 12px;
+  border-color: var(--calendar-pro-border);
+  background:
+    radial-gradient(circle at 100% -20%, rgba(20, 129, 192, 0.2), transparent 45%),
+    radial-gradient(circle at 0% 120%, rgba(255, 193, 7, 0.14), transparent 45%),
+    linear-gradient(180deg, rgba(8, 20, 30, 0.94), rgba(6, 14, 24, 0.96));
+}
+
+/* Keep semantic warning/error cards highly visible */
+.tradeDeskWrap .tradeDeskNoticeError {
+  border-color: rgba(239, 68, 68, 0.92);
+  background: linear-gradient(180deg, rgba(239, 68, 68, 0.16), rgba(239, 68, 68, 0.05));
+  box-shadow: inset 0 0 0 1px rgba(239, 68, 68, 0.22);
+}
+
+.tradeDeskWrap .tradeDeskNoticeWarn {
+  border-color: rgba(245, 158, 11, 0.88);
+  background: linear-gradient(180deg, rgba(245, 158, 11, 0.16), rgba(245, 158, 11, 0.05));
+  box-shadow: inset 0 0 0 1px rgba(245, 158, 11, 0.2);
+}
+
+.tradeDeskWrap .tradeDeskNoticeInfo {
+  border-color: rgba(59, 130, 246, 0.88);
+  background: linear-gradient(180deg, rgba(59, 130, 246, 0.16), rgba(59, 130, 246, 0.05));
+  box-shadow: inset 0 0 0 1px rgba(59, 130, 246, 0.2);
+}
+
+.predictionsWrap .predictionAlertError {
+  border-color: rgba(239, 68, 68, 0.92);
+  background: linear-gradient(180deg, rgba(239, 68, 68, 0.16), rgba(239, 68, 68, 0.05));
+  box-shadow: inset 0 0 0 1px rgba(239, 68, 68, 0.22);
+}
+
+.predictionsWrap .predictionAlertWarn {
+  border-color: rgba(245, 158, 11, 0.88);
+  background: linear-gradient(180deg, rgba(245, 158, 11, 0.16), rgba(245, 158, 11, 0.05));
+  box-shadow: inset 0 0 0 1px rgba(245, 158, 11, 0.2);
+}
+
+/* Inner card tuning for readability and consistency */
+.tradeDeskWrap .tradeDeskSummary,
+.tradeDeskWrap .tradeDeskPane {
+  border-color: rgba(255, 193, 7, 0.24);
+  background:
+    radial-gradient(circle at 85% -35%, rgba(20, 129, 192, 0.16), transparent 44%),
+    linear-gradient(180deg, rgba(8, 18, 28, 0.92), rgba(6, 13, 22, 0.96));
+}
+
+.botsPage .botCard,
+.botsDetailPage .botAccordionCard {
+  border-color: rgba(255, 193, 7, 0.28);
+}
+
+.predictionsWrap .predictionDetailPanel,
+.predictionsWrap .predictionIndicatorCard,
+.predictionsWrap .predictionSubCard {
+  border-color: rgba(255, 193, 7, 0.24);
+  background:
+    radial-gradient(circle at 90% -30%, rgba(20, 129, 192, 0.14), transparent 44%),
+    linear-gradient(180deg, rgba(8, 18, 28, 0.9), rgba(6, 13, 22, 0.96));
+}
+
 /* Dashboard calendar card alignment */
 .dashboardCalendarProCard {
   border-radius: 12px;
