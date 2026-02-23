@@ -7348,6 +7348,18 @@ async function refreshPredictionStateForTemplate(params: {
   const { template } = params;
   let adapter: BitgetFuturesAdapter | null = null;
   try {
+    // Guard against pause/resume races while a scheduler cycle is already in progress.
+    const liveState = await db.predictionState.findUnique({
+      where: { id: template.stateId },
+      select: {
+        autoScheduleEnabled: true,
+        autoSchedulePaused: true
+      }
+    });
+    if (!liveState || !Boolean(liveState.autoScheduleEnabled) || Boolean(liveState.autoSchedulePaused)) {
+      return { refreshed: false, significant: false, aiCalled: false };
+    }
+
     const resolvedAccount = await resolveMarketDataTradingAccount(template.userId, template.exchangeAccountId);
     const account = resolvedAccount.selectedAccount;
     adapter = createBitgetAdapter(resolvedAccount.marketDataAccount);
