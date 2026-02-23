@@ -419,20 +419,46 @@ function TradePageContent() {
   }, [estimatedMaxQty, numericLeverage, qtyInputMode, summary]);
 
   const estimatedLiquidation = useMemo(() => {
-    if (!orderReferencePrice || !numericLeverage) {
+    if (!orderReferencePrice || !numericLeverage || !orderQtyValue) {
+      return { long: null as number | null, short: null as number | null };
+    }
+
+    const qtyAbs = Math.abs(orderQtyValue);
+    if (!Number.isFinite(qtyAbs) || qtyAbs <= 0) {
+      return { long: null as number | null, short: null as number | null };
+    }
+
+    const notional = qtyAbs * orderReferencePrice;
+    if (!Number.isFinite(notional) || notional <= 0) {
       return { long: null as number | null, short: null as number | null };
     }
 
     // Approximate liquidation estimate for UI guidance only.
+    // Cross mode uses the full available account budget as additional loss buffer.
     const maintenanceMarginRate = marginMode === "isolated" ? 0.004 : 0.005;
-    const longPrice = orderReferencePrice * (1 - 1 / numericLeverage + maintenanceMarginRate);
-    const shortPrice = orderReferencePrice * (1 + 1 / numericLeverage - maintenanceMarginRate);
+    const maintenanceMargin = notional * maintenanceMarginRate;
+    const isolatedBuffer = notional / numericLeverage;
+    const crossBuffer =
+      summary?.availableMargin !== null &&
+      summary?.availableMargin !== undefined &&
+      Number.isFinite(summary.availableMargin)
+        ? Math.max(0, summary.availableMargin)
+        : null;
+
+    const lossBuffer =
+      marginMode === "cross"
+        ? (crossBuffer !== null ? crossBuffer : isolatedBuffer) - maintenanceMargin
+        : isolatedBuffer - maintenanceMargin;
+
+    const priceDelta = lossBuffer / qtyAbs;
+    const longPrice = orderReferencePrice - priceDelta;
+    const shortPrice = orderReferencePrice + priceDelta;
 
     return {
       long: Number.isFinite(longPrice) && longPrice > 0 ? longPrice : null,
       short: Number.isFinite(shortPrice) && shortPrice > 0 ? shortPrice : null
     };
-  }, [marginMode, numericLeverage, orderReferencePrice]);
+  }, [marginMode, numericLeverage, orderQtyValue, orderReferencePrice, summary?.availableMargin]);
 
   function setQtyFromPercent(nextPercent: number) {
     const clamped = Math.max(0, Math.min(100, nextPercent));
