@@ -4486,7 +4486,8 @@ a { color: inherit; }
     position: fixed;
     inset: 0 auto 0 0;
     z-index: 45;
-    width: min(var(--app-sidebar-width), 84vw);
+    width: min(320px, calc(100vw - 12px));
+    max-width: calc(100vw - 12px);
     min-width: 0;
     transform: translateX(-110%);
     transition: transform 180ms ease;
@@ -4526,6 +4527,18 @@ a { color: inherit; }
   .appSidebarBackdropOpen {
     opacity: 1;
     pointer-events: auto;
+  }
+}
+
+@media (max-width: 560px) {
+  .appSidebar {
+    width: calc(100vw - 8px);
+    max-width: calc(100vw - 8px);
+    padding: 10px 6px 10px 10px;
+  }
+
+  .appSidebarInner {
+    padding-right: 2px;
   }
 }
 
