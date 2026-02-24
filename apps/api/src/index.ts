@@ -16638,6 +16638,7 @@ app.get("/bots/:id/trade-history", requireAuth, async (req, res) => {
 
   const baseWhere: Record<string, unknown> = {
     botId: bot.id,
+    status: "closed",
     ...(queryParsed.data.outcome ? { outcome: queryParsed.data.outcome } : {}),
     ...((fromDate || toDate)
       ? {
