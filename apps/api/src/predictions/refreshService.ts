@@ -56,6 +56,9 @@ export type RefreshDecision = {
   cooldownActive: boolean;
 };
 
+export type PredictionRefreshIntervalsSec = Record<PredictionTimeframe, number>;
+export type PredictionRefreshIntervalsMs = Record<PredictionTimeframe, number>;
+
 const DEFAULT_AI_COOLDOWN_MS =
   Math.max(
     30,
@@ -66,13 +69,63 @@ const DEFAULT_EVENT_THROTTLE_MS =
 const DEFAULT_UNSTABLE_FLIP_WINDOW_MS = 30 * 60 * 1000;
 const DEFAULT_UNSTABLE_FLIP_LIMIT = Math.max(2, Number(process.env.PRED_UNSTABLE_FLIP_LIMIT ?? "4"));
 
-const REFRESH_INTERVALS_MS: Record<PredictionTimeframe, number> = {
-  "5m": Math.max(60, Number(process.env.PREDICTION_REFRESH_5M_SECONDS ?? "180")) * 1000,
-  "15m": Math.max(120, Number(process.env.PREDICTION_REFRESH_15M_SECONDS ?? "300")) * 1000,
-  "1h": Math.max(180, Number(process.env.PREDICTION_REFRESH_1H_SECONDS ?? "600")) * 1000,
-  "4h": Math.max(300, Number(process.env.PREDICTION_REFRESH_4H_SECONDS ?? "1800")) * 1000,
-  "1d": Math.max(600, Number(process.env.PREDICTION_REFRESH_1D_SECONDS ?? "10800")) * 1000
+const REFRESH_INTERVAL_MIN_SEC: PredictionRefreshIntervalsSec = {
+  "5m": 60,
+  "15m": 120,
+  "1h": 180,
+  "4h": 300,
+  "1d": 600
 };
+
+const REFRESH_INTERVALS_SEC: PredictionRefreshIntervalsSec = {
+  "5m": Math.max(REFRESH_INTERVAL_MIN_SEC["5m"], Number(process.env.PREDICTION_REFRESH_5M_SECONDS ?? "180")),
+  "15m": Math.max(REFRESH_INTERVAL_MIN_SEC["15m"], Number(process.env.PREDICTION_REFRESH_15M_SECONDS ?? "300")),
+  "1h": Math.max(REFRESH_INTERVAL_MIN_SEC["1h"], Number(process.env.PREDICTION_REFRESH_1H_SECONDS ?? "600")),
+  "4h": Math.max(REFRESH_INTERVAL_MIN_SEC["4h"], Number(process.env.PREDICTION_REFRESH_4H_SECONDS ?? "1800")),
+  "1d": Math.max(REFRESH_INTERVAL_MIN_SEC["1d"], Number(process.env.PREDICTION_REFRESH_1D_SECONDS ?? "10800"))
+};
+
+const REFRESH_INTERVALS_MS: PredictionRefreshIntervalsMs = {
+  "5m": REFRESH_INTERVALS_SEC["5m"] * 1000,
+  "15m": REFRESH_INTERVALS_SEC["15m"] * 1000,
+  "1h": REFRESH_INTERVALS_SEC["1h"] * 1000,
+  "4h": REFRESH_INTERVALS_SEC["4h"] * 1000,
+  "1d": REFRESH_INTERVALS_SEC["1d"] * 1000
+};
+
+function normalizeRefreshIntervalSec(
+  timeframe: PredictionTimeframe,
+  value: unknown
+): number {
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed)) return REFRESH_INTERVALS_SEC[timeframe];
+  return Math.max(REFRESH_INTERVAL_MIN_SEC[timeframe], Math.trunc(parsed));
+}
+
+export function resolveRefreshIntervalsSec(
+  override?: Partial<Record<PredictionTimeframe, unknown>> | null
+): PredictionRefreshIntervalsSec {
+  return {
+    "5m": normalizeRefreshIntervalSec("5m", override?.["5m"]),
+    "15m": normalizeRefreshIntervalSec("15m", override?.["15m"]),
+    "1h": normalizeRefreshIntervalSec("1h", override?.["1h"]),
+    "4h": normalizeRefreshIntervalSec("4h", override?.["4h"]),
+    "1d": normalizeRefreshIntervalSec("1d", override?.["1d"])
+  };
+}
+
+export function refreshIntervalsMsFromSec(
+  override?: Partial<Record<PredictionTimeframe, unknown>> | null
+): PredictionRefreshIntervalsMs {
+  const sec = resolveRefreshIntervalsSec(override);
+  return {
+    "5m": sec["5m"] * 1000,
+    "15m": sec["15m"] * 1000,
+    "1h": sec["1h"] * 1000,
+    "4h": sec["4h"] * 1000,
+    "1d": sec["1d"] * 1000
+  };
+}
 
 function normalizeTags(tags: unknown): string[] {
   if (!Array.isArray(tags)) return [];
@@ -93,7 +146,14 @@ function confidenceToPct(value: number): number {
   return Math.max(0, Math.min(100, normalized));
 }
 
-export function refreshIntervalMsForTimeframe(timeframe: PredictionTimeframe): number {
+export function refreshIntervalMsForTimeframe(
+  timeframe: PredictionTimeframe,
+  intervalsMs?: Partial<Record<PredictionTimeframe, number>> | null
+): number {
+  const override = Number(intervalsMs?.[timeframe]);
+  if (Number.isFinite(override) && override > 0) {
+    return Math.max(REFRESH_INTERVAL_MIN_SEC[timeframe] * 1000, Math.trunc(override));
+  }
   return REFRESH_INTERVALS_MS[timeframe] ?? 300_000;
 }
 

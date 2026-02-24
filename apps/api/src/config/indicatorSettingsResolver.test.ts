@@ -26,6 +26,11 @@ test("resolveIndicatorSettings applies precedence global->account->symbol->symbo
           scopeType: "global",
           configJson: {
             enabledPacks: { indicatorsV2: true },
+            aiGating: {
+              refreshIntervalSec: {
+                "5m": 240
+              }
+            },
             indicatorsV2: {
               volume: { lookback: 110 },
               breakerBlocks: { len: 4, showSPD: true },
@@ -84,6 +89,8 @@ test("resolveIndicatorSettings applies precedence global->account->symbol->symbo
   assert.equal(resolved.config.indicatorsV2.superOrderBlockFvgBos.pivotLookup, 2);
   assert.equal(resolved.config.indicatorsV2.superOrderBlockFvgBos.plotRJB, true);
   assert.equal(resolved.config.enabledPacks.advancedIndicators, false);
+  assert.equal(resolved.config.aiGating.refreshIntervalSec["5m"], 240);
+  assert.equal(resolved.config.aiGating.refreshIntervalSec["15m"], 300);
   assert.equal(resolved.breakdown.length, 4);
   assert.ok(resolved.hash.length >= 12);
 });

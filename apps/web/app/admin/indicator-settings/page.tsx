@@ -165,6 +165,7 @@ type IndicatorSettingsConfig = {
     recentEventBars: { "5m": number; "15m": number; "1h": number; "4h": number; "1d": number };
     highImportanceMin: number;
     aiCooldownSec: { "5m": number; "15m": number; "1h": number; "4h": number; "1d": number };
+    refreshIntervalSec: { "5m": number; "15m": number; "1h": number; "4h": number; "1d": number };
     maxHighPriorityPerHour: number;
   };
 };
@@ -404,6 +405,7 @@ const FALLBACK_DEFAULTS: IndicatorSettingsConfig = {
     recentEventBars: { "5m": 6, "15m": 4, "1h": 2, "4h": 2, "1d": 2 },
     highImportanceMin: 4,
     aiCooldownSec: { "5m": 120, "15m": 240, "1h": 900, "4h": 1800, "1d": 3600 },
+    refreshIntervalSec: { "5m": 180, "15m": 300, "1h": 600, "4h": 1800, "1d": 10800 },
     maxHighPriorityPerHour: 12
   }
 };
@@ -694,6 +696,7 @@ const INDICATOR_CATALOG_GROUPS: IndicatorCatalogGroup[] = [
           "config.aiGating.recentEventBars.*",
           "config.aiGating.highImportanceMin",
           "config.aiGating.aiCooldownSec.*",
+          "config.aiGating.refreshIntervalSec.*",
           "config.aiGating.maxHighPriorityPerHour"
         ]
       },
@@ -824,6 +827,7 @@ export default function AdminIndicatorSettingsPage() {
       settingsOnly: allItems.length - liveCount
     };
   }, [t]);
+  const refreshIntervalsDisabled = scopeType !== "global";
 
   function setIndicatorsV2StochRsi(field: StochRsiKey, value: number) {
     setConfig((prev) => ({
@@ -948,6 +952,19 @@ export default function AdminIndicatorSettingsPage() {
     }));
   }
 
+  function setAiGatingRefreshIntervalSec(tf: Timeframe, value: number) {
+    setConfig((prev) => ({
+      ...prev,
+      aiGating: {
+        ...prev.aiGating,
+        refreshIntervalSec: {
+          ...prev.aiGating.refreshIntervalSec,
+          [tf]: value
+        }
+      }
+    }));
+  }
+
   function setLiquiditySweepsNumber(field: LiquiditySweepsNumberKey, value: number) {
     setConfig((prev) => ({
       ...prev,
@@ -1054,13 +1071,22 @@ export default function AdminIndicatorSettingsPage() {
     setError(null);
     setNotice(null);
     try {
+      const configPayload = (() => {
+        if (scopeType === "global") return config;
+        const aiGatingWithoutRefreshInterval = { ...config.aiGating } as Record<string, unknown>;
+        delete aiGatingWithoutRefreshInterval.refreshIntervalSec;
+        return {
+          ...config,
+          aiGating: aiGatingWithoutRefreshInterval
+        };
+      })();
       const payload = {
         scopeType,
         exchange: scopeType === "global" ? undefined : exchange.trim() || undefined,
         accountId: scopeType === "account" ? accountId.trim() : undefined,
         symbol: scopeType === "symbol" || scopeType === "symbol_tf" ? symbol.trim() : undefined,
         timeframe: scopeType === "symbol_tf" ? timeframe : undefined,
-        config
+        config: configPayload
       };
 
       if (editingId) {
@@ -1609,6 +1635,22 @@ export default function AdminIndicatorSettingsPage() {
                       <label className="settingsField"><span className="mutedTiny">1h</span><input className="input" type="number" min={0} max={86400} step={1} value={config.aiGating.aiCooldownSec["1h"]} onChange={(e) => setAiGatingCooldownSec("1h", parseNumber(e.target.value))} /></label>
                       <label className="settingsField"><span className="mutedTiny">4h</span><input className="input" type="number" min={0} max={86400} step={1} value={config.aiGating.aiCooldownSec["4h"]} onChange={(e) => setAiGatingCooldownSec("4h", parseNumber(e.target.value))} /></label>
                       <label className="settingsField"><span className="mutedTiny">1d</span><input className="input" type="number" min={0} max={86400} step={1} value={config.aiGating.aiCooldownSec["1d"]} onChange={(e) => setAiGatingCooldownSec("1d", parseNumber(e.target.value))} /></label>
+                    </div>
+
+                    <div className="settingsMutedText indicatorConfigHint" style={{ marginTop: 8 }}>
+                      {t("fields.refreshIntervalPerTf")}
+                    </div>
+                    {refreshIntervalsDisabled ? (
+                      <div className="settingsMutedText indicatorConfigHint">
+                        {t("fields.refreshIntervalGlobalOnlyHint")}
+                      </div>
+                    ) : null}
+                    <div className="indicatorConfigGrid">
+                      <label className="settingsField"><span className="mutedTiny">5m</span><input className="input" type="number" min={60} max={86400} step={1} value={config.aiGating.refreshIntervalSec["5m"]} onChange={(e) => setAiGatingRefreshIntervalSec("5m", parseNumber(e.target.value))} disabled={refreshIntervalsDisabled} /></label>
+                      <label className="settingsField"><span className="mutedTiny">15m</span><input className="input" type="number" min={120} max={86400} step={1} value={config.aiGating.refreshIntervalSec["15m"]} onChange={(e) => setAiGatingRefreshIntervalSec("15m", parseNumber(e.target.value))} disabled={refreshIntervalsDisabled} /></label>
+                      <label className="settingsField"><span className="mutedTiny">1h</span><input className="input" type="number" min={180} max={86400} step={1} value={config.aiGating.refreshIntervalSec["1h"]} onChange={(e) => setAiGatingRefreshIntervalSec("1h", parseNumber(e.target.value))} disabled={refreshIntervalsDisabled} /></label>
+                      <label className="settingsField"><span className="mutedTiny">4h</span><input className="input" type="number" min={300} max={86400} step={1} value={config.aiGating.refreshIntervalSec["4h"]} onChange={(e) => setAiGatingRefreshIntervalSec("4h", parseNumber(e.target.value))} disabled={refreshIntervalsDisabled} /></label>
+                      <label className="settingsField"><span className="mutedTiny">1d</span><input className="input" type="number" min={600} max={86400} step={1} value={config.aiGating.refreshIntervalSec["1d"]} onChange={(e) => setAiGatingRefreshIntervalSec("1d", parseNumber(e.target.value))} disabled={refreshIntervalsDisabled} /></label>
                     </div>
                   </div>
                 ) : null}

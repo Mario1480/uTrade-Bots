@@ -204,9 +204,11 @@ import {
   buildEventDelta,
   buildPredictionChangeHash,
   evaluateSignificantChange,
+  refreshIntervalsMsFromSec,
   refreshIntervalMsForTimeframe,
   shouldMarkUnstableFlips,
   shouldThrottleRepeatedEvent,
+  type PredictionRefreshIntervalsMs,
   type PredictionStateLike
 } from "./predictions/refreshService.js";
 import {
@@ -7494,8 +7496,39 @@ async function refreshPredictionRefreshRuntimeSettingsFromDb() {
   predictionRefreshRuntimeSettings = toEffectivePredictionRefreshSettings(stored);
 }
 
+async function resolveGlobalPredictionRefreshIntervalsMs(): Promise<PredictionRefreshIntervalsMs> {
+  const fallbackIntervalsMs = refreshIntervalsMsFromSec();
+  try {
+    const indicatorSettingsResolution = await resolveIndicatorSettings({ db });
+    const globalBreakdown = indicatorSettingsResolution.breakdown.find(
+      (item) => item.scopeType === "global"
+    );
+    if (!globalBreakdown || !db?.indicatorSetting || typeof db.indicatorSetting.findUnique !== "function") {
+      return fallbackIntervalsMs;
+    }
+    const globalRow = await db.indicatorSetting.findUnique({
+      where: { id: globalBreakdown.id },
+      select: { configJson: true }
+    });
+    const refreshIntervalPatch = asRecord(
+      asRecord(asRecord(globalRow?.configJson).aiGating).refreshIntervalSec
+    );
+    if (Object.keys(refreshIntervalPatch).length === 0) {
+      return fallbackIntervalsMs;
+    }
+    return refreshIntervalsMsFromSec(refreshIntervalPatch);
+  } catch (error) {
+    // eslint-disable-next-line no-console
+    console.warn("[predictions:refresh] failed to resolve global refresh intervals, using env defaults", {
+      reason: String(error)
+    });
+    return fallbackIntervalsMs;
+  }
+}
+
 async function probePredictionRefreshTrigger(
-  template: PredictionRefreshTemplate
+  template: PredictionRefreshTemplate,
+  refreshIntervalsMs: PredictionRefreshIntervalsMs
 ): Promise<{ refresh: boolean; reasons: string[] }> {
   let adapter: BitgetFuturesAdapter | null = null;
   try {
@@ -7572,7 +7605,7 @@ async function probePredictionRefreshTrigger(
       timeframe: template.timeframe,
       nowMs: Date.now(),
       lastUpdatedMs: template.tsUpdated.getTime(),
-      refreshIntervalMs: refreshIntervalMsForTimeframe(template.timeframe),
+      refreshIntervalMs: refreshIntervalMsForTimeframe(template.timeframe, refreshIntervalsMs),
       previousFeatureSnapshot: template.featureSnapshot,
       currentFeatureSnapshot: inferred.featureSnapshot,
       previousTriggerState: predictionTriggerDebounceState.get(template.stateId) ?? null,
@@ -8885,6 +8918,7 @@ async function runPredictionAutoCycle() {
       });
     }
     await bootstrapPredictionStateFromHistory();
+    const refreshIntervalsMs = await resolveGlobalPredictionRefreshIntervalsMs();
     const templates = await listPredictionRefreshTemplates();
     const active = templates.filter(
       (row) => row.autoScheduleEnabled && !row.autoSchedulePaused
@@ -8893,7 +8927,7 @@ async function runPredictionAutoCycle() {
     const now = Date.now();
 
     const dueTemplates = active.filter((template) => {
-      const intervalMs = refreshIntervalMsForTimeframe(template.timeframe);
+      const intervalMs = refreshIntervalMsForTimeframe(template.timeframe, refreshIntervalsMs);
       return now - template.tsUpdated.getTime() >= intervalMs;
     });
 
@@ -8918,7 +8952,7 @@ async function runPredictionAutoCycle() {
 
       for (const template of remaining) {
         if (refreshed >= PREDICTION_REFRESH_MAX_RUNS_PER_CYCLE) break;
-        const triggerProbe = await probePredictionRefreshTrigger(template);
+        const triggerProbe = await probePredictionRefreshTrigger(template, refreshIntervalsMs);
         if (!triggerProbe.refresh) continue;
         const result = await refreshPredictionStateForTemplate({
           template,
@@ -13780,6 +13814,7 @@ app.get("/api/thresholds/latest", requireAuth, async (req, res) => {
 
 app.get("/api/predictions/running", requireAuth, async (req, res) => {
   const user = getUserFromLocals(res);
+  const refreshIntervalsMs = await resolveGlobalPredictionRefreshIntervalsMs();
 
   const [rows, exchangeAccounts] = await Promise.all([
     db.predictionState.findMany({
@@ -13867,7 +13902,7 @@ app.get("/api/predictions/running", requireAuth, async (req, res) => {
     const paused = Boolean(row.autoSchedulePaused);
     const dueAt = row.tsPredictedFor instanceof Date
       ? row.tsPredictedFor.getTime()
-      : row.tsUpdated.getTime() + refreshIntervalMsForTimeframe(timeframe);
+      : row.tsUpdated.getTime() + refreshIntervalMsForTimeframe(timeframe, refreshIntervalsMs);
     const dueInSec = Math.max(0, Math.floor((dueAt - now) / 1000));
     const account = accountMap.get(exchangeAccountId);
 

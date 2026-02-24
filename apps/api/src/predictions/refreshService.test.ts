@@ -4,7 +4,9 @@ import {
   buildEventDelta,
   buildPredictionChangeHash,
   evaluateSignificantChange,
+  refreshIntervalsMsFromSec,
   refreshIntervalMsForTimeframe,
+  resolveRefreshIntervalsSec,
   shouldMarkUnstableFlips,
   shouldCallAiForRefresh,
   shouldThrottleRepeatedEvent,
@@ -14,6 +16,21 @@ import {
 test("refreshIntervalMsForTimeframe returns configured defaults", () => {
   assert.equal(refreshIntervalMsForTimeframe("5m") > 0, true);
   assert.equal(refreshIntervalMsForTimeframe("1d") >= refreshIntervalMsForTimeframe("1h"), true);
+});
+
+test("resolveRefreshIntervalsSec applies overrides and fallback defaults", () => {
+  const resolved = resolveRefreshIntervalsSec({
+    "5m": 240
+  });
+  assert.equal(resolved["5m"], 240);
+  assert.equal(resolved["15m"] > 0, true);
+});
+
+test("refreshIntervalMsForTimeframe uses provided interval map", () => {
+  const intervalsMs = refreshIntervalsMsFromSec({
+    "1h": 700
+  });
+  assert.equal(refreshIntervalMsForTimeframe("1h", intervalsMs), 700_000);
 });
 
 test("buildPredictionChangeHash is stable for same input", () => {

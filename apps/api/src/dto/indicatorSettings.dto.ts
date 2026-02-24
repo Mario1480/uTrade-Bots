@@ -197,6 +197,13 @@ const aiGatingSchema = z.object({
     "4h": positiveInt(0, 86_400).default(1800),
     "1d": positiveInt(0, 86_400).default(3600)
   }),
+  refreshIntervalSec: z.object({
+    "5m": positiveInt(60, 86_400).default(180),
+    "15m": positiveInt(120, 86_400).default(300),
+    "1h": positiveInt(180, 86_400).default(600),
+    "4h": positiveInt(300, 86_400).default(1800),
+    "1d": positiveInt(600, 86_400).default(10800)
+  }),
   maxHighPriorityPerHour: positiveInt(1, 200).default(12)
 });
 
@@ -247,6 +254,16 @@ export const indicatorSettingsUpsertSchema = z
         code: z.ZodIssueCode.custom,
         message: "config must include at least one setting",
         path: ["config"]
+      });
+    }
+    if (
+      value.scopeType !== "global"
+      && value.config?.aiGating?.refreshIntervalSec !== undefined
+    ) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "aiGating.refreshIntervalSec is global-only",
+        path: ["config", "aiGating", "refreshIntervalSec"]
       });
     }
     if (value.scopeType === "global") return;
@@ -466,6 +483,13 @@ export const DEFAULT_INDICATOR_SETTINGS: IndicatorSettingsConfig = {
       "4h": 1800,
       "1d": 3600
     },
+    refreshIntervalSec: {
+      "5m": 180,
+      "15m": 300,
+      "1h": 600,
+      "4h": 1800,
+      "1d": 10800
+    },
     maxHighPriorityPerHour: 12
   }
 };
@@ -521,6 +545,15 @@ function normalizeLegacyAdvancedIndicatorsKey(value: unknown): unknown {
         "1h": 900,
         "4h": 1800,
         "1d": 3600
+      };
+    }
+    if (!aiGating.refreshIntervalSec || typeof aiGating.refreshIntervalSec !== "object") {
+      aiGating.refreshIntervalSec = {
+        "5m": 180,
+        "15m": 300,
+        "1h": 600,
+        "4h": 1800,
+        "1d": 10800
       };
     }
     if (aiGating.maxHighPriorityPerHour === undefined) {
@@ -771,6 +804,18 @@ export function mergeIndicatorSettings(
           patch.aiGating?.aiCooldownSec?.["4h"] ?? base.aiGating.aiCooldownSec["4h"],
         "1d":
           patch.aiGating?.aiCooldownSec?.["1d"] ?? base.aiGating.aiCooldownSec["1d"]
+      },
+      refreshIntervalSec: {
+        "5m":
+          patch.aiGating?.refreshIntervalSec?.["5m"] ?? base.aiGating.refreshIntervalSec["5m"],
+        "15m":
+          patch.aiGating?.refreshIntervalSec?.["15m"] ?? base.aiGating.refreshIntervalSec["15m"],
+        "1h":
+          patch.aiGating?.refreshIntervalSec?.["1h"] ?? base.aiGating.refreshIntervalSec["1h"],
+        "4h":
+          patch.aiGating?.refreshIntervalSec?.["4h"] ?? base.aiGating.refreshIntervalSec["4h"],
+        "1d":
+          patch.aiGating?.refreshIntervalSec?.["1d"] ?? base.aiGating.refreshIntervalSec["1d"]
       },
       maxHighPriorityPerHour:
         patch.aiGating?.maxHighPriorityPerHour ?? base.aiGating.maxHighPriorityPerHour

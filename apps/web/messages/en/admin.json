@@ -623,6 +623,8 @@
       "maxHighPriorityPerHour": "Max high-priority calls / hour",
       "recentEventBars": "Recent event bars per timeframe",
       "aiCooldownPerTf": "AI cooldown seconds per timeframe",
+      "refreshIntervalPerTf": "Prediction refresh interval seconds per timeframe",
+      "refreshIntervalGlobalOnlyHint": "Refresh intervals are global runtime controls and can only be changed on global scope.",
       "liquidityPreparedHint": "Liquidity sweeps are active and used in prediction features.",
       "sweepLen": "Sweep len",
       "mode": "Mode",
