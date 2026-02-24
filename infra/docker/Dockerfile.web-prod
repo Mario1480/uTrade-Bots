@@ -26,12 +26,14 @@ FROM deps AS build
 ARG NEXT_PUBLIC_API_URL
 ENV NEXT_PUBLIC_API_URL=${NEXT_PUBLIC_API_URL}
 COPY . .
-RUN npm -w apps/web run build
+RUN npm -w packages/futures-core run build \
+  && npm -w apps/web run build
 
 FROM node:20-alpine AS runner
 ENV NODE_ENV=production
 WORKDIR /app
 COPY --from=build /app/node_modules /app/node_modules
+COPY --from=build /app/packages/futures-core /app/packages/futures-core
 COPY --from=build /app/apps/web/.next /app/apps/web/.next
 COPY --from=build /app/apps/web/public /app/apps/web/public
 COPY --from=build /app/apps/web/app /app/apps/web/app
