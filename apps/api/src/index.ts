@@ -234,6 +234,12 @@ import {
   getEconomicCalendarConfig
 } from "./services/economicCalendar/index.js";
 import { fetchFmpEconomicEvents } from "./services/economicCalendar/providers/fmp.js";
+import {
+  TELEGRAM_CHAT_ID_IN_USE_ERROR,
+  findTelegramChatIdConflict as findTelegramChatIdConflictFromDeps,
+  isPrismaUniqueConstraintError,
+  normalizeTelegramChatId as normalizeTelegramChatIdValue
+} from "./telegram/chatIdUniqueness.js";
 
 const db = prisma as any;
 const economicCalendarRefreshJob = createEconomicCalendarRefreshJob(db);
@@ -5739,9 +5745,44 @@ function parseTelegramConfigValue(value: unknown): string | null {
   return trimmed.length > 0 ? trimmed : null;
 }
 
+function normalizeTelegramChatId(value: unknown): string | null {
+  return normalizeTelegramChatIdValue(value);
+}
+
+async function findTelegramChatIdConflict(params: {
+  chatId: string | null;
+  currentUserId?: string | null;
+  includeGlobal?: boolean;
+}): Promise<"user" | "global" | null> {
+  return findTelegramChatIdConflictFromDeps({
+    ...params,
+    deps: {
+      findUserByChatId: async (input) =>
+        db.user.findFirst({
+          where: {
+            telegramChatId: input.chatId,
+            ...(input.excludingUserId ? { id: { not: input.excludingUserId } } : {})
+          },
+          select: { id: true }
+        }),
+      getGlobalChatId: async () => {
+        const config = await db.alertConfig.findUnique({
+          where: { key: "default" },
+          select: { telegramChatId: true }
+        });
+        return normalizeTelegramChatId(config?.telegramChatId);
+      }
+    }
+  });
+}
+
+function buildTelegramChatIdConflictResponse(res: express.Response): express.Response {
+  return res.status(409).json(TELEGRAM_CHAT_ID_IN_USE_ERROR);
+}
+
 async function resolveTelegramConfig(userId?: string | null): Promise<TelegramConfig | null> {
   const envToken = parseTelegramConfigValue(process.env.TELEGRAM_BOT_TOKEN);
-  const envChatId = parseTelegramConfigValue(process.env.TELEGRAM_CHAT_ID);
+  const envChatId = normalizeTelegramChatId(process.env.TELEGRAM_CHAT_ID);
   const envOverrideEnabled = Boolean(envToken && envChatId);
   const config = await db.alertConfig.findUnique({
     where: { key: "default" },
@@ -5762,12 +5803,12 @@ async function resolveTelegramConfig(userId?: string | null): Promise<TelegramCo
         telegramChatId: true
       }
     });
-    chatId = parseTelegramConfigValue(userSettings?.telegramChatId);
+    chatId = normalizeTelegramChatId(userSettings?.telegramChatId);
   }
   if (!chatId) {
     chatId = envOverrideEnabled
       ? envChatId
-      : parseTelegramConfigValue(config?.telegramChatId);
+      : normalizeTelegramChatId(config?.telegramChatId);
   }
 
   if (!botToken || !chatId) return null;
@@ -9489,17 +9530,26 @@ app.put("/settings/alerts", requireAuth, async (req, res) => {
   }
 
   const requestedToken = parseTelegramConfigValue(parsed.data.telegramBotToken);
-  const requestedChatId = parseTelegramConfigValue(parsed.data.telegramChatId);
+  const requestedChatId = normalizeTelegramChatId(parsed.data.telegramChatId);
+  const chatIdConflict = await findTelegramChatIdConflict({
+    chatId: requestedChatId,
+    currentUserId: user.id,
+    includeGlobal: true
+  });
+  if (chatIdConflict) {
+    return buildTelegramChatIdConflictResponse(res);
+  }
   const hasTokenUpdate = Object.prototype.hasOwnProperty.call(parsed.data, "telegramBotToken");
-  const [existingConfig, updatedUser] = await Promise.all([
-    db.alertConfig.findUnique({
-      where: { key: "default" },
-      select: {
-        telegramBotToken: true,
-        telegramChatId: true
-      }
-    }),
-    db.user.update({
+  const existingConfig = await db.alertConfig.findUnique({
+    where: { key: "default" },
+    select: {
+      telegramBotToken: true,
+      telegramChatId: true
+    }
+  });
+  let updatedUser: { telegramChatId: string | null };
+  try {
+    updatedUser = await db.user.update({
       where: { id: user.id },
       data: {
         telegramChatId: requestedChatId
@@ -9507,8 +9557,13 @@ app.put("/settings/alerts", requireAuth, async (req, res) => {
       select: {
         telegramChatId: true
       }
-    })
-  ]);
+    });
+  } catch (error) {
+    if (isPrismaUniqueConstraintError(error)) {
+      return buildTelegramChatIdConflictResponse(res);
+    }
+    throw error;
+  }
 
   let token = parseTelegramConfigValue(existingConfig?.telegramBotToken);
   if (isSuperadmin && hasTokenUpdate) {
@@ -9517,7 +9572,7 @@ app.put("/settings/alerts", requireAuth, async (req, res) => {
       create: {
         key: "default",
         telegramBotToken: requestedToken,
-        telegramChatId: parseTelegramConfigValue(existingConfig?.telegramChatId)
+        telegramChatId: normalizeTelegramChatId(existingConfig?.telegramChatId)
       },
       update: {
         telegramBotToken: requestedToken
@@ -9791,7 +9846,7 @@ app.get("/admin/settings/telegram", requireAuth, async (_req, res) => {
     }
   });
   const envToken = parseTelegramConfigValue(process.env.TELEGRAM_BOT_TOKEN);
-  const envChatId = parseTelegramConfigValue(process.env.TELEGRAM_CHAT_ID);
+  const envChatId = normalizeTelegramChatId(process.env.TELEGRAM_CHAT_ID);
 
   return res.json({
     telegramBotTokenMasked: config?.telegramBotToken ? maskSecret(config.telegramBotToken) : null,
@@ -9809,7 +9864,15 @@ app.put("/admin/settings/telegram", requireAuth, async (req, res) => {
   }
 
   const token = parseTelegramConfigValue(parsed.data.telegramBotToken);
-  const chatId = parseTelegramConfigValue(parsed.data.telegramChatId);
+  const chatId = normalizeTelegramChatId(parsed.data.telegramChatId);
+  const chatIdConflict = await findTelegramChatIdConflict({
+    chatId,
+    currentUserId: null,
+    includeGlobal: false
+  });
+  if (chatIdConflict) {
+    return buildTelegramChatIdConflictResponse(res);
+  }
 
   const updated = await db.alertConfig.upsert({
     where: { key: "default" },

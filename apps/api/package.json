@@ -6,7 +6,7 @@
     "dev": "tsx watch src/index.ts",
     "build": "tsc -p tsconfig.json",
     "typecheck": "tsc -p tsconfig.json --noEmit",
-    "test:ai": "tsx --test src/ai/qualityGate.test.ts src/ai/payloadBudget.test.ts src/ai/historyContext.test.ts src/ai/promptSettings.test.ts src/ai/predictionExplainer.test.ts src/ai/promptGenerator.test.ts src/ai/userPromptSettings.test.ts src/ai/provider.model.test.ts",
+    "test:ai": "tsx --test src/ai/qualityGate.test.ts src/ai/payloadBudget.test.ts src/ai/historyContext.test.ts src/ai/promptSettings.test.ts src/ai/predictionExplainer.test.ts src/ai/promptGenerator.test.ts src/ai/userPromptSettings.test.ts src/ai/provider.model.test.ts src/telegram/telegramChatIdUniqueness.test.ts",
     "test:composite-strategies": "tsx --test src/composite-strategies/graph.test.ts src/composite-strategies/runner.test.ts",
     "test:local-strategies": "tsx --test src/local-strategies/registry.test.ts src/local-strategies/pythonClient.test.ts src/local-strategies/pythonRunner.test.ts",
     "test:predictions-detail": "tsx --test src/dto/predictions.dto.test.ts src/controllers/predictionsController.test.ts",

@@ -430,7 +430,7 @@ model User {
   email              String            @unique
   passwordHash       String?
   emailVerifiedAt    DateTime?
-  telegramChatId     String?
+  telegramChatId     String?           @unique
   autoLogoutEnabled  Boolean           @default(true)
   autoLogoutMinutes  Int               @default(60)
   allowManualTrading Boolean           @default(false)
