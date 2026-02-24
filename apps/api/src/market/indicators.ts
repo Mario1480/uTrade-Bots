@@ -31,8 +31,14 @@ import type {
   IndicatorsComputeSettings,
   IndicatorsSnapshot
 } from "./indicators/types.js";
-import type { BreakerBlocksSnapshot } from "@mm/futures-core";
-import { computeBreakerBlocksSnapshot } from "@mm/futures-core";
+import type {
+  BreakerBlocksSnapshot,
+  SuperOrderBlockFvgBosSnapshot
+} from "@mm/futures-core";
+import {
+  computeBreakerBlocksSnapshot,
+  computeSuperOrderBlockFvgBosSnapshot
+} from "@mm/futures-core";
 
 export type {
   Candle,
@@ -54,6 +60,17 @@ function emptyBreakerBlocksSnapshot(
   settings: NormalizedIndicatorSettings
 ): BreakerBlocksSnapshot {
   const snapshot = computeBreakerBlocksSnapshot([], settings.breakerBlocks);
+  return {
+    ...snapshot,
+    dataGap
+  };
+}
+
+function emptySuperOrderBlockFvgBosSnapshot(
+  dataGap: boolean,
+  settings: NormalizedIndicatorSettings
+): SuperOrderBlockFvgBosSnapshot {
+  const snapshot = computeSuperOrderBlockFvgBosSnapshot([], settings.superOrderBlockFvgBos);
   return {
     ...snapshot,
     dataGap
@@ -100,6 +117,7 @@ function emptyIndicators(
     },
     vumanchu: emptyVuManChuSnapshot(settings.vumanchu, dataGap),
     breakerBlocks: emptyBreakerBlocksSnapshot(dataGap, settings),
+    superOrderBlockFvgBos: emptySuperOrderBlockFvgBosSnapshot(dataGap, settings),
     atr_pct: null,
     dataGap
   };
@@ -175,6 +193,9 @@ export function computeIndicators(
   const breakerBlocks = settings.enabledV2
     ? computeBreakerBlocksSnapshot(bucketedCandles, settings.breakerBlocks)
     : emptyBreakerBlocksSnapshot(false, settings);
+  const superOrderBlockFvgBos = settings.enabledV2
+    ? computeSuperOrderBlockFvgBosSnapshot(bucketedCandles, settings.superOrderBlockFvgBos)
+    : emptySuperOrderBlockFvgBosSnapshot(false, settings);
 
   let vwapValue: number | null = null;
   let vwapDistPct: number | null = null;
@@ -245,8 +266,14 @@ export function computeIndicators(
     fvg,
     vumanchu,
     breakerBlocks,
+    superOrderBlockFvgBos,
     atr_pct: round(atrPct, 6),
-    dataGap: bucketedMeta.candleBucketed || vwapDataGap || vumanchu.dataGap || breakerBlocks.dataGap
+    dataGap:
+      bucketedMeta.candleBucketed
+      || vwapDataGap
+      || vumanchu.dataGap
+      || breakerBlocks.dataGap
+      || superOrderBlockFvgBos.dataGap
   };
 
   const hasInvalid = [

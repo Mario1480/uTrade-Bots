@@ -74,6 +74,83 @@ const breakerBlocksSchema = z.object({
   swingBearColor: z.string().trim().min(1).max(64).default("rgba(0,137,123,0.333)")
 });
 
+const boxBorderStyleSchema = z.enum(["solid", "dashed", "dotted"]);
+const labelSizeSchema = z.enum(["huge", "large", "small", "tiny", "auto", "normal"]);
+
+const superOrderBlockFvgBosSchema = z.object({
+  plotOB: z.boolean().default(true),
+  obBullColor: z.string().trim().min(1).max(64).default("rgba(0,128,0,0.1)"),
+  obBearColor: z.string().trim().min(1).max(64).default("rgba(255,0,0,0.1)"),
+  obBoxBorderStyle: boxBorderStyleSchema.default("solid"),
+  obBorderTransparency: positiveInt(0, 100).default(80),
+  obMaxBoxSet: positiveInt(1, 100).default(10),
+  filterMitOB: z.boolean().default(false),
+  mitOBColor: z.string().trim().min(1).max(64).default("rgba(128,128,128,0.1)"),
+
+  plotFVG: z.boolean().default(true),
+  plotStructureBreakingFVG: z.boolean().default(true),
+  fvgBullColor: z.string().trim().min(1).max(64).default("rgba(0,0,0,0.1)"),
+  fvgBearColor: z.string().trim().min(1).max(64).default("rgba(0,0,0,0.1)"),
+  fvgStructBreakingColor: z.string().trim().min(1).max(64).default("rgba(0,0,255,0.1)"),
+  fvgBoxBorderStyle: boxBorderStyleSchema.default("solid"),
+  fvgBorderTransparency: positiveInt(0, 100).default(80),
+  fvgMaxBoxSet: positiveInt(1, 100).default(10),
+  filterMitFVG: z.boolean().default(false),
+  mitFVGColor: z.string().trim().min(1).max(64).default("rgba(128,128,128,0.1)"),
+
+  plotRJB: z.boolean().default(false),
+  rjbBullColor: z.string().trim().min(1).max(64).default("rgba(0,128,0,0.1)"),
+  rjbBearColor: z.string().trim().min(1).max(64).default("rgba(255,0,0,0.1)"),
+  rjbBoxBorderStyle: boxBorderStyleSchema.default("solid"),
+  rjbBorderTransparency: positiveInt(0, 100).default(80),
+  rjbMaxBoxSet: positiveInt(1, 100).default(10),
+  filterMitRJB: z.boolean().default(false),
+  mitRJBColor: z.string().trim().min(1).max(64).default("rgba(128,128,128,0.1)"),
+
+  plotPVT: z.boolean().default(true),
+  pivotLookup: positiveInt(1, 5).default(1),
+  pvtTopColor: z.string().trim().min(1).max(64).default("rgba(192,192,192,1)"),
+  pvtBottomColor: z.string().trim().min(1).max(64).default("rgba(192,192,192,1)"),
+
+  plotBOS: z.boolean().default(false),
+  useHighLowForBullishBoS: z.boolean().default(false),
+  useHighLowForBearishBoS: z.boolean().default(false),
+  bosBoxFlag: z.boolean().default(false),
+  bosBoxLength: positiveInt(1, 5).default(3),
+  bosBullColor: z.string().trim().min(1).max(64).default("rgba(0,128,0,0.1)"),
+  bosBearColor: z.string().trim().min(1).max(64).default("rgba(255,0,0,0.1)"),
+  bosBoxBorderStyle: boxBorderStyleSchema.default("solid"),
+  bosBorderTransparency: positiveInt(0, 100).default(80),
+  bosMaxBoxSet: positiveInt(1, 100).default(10),
+
+  plotHVB: z.boolean().default(true),
+  hvbBullColor: z.string().trim().min(1).max(64).default("rgba(0,128,0,1)"),
+  hvbBearColor: z.string().trim().min(1).max(64).default("rgba(255,0,0,1)"),
+  hvbEMAPeriod: positiveInt(1, 500).default(12),
+  hvbMultiplier: z.number().min(1).max(100).default(1.5),
+
+  plotPPDD: z.boolean().default(true),
+  ppddBullColor: z.string().trim().min(1).max(64).default("rgba(0,128,0,1)"),
+  ppddBearColor: z.string().trim().min(1).max(64).default("rgba(255,0,0,1)"),
+
+  plotOBFVG: z.boolean().default(true),
+  obfvgBullColor: z.string().trim().min(1).max(64).default("rgba(0,128,0,1)"),
+  obfvgBearColor: z.string().trim().min(1).max(64).default("rgba(255,0,0,1)"),
+
+  plotLabelOB: z.boolean().default(true),
+  obLabelColor: z.string().trim().min(1).max(64).default("rgba(128,128,128,1)"),
+  obLabelSize: labelSizeSchema.default("tiny"),
+  plotLabelFVG: z.boolean().default(true),
+  fvgLabelColor: z.string().trim().min(1).max(64).default("rgba(128,128,128,1)"),
+  fvgLabelSize: labelSizeSchema.default("tiny"),
+  plotLabelRJB: z.boolean().default(true),
+  rjbLabelColor: z.string().trim().min(1).max(64).default("rgba(128,128,128,1)"),
+  rjbLabelSize: labelSizeSchema.default("tiny"),
+  plotLabelBOS: z.boolean().default(true),
+  bosLabelColor: z.string().trim().min(1).max(64).default("rgba(128,128,128,1)"),
+  bosLabelSize: labelSizeSchema.default("tiny")
+});
+
 const advancedIndicatorsSchema = z.object({
   adrLen: positiveInt(1, 365).default(14),
   awrLen: positiveInt(1, 52).default(4),
@@ -135,7 +212,8 @@ export const indicatorSettingsConfigSchema = z.object({
     volume: volumeSchema,
     fvg: fvgSchema,
     vumanchu: vumanchuSchema,
-    breakerBlocks: breakerBlocksSchema
+    breakerBlocks: breakerBlocksSchema,
+    superOrderBlockFvgBos: superOrderBlockFvgBosSchema
   }),
   advancedIndicators: advancedIndicatorsSchema,
   liquiditySweeps: liquiditySweepsSchema,
@@ -277,6 +355,71 @@ export const DEFAULT_INDICATOR_SETTINGS: IndicatorSettingsConfig = {
       bbMinusColorA: "rgba(255,17,0,0.373)",
       bbMinusColorB: "rgba(255,17,0,0.333)",
       swingBearColor: "rgba(0,137,123,0.333)"
+    },
+    superOrderBlockFvgBos: {
+      plotOB: true,
+      obBullColor: "rgba(0,128,0,0.1)",
+      obBearColor: "rgba(255,0,0,0.1)",
+      obBoxBorderStyle: "solid",
+      obBorderTransparency: 80,
+      obMaxBoxSet: 10,
+      filterMitOB: false,
+      mitOBColor: "rgba(128,128,128,0.1)",
+      plotFVG: true,
+      plotStructureBreakingFVG: true,
+      fvgBullColor: "rgba(0,0,0,0.1)",
+      fvgBearColor: "rgba(0,0,0,0.1)",
+      fvgStructBreakingColor: "rgba(0,0,255,0.1)",
+      fvgBoxBorderStyle: "solid",
+      fvgBorderTransparency: 80,
+      fvgMaxBoxSet: 10,
+      filterMitFVG: false,
+      mitFVGColor: "rgba(128,128,128,0.1)",
+      plotRJB: false,
+      rjbBullColor: "rgba(0,128,0,0.1)",
+      rjbBearColor: "rgba(255,0,0,0.1)",
+      rjbBoxBorderStyle: "solid",
+      rjbBorderTransparency: 80,
+      rjbMaxBoxSet: 10,
+      filterMitRJB: false,
+      mitRJBColor: "rgba(128,128,128,0.1)",
+      plotPVT: true,
+      pivotLookup: 1,
+      pvtTopColor: "rgba(192,192,192,1)",
+      pvtBottomColor: "rgba(192,192,192,1)",
+      plotBOS: false,
+      useHighLowForBullishBoS: false,
+      useHighLowForBearishBoS: false,
+      bosBoxFlag: false,
+      bosBoxLength: 3,
+      bosBullColor: "rgba(0,128,0,0.1)",
+      bosBearColor: "rgba(255,0,0,0.1)",
+      bosBoxBorderStyle: "solid",
+      bosBorderTransparency: 80,
+      bosMaxBoxSet: 10,
+      plotHVB: true,
+      hvbBullColor: "rgba(0,128,0,1)",
+      hvbBearColor: "rgba(255,0,0,1)",
+      hvbEMAPeriod: 12,
+      hvbMultiplier: 1.5,
+      plotPPDD: true,
+      ppddBullColor: "rgba(0,128,0,1)",
+      ppddBearColor: "rgba(255,0,0,1)",
+      plotOBFVG: true,
+      obfvgBullColor: "rgba(0,128,0,1)",
+      obfvgBearColor: "rgba(255,0,0,1)",
+      plotLabelOB: true,
+      obLabelColor: "rgba(128,128,128,1)",
+      obLabelSize: "tiny",
+      plotLabelFVG: true,
+      fvgLabelColor: "rgba(128,128,128,1)",
+      fvgLabelSize: "tiny",
+      plotLabelRJB: true,
+      rjbLabelColor: "rgba(128,128,128,1)",
+      rjbLabelSize: "tiny",
+      plotLabelBOS: true,
+      bosLabelColor: "rgba(128,128,128,1)",
+      bosLabelSize: "tiny"
     }
   },
   advancedIndicators: {
@@ -555,7 +698,11 @@ export function mergeIndicatorSettings(
         swingBearColor:
           patch.indicatorsV2?.breakerBlocks?.swingBearColor
           ?? base.indicatorsV2.breakerBlocks.swingBearColor
-      }
+      },
+      superOrderBlockFvgBos: superOrderBlockFvgBosSchema.parse({
+        ...base.indicatorsV2.superOrderBlockFvgBos,
+        ...(patch.indicatorsV2?.superOrderBlockFvgBos ?? {})
+      })
     },
     advancedIndicators: {
       adrLen: patch.advancedIndicators?.adrLen ?? base.advancedIndicators.adrLen,

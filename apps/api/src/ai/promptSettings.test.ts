@@ -128,6 +128,24 @@ test("filterFeatureSnapshotForAiPrompt includes breaker blocks when selected", (
   assert.equal((filtered as any).indicators?.vumanchu, undefined);
 });
 
+test("filterFeatureSnapshotForAiPrompt includes super_orderblock_fvg_bos when selected", () => {
+  const snapshot = {
+    indicators: {
+      superOrderBlockFvgBos: {
+        top: 101.2,
+        events: { obBull: true }
+      },
+      breakerBlocks: {
+        dir: 1
+      }
+    }
+  } as Record<string, unknown>;
+
+  const filtered = filterFeatureSnapshotForAiPrompt(snapshot, ["super_orderblock_fvg_bos"]);
+  assert.equal((filtered as any).indicators?.superOrderBlockFvgBos?.top, 101.2);
+  assert.equal((filtered as any).indicators?.breakerBlocks, undefined);
+});
+
 test("ai prompt template defaults marketAnalysisUpdateEnabled to false", () => {
   const parsed = parseStoredAiPromptSettings({
     activePromptId: "prompt_a",

@@ -82,6 +82,13 @@ export const AI_PROMPT_INDICATOR_OPTIONS = [
     paths: ["indicators.breakerBlocks"]
   },
   {
+    key: "super_orderblock_fvg_bos",
+    label: "Super OrderBlock / FVG / BoS",
+    group: "Core",
+    description: "OB/FVG/RJB/BOS zones, pivots, HVB and qualitative marker states.",
+    paths: ["indicators.superOrderBlockFvgBos"]
+  },
+  {
     key: "history_context",
     label: "History Context Pack",
     group: "Context",

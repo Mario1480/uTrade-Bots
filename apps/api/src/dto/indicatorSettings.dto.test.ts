@@ -26,7 +26,8 @@ test("mergeIndicatorSettings applies nested overrides", () => {
     indicatorsV2: {
       fvg: { fillRule: "mid_touch" },
       vumanchu: { wtChannelLen: 11, useHiddenDiv: true },
-      breakerBlocks: { len: 7, enableTp: true, rrTp2: 5.5 }
+      breakerBlocks: { len: 7, enableTp: true, rrTp2: 5.5 },
+      superOrderBlockFvgBos: { plotRJB: true, pivotLookup: 3, hvbMultiplier: 2.2 }
     }
   });
 
@@ -39,12 +40,18 @@ test("mergeIndicatorSettings applies nested overrides", () => {
   assert.equal(merged.indicatorsV2.breakerBlocks.len, 7);
   assert.equal(merged.indicatorsV2.breakerBlocks.enableTp, true);
   assert.equal(merged.indicatorsV2.breakerBlocks.rrTp2, 5.5);
+  assert.equal(merged.indicatorsV2.superOrderBlockFvgBos.plotRJB, true);
+  assert.equal(merged.indicatorsV2.superOrderBlockFvgBos.pivotLookup, 3);
+  assert.equal(merged.indicatorsV2.superOrderBlockFvgBos.hvbMultiplier, 2.2);
 });
 
 test("default indicator settings include breaker blocks defaults", () => {
   assert.equal(DEFAULT_INDICATOR_SETTINGS.indicatorsV2.breakerBlocks.len, 5);
   assert.equal(DEFAULT_INDICATOR_SETTINGS.indicatorsV2.breakerBlocks.tillFirstBreak, true);
   assert.equal(DEFAULT_INDICATOR_SETTINGS.indicatorsV2.breakerBlocks.enableTp, false);
+  assert.equal(DEFAULT_INDICATOR_SETTINGS.indicatorsV2.superOrderBlockFvgBos.plotOB, true);
+  assert.equal(DEFAULT_INDICATOR_SETTINGS.indicatorsV2.superOrderBlockFvgBos.pivotLookup, 1);
+  assert.equal(DEFAULT_INDICATOR_SETTINGS.indicatorsV2.superOrderBlockFvgBos.hvbMultiplier, 1.5);
 });
 
 test("normalizeIndicatorSettingsPatch maps legacy tradersReality keys", () => {

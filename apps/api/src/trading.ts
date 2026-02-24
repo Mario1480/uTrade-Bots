@@ -49,6 +49,7 @@ export type TradingChartIndicatorToggles = {
   volumeOverlay: boolean;
   pvsraVector: boolean;
   breakerBlocks: boolean;
+  superOrderBlockFvgBos: boolean;
 };
 
 export type TradingChartPreferences = {
@@ -69,7 +70,8 @@ export const DEFAULT_TRADING_CHART_INDICATOR_TOGGLES: TradingChartIndicatorToggl
   smcStructure: false,
   volumeOverlay: false,
   pvsraVector: false,
-  breakerBlocks: false
+  breakerBlocks: false,
+  superOrderBlockFvgBos: false
 };
 
 export const DEFAULT_TRADING_CHART_PREFERENCES: TradingChartPreferences = {
@@ -599,7 +601,11 @@ function normalizeIndicatorToggles(value: unknown): TradingChartIndicatorToggles
     breakerBlocks:
       typeof record.breakerBlocks === "boolean"
         ? record.breakerBlocks
-        : DEFAULT_TRADING_CHART_INDICATOR_TOGGLES.breakerBlocks
+        : DEFAULT_TRADING_CHART_INDICATOR_TOGGLES.breakerBlocks,
+    superOrderBlockFvgBos:
+      typeof record.superOrderBlockFvgBos === "boolean"
+        ? record.superOrderBlockFvgBos
+        : DEFAULT_TRADING_CHART_INDICATOR_TOGGLES.superOrderBlockFvgBos
   };
 }
 

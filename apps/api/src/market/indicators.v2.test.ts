@@ -78,4 +78,8 @@ test("computeIndicators v2 emits finite nested values", () => {
   assert.equal(typeof indicators.breakerBlocks.signals.signDN, "boolean");
   assert.equal(typeof indicators.breakerBlocks.eventCounts.BBplus, "number");
   assert.equal(typeof indicators.breakerBlocks.eventCounts.BB_min, "number");
+  assert.equal(typeof indicators.superOrderBlockFvgBos.events.obBull, "boolean");
+  assert.equal(typeof indicators.superOrderBlockFvgBos.events.obBear, "boolean");
+  assert.equal(typeof indicators.superOrderBlockFvgBos.eventCounts.fvgBull, "number");
+  assert.equal(typeof indicators.superOrderBlockFvgBos.eventCounts.hvbBull, "number");
 });

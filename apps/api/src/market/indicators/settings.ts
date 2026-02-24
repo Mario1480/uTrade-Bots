@@ -2,7 +2,10 @@ import type { FvgFillRule } from "../fvg.js";
 import type { Timeframe, IndicatorsComputeSettings } from "./types.js";
 import {
   normalizeBreakerBlocksSettings,
-  type BreakerBlocksSettings
+  normalizeSuperOrderBlockFvgBosSettings,
+  superOrderBlockFvgBosRequiredBars as computeSuperOrderBlockFvgBosRequiredBars,
+  type BreakerBlocksSettings,
+  type SuperOrderBlockFvgBosSettings
 } from "@mm/futures-core";
 
 const DEFAULT_STOCHRSI = {
@@ -97,6 +100,8 @@ export type NormalizedIndicatorSettings = {
   vumanchuRequiredBars: number;
   breakerBlocks: BreakerBlocksSettings;
   breakerBlocksRequiredBars: number;
+  superOrderBlockFvgBos: SuperOrderBlockFvgBosSettings;
+  superOrderBlockFvgBosRequiredBars: number;
 };
 
 function toPositiveInt(value: unknown, fallback: number, min = 1, max = 5000): number {
@@ -163,6 +168,12 @@ export function normalizeIndicatorSettings(
   );
   const breakerBlocks = normalizeBreakerBlocksSettings(settings?.breakerBlocks);
   const breakerBlocksRequiredBars = Math.max(80, breakerBlocks.len * 8);
+  const superOrderBlockFvgBos = normalizeSuperOrderBlockFvgBosSettings(
+    settings?.superOrderBlockFvgBos
+  );
+  const superOrderBlockFvgBosRequiredBars = computeSuperOrderBlockFvgBosRequiredBars(
+    superOrderBlockFvgBos
+  );
 
   return {
     enabledV1: enabledPacks.indicatorsV1 ?? true,
@@ -177,7 +188,9 @@ export function normalizeIndicatorSettings(
     vumanchu: vumanchuCfg,
     vumanchuRequiredBars,
     breakerBlocks,
-    breakerBlocksRequiredBars
+    breakerBlocksRequiredBars,
+    superOrderBlockFvgBos,
+    superOrderBlockFvgBosRequiredBars
   };
 }
 
@@ -195,9 +208,15 @@ export function minimumCandlesForIndicatorsWithSettings(
     normalized.stochrsiRequiredBars,
     normalized.volume.lookback + 20,
     normalized.vumanchuRequiredBars,
-    normalized.breakerBlocksRequiredBars
+    normalized.breakerBlocksRequiredBars,
+    normalized.superOrderBlockFvgBosRequiredBars
   );
   return tf === "1d"
-    ? Math.max(DAILY_MIN_BARS, normalized.vumanchuRequiredBars, normalized.breakerBlocksRequiredBars)
+    ? Math.max(
+        DAILY_MIN_BARS,
+        normalized.vumanchuRequiredBars,
+        normalized.breakerBlocksRequiredBars,
+        normalized.superOrderBlockFvgBosRequiredBars
+      )
     : intradayMinBars;
 }

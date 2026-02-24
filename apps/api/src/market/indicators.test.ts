@@ -48,6 +48,9 @@ test("computeIndicators: outputs are bounded and finite on sufficient bars", () 
   assert.ok(indicators.breakerBlocks !== null);
   assert.equal(typeof indicators.breakerBlocks.signals.BBplus, "boolean");
   assert.equal(typeof indicators.breakerBlocks.signals.BB_min, "boolean");
+  assert.ok(indicators.superOrderBlockFvgBos !== null);
+  assert.equal(typeof indicators.superOrderBlockFvgBos.events.obBull, "boolean");
+  assert.equal(typeof indicators.superOrderBlockFvgBos.eventCounts.obBull, "number");
 
   const numericValues = [
     indicators.rsi_14,
@@ -115,6 +118,7 @@ test("computeIndicators: insufficient bars marks data gap with null indicators",
   assert.equal(indicators.stochrsi.k, null);
   assert.equal(indicators.volume.rel_vol, null);
   assert.equal(indicators.breakerBlocks.dataGap, true);
+  assert.equal(indicators.superOrderBlockFvgBos.dataGap, true);
 });
 
 test("computeADX14: produces bounded values on valid fixture", () => {

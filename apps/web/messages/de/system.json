@@ -772,7 +772,8 @@
         "smcStructure": "SMC Struktur (BOS/CHoCH)",
         "volumeOverlay": "Volume Overlay",
         "pvsraVector": "PVSRA Vector Kerzen (normal = grau)",
-        "breakerBlocks": "Breaker Blocks (LuxAlgo)"
+        "breakerBlocks": "Breaker Blocks (LuxAlgo)",
+        "superOrderBlockFvgBos": "Super OrderBlock / FVG / BoS"
       },
       "presets": {
         "title": "Presets:",

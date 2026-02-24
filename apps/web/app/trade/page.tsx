@@ -41,6 +41,7 @@ type TradingSettings = {
       volumeOverlay: boolean;
       pvsraVector: boolean;
       breakerBlocks: boolean;
+      superOrderBlockFvgBos: boolean;
     };
     showUpMarkers: boolean;
     showDownMarkers: boolean;
@@ -136,7 +137,8 @@ const DEFAULT_CHART_PREFERENCES: TradingSettings["chartPreferences"] = {
     smcStructure: false,
     volumeOverlay: false,
     pvsraVector: false,
-    breakerBlocks: false
+    breakerBlocks: false,
+    superOrderBlockFvgBos: false
   },
   showUpMarkers: false,
   showDownMarkers: false

@@ -1,7 +1,13 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
-import { computeBreakerBlocksOverlay } from "@mm/futures-core";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  computeBreakerBlocksOverlay,
+  computeSuperOrderBlockFvgBosOverlay,
+  normalizeSuperOrderBlockFvgBosSettings,
+  type SuperOrderBlockFvgBosOverlay,
+  type SuperOrderBlockFvgBosZone
+} from "@mm/futures-core";
 import {
   CandlestickSeries,
   ColorType,
@@ -95,6 +101,7 @@ type IndicatorToggleState = {
   volumeOverlay: boolean;
   pvsraVector: boolean;
   breakerBlocks: boolean;
+  superOrderBlockFvgBos: boolean;
 };
 
 type IndicatorPresetKey = "scalping" | "trend" | "off" | "all";
@@ -111,7 +118,8 @@ const DEFAULT_INDICATOR_TOGGLES: IndicatorToggleState = {
   smcStructure: false,
   volumeOverlay: false,
   pvsraVector: false,
-  breakerBlocks: false
+  breakerBlocks: false,
+  superOrderBlockFvgBos: false
 };
 
 const INDICATOR_PRESETS: Record<IndicatorPresetKey, { labelKey: string; toggles: IndicatorToggleState }> = {
@@ -129,7 +137,8 @@ const INDICATOR_PRESETS: Record<IndicatorPresetKey, { labelKey: string; toggles:
       smcStructure: false,
       volumeOverlay: true,
       pvsraVector: false,
-      breakerBlocks: false
+      breakerBlocks: false,
+      superOrderBlockFvgBos: false
     }
   },
   trend: {
@@ -146,7 +155,8 @@ const INDICATOR_PRESETS: Record<IndicatorPresetKey, { labelKey: string; toggles:
       smcStructure: true,
       volumeOverlay: false,
       pvsraVector: false,
-      breakerBlocks: true
+      breakerBlocks: true,
+      superOrderBlockFvgBos: true
     }
   },
   off: {
@@ -163,7 +173,8 @@ const INDICATOR_PRESETS: Record<IndicatorPresetKey, { labelKey: string; toggles:
       smcStructure: false,
       volumeOverlay: false,
       pvsraVector: false,
-      breakerBlocks: false
+      breakerBlocks: false,
+      superOrderBlockFvgBos: false
     }
   },
   all: {
@@ -180,7 +191,8 @@ const INDICATOR_PRESETS: Record<IndicatorPresetKey, { labelKey: string; toggles:
       smcStructure: true,
       volumeOverlay: true,
       pvsraVector: true,
-      breakerBlocks: true
+      breakerBlocks: true,
+      superOrderBlockFvgBos: true
     }
   }
 };
@@ -198,7 +210,8 @@ function togglesEqual(a: IndicatorToggleState, b: IndicatorToggleState): boolean
     a.smcStructure === b.smcStructure &&
     a.volumeOverlay === b.volumeOverlay &&
     a.pvsraVector === b.pvsraVector &&
-    a.breakerBlocks === b.breakerBlocks
+    a.breakerBlocks === b.breakerBlocks &&
+    a.superOrderBlockFvgBos === b.superOrderBlockFvgBos
   );
 }
 
@@ -236,7 +249,11 @@ function applyLatestViewport(
   chart.timeScale().setVisibleLogicalRange({ from, to });
 }
 
-function toChartData(items: CandleApiItem[], usePvsraVector: boolean): CandlestickData[] {
+function toChartData(
+  items: CandleApiItem[],
+  usePvsraVector: boolean,
+  hvbColorByTs?: Map<number, string>
+): CandlestickData[] {
   const normalized = normalizeCandles(items);
   const out: CandlestickData[] = [];
   for (let index = 0; index < normalized.length; index += 1) {
@@ -248,7 +265,12 @@ function toChartData(items: CandleApiItem[], usePvsraVector: boolean): Candlesti
       low: row.low,
       close: row.close
     };
-    if (usePvsraVector) {
+    const hvbColor = hvbColorByTs?.get(row.ts) ?? null;
+    if (hvbColor) {
+      base.color = hvbColor;
+      base.borderColor = hvbColor;
+      base.wickColor = hvbColor;
+    } else if (usePvsraVector) {
       const pvsraColor = getPvsraCandleColor(normalized, index);
       base.color = pvsraColor;
       base.borderColor = pvsraColor;
@@ -257,6 +279,59 @@ function toChartData(items: CandleApiItem[], usePvsraVector: boolean): Candlesti
     out.push(base);
   }
   return out;
+}
+
+type CanvasRgba = { r: number; g: number; b: number; a: number };
+
+function parseCanvasColor(input: string): CanvasRgba | null {
+  const value = input.trim().toLowerCase();
+  if (!value) return null;
+
+  if (value.startsWith("#")) {
+    const hex = value.slice(1);
+    if (hex.length === 3 || hex.length === 4) {
+      const r = Number.parseInt(hex[0] + hex[0], 16);
+      const g = Number.parseInt(hex[1] + hex[1], 16);
+      const b = Number.parseInt(hex[2] + hex[2], 16);
+      const a = hex.length === 4 ? Number.parseInt(hex[3] + hex[3], 16) / 255 : 1;
+      if ([r, g, b, a].every(Number.isFinite)) return { r, g, b, a };
+    }
+    if (hex.length === 6 || hex.length === 8) {
+      const r = Number.parseInt(hex.slice(0, 2), 16);
+      const g = Number.parseInt(hex.slice(2, 4), 16);
+      const b = Number.parseInt(hex.slice(4, 6), 16);
+      const a = hex.length === 8 ? Number.parseInt(hex.slice(6, 8), 16) / 255 : 1;
+      if ([r, g, b, a].every(Number.isFinite)) return { r, g, b, a };
+    }
+    return null;
+  }
+
+  const rgb = value.match(/^rgba?\\((.+)\\)$/);
+  if (rgb) {
+    const parts = rgb[1]?.split(",").map((part) => part.trim()) ?? [];
+    if (parts.length < 3) return null;
+    const r = Number(parts[0]);
+    const g = Number(parts[1]);
+    const b = Number(parts[2]);
+    const a = parts.length >= 4 ? Number(parts[3]) : 1;
+    if ([r, g, b, a].every(Number.isFinite)) {
+      return {
+        r: Math.max(0, Math.min(255, r)),
+        g: Math.max(0, Math.min(255, g)),
+        b: Math.max(0, Math.min(255, b)),
+        a: Math.max(0, Math.min(1, a))
+      };
+    }
+  }
+
+  return null;
+}
+
+function colorWithAlpha(input: string, alphaScale: number): string {
+  const rgba = parseCanvasColor(input);
+  if (!rgba) return input;
+  const alpha = Math.max(0, Math.min(1, rgba.a * alphaScale));
+  return `rgba(${Math.round(rgba.r)},${Math.round(rgba.g)},${Math.round(rgba.b)},${alpha.toFixed(4)})`;
 }
 
 function buildVolumeHistogram(items: CandleApiItem[]): HistogramData<Time>[] {
@@ -531,6 +606,7 @@ export function LightweightChart({
 }: LightweightChartProps) {
   const t = useTranslations("system.trade.chart");
   const hostRef = useRef<HTMLDivElement | null>(null);
+  const overlayCanvasRef = useRef<HTMLCanvasElement | null>(null);
   const chartRef = useRef<IChartApi | null>(null);
   const candleSeriesRef = useRef<ISeriesApi<"Candlestick"> | null>(null);
   const volumeSeriesRef = useRef<ISeriesApi<"Histogram"> | null>(null);
@@ -559,7 +635,12 @@ export function LightweightChart({
     tp2: null,
     tp3: null
   });
+  const superPivotSeriesRef = useRef<{ top: ISeriesApi<"Line"> | null; bottom: ISeriesApi<"Line"> | null }>({
+    top: null,
+    bottom: null
+  });
   const markerPluginRef = useRef<ISeriesMarkersPluginApi<Time> | null>(null);
+  const superOverlayRef = useRef<SuperOrderBlockFvgBosOverlay | null>(null);
   const shouldResetViewportRef = useRef(true);
   const serializedPrefsRef = useRef<string>("");
   const [status, setStatus] = useState<"loading" | "ready" | "error">("loading");
@@ -571,6 +652,7 @@ export function LightweightChart({
   const [predictionMarkers, setPredictionMarkers] = useState<SeriesMarker<Time>[]>([]);
   const [smcMarkers, setSmcMarkers] = useState<SeriesMarker<Time>[]>([]);
   const [breakerMarkers, setBreakerMarkers] = useState<SeriesMarker<Time>[]>([]);
+  const [superMarkers, setSuperMarkers] = useState<SeriesMarker<Time>[]>([]);
   const [indicatorToggles, setIndicatorToggles] = useState<IndicatorToggleState>(
     {
       ...DEFAULT_INDICATOR_TOGGLES,
@@ -585,6 +667,91 @@ export function LightweightChart({
     }
     return null;
   }, [indicatorToggles]);
+
+  const drawSuperOverlayCanvas = useCallback(() => {
+    const canvas = overlayCanvasRef.current;
+    const chart = chartRef.current;
+    const candleSeries = candleSeriesRef.current;
+    const overlay = superOverlayRef.current;
+    if (!canvas || !chart || !candleSeries || !overlay || !indicatorToggles.superOrderBlockFvgBos) {
+      if (canvas) {
+        const ctx = canvas.getContext("2d");
+        if (ctx) {
+          ctx.clearRect(0, 0, canvas.width, canvas.height);
+        }
+      }
+      return;
+    }
+
+    const width = canvas.clientWidth;
+    const height = canvas.clientHeight;
+    if (width <= 0 || height <= 0) return;
+
+    const ratio = window.devicePixelRatio || 1;
+    const pixelWidth = Math.max(1, Math.floor(width * ratio));
+    const pixelHeight = Math.max(1, Math.floor(height * ratio));
+    if (canvas.width !== pixelWidth || canvas.height !== pixelHeight) {
+      canvas.width = pixelWidth;
+      canvas.height = pixelHeight;
+    }
+
+    const ctx = canvas.getContext("2d");
+    if (!ctx) return;
+    ctx.setTransform(1, 0, 0, 1, 0, 0);
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    ctx.scale(ratio, ratio);
+
+    const toTime = (ts: number | null): UTCTimestamp | null => {
+      if (!Number.isFinite(ts)) return null;
+      return Math.floor((ts as number) / 1000) as UTCTimestamp;
+    };
+
+    const setDash = (style: SuperOrderBlockFvgBosZone["borderStyle"]) => {
+      if (style === "dashed") {
+        ctx.setLineDash([6, 4]);
+        return;
+      }
+      if (style === "dotted") {
+        ctx.setLineDash([2, 4]);
+        return;
+      }
+      ctx.setLineDash([]);
+    };
+
+    for (const box of overlay.rectangles) {
+      const leftTime = toTime(box.leftTs);
+      const rightTime = toTime(box.rightTs);
+      if (leftTime === null || rightTime === null) continue;
+      const x1 = chart.timeScale().timeToCoordinate(leftTime);
+      const x2 = chart.timeScale().timeToCoordinate(rightTime);
+      const y1 = candleSeries.priceToCoordinate(box.top);
+      const y2 = candleSeries.priceToCoordinate(box.bottom);
+      if (x1 === null || x2 === null || y1 === null || y2 === null) continue;
+
+      const left = Math.min(x1, x2);
+      const top = Math.min(y1, y2);
+      const widthPx = Math.max(1, Math.abs(x2 - x1));
+      const heightPx = Math.max(1, Math.abs(y2 - y1));
+
+      ctx.fillStyle = colorWithAlpha(box.fillColor, box.mitigated ? 0.75 : 1);
+      ctx.fillRect(left, top, widthPx, heightPx);
+
+      ctx.strokeStyle = colorWithAlpha(box.borderColor, box.mitigated ? 0.85 : 1);
+      ctx.lineWidth = 1;
+      setDash(box.borderStyle);
+      ctx.strokeRect(left + 0.5, top + 0.5, Math.max(0, widthPx - 1), Math.max(0, heightPx - 1));
+
+      if (box.label) {
+        ctx.setLineDash([]);
+        ctx.fillStyle = colorWithAlpha(box.labelColor, 0.95);
+        ctx.font = "10px ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace";
+        ctx.textAlign = "right";
+        ctx.textBaseline = "bottom";
+        ctx.fillText(box.label, left + widthPx - 3, top + heightPx - 2);
+      }
+    }
+    ctx.setLineDash([]);
+  }, [indicatorToggles.superOrderBlockFvgBos]);
 
   useEffect(() => {
     if (!chartPreferences) return;
@@ -811,6 +978,22 @@ export function LightweightChart({
       lastValueVisible: false,
       visible: false
     });
+    superPivotSeriesRef.current.top = chart.addSeries(LineSeries, {
+      color: "rgba(192,192,192,.9)",
+      lineWidth: 1,
+      lineStyle: LineStyle.Solid,
+      priceLineVisible: false,
+      lastValueVisible: false,
+      visible: false
+    });
+    superPivotSeriesRef.current.bottom = chart.addSeries(LineSeries, {
+      color: "rgba(192,192,192,.9)",
+      lineWidth: 1,
+      lineStyle: LineStyle.Solid,
+      priceLineVisible: false,
+      lastValueVisible: false,
+      visible: false
+    });
     markerPluginRef.current = createSeriesMarkers(candleSeries, []);
 
     chartRef.current = chart;
@@ -842,13 +1025,38 @@ export function LightweightChart({
         tp2: null,
         tp3: null
       };
+      superPivotSeriesRef.current = { top: null, bottom: null };
       for (const line of selectedPositionLinesRef.current) {
         candleSeries.removePriceLine(line);
       }
       selectedPositionLinesRef.current = [];
+      superOverlayRef.current = null;
       chart.remove();
     };
   }, []);
+
+  useEffect(() => {
+    const chart = chartRef.current;
+    const host = hostRef.current;
+    if (!chart || !host) return;
+
+    const redraw = () => {
+      drawSuperOverlayCanvas();
+    };
+
+    chart.timeScale().subscribeVisibleLogicalRangeChange(redraw);
+    chart.timeScale().subscribeVisibleTimeRangeChange(redraw);
+    const resizeObserver = new ResizeObserver(redraw);
+    resizeObserver.observe(host);
+
+    redraw();
+
+    return () => {
+      chart.timeScale().unsubscribeVisibleLogicalRangeChange(redraw);
+      chart.timeScale().unsubscribeVisibleTimeRangeChange(redraw);
+      resizeObserver.disconnect();
+    };
+  }, [drawSuperOverlayCanvas]);
 
   useEffect(() => {
     if (!exchangeAccountId || !symbol || !candleSeriesRef.current) return;
@@ -1012,7 +1220,31 @@ export function LightweightChart({
     if (!candleSeriesRef.current) return;
 
     const normalized = normalizeCandles(rawCandles);
-    const candleData = toChartData(rawCandles, indicatorToggles.pvsraVector);
+    const superOverlay = indicatorToggles.superOrderBlockFvgBos
+      ? computeSuperOrderBlockFvgBosOverlay(
+        normalized.map((row) => ({
+          ts: row.ts,
+          open: row.open,
+          high: row.high,
+          low: row.low,
+          close: row.close,
+          volume: row.volume
+        })),
+        normalizeSuperOrderBlockFvgBosSettings()
+      )
+      : null;
+    superOverlayRef.current = superOverlay;
+
+    const hvbColorByTs = new Map<number, string>();
+    if (superOverlay && superOverlay.hvbColors.length > 0) {
+      for (let i = 0; i < superOverlay.hvbColors.length && i < normalized.length; i += 1) {
+        const color = superOverlay.hvbColors[i];
+        if (!color) continue;
+        hvbColorByTs.set(normalized[i].ts, color);
+      }
+    }
+
+    const candleData = toChartData(rawCandles, indicatorToggles.pvsraVector, hvbColorByTs);
     candleSeriesRef.current.setData(candleData);
     chartRef.current?.timeScale().applyOptions({ rightOffset: CHART_RIGHT_OFFSET });
     if (shouldResetViewportRef.current) {
@@ -1054,8 +1286,14 @@ export function LightweightChart({
         breakerSeriesRef.current[key]?.setData([]);
         breakerSeriesRef.current[key]?.applyOptions({ visible: false });
       }
+      superPivotSeriesRef.current.top?.setData([]);
+      superPivotSeriesRef.current.top?.applyOptions({ visible: false });
+      superPivotSeriesRef.current.bottom?.setData([]);
+      superPivotSeriesRef.current.bottom?.applyOptions({ visible: false });
       setSmcMarkers([]);
       setBreakerMarkers([]);
+      setSuperMarkers([]);
+      drawSuperOverlayCanvas();
       return;
     }
 
@@ -1227,7 +1465,62 @@ export function LightweightChart({
       }
       setBreakerMarkers([]);
     }
-  }, [rawCandles, indicatorToggles, normalizedTimeframe]);
+
+    if (superOverlay) {
+      const topPoints = buildBreakerLine(normalized, superOverlay.pivotTop);
+      const bottomPoints = buildBreakerLine(normalized, superOverlay.pivotBottom);
+      superPivotSeriesRef.current.top?.setData(topPoints);
+      superPivotSeriesRef.current.top?.applyOptions({
+        visible: indicatorToggles.superOrderBlockFvgBos && topPoints.length > 0,
+        color: superOverlay.settings.pvtTopColor
+      });
+      superPivotSeriesRef.current.bottom?.setData(bottomPoints);
+      superPivotSeriesRef.current.bottom?.applyOptions({
+        visible: indicatorToggles.superOrderBlockFvgBos && bottomPoints.length > 0,
+        color: superOverlay.settings.pvtBottomColor
+      });
+
+      const recent = superOverlay.markers.length > 350
+        ? superOverlay.markers.slice(superOverlay.markers.length - 350)
+        : superOverlay.markers;
+      const markers: SeriesMarker<Time>[] = [];
+      for (const marker of recent) {
+        if (!Number.isFinite(marker.ts)) continue;
+        const shape = marker.shape;
+        const seriesShape: SeriesMarker<Time>["shape"] =
+          shape === "triangle_up"
+            ? "arrowUp"
+            : shape === "triangle_down"
+              ? "arrowDown"
+              : shape === "diamond"
+                ? "square"
+                : "circle";
+        const position: SeriesMarker<Time>["position"] =
+          marker.side === "bull" ? "belowBar" : "aboveBar";
+        markers.push({
+          time: Math.floor((marker.ts as number) / 1000) as UTCTimestamp,
+          position,
+          shape: seriesShape,
+          color: marker.color,
+          text:
+            marker.type === "ppdd"
+              ? "PPDD"
+              : marker.type === "ppdd_weak"
+                ? "PPDD1"
+                : "OB+FVG"
+        });
+      }
+      setSuperMarkers(markers);
+    } else {
+      superPivotSeriesRef.current.top?.setData([]);
+      superPivotSeriesRef.current.top?.applyOptions({ visible: false });
+      superPivotSeriesRef.current.bottom?.setData([]);
+      superPivotSeriesRef.current.bottom?.applyOptions({ visible: false });
+      setSuperMarkers([]);
+    }
+
+    drawSuperOverlayCanvas();
+  }, [rawCandles, indicatorToggles, normalizedTimeframe, drawSuperOverlayCanvas]);
 
   useEffect(() => {
     if (!exchangeAccountId || !symbol || !markerPluginRef.current) return;
@@ -1304,15 +1597,27 @@ export function LightweightChart({
 
   useEffect(() => {
     if (!markerPluginRef.current) return;
-    const merged = [...predictionMarkers, ...smcMarkers, ...breakerMarkers].sort(
+    const merged = [...predictionMarkers, ...smcMarkers, ...breakerMarkers, ...superMarkers].sort(
       (a, b) => Number(a.time) - Number(b.time)
     );
     markerPluginRef.current.setMarkers(merged);
-  }, [predictionMarkers, smcMarkers, breakerMarkers]);
+  }, [predictionMarkers, smcMarkers, breakerMarkers, superMarkers]);
 
   return (
     <div>
-      <div ref={hostRef} style={{ width: "100%", height: "clamp(280px, 55vh, 520px)" }} />
+      <div style={{ position: "relative", width: "100%", height: "clamp(280px, 55vh, 520px)" }}>
+        <div ref={hostRef} style={{ width: "100%", height: "100%" }} />
+        <canvas
+          ref={overlayCanvasRef}
+          style={{
+            position: "absolute",
+            inset: 0,
+            width: "100%",
+            height: "100%",
+            pointerEvents: "none"
+          }}
+        />
+      </div>
       <div className="tradeChartMeta" style={{ marginTop: 8, fontSize: 12, color: "var(--muted)", display: "flex", justifyContent: "space-between", gap: 8, flexWrap: "wrap" }}>
         <span>{t("engine")}</span>
         <span>
@@ -1351,7 +1656,8 @@ export function LightweightChart({
           { key: "smcStructure", label: t("indicators.smcStructure") },
           { key: "volumeOverlay", label: t("indicators.volumeOverlay") },
           { key: "pvsraVector", label: t("indicators.pvsraVector") },
-          { key: "breakerBlocks", label: t("indicators.breakerBlocks") }
+          { key: "breakerBlocks", label: t("indicators.breakerBlocks") },
+          { key: "superOrderBlockFvgBos", label: t("indicators.superOrderBlockFvgBos") }
         ].map((item) => (
           <label key={item.key} style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
             <input

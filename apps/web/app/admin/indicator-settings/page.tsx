@@ -43,6 +43,71 @@ type IndicatorSettingsConfig = {
       bbMinusColorB: string;
       swingBearColor: string;
     };
+    superOrderBlockFvgBos: {
+      plotOB: boolean;
+      obBullColor: string;
+      obBearColor: string;
+      obBoxBorderStyle: "solid" | "dashed" | "dotted";
+      obBorderTransparency: number;
+      obMaxBoxSet: number;
+      filterMitOB: boolean;
+      mitOBColor: string;
+      plotFVG: boolean;
+      plotStructureBreakingFVG: boolean;
+      fvgBullColor: string;
+      fvgBearColor: string;
+      fvgStructBreakingColor: string;
+      fvgBoxBorderStyle: "solid" | "dashed" | "dotted";
+      fvgBorderTransparency: number;
+      fvgMaxBoxSet: number;
+      filterMitFVG: boolean;
+      mitFVGColor: string;
+      plotRJB: boolean;
+      rjbBullColor: string;
+      rjbBearColor: string;
+      rjbBoxBorderStyle: "solid" | "dashed" | "dotted";
+      rjbBorderTransparency: number;
+      rjbMaxBoxSet: number;
+      filterMitRJB: boolean;
+      mitRJBColor: string;
+      plotPVT: boolean;
+      pivotLookup: number;
+      pvtTopColor: string;
+      pvtBottomColor: string;
+      plotBOS: boolean;
+      useHighLowForBullishBoS: boolean;
+      useHighLowForBearishBoS: boolean;
+      bosBoxFlag: boolean;
+      bosBoxLength: number;
+      bosBullColor: string;
+      bosBearColor: string;
+      bosBoxBorderStyle: "solid" | "dashed" | "dotted";
+      bosBorderTransparency: number;
+      bosMaxBoxSet: number;
+      plotHVB: boolean;
+      hvbBullColor: string;
+      hvbBearColor: string;
+      hvbEMAPeriod: number;
+      hvbMultiplier: number;
+      plotPPDD: boolean;
+      ppddBullColor: string;
+      ppddBearColor: string;
+      plotOBFVG: boolean;
+      obfvgBullColor: string;
+      obfvgBearColor: string;
+      plotLabelOB: boolean;
+      obLabelColor: string;
+      obLabelSize: "huge" | "large" | "small" | "tiny" | "auto" | "normal";
+      plotLabelFVG: boolean;
+      fvgLabelColor: string;
+      fvgLabelSize: "huge" | "large" | "small" | "tiny" | "auto" | "normal";
+      plotLabelRJB: boolean;
+      rjbLabelColor: string;
+      rjbLabelSize: "huge" | "large" | "small" | "tiny" | "auto" | "normal";
+      plotLabelBOS: boolean;
+      bosLabelColor: string;
+      bosLabelSize: "huge" | "large" | "small" | "tiny" | "auto" | "normal";
+    };
     vumanchu: {
       wtChannelLen: number;
       wtAverageLen: number;
@@ -153,6 +218,7 @@ type StochRsiKey = keyof IndicatorSettingsConfig["indicatorsV2"]["stochrsi"];
 type VolumeKey = keyof IndicatorSettingsConfig["indicatorsV2"]["volume"];
 type FvgKey = keyof IndicatorSettingsConfig["indicatorsV2"]["fvg"];
 type BreakerBlocksKey = keyof IndicatorSettingsConfig["indicatorsV2"]["breakerBlocks"];
+type SuperOrderBlockFvgBosKey = keyof IndicatorSettingsConfig["indicatorsV2"]["superOrderBlockFvgBos"];
 type AdvancedIndicatorsKey = Exclude<
   keyof IndicatorSettingsConfig["advancedIndicators"],
   "sessionsUseDST" | "smcFvgAutoThreshold"
@@ -173,6 +239,7 @@ type IndicatorSectionKey =
   | "volume"
   | "fvg"
   | "breakerBlocks"
+  | "superOrderBlockFvgBos"
   | "rangesSessions"
   | "smc"
   | "aiGating"
@@ -214,6 +281,71 @@ const FALLBACK_DEFAULTS: IndicatorSettingsConfig = {
       bbMinusColorA: "rgba(255,17,0,0.373)",
       bbMinusColorB: "rgba(255,17,0,0.333)",
       swingBearColor: "rgba(0,137,123,0.333)"
+    },
+    superOrderBlockFvgBos: {
+      plotOB: true,
+      obBullColor: "rgba(0,128,0,0.1)",
+      obBearColor: "rgba(255,0,0,0.1)",
+      obBoxBorderStyle: "solid",
+      obBorderTransparency: 80,
+      obMaxBoxSet: 10,
+      filterMitOB: false,
+      mitOBColor: "rgba(128,128,128,0.1)",
+      plotFVG: true,
+      plotStructureBreakingFVG: true,
+      fvgBullColor: "rgba(0,0,0,0.1)",
+      fvgBearColor: "rgba(0,0,0,0.1)",
+      fvgStructBreakingColor: "rgba(0,0,255,0.1)",
+      fvgBoxBorderStyle: "solid",
+      fvgBorderTransparency: 80,
+      fvgMaxBoxSet: 10,
+      filterMitFVG: false,
+      mitFVGColor: "rgba(128,128,128,0.1)",
+      plotRJB: false,
+      rjbBullColor: "rgba(0,128,0,0.1)",
+      rjbBearColor: "rgba(255,0,0,0.1)",
+      rjbBoxBorderStyle: "solid",
+      rjbBorderTransparency: 80,
+      rjbMaxBoxSet: 10,
+      filterMitRJB: false,
+      mitRJBColor: "rgba(128,128,128,0.1)",
+      plotPVT: true,
+      pivotLookup: 1,
+      pvtTopColor: "rgba(192,192,192,1)",
+      pvtBottomColor: "rgba(192,192,192,1)",
+      plotBOS: false,
+      useHighLowForBullishBoS: false,
+      useHighLowForBearishBoS: false,
+      bosBoxFlag: false,
+      bosBoxLength: 3,
+      bosBullColor: "rgba(0,128,0,0.1)",
+      bosBearColor: "rgba(255,0,0,0.1)",
+      bosBoxBorderStyle: "solid",
+      bosBorderTransparency: 80,
+      bosMaxBoxSet: 10,
+      plotHVB: true,
+      hvbBullColor: "rgba(0,128,0,1)",
+      hvbBearColor: "rgba(255,0,0,1)",
+      hvbEMAPeriod: 12,
+      hvbMultiplier: 1.5,
+      plotPPDD: true,
+      ppddBullColor: "rgba(0,128,0,1)",
+      ppddBearColor: "rgba(255,0,0,1)",
+      plotOBFVG: true,
+      obfvgBullColor: "rgba(0,128,0,1)",
+      obfvgBearColor: "rgba(255,0,0,1)",
+      plotLabelOB: true,
+      obLabelColor: "rgba(128,128,128,1)",
+      obLabelSize: "tiny",
+      plotLabelFVG: true,
+      fvgLabelColor: "rgba(128,128,128,1)",
+      fvgLabelSize: "tiny",
+      plotLabelRJB: true,
+      rjbLabelColor: "rgba(128,128,128,1)",
+      rjbLabelSize: "tiny",
+      plotLabelBOS: true,
+      bosLabelColor: "rgba(128,128,128,1)",
+      bosLabelSize: "tiny"
     },
     vumanchu: {
       wtChannelLen: 9,
@@ -400,6 +532,21 @@ const INDICATOR_CATALOG_GROUPS: IndicatorCatalogGroup[] = [
         ],
         params: [
           "config.indicatorsV2.breakerBlocks.*"
+        ]
+      },
+      {
+        key: "super-orderblock-fvg-bos",
+        name: "Super OrderBlock / FVG / BoS (makuchaku & eFe)",
+        live: true,
+        outputs: [
+          "indicators.superOrderBlockFvgBos.top|bottom",
+          "indicators.superOrderBlockFvgBos.activeZones.*",
+          "indicators.superOrderBlockFvgBos.events.*",
+          "indicators.superOrderBlockFvgBos.eventCounts.*",
+          "indicators.superOrderBlockFvgBos.markerCounts.*"
+        ],
+        params: [
+          "config.indicatorsV2.superOrderBlockFvgBos.*"
         ]
       }
     ]
@@ -653,6 +800,7 @@ export default function AdminIndicatorSettingsPage() {
     volume: false,
     fvg: false,
     breakerBlocks: false,
+    superOrderBlockFvgBos: false,
     rangesSessions: false,
     smc: false,
     aiGating: false,
@@ -716,6 +864,22 @@ export default function AdminIndicatorSettingsPage() {
       indicatorsV2: {
         ...prev.indicatorsV2,
         breakerBlocks: { ...prev.indicatorsV2.breakerBlocks, [field]: value }
+      }
+    }));
+  }
+
+  function setIndicatorsV2SuperOrderBlockFvgBos(
+    field: SuperOrderBlockFvgBosKey,
+    value: IndicatorSettingsConfig["indicatorsV2"]["superOrderBlockFvgBos"][SuperOrderBlockFvgBosKey]
+  ) {
+    setConfig((prev) => ({
+      ...prev,
+      indicatorsV2: {
+        ...prev.indicatorsV2,
+        superOrderBlockFvgBos: {
+          ...prev.indicatorsV2.superOrderBlockFvgBos,
+          [field]: value
+        }
       }
     }));
   }
@@ -1192,6 +1356,87 @@ export default function AdminIndicatorSettingsPage() {
                       <label className="inlineCheck"><input type="checkbox" checked={config.indicatorsV2.breakerBlocks.showBreaks} onChange={(e) => setIndicatorsV2BreakerBlocks("showBreaks", e.target.checked)} /> {t("fields.showBreaks")}</label>
                       <label className="inlineCheck"><input type="checkbox" checked={config.indicatorsV2.breakerBlocks.showSPD} onChange={(e) => setIndicatorsV2BreakerBlocks("showSPD", e.target.checked)} /> {t("fields.showSPD")}</label>
                       <label className="inlineCheck"><input type="checkbox" checked={config.indicatorsV2.breakerBlocks.enableTp} onChange={(e) => setIndicatorsV2BreakerBlocks("enableTp", e.target.checked)} /> {t("fields.enableTp")}</label>
+                    </div>
+                  </div>
+                ) : null}
+              </div>
+
+              <div className={`settingsAccordionItem ${openIndicatorSections.superOrderBlockFvgBos ? "settingsAccordionItemOpen" : ""}`}>
+                <button type="button" className="settingsAccordionTrigger" onClick={() => toggleIndicatorSection("superOrderBlockFvgBos")} aria-expanded={openIndicatorSections.superOrderBlockFvgBos}>
+                  <span>{t("sections.superOrderBlockFvgBos")}</span>
+                  <span className={`settingsAccordionChevron ${openIndicatorSections.superOrderBlockFvgBos ? "settingsAccordionChevronOpen" : ""}`}>▾</span>
+                </button>
+                {openIndicatorSections.superOrderBlockFvgBos ? (
+                  <div className="settingsAccordionBody">
+                    <div className="indicatorConfigGrid">
+                      <label className="settingsField"><span className="mutedTiny">{t("fields.pivotLookup")}</span><input className="input" type="number" min={1} max={5} value={config.indicatorsV2.superOrderBlockFvgBos.pivotLookup} onChange={(e) => setIndicatorsV2SuperOrderBlockFvgBos("pivotLookup", parseNumber(e.target.value))} /></label>
+                      <label className="settingsField"><span className="mutedTiny">{t("fields.hvbEmaPeriod")}</span><input className="input" type="number" min={1} max={500} value={config.indicatorsV2.superOrderBlockFvgBos.hvbEMAPeriod} onChange={(e) => setIndicatorsV2SuperOrderBlockFvgBos("hvbEMAPeriod", parseNumber(e.target.value))} /></label>
+                      <label className="settingsField"><span className="mutedTiny">{t("fields.hvbMultiplier")}</span><input className="input" type="number" min={1} max={100} step={0.1} value={config.indicatorsV2.superOrderBlockFvgBos.hvbMultiplier} onChange={(e) => setIndicatorsV2SuperOrderBlockFvgBos("hvbMultiplier", parseNumber(e.target.value))} /></label>
+                      <label className="settingsField"><span className="mutedTiny">{t("fields.obMaxBoxSet")}</span><input className="input" type="number" min={1} max={100} value={config.indicatorsV2.superOrderBlockFvgBos.obMaxBoxSet} onChange={(e) => setIndicatorsV2SuperOrderBlockFvgBos("obMaxBoxSet", parseNumber(e.target.value))} /></label>
+                      <label className="settingsField"><span className="mutedTiny">{t("fields.fvgMaxBoxSet")}</span><input className="input" type="number" min={1} max={100} value={config.indicatorsV2.superOrderBlockFvgBos.fvgMaxBoxSet} onChange={(e) => setIndicatorsV2SuperOrderBlockFvgBos("fvgMaxBoxSet", parseNumber(e.target.value))} /></label>
+                      <label className="settingsField"><span className="mutedTiny">{t("fields.rjbMaxBoxSet")}</span><input className="input" type="number" min={1} max={100} value={config.indicatorsV2.superOrderBlockFvgBos.rjbMaxBoxSet} onChange={(e) => setIndicatorsV2SuperOrderBlockFvgBos("rjbMaxBoxSet", parseNumber(e.target.value))} /></label>
+                      <label className="settingsField"><span className="mutedTiny">{t("fields.bosMaxBoxSet")}</span><input className="input" type="number" min={1} max={100} value={config.indicatorsV2.superOrderBlockFvgBos.bosMaxBoxSet} onChange={(e) => setIndicatorsV2SuperOrderBlockFvgBos("bosMaxBoxSet", parseNumber(e.target.value))} /></label>
+                      <label className="settingsField"><span className="mutedTiny">{t("fields.bosBoxLength")}</span><input className="input" type="number" min={1} max={5} value={config.indicatorsV2.superOrderBlockFvgBos.bosBoxLength} onChange={(e) => setIndicatorsV2SuperOrderBlockFvgBos("bosBoxLength", parseNumber(e.target.value))} /></label>
+                      <label className="settingsField"><span className="mutedTiny">{t("fields.obBorderTransparency")}</span><input className="input" type="number" min={0} max={100} value={config.indicatorsV2.superOrderBlockFvgBos.obBorderTransparency} onChange={(e) => setIndicatorsV2SuperOrderBlockFvgBos("obBorderTransparency", parseNumber(e.target.value))} /></label>
+                      <label className="settingsField"><span className="mutedTiny">{t("fields.fvgBorderTransparency")}</span><input className="input" type="number" min={0} max={100} value={config.indicatorsV2.superOrderBlockFvgBos.fvgBorderTransparency} onChange={(e) => setIndicatorsV2SuperOrderBlockFvgBos("fvgBorderTransparency", parseNumber(e.target.value))} /></label>
+                      <label className="settingsField"><span className="mutedTiny">{t("fields.rjbBorderTransparency")}</span><input className="input" type="number" min={0} max={100} value={config.indicatorsV2.superOrderBlockFvgBos.rjbBorderTransparency} onChange={(e) => setIndicatorsV2SuperOrderBlockFvgBos("rjbBorderTransparency", parseNumber(e.target.value))} /></label>
+                      <label className="settingsField"><span className="mutedTiny">{t("fields.bosBorderTransparency")}</span><input className="input" type="number" min={0} max={100} value={config.indicatorsV2.superOrderBlockFvgBos.bosBorderTransparency} onChange={(e) => setIndicatorsV2SuperOrderBlockFvgBos("bosBorderTransparency", parseNumber(e.target.value))} /></label>
+
+                      <label className="settingsField"><span className="mutedTiny">{t("fields.obBullColor")}</span><input className="input" type="text" value={config.indicatorsV2.superOrderBlockFvgBos.obBullColor} onChange={(e) => setIndicatorsV2SuperOrderBlockFvgBos("obBullColor", e.target.value)} /></label>
+                      <label className="settingsField"><span className="mutedTiny">{t("fields.obBearColor")}</span><input className="input" type="text" value={config.indicatorsV2.superOrderBlockFvgBos.obBearColor} onChange={(e) => setIndicatorsV2SuperOrderBlockFvgBos("obBearColor", e.target.value)} /></label>
+                      <label className="settingsField"><span className="mutedTiny">{t("fields.mitOBColor")}</span><input className="input" type="text" value={config.indicatorsV2.superOrderBlockFvgBos.mitOBColor} onChange={(e) => setIndicatorsV2SuperOrderBlockFvgBos("mitOBColor", e.target.value)} /></label>
+                      <label className="settingsField"><span className="mutedTiny">{t("fields.fvgBullColor")}</span><input className="input" type="text" value={config.indicatorsV2.superOrderBlockFvgBos.fvgBullColor} onChange={(e) => setIndicatorsV2SuperOrderBlockFvgBos("fvgBullColor", e.target.value)} /></label>
+                      <label className="settingsField"><span className="mutedTiny">{t("fields.fvgBearColor")}</span><input className="input" type="text" value={config.indicatorsV2.superOrderBlockFvgBos.fvgBearColor} onChange={(e) => setIndicatorsV2SuperOrderBlockFvgBos("fvgBearColor", e.target.value)} /></label>
+                      <label className="settingsField"><span className="mutedTiny">{t("fields.fvgStructBreakingColor")}</span><input className="input" type="text" value={config.indicatorsV2.superOrderBlockFvgBos.fvgStructBreakingColor} onChange={(e) => setIndicatorsV2SuperOrderBlockFvgBos("fvgStructBreakingColor", e.target.value)} /></label>
+                      <label className="settingsField"><span className="mutedTiny">{t("fields.mitFVGColor")}</span><input className="input" type="text" value={config.indicatorsV2.superOrderBlockFvgBos.mitFVGColor} onChange={(e) => setIndicatorsV2SuperOrderBlockFvgBos("mitFVGColor", e.target.value)} /></label>
+                      <label className="settingsField"><span className="mutedTiny">{t("fields.rjbBullColor")}</span><input className="input" type="text" value={config.indicatorsV2.superOrderBlockFvgBos.rjbBullColor} onChange={(e) => setIndicatorsV2SuperOrderBlockFvgBos("rjbBullColor", e.target.value)} /></label>
+                      <label className="settingsField"><span className="mutedTiny">{t("fields.rjbBearColor")}</span><input className="input" type="text" value={config.indicatorsV2.superOrderBlockFvgBos.rjbBearColor} onChange={(e) => setIndicatorsV2SuperOrderBlockFvgBos("rjbBearColor", e.target.value)} /></label>
+                      <label className="settingsField"><span className="mutedTiny">{t("fields.mitRJBColor")}</span><input className="input" type="text" value={config.indicatorsV2.superOrderBlockFvgBos.mitRJBColor} onChange={(e) => setIndicatorsV2SuperOrderBlockFvgBos("mitRJBColor", e.target.value)} /></label>
+                      <label className="settingsField"><span className="mutedTiny">{t("fields.bosBullColor")}</span><input className="input" type="text" value={config.indicatorsV2.superOrderBlockFvgBos.bosBullColor} onChange={(e) => setIndicatorsV2SuperOrderBlockFvgBos("bosBullColor", e.target.value)} /></label>
+                      <label className="settingsField"><span className="mutedTiny">{t("fields.bosBearColor")}</span><input className="input" type="text" value={config.indicatorsV2.superOrderBlockFvgBos.bosBearColor} onChange={(e) => setIndicatorsV2SuperOrderBlockFvgBos("bosBearColor", e.target.value)} /></label>
+                      <label className="settingsField"><span className="mutedTiny">{t("fields.hvbBullColor")}</span><input className="input" type="text" value={config.indicatorsV2.superOrderBlockFvgBos.hvbBullColor} onChange={(e) => setIndicatorsV2SuperOrderBlockFvgBos("hvbBullColor", e.target.value)} /></label>
+                      <label className="settingsField"><span className="mutedTiny">{t("fields.hvbBearColor")}</span><input className="input" type="text" value={config.indicatorsV2.superOrderBlockFvgBos.hvbBearColor} onChange={(e) => setIndicatorsV2SuperOrderBlockFvgBos("hvbBearColor", e.target.value)} /></label>
+                      <label className="settingsField"><span className="mutedTiny">{t("fields.ppddBullColor")}</span><input className="input" type="text" value={config.indicatorsV2.superOrderBlockFvgBos.ppddBullColor} onChange={(e) => setIndicatorsV2SuperOrderBlockFvgBos("ppddBullColor", e.target.value)} /></label>
+                      <label className="settingsField"><span className="mutedTiny">{t("fields.ppddBearColor")}</span><input className="input" type="text" value={config.indicatorsV2.superOrderBlockFvgBos.ppddBearColor} onChange={(e) => setIndicatorsV2SuperOrderBlockFvgBos("ppddBearColor", e.target.value)} /></label>
+                      <label className="settingsField"><span className="mutedTiny">{t("fields.obfvgBullColor")}</span><input className="input" type="text" value={config.indicatorsV2.superOrderBlockFvgBos.obfvgBullColor} onChange={(e) => setIndicatorsV2SuperOrderBlockFvgBos("obfvgBullColor", e.target.value)} /></label>
+                      <label className="settingsField"><span className="mutedTiny">{t("fields.obfvgBearColor")}</span><input className="input" type="text" value={config.indicatorsV2.superOrderBlockFvgBos.obfvgBearColor} onChange={(e) => setIndicatorsV2SuperOrderBlockFvgBos("obfvgBearColor", e.target.value)} /></label>
+                      <label className="settingsField"><span className="mutedTiny">{t("fields.pvtTopColor")}</span><input className="input" type="text" value={config.indicatorsV2.superOrderBlockFvgBos.pvtTopColor} onChange={(e) => setIndicatorsV2SuperOrderBlockFvgBos("pvtTopColor", e.target.value)} /></label>
+                      <label className="settingsField"><span className="mutedTiny">{t("fields.pvtBottomColor")}</span><input className="input" type="text" value={config.indicatorsV2.superOrderBlockFvgBos.pvtBottomColor} onChange={(e) => setIndicatorsV2SuperOrderBlockFvgBos("pvtBottomColor", e.target.value)} /></label>
+
+                      <label className="settingsField"><span className="mutedTiny">{t("fields.obBoxBorderStyle")}</span><select className="input" value={config.indicatorsV2.superOrderBlockFvgBos.obBoxBorderStyle} onChange={(e) => setIndicatorsV2SuperOrderBlockFvgBos("obBoxBorderStyle", e.target.value as any)}><option value="solid">solid</option><option value="dashed">dashed</option><option value="dotted">dotted</option></select></label>
+                      <label className="settingsField"><span className="mutedTiny">{t("fields.fvgBoxBorderStyle")}</span><select className="input" value={config.indicatorsV2.superOrderBlockFvgBos.fvgBoxBorderStyle} onChange={(e) => setIndicatorsV2SuperOrderBlockFvgBos("fvgBoxBorderStyle", e.target.value as any)}><option value="solid">solid</option><option value="dashed">dashed</option><option value="dotted">dotted</option></select></label>
+                      <label className="settingsField"><span className="mutedTiny">{t("fields.rjbBoxBorderStyle")}</span><select className="input" value={config.indicatorsV2.superOrderBlockFvgBos.rjbBoxBorderStyle} onChange={(e) => setIndicatorsV2SuperOrderBlockFvgBos("rjbBoxBorderStyle", e.target.value as any)}><option value="solid">solid</option><option value="dashed">dashed</option><option value="dotted">dotted</option></select></label>
+                      <label className="settingsField"><span className="mutedTiny">{t("fields.bosBoxBorderStyle")}</span><select className="input" value={config.indicatorsV2.superOrderBlockFvgBos.bosBoxBorderStyle} onChange={(e) => setIndicatorsV2SuperOrderBlockFvgBos("bosBoxBorderStyle", e.target.value as any)}><option value="solid">solid</option><option value="dashed">dashed</option><option value="dotted">dotted</option></select></label>
+
+                      <label className="settingsField"><span className="mutedTiny">{t("fields.obLabelColor")}</span><input className="input" type="text" value={config.indicatorsV2.superOrderBlockFvgBos.obLabelColor} onChange={(e) => setIndicatorsV2SuperOrderBlockFvgBos("obLabelColor", e.target.value)} /></label>
+                      <label className="settingsField"><span className="mutedTiny">{t("fields.fvgLabelColor")}</span><input className="input" type="text" value={config.indicatorsV2.superOrderBlockFvgBos.fvgLabelColor} onChange={(e) => setIndicatorsV2SuperOrderBlockFvgBos("fvgLabelColor", e.target.value)} /></label>
+                      <label className="settingsField"><span className="mutedTiny">{t("fields.rjbLabelColor")}</span><input className="input" type="text" value={config.indicatorsV2.superOrderBlockFvgBos.rjbLabelColor} onChange={(e) => setIndicatorsV2SuperOrderBlockFvgBos("rjbLabelColor", e.target.value)} /></label>
+                      <label className="settingsField"><span className="mutedTiny">{t("fields.bosLabelColor")}</span><input className="input" type="text" value={config.indicatorsV2.superOrderBlockFvgBos.bosLabelColor} onChange={(e) => setIndicatorsV2SuperOrderBlockFvgBos("bosLabelColor", e.target.value)} /></label>
+                      <label className="settingsField"><span className="mutedTiny">{t("fields.obLabelSize")}</span><select className="input" value={config.indicatorsV2.superOrderBlockFvgBos.obLabelSize} onChange={(e) => setIndicatorsV2SuperOrderBlockFvgBos("obLabelSize", e.target.value as any)}>{["huge","large","small","tiny","auto","normal"].map((value) => <option key={value} value={value}>{value}</option>)}</select></label>
+                      <label className="settingsField"><span className="mutedTiny">{t("fields.fvgLabelSize")}</span><select className="input" value={config.indicatorsV2.superOrderBlockFvgBos.fvgLabelSize} onChange={(e) => setIndicatorsV2SuperOrderBlockFvgBos("fvgLabelSize", e.target.value as any)}>{["huge","large","small","tiny","auto","normal"].map((value) => <option key={value} value={value}>{value}</option>)}</select></label>
+                      <label className="settingsField"><span className="mutedTiny">{t("fields.rjbLabelSize")}</span><select className="input" value={config.indicatorsV2.superOrderBlockFvgBos.rjbLabelSize} onChange={(e) => setIndicatorsV2SuperOrderBlockFvgBos("rjbLabelSize", e.target.value as any)}>{["huge","large","small","tiny","auto","normal"].map((value) => <option key={value} value={value}>{value}</option>)}</select></label>
+                      <label className="settingsField"><span className="mutedTiny">{t("fields.bosLabelSize")}</span><select className="input" value={config.indicatorsV2.superOrderBlockFvgBos.bosLabelSize} onChange={(e) => setIndicatorsV2SuperOrderBlockFvgBos("bosLabelSize", e.target.value as any)}>{["huge","large","small","tiny","auto","normal"].map((value) => <option key={value} value={value}>{value}</option>)}</select></label>
+                    </div>
+                    <div className="indicatorInlineChecks">
+                      <label className="inlineCheck"><input type="checkbox" checked={config.indicatorsV2.superOrderBlockFvgBos.plotOB} onChange={(e) => setIndicatorsV2SuperOrderBlockFvgBos("plotOB", e.target.checked)} /> {t("fields.plotOB")}</label>
+                      <label className="inlineCheck"><input type="checkbox" checked={config.indicatorsV2.superOrderBlockFvgBos.filterMitOB} onChange={(e) => setIndicatorsV2SuperOrderBlockFvgBos("filterMitOB", e.target.checked)} /> {t("fields.filterMitOB")}</label>
+                      <label className="inlineCheck"><input type="checkbox" checked={config.indicatorsV2.superOrderBlockFvgBos.plotFVG} onChange={(e) => setIndicatorsV2SuperOrderBlockFvgBos("plotFVG", e.target.checked)} /> {t("fields.plotFVG")}</label>
+                      <label className="inlineCheck"><input type="checkbox" checked={config.indicatorsV2.superOrderBlockFvgBos.plotStructureBreakingFVG} onChange={(e) => setIndicatorsV2SuperOrderBlockFvgBos("plotStructureBreakingFVG", e.target.checked)} /> {t("fields.plotStructureBreakingFVG")}</label>
+                      <label className="inlineCheck"><input type="checkbox" checked={config.indicatorsV2.superOrderBlockFvgBos.filterMitFVG} onChange={(e) => setIndicatorsV2SuperOrderBlockFvgBos("filterMitFVG", e.target.checked)} /> {t("fields.filterMitFVG")}</label>
+                      <label className="inlineCheck"><input type="checkbox" checked={config.indicatorsV2.superOrderBlockFvgBos.plotRJB} onChange={(e) => setIndicatorsV2SuperOrderBlockFvgBos("plotRJB", e.target.checked)} /> {t("fields.plotRJB")}</label>
+                      <label className="inlineCheck"><input type="checkbox" checked={config.indicatorsV2.superOrderBlockFvgBos.filterMitRJB} onChange={(e) => setIndicatorsV2SuperOrderBlockFvgBos("filterMitRJB", e.target.checked)} /> {t("fields.filterMitRJB")}</label>
+                      <label className="inlineCheck"><input type="checkbox" checked={config.indicatorsV2.superOrderBlockFvgBos.plotPVT} onChange={(e) => setIndicatorsV2SuperOrderBlockFvgBos("plotPVT", e.target.checked)} /> {t("fields.plotPVT")}</label>
+                      <label className="inlineCheck"><input type="checkbox" checked={config.indicatorsV2.superOrderBlockFvgBos.plotBOS} onChange={(e) => setIndicatorsV2SuperOrderBlockFvgBos("plotBOS", e.target.checked)} /> {t("fields.plotBOS")}</label>
+                      <label className="inlineCheck"><input type="checkbox" checked={config.indicatorsV2.superOrderBlockFvgBos.useHighLowForBullishBoS} onChange={(e) => setIndicatorsV2SuperOrderBlockFvgBos("useHighLowForBullishBoS", e.target.checked)} /> {t("fields.useHighLowForBullishBoS")}</label>
+                      <label className="inlineCheck"><input type="checkbox" checked={config.indicatorsV2.superOrderBlockFvgBos.useHighLowForBearishBoS} onChange={(e) => setIndicatorsV2SuperOrderBlockFvgBos("useHighLowForBearishBoS", e.target.checked)} /> {t("fields.useHighLowForBearishBoS")}</label>
+                      <label className="inlineCheck"><input type="checkbox" checked={config.indicatorsV2.superOrderBlockFvgBos.bosBoxFlag} onChange={(e) => setIndicatorsV2SuperOrderBlockFvgBos("bosBoxFlag", e.target.checked)} /> {t("fields.bosBoxFlag")}</label>
+                      <label className="inlineCheck"><input type="checkbox" checked={config.indicatorsV2.superOrderBlockFvgBos.plotHVB} onChange={(e) => setIndicatorsV2SuperOrderBlockFvgBos("plotHVB", e.target.checked)} /> {t("fields.plotHVB")}</label>
+                      <label className="inlineCheck"><input type="checkbox" checked={config.indicatorsV2.superOrderBlockFvgBos.plotPPDD} onChange={(e) => setIndicatorsV2SuperOrderBlockFvgBos("plotPPDD", e.target.checked)} /> {t("fields.plotPPDD")}</label>
+                      <label className="inlineCheck"><input type="checkbox" checked={config.indicatorsV2.superOrderBlockFvgBos.plotOBFVG} onChange={(e) => setIndicatorsV2SuperOrderBlockFvgBos("plotOBFVG", e.target.checked)} /> {t("fields.plotOBFVG")}</label>
+                      <label className="inlineCheck"><input type="checkbox" checked={config.indicatorsV2.superOrderBlockFvgBos.plotLabelOB} onChange={(e) => setIndicatorsV2SuperOrderBlockFvgBos("plotLabelOB", e.target.checked)} /> {t("fields.plotLabelOB")}</label>
+                      <label className="inlineCheck"><input type="checkbox" checked={config.indicatorsV2.superOrderBlockFvgBos.plotLabelFVG} onChange={(e) => setIndicatorsV2SuperOrderBlockFvgBos("plotLabelFVG", e.target.checked)} /> {t("fields.plotLabelFVG")}</label>
+                      <label className="inlineCheck"><input type="checkbox" checked={config.indicatorsV2.superOrderBlockFvgBos.plotLabelRJB} onChange={(e) => setIndicatorsV2SuperOrderBlockFvgBos("plotLabelRJB", e.target.checked)} /> {t("fields.plotLabelRJB")}</label>
+                      <label className="inlineCheck"><input type="checkbox" checked={config.indicatorsV2.superOrderBlockFvgBos.plotLabelBOS} onChange={(e) => setIndicatorsV2SuperOrderBlockFvgBos("plotLabelBOS", e.target.checked)} /> {t("fields.plotLabelBOS")}</label>
                     </div>
                   </div>
                 ) : null}

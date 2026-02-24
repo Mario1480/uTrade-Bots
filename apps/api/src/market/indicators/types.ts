@@ -1,7 +1,9 @@
 import type { FvgFillRule, FvgSummary } from "../fvg.js";
 import type {
   BreakerBlocksSettings,
-  BreakerBlocksSnapshot
+  BreakerBlocksSnapshot,
+  SuperOrderBlockFvgBosSettings,
+  SuperOrderBlockFvgBosSnapshot
 } from "@mm/futures-core";
 
 export type { Candle, Timeframe } from "../timeframe.js";
@@ -124,6 +126,7 @@ export type IndicatorsSnapshot = {
   fvg: FvgSummary;
   vumanchu: VumanchuSnapshot;
   breakerBlocks: BreakerBlocksSnapshot;
+  superOrderBlockFvgBos: SuperOrderBlockFvgBosSnapshot;
   atr_pct: NullableNumber;
   dataGap: boolean;
 };
@@ -173,4 +176,5 @@ export type IndicatorsComputeSettings = {
     goldWtDiffMin?: number;
   };
   breakerBlocks?: Partial<BreakerBlocksSettings>;
+  superOrderBlockFvgBos?: Partial<SuperOrderBlockFvgBosSettings>;
 };
