@@ -19,6 +19,10 @@ type RedisClientLike = {
 type AnyDb = any;
 
 const NEWS_CACHE_TTL_SEC = Math.max(15, Number(process.env.NEWS_CACHE_TTL_SEC ?? "120"));
+const ALL_MODE_MAX_PROVIDER_PAGES = Math.max(
+  1,
+  Number(process.env.ALL_MODE_MAX_PROVIDER_PAGES ?? "8")
+);
 const MEMORY_CACHE = new Map<string, { expiresAt: number; value: unknown }>();
 let redisClient: RedisClientLike | null = null;
 let redisInitDone = false;
@@ -152,6 +156,39 @@ function filterCryptoByQuery(items: NewsItemNormalized[], query: string | null):
   });
 }
 
+function filterGeneralByQuery(items: NewsItemNormalized[], query: string | null): NewsItemNormalized[] {
+  if (!query) return items;
+  const queryUpper = query.toUpperCase();
+  return items.filter((item) => {
+    if (item.feed !== "general") return true;
+    const haystacks = [item.title ?? "", item.text ?? "", item.site ?? ""].map((entry) =>
+      entry.toUpperCase()
+    );
+    return haystacks.some((value) => value.includes(queryUpper));
+  });
+}
+
+function parseIsoTimestamp(value: string | null | undefined): Date | null {
+  if (!value) return null;
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) return null;
+  return parsed;
+}
+
+function filterByPublishedAtRange(
+  items: NewsItemNormalized[],
+  fromTs: Date | null,
+  toTs: Date | null
+): NewsItemNormalized[] {
+  if (!fromTs && !toTs) return items;
+  const fromTime = fromTs?.getTime() ?? Number.NEGATIVE_INFINITY;
+  const toTime = toTs?.getTime() ?? Number.POSITIVE_INFINITY;
+  return items.filter((item) => {
+    const ts = item.publishedAt.getTime();
+    return ts >= fromTime && ts <= toTime;
+  });
+}
+
 function dedupNews(items: NewsItemNormalized[]): NewsItemNormalized[] {
   const out = new Map<string, NewsItemNormalized>();
   for (const item of items) {
@@ -191,6 +228,8 @@ function buildCacheKey(params: {
   symbols: string[];
   from?: string | null;
   to?: string | null;
+  fromTs?: string | null;
+  toTs?: string | null;
 }): string {
   const symbolsKey = params.symbols.join(",");
   return [
@@ -202,22 +241,87 @@ function buildCacheKey(params: {
     params.q ?? "",
     params.from ?? "",
     params.to ?? "",
+    params.fromTs ?? "",
+    params.toTs ?? "",
     symbolsKey
   ].join(":");
 }
 
-function splitFeedsByMode(mode: NewsMode, hasQuery: boolean): NewsFeed[] {
-  if (hasQuery && mode === "all") return ["crypto"];
+function splitFeedsByMode(mode: NewsMode): NewsFeed[] {
   if (mode === "crypto") return ["crypto"];
   if (mode === "general") return ["general"];
   return ["crypto", "general"];
 }
 
+function applyNewsFilters(params: {
+  items: NewsItemNormalized[];
+  query: string | null;
+  symbols: string[];
+  fromTs: Date | null;
+  toTs: Date | null;
+}): NewsItemNormalized[] {
+  const queryFiltered = filterGeneralByQuery(filterCryptoByQuery(params.items, params.query), params.query);
+  const symbolFiltered = filterCryptoBySymbols(queryFiltered, params.symbols);
+  return filterByPublishedAtRange(symbolFiltered, params.fromTs, params.toTs);
+}
+
+async function fetchFeedBatch(params: {
+  feed: NewsFeed;
+  apiKey: string;
+  page: number;
+  limit: number;
+  query: string | null;
+  from?: string | null;
+  to?: string | null;
+  mode: NewsMode;
+  markSearchFallback: () => void;
+}): Promise<NewsItemNormalized[]> {
+  if (params.feed === "crypto") {
+    if (params.query) {
+      try {
+        const searched = await fetchFmpCryptoNewsSearch({
+          apiKey: params.apiKey,
+          page: params.page,
+          limit: params.limit,
+          query: params.query,
+          from: params.from,
+          to: params.to
+        });
+        if (searched.length > 0) {
+          return searched;
+        }
+      } catch (error) {
+        params.markSearchFallback();
+        logger.warn("news_search_fallback_crypto_feed", {
+          reason: String(error),
+          mode: params.mode
+        });
+      }
+    }
+    return fetchFmpCryptoNews({
+      apiKey: params.apiKey,
+      page: params.page,
+      limit: params.limit,
+      from: params.from,
+      to: params.to
+    });
+  }
+  return fetchFmpGeneralNews({
+    apiKey: params.apiKey,
+    page: params.page,
+    limit: params.limit,
+    from: params.from,
+    to: params.to
+  });
+}
+
 export async function listNews(params: ListNewsParams): Promise<ListNewsResult> {
   const page = Math.max(1, Math.trunc(Number(params.page) || 1));
   const query = normalizeQuery(params.q);
-  const queryApplies = Boolean(query) && params.mode !== "general";
+  const queryApplies = Boolean(query);
   const symbols = normalizeSymbols(params.symbols);
+  const fromTs = parseIsoTimestamp(params.fromTs);
+  const toTs = parseIsoTimestamp(params.toTs);
   const key = buildCacheKey({
     mode: params.mode,
     page,
@@ -225,7 +329,9 @@ export async function listNews(params: ListNewsParams): Promise<ListNewsResult> 
     q: query,
     symbols,
     from: params.from,
-    to: params.to
+    to: params.to,
+    fromTs: params.fromTs,
+    toTs: params.toTs
   });
   const cached = await cacheGet<ListNewsResult>(key);
   if (cached) {
@@ -243,81 +349,117 @@ export async function listNews(params: ListNewsParams): Promise<ListNewsResult> 
     throw new Error("fmp_api_key_missing");
   }
 
-  const feeds = splitFeedsByMode(params.mode, queryApplies);
+  const feeds = splitFeedsByMode(params.mode);
   const allMode = params.mode === "all";
-  const fetchPage = allMode ? 0 : (page - 1);
-  const fetchLimit = allMode
-    ? Math.min(50, Math.max(params.limit * page * 2, params.limit))
-    : params.limit;
+  const fetchLimit = params.limit;
+  const targetCount = allMode ? page * params.limit : params.limit;
   let searchFallbackUsed = false;
+  let partial = false;
+  const collected: NewsItemNormalized[] = [];
 
-  const fetchJobs = feeds.map(async (feed) => {
-    if (feed === "crypto") {
-      if (queryApplies && query) {
-        try {
-          return await fetchFmpCryptoNewsSearch({
+  if (allMode) {
+    for (let providerPage = 0; providerPage < ALL_MODE_MAX_PROVIDER_PAGES; providerPage += 1) {
+      const settled = await Promise.allSettled(
+        feeds.map((feed) =>
+          fetchFeedBatch({
+            feed,
             apiKey,
-            page: fetchPage,
+            page: providerPage,
             limit: fetchLimit,
             query,
             from: params.from,
-            to: params.to
-          });
-        } catch (error) {
-          searchFallbackUsed = true;
-          logger.warn("news_search_fallback_crypto_feed", {
-            reason: String(error),
-            mode: params.mode
-          });
+            to: params.to,
+            mode: params.mode,
+            markSearchFallback: () => {
+              searchFallbackUsed = true;
+            }
+          })
+        )
+      );
+
+      let fulfilledCount = 0;
+      let addedCount = 0;
+      for (let index = 0; index < settled.length; index += 1) {
+        const result = settled[index];
+        if (result.status === "fulfilled") {
+          fulfilledCount += 1;
+          collected.push(...result.value);
+          addedCount += result.value.length;
+          continue;
         }
+        partial = true;
+        logger.warn("news_fetch_partial_failure", {
+          feed: feeds[index],
+          reason: String(result.reason),
+          providerPage
+        });
       }
-      return fetchFmpCryptoNews({
-        apiKey,
-        page: fetchPage,
-        limit: fetchLimit,
-        from: params.from,
-        to: params.to
+
+      const filteredCount = dedupNews(
+        applyNewsFilters({
+          items: collected,
+          query,
+          symbols,
+          fromTs,
+          toTs
+        })
+      ).length;
+
+      if (filteredCount >= targetCount) {
+        break;
+      }
+      if (fulfilledCount === 0 || addedCount === 0) {
+        break;
+      }
+    }
+  } else {
+    const settled = await Promise.allSettled(
+      feeds.map((feed) =>
+        fetchFeedBatch({
+          feed,
+          apiKey,
+          page: page - 1,
+          limit: fetchLimit,
+          query,
+          from: params.from,
+          to: params.to,
+          mode: params.mode,
+          markSearchFallback: () => {
+            searchFallbackUsed = true;
+          }
+        })
+      )
+    );
+
+    for (let index = 0; index < settled.length; index += 1) {
+      const result = settled[index];
+      if (result.status === "fulfilled") {
+        collected.push(...result.value);
+        continue;
+      }
+      partial = true;
+      logger.warn("news_fetch_partial_failure", {
+        feed: feeds[index],
+        reason: String(result.reason)
       });
     }
-    return fetchFmpGeneralNews({
-      apiKey,
-      page: fetchPage,
-      limit: fetchLimit,
-      from: params.from,
-      to: params.to
-    });
-  });
-
-  const settled = await Promise.allSettled(fetchJobs);
-  const collected: NewsItemNormalized[] = [];
-  let partial = false;
-
-  for (let index = 0; index < settled.length; index += 1) {
-    const result = settled[index];
-    if (result.status === "fulfilled") {
-      collected.push(...result.value);
-      continue;
-    }
-    partial = true;
-    logger.warn("news_fetch_partial_failure", {
-      feed: feeds[index],
-      reason: String(result.reason)
-    });
   }
 
   if (collected.length === 0) {
-    const firstRejection = settled.find((entry) => entry.status === "rejected");
-    throw new Error(String(firstRejection ? firstRejection.reason : "news_provider_unavailable"));
+    throw new Error("news_provider_unavailable");
   }
 
-  const merged = dedupNews(filterCryptoBySymbols(filterCryptoByQuery(collected, query), symbols));
-  let sliced = merged;
-  if (allMode) {
-    const start = (page - 1) * params.limit;
-    sliced = merged.slice(start, start + params.limit);
-  } else {
-    sliced = merged.slice(0, params.limit);
-  }
+  const merged = dedupNews(
+    applyNewsFilters({
+      items: collected,
+      query,
+      symbols,
+      fromTs,
+      toTs
+    })
+  );
+  const start = allMode ? (page - 1) * params.limit : 0;
+  const sliced = merged.slice(start, start + params.limit);
 
   const payload: ListNewsResult = {
     items: toView(sliced),
@@ -328,7 +470,7 @@ export async function listNews(params: ListNewsParams): Promise<ListNewsResult> 
       cache: "miss",
       fetchedAt: new Date().toISOString(),
       ...(query ? { searchQuery: query, searchApplied: queryApplies } : {}),
-      ...(queryApplies && searchFallbackUsed ? { searchFallback: true } : {}),
+      ...(query && searchFallbackUsed ? { searchFallback: true } : {}),
       ...(partial ? { partial: true } : {})
     }
   };

@@ -5557,12 +5557,20 @@ a { color: inherit; }
 }
 
 .dashboardCalendarProTitle {
+  flex: 1 1 auto;
+  min-width: 0;
   font-weight: 700;
+  overflow-wrap: anywhere;
+}
+
+.dashboardCalendarProHead .btn {
+  flex-shrink: 0;
 }
 
 .dashboardCalendarProList {
   display: grid;
   gap: 6px;
+  min-width: 0;
 }
 
 .dashboardCalendarProCount {
@@ -5575,9 +5583,20 @@ a { color: inherit; }
   align-items: center;
   gap: 8px;
   flex-wrap: nowrap;
+  min-width: 0;
+  max-width: 100%;
+  overflow: hidden;
+}
+
+.dashboardCalendarProRow .badge {
+  flex-shrink: 0;
 }
 
 .dashboardCalendarProMeta {
+  flex: 1 1 auto;
+  min-width: 0;
+  max-width: 100%;
+  display: block;
   font-size: 13px;
   color: var(--muted);
   white-space: nowrap;

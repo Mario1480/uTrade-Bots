@@ -8,12 +8,16 @@ const newsModeSchema = z.enum(["all", "crypto", "general"]);
 const newsQuerySchema = z.object({
   mode: newsModeSchema.default("all"),
   limit: z.coerce.number().int().min(1).max(50).default(20),
-  page: z.coerce.number().int().min(0).max(6).default(1),
+  page: z.coerce.number().int().min(1).max(100).default(1),
   q: z.string().trim().max(120).optional(),
   symbols: z.string().trim().max(300).optional(),
   from: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
-  to: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional()
+  to: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
+  fromTs: z.string().datetime({ offset: true }).optional(),
+  toTs: z.string().datetime({ offset: true }).optional()
 });
+
+export { newsQuerySchema };
 
 function parseSymbols(raw: string | undefined): string[] {
   if (!raw) return [];
@@ -50,11 +54,13 @@ export function registerNewsRoutes(app: Express, deps: { db: any }) {
         db: deps.db,
         mode: parsed.data.mode,
         limit: parsed.data.limit,
-        page: Math.max(1, parsed.data.page),
+        page: parsed.data.page,
         q: parsed.data.q ?? null,
         symbols: parseSymbols(parsed.data.symbols),
         from: parsed.data.from ?? null,
-        to: parsed.data.to ?? null
+        to: parsed.data.to ?? null,
+        fromTs: parsed.data.fromTs ?? null,
+        toTs: parsed.data.toTs ?? null
       });
       return res.json(payload);
     } catch (error) {

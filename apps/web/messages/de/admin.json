@@ -345,7 +345,14 @@
     "selectAllIndicators": "Alle Indikatoren wählen",
     "clearIndicators": "Indikatoren leeren",
     "saving": "Erzeuge und speichere...",
+    "previewGenerating": "Erzeuge Vorschau...",
+    "previewSaving": "Speichere Prompt...",
     "generateSave": "Generate & Save",
+    "generatePreview": "Generate",
+    "previewTitle": "Prompt-Vorschau",
+    "previewHint": "Prüfe den generierten Prompt vor dem Speichern. Modus: {mode}, Modell: {model}.",
+    "previewCancel": "Abbrechen",
+    "previewSave": "Prompt speichern",
     "resultTitle": "Generierter Prompt",
     "resultMeta": "Generierungsmodus: {mode} · Modell: {model} · Prompt-ID: {promptId}",
     "messages": {
@@ -356,7 +363,10 @@
       "runTimeframeMustBeInSet": "Run-Timeframe muss im ausgewählten Timeframe-Set enthalten sein.",
       "confidenceRange": "Confidence-Ziel muss zwischen 0 und 100 liegen.",
       "ohlcvRange": "OHLCV-Bars müssen zwischen 20 und 500 liegen.",
-      "generatedSaved": "Prompt erzeugt und gespeichert. Modus: {mode}, Modell: {model}."
+      "generatedSaved": "Prompt erzeugt und gespeichert. Modus: {mode}, Modell: {model}.",
+      "previewGenerated": "Vorschau erzeugt. Modus: {mode}, Modell: {model}.",
+      "previewSaveSuccess": "Prompt aus Vorschau gespeichert. Modus: {mode}, Modell: {model}.",
+      "previewMissing": "Keine Vorschau vorhanden. Bitte zuerst Vorschau erzeugen."
     }
   },
   "aiTrace": {

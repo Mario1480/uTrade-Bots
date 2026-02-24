@@ -345,7 +345,14 @@
     "selectAllIndicators": "Select all indicators",
     "clearIndicators": "Clear indicators",
     "saving": "Generating and saving...",
+    "previewGenerating": "Generating preview...",
+    "previewSaving": "Saving prompt...",
     "generateSave": "Generate & Save",
+    "generatePreview": "Generate",
+    "previewTitle": "Prompt preview",
+    "previewHint": "Review generated prompt before saving. Mode: {mode}, model: {model}.",
+    "previewCancel": "Cancel",
+    "previewSave": "Save prompt",
     "resultTitle": "Generated prompt",
     "resultMeta": "Generation mode: {mode} · Model: {model} · Prompt ID: {promptId}",
     "messages": {
@@ -356,7 +363,10 @@
       "runTimeframeMustBeInSet": "Run timeframe must be one of the selected timeframes.",
       "confidenceRange": "Confidence target must be between 0 and 100.",
       "ohlcvRange": "OHLCV bars must be between 20 and 500.",
-      "generatedSaved": "Prompt generated and saved. Mode: {mode}, model: {model}."
+      "generatedSaved": "Prompt generated and saved. Mode: {mode}, model: {model}.",
+      "previewGenerated": "Preview generated. Mode: {mode}, model: {model}.",
+      "previewSaveSuccess": "Prompt saved from preview. Mode: {mode}, model: {model}.",
+      "previewMissing": "No preview available. Generate preview first."
     }
   },
   "aiTrace": {

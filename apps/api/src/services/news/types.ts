@@ -36,6 +36,8 @@ export type ListNewsParams = {
   symbols?: string[];
   from?: string | null;
   to?: string | null;
+  fromTs?: string | null;
+  toTs?: string | null;
 };
 
 export type ListNewsResult = {

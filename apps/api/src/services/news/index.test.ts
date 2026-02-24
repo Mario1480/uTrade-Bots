@@ -27,45 +27,7 @@ function mockNewsResponse(items: Array<Record<string, unknown>>): Response {
   });
 }
 
-test("mode=crypto with q uses search and sets search meta", { concurrency: false }, async () => {
-  const prevApiKey = process.env.FMP_API_KEY;
-  process.env.FMP_API_KEY = "test_key";
-  const restoreFetch = installFetchMock((url) => {
-    if (url.pathname === "/stable/search-crypto-news") {
-      return mockNewsResponse([
-        {
-          title: "Bitcoin market update",
-          url: "https://example.com/crypto/bitcoin",
-          publishedDate: "2026-02-18T10:00:00Z",
-          symbol: "BTC",
-          text: "BTC rallies."
-        }
-      ]);
-    }
-    return new Response("not found", { status: 404 });
-  });
-
-  try {
-    const result = await listNews({
-      db: {},
-      mode: "crypto",
-      limit: 20,
-      page: 0,
-      q: "bitcoin",
-      symbols: []
-    });
-    assert.equal(result.items.length, 1);
-    assert.equal(result.items[0]?.feed, "crypto");
-    assert.equal(result.meta.searchApplied, true);
-    assert.equal(result.meta.searchQuery, "bitcoin");
-    assert.equal(result.meta.searchFallback, undefined);
-  } finally {
-    restoreFetch();
-    process.env.FMP_API_KEY = prevApiKey;
-  }
-});
-
-test("mode=all with q returns only crypto feed results", { concurrency: false }, async () => {
+test("mode=all with q searches crypto and general feeds", { concurrency: false }, async () => {
   const prevApiKey = process.env.FMP_API_KEY;
   process.env.FMP_API_KEY = "test_key";
   const calledPaths: string[] = [];
@@ -74,19 +36,21 @@ test("mode=all with q returns only crypto feed results", { concurrency: false },
     if (url.pathname === "/stable/search-crypto-news") {
       return mockNewsResponse([
         {
-          title: "Solana update",
-          url: "https://example.com/crypto/sol",
+          title: "Macro BTC setup",
+          url: "https://example.com/crypto/macro-btc",
           publishedDate: "2026-02-18T11:00:00Z",
-          symbol: "SOL"
+          symbol: "BTC",
+          text: "macro move"
         }
       ]);
     }
     if (url.pathname === "/stable/general-news") {
       return mockNewsResponse([
         {
-          title: "General macro headline",
+          title: "Macro economy headline",
           url: "https://example.com/general/macro",
-          publishedDate: "2026-02-18T09:00:00Z"
+          publishedDate: "2026-02-18T10:00:00Z",
+          site: "Reuters"
         }
       ]);
     }
@@ -98,20 +62,183 @@ test("mode=all with q returns only crypto feed results", { concurrency: false },
       db: {},
       mode: "all",
       limit: 20,
-      page: 0,
-      q: "solana",
+      page: 1,
+      q: "macro",
       symbols: []
     });
-    assert.equal(result.items.length, 1);
-    assert.equal(result.items[0]?.feed, "crypto");
-    assert.equal(calledPaths.includes("/stable/general-news"), false);
+    const feeds = new Set(result.items.map((item) => item.feed));
+    assert.equal(result.items.length, 2);
+    assert.equal(feeds.has("crypto"), true);
+    assert.equal(feeds.has("general"), true);
+    assert.equal(calledPaths.includes("/stable/general-news"), true);
+    assert.equal(result.meta.searchApplied, true);
+    assert.equal(result.meta.searchQuery, "macro");
   } finally {
     restoreFetch();
     process.env.FMP_API_KEY = prevApiKey;
   }
 });
 
-test("q + symbols applies AND filtering", { concurrency: false }, async () => {
+test("mode=general q matches title, text, and site", { concurrency: false }, async () => {
+  const prevApiKey = process.env.FMP_API_KEY;
+  process.env.FMP_API_KEY = "test_key";
+  const restoreFetch = installFetchMock((url) => {
+    if (url.pathname === "/stable/general-news") {
+      return mockNewsResponse([
+        {
+          title: "Alpha outlook",
+          url: "https://example.com/general/title",
+          publishedDate: "2026-02-18T11:00:00Z",
+          site: "Bloomberg",
+          text: "market wrap"
+        },
+        {
+          title: "Macro update",
+          url: "https://example.com/general/text",
+          publishedDate: "2026-02-18T10:59:00Z",
+          site: "FT",
+          text: "Alpha in text"
+        },
+        {
+          title: "Rates update",
+          url: "https://example.com/general/site",
+          publishedDate: "2026-02-18T10:58:00Z",
+          site: "AlphaWire",
+          text: "neutral"
+        },
+        {
+          title: "No match",
+          url: "https://example.com/general/no-match",
+          publishedDate: "2026-02-18T10:57:00Z",
+          site: "Reuters",
+          text: "neutral"
+        }
+      ]);
+    }
+    return new Response("not found", { status: 404 });
+  });
+
+  try {
+    const result = await listNews({
+      db: {},
+      mode: "general",
+      limit: 20,
+      page: 1,
+      q: "alpha",
+      symbols: []
+    });
+    assert.equal(result.items.length, 3);
+    assert.equal(result.items.every((item) => item.feed === "general"), true);
+  } finally {
+    restoreFetch();
+    process.env.FMP_API_KEY = prevApiKey;
+  }
+});
+
+test("fromTs/toTs filters news inclusively", { concurrency: false }, async () => {
+  const prevApiKey = process.env.FMP_API_KEY;
+  process.env.FMP_API_KEY = "test_key";
+  const restoreFetch = installFetchMock((url) => {
+    if (url.pathname === "/stable/crypto-news") {
+      return mockNewsResponse([
+        {
+          title: "Boundary start",
+          url: "https://example.com/crypto/start",
+          publishedDate: "2026-02-18T10:00:00.000Z",
+          symbol: "BTC"
+        },
+        {
+          title: "Outside after",
+          url: "https://example.com/crypto/outside",
+          publishedDate: "2026-02-18T11:00:00.001Z",
+          symbol: "BTC"
+        }
+      ]);
+    }
+    if (url.pathname === "/stable/general-news") {
+      return mockNewsResponse([
+        {
+          title: "Boundary end",
+          url: "https://example.com/general/end",
+          publishedDate: "2026-02-18T11:00:00.000Z"
+        }
+      ]);
+    }
+    return new Response("not found", { status: 404 });
+  });
+
+  try {
+    const result = await listNews({
+      db: {},
+      mode: "all",
+      limit: 20,
+      page: 1,
+      symbols: [],
+      fromTs: "2026-02-18T10:00:00.000Z",
+      toTs: "2026-02-18T11:00:00.000Z"
+    });
+    assert.equal(result.items.length, 2);
+    assert.equal(result.items.some((item) => item.title === "Boundary start"), true);
+    assert.equal(result.items.some((item) => item.title === "Boundary end"), true);
+    assert.equal(result.items.some((item) => item.title === "Outside after"), false);
+  } finally {
+    restoreFetch();
+    process.env.FMP_API_KEY = prevApiKey;
+  }
+});
+
+test("all mode iterates provider pages to fill higher pages", { concurrency: false }, async () => {
+  const prevApiKey = process.env.FMP_API_KEY;
+  process.env.FMP_API_KEY = "test_key";
+  const visitedCryptoPages: number[] = [];
+  const visitedGeneralPages: number[] = [];
+
+  const restoreFetch = installFetchMock((url) => {
+    const providerPage = Number(url.searchParams.get("page") ?? "0");
+    if (url.pathname === "/stable/crypto-news") {
+      visitedCryptoPages.push(providerPage);
+      return mockNewsResponse([
+        {
+          title: `C${providerPage}`,
+          url: `https://example.com/crypto/${providerPage}`,
+          publishedDate: `2026-02-18T1${2 - providerPage}:00:00Z`,
+          symbol: "BTC"
+        }
+      ]);
+    }
+    if (url.pathname === "/stable/general-news") {
+      visitedGeneralPages.push(providerPage);
+      return mockNewsResponse([
+        {
+          title: `G${providerPage}`,
+          url: `https://example.com/general/${providerPage}`,
+          publishedDate: `2026-02-18T1${2 - providerPage}:30:00Z`
+        }
+      ]);
+    }
+    return new Response("not found", { status: 404 });
+  });
+
+  try {
+    const result = await listNews({
+      db: {},
+      mode: "all",
+      limit: 2,
+      page: 2,
+      symbols: []
+    });
+
+    assert.equal(result.items.length, 2);
+    assert.equal(visitedCryptoPages.includes(1), true);
+    assert.equal(visitedGeneralPages.includes(1), true);
+    assert.equal(new Set(result.items.map((item) => item.title)).size, 2);
+  } finally {
+    restoreFetch();
+    process.env.FMP_API_KEY = prevApiKey;
+  }
+});
+
+test("q + symbols keeps symbol filtering on crypto only", { concurrency: false }, async () => {
   const prevApiKey = process.env.FMP_API_KEY;
   process.env.FMP_API_KEY = "test_key";
   const restoreFetch = installFetchMock((url) => {
@@ -119,17 +246,27 @@ test("q + symbols applies AND filtering", { concurrency: false }, async () => {
       return mockNewsResponse([
         {
           title: "Market setup BTC",
-          url: "https://example.com/crypto/btc",
+          url: "https://example.com/crypto/btc-market",
           publishedDate: "2026-02-18T12:00:00Z",
           symbol: "BTC",
-          text: "Market setup"
+          text: "market"
         },
         {
           title: "Market setup ETH",
-          url: "https://example.com/crypto/eth",
-          publishedDate: "2026-02-18T12:01:00Z",
+          url: "https://example.com/crypto/eth-market",
+          publishedDate: "2026-02-18T11:59:00Z",
           symbol: "ETH",
-          text: "Market setup"
+          text: "market"
+        }
+      ]);
+    }
+    if (url.pathname === "/stable/general-news") {
+      return mockNewsResponse([
+        {
+          title: "Market macro",
+          url: "https://example.com/general/market",
+          publishedDate: "2026-02-18T11:58:00Z",
+          site: "Reuters"
         }
       ]);
     }
@@ -139,38 +276,48 @@ test("q + symbols applies AND filtering", { concurrency: false }, async () => {
   try {
     const result = await listNews({
       db: {},
-      mode: "crypto",
+      mode: "all",
       limit: 20,
-      page: 0,
+      page: 1,
       q: "market",
       symbols: ["BTC"]
     });
-    assert.equal(result.items.length, 1);
-    assert.equal(result.items[0]?.symbol, "BTC");
+
+    assert.equal(result.items.length, 2);
+    assert.equal(result.items.some((item) => item.feed === "general"), true);
+    const cryptoSymbols = result.items.filter((item) => item.feed === "crypto").map((item) => item.symbol);
+    assert.deepEqual(cryptoSymbols, ["BTC"]);
   } finally {
     restoreFetch();
     process.env.FMP_API_KEY = prevApiKey;
   }
 });
 
-test("search failures fallback to crypto feed and set searchFallback", { concurrency: false }, async () => {
+test("mode=all with q falls back to crypto feed when crypto search returns empty", { concurrency: false }, async () => {
   const prevApiKey = process.env.FMP_API_KEY;
   process.env.FMP_API_KEY = "test_key";
   const restoreFetch = installFetchMock((url) => {
     if (url.pathname === "/stable/search-crypto-news") {
-      return new Response("unavailable", { status: 503 });
-    }
-    if (url.pathname === "/stable/news/crypto" || url.pathname === "/api/v4/crypto_news") {
-      return new Response("forbidden", { status: 403 });
+      return mockNewsResponse([]);
     }
     if (url.pathname === "/stable/crypto-news") {
       return mockNewsResponse([
         {
-          title: "BTC fallback feed",
-          url: "https://example.com/crypto/fallback-btc",
-          publishedDate: "2026-02-18T13:00:00Z",
+          title: "Bitcoin breaks resistance",
+          url: "https://example.com/crypto/bitcoin-breakout",
+          publishedDate: "2026-02-18T12:00:00Z",
           symbol: "BTC",
-          text: "Fallback entry"
+          text: "bitcoin trend up"
+        }
+      ]);
+    }
+    if (url.pathname === "/stable/general-news") {
+      return mockNewsResponse([
+        {
+          title: "General rates update",
+          url: "https://example.com/general/rates",
+          publishedDate: "2026-02-18T11:58:00Z",
+          site: "Reuters"
         }
       ]);
     }
@@ -180,60 +327,14 @@ test("search failures fallback to crypto feed and set searchFallback", { concurr
   try {
     const result = await listNews({
       db: {},
-      mode: "crypto",
+      mode: "all",
       limit: 20,
-      page: 0,
-      q: "btc",
+      page: 1,
+      q: "bitcoin",
       symbols: []
     });
-    assert.equal(result.items.length, 1);
-    assert.equal(result.meta.searchApplied, true);
-    assert.equal(result.meta.searchFallback, true);
-  } finally {
-    restoreFetch();
-    process.env.FMP_API_KEY = prevApiKey;
-  }
-});
-
-test("cache key includes q so different queries do not collide", { concurrency: false }, async () => {
-  const prevApiKey = process.env.FMP_API_KEY;
-  process.env.FMP_API_KEY = "test_key";
-  const restoreFetch = installFetchMock((url) => {
-    if (url.pathname === "/stable/search-crypto-news") {
-      const query = url.searchParams.get("query") ?? "unknown";
-      return mockNewsResponse([
-        {
-          title: `Search result ${query}`,
-          url: `https://example.com/crypto/${query}`,
-          publishedDate: "2026-02-18T14:00:00Z",
-          symbol: "BTC"
-        }
-      ]);
-    }
-    return new Response("not found", { status: 404 });
-  });
-
-  try {
-    const alpha = await listNews({
-      db: {},
-      mode: "crypto",
-      limit: 20,
-      page: 0,
-      q: "alpha",
-      symbols: []
-    });
-    const beta = await listNews({
-      db: {},
-      mode: "crypto",
-      limit: 20,
-      page: 0,
-      q: "beta",
-      symbols: []
-    });
-    assert.equal(alpha.items[0]?.title.includes("alpha"), true);
-    assert.equal(beta.items[0]?.title.includes("beta"), true);
-    assert.equal(alpha.meta.cache, "miss");
-    assert.equal(beta.meta.cache, "miss");
+    assert.equal(result.items.some((item) => item.feed === "crypto"), true);
+    assert.equal(result.items.some((item) => item.title.includes("Bitcoin")), true);
   } finally {
     restoreFetch();
     process.env.FMP_API_KEY = prevApiKey;

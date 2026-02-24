@@ -49,6 +49,22 @@ function addDays(value: Date, days: number): Date {
   return new Date(value.getTime() + days * 24 * 60 * 60 * 1000);
 }
 
+function toLocalDayBoundaryIso(dateInput: string, boundary: "start" | "end"): string | null {
+  if (!dateInput) return null;
+  const [yearRaw, monthRaw, dayRaw] = dateInput.split("-");
+  const year = Number(yearRaw);
+  const month = Number(monthRaw);
+  const day = Number(dayRaw);
+  if (!Number.isFinite(year) || !Number.isFinite(month) || !Number.isFinite(day)) return null;
+
+  const localDate =
+    boundary === "start"
+      ? new Date(year, month - 1, day, 0, 0, 0, 0)
+      : new Date(year, month - 1, day, 23, 59, 59, 999);
+  if (Number.isNaN(localDate.getTime())) return null;
+  return localDate.toISOString();
+}
+
 export default function NewsPage() {
   const t = useTranslations("system.news");
   const locale = useLocale();
@@ -57,7 +73,6 @@ export default function NewsPage() {
   const [limit, setLimit] = useState(20);
   const [page, setPage] = useState(1);
   const [search, setSearch] = useState("");
-  const [symbols, setSymbols] = useState("");
   const [from, setFrom] = useState(() => toDateInput(addDays(new Date(), -1)));
   const [to, setTo] = useState(() => toDateInput(addDays(new Date(), 1)));
   const [items, setItems] = useState<NewsItem[]>([]);
@@ -71,15 +86,15 @@ export default function NewsPage() {
     params.set("limit", String(limit));
     params.set("page", String(page));
     const queryRaw = search.trim();
-    if (queryRaw && mode !== "general") params.set("q", queryRaw);
-    const symbolRaw = symbols.trim();
-    if (symbolRaw) params.set("symbols", symbolRaw);
-    if (mode !== "crypto") {
-      if (from) params.set("from", from);
-      if (to) params.set("to", to);
-    }
+    if (queryRaw) params.set("q", queryRaw);
+    const fromTs = toLocalDayBoundaryIso(from, "start");
+    const toTs = toLocalDayBoundaryIso(to, "end");
+    if (from) params.set("from", from);
+    if (to) params.set("to", to);
+    if (fromTs) params.set("fromTs", fromTs);
+    if (toTs) params.set("toTs", toTs);
     return params.toString();
-  }, [mode, limit, page, search, symbols, from, to]);
+  }, [mode, limit, page, search, from, to]);
 
   function formatLocalDateTime(value: string): string {
     const parsed = new Date(value);
@@ -98,7 +113,11 @@ export default function NewsPage() {
     setError(null);
     try {
       const response = await apiGet<NewsResponse>(`/news?${query}`);
-      setItems(Array.isArray(response.items) ? response.items : []);
+      const nextItems = Array.isArray(response.items) ? response.items : [];
+      if (page > 1 && nextItems.length === 0) {
+        setPage(1);
+      }
+      setItems(nextItems);
       setMeta(response.meta ?? null);
     } catch (e) {
       setError(errMsg(e));
@@ -196,64 +215,43 @@ export default function NewsPage() {
             </select>
           </label>
 
-          {(mode === "all" || mode === "crypto") ? (
-            <label className="newsFilterField">
-              <div className="newsProFilterLabel">{t("filters.search")}</div>
-              <input
-                className="input"
-                placeholder={t("filters.searchPlaceholder")}
-                value={search}
-                onChange={(event) => {
-                  setSearch(event.target.value);
-                  setPage(1);
-                }}
-              />
-            </label>
-          ) : null}
+          <label className="newsFilterField">
+            <div className="newsProFilterLabel">{t("filters.search")}</div>
+            <input
+              className="input"
+              placeholder={t("filters.searchPlaceholder")}
+              value={search}
+              onChange={(event) => {
+                setSearch(event.target.value);
+                setPage(1);
+              }}
+            />
+          </label>
 
-          {(mode === "all" || mode === "crypto") ? (
-            <label className="newsFilterField">
-              <div className="newsProFilterLabel">{t("filters.symbols")}</div>
-              <input
-                className="input"
-                placeholder={t("filters.symbolsPlaceholder")}
-                value={symbols}
-                onChange={(event) => {
-                  setSymbols(event.target.value);
-                  setPage(1);
-                }}
-              />
-            </label>
-          ) : null}
-
-          {mode !== "crypto" ? (
-            <>
-              <label className="newsFilterField">
-                <div className="newsProFilterLabel">{t("filters.from")}</div>
-                <input
-                  className="input"
-                  type="date"
-                  value={from}
-                  onChange={(event) => {
-                    setFrom(event.target.value);
-                    setPage(1);
-                  }}
-                />
-              </label>
-              <label className="newsFilterField">
-                <div className="newsProFilterLabel">{t("filters.to")}</div>
-                <input
-                  className="input"
-                  type="date"
-                  value={to}
-                  onChange={(event) => {
-                    setTo(event.target.value);
-                    setPage(1);
-                  }}
-                />
-              </label>
-            </>
-          ) : null}
+          <label className="newsFilterField">
+            <div className="newsProFilterLabel">{t("filters.from")}</div>
+            <input
+              className="input"
+              type="date"
+              value={from}
+              onChange={(event) => {
+                setFrom(event.target.value);
+                setPage(1);
+              }}
+            />
+          </label>
+          <label className="newsFilterField">
+            <div className="newsProFilterLabel">{t("filters.to")}</div>
+            <input
+              className="input"
+              type="date"
+              value={to}
+              onChange={(event) => {
+                setTo(event.target.value);
+                setPage(1);
+              }}
+            />
+          </label>
         </div>
       </div>
 

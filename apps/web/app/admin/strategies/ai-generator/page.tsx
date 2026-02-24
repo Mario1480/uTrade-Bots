@@ -33,14 +33,36 @@ type PromptTemplate = {
   isPublic: boolean;
 };
 
+type PromptGenerationMeta = {
+  mode: "ai" | "fallback";
+  model: string;
+};
+
+type GenerateRequestBody = {
+  name: string;
+  strategyDescription: string;
+  indicatorKeys: string[];
+  ohlcvBars: number;
+  timeframes: Array<"5m" | "15m" | "1h" | "4h" | "1d">;
+  runTimeframe: "5m" | "15m" | "1h" | "4h" | "1d" | null;
+  directionPreference: "long" | "short" | "either";
+  confidenceTargetPct: number;
+  slTpSource: "local" | "ai" | "hybrid";
+  newsRiskMode: "off" | "block";
+  setActive: boolean;
+  isPublic: boolean;
+};
+
+type GeneratePreviewResponse = {
+  generatedPromptText: string;
+  generationMeta: PromptGenerationMeta;
+};
+
 type GenerateSaveResponse = {
   prompt: PromptTemplate;
   activePromptId: string | null;
   generatedPromptText: string;
-  generationMeta: {
-    mode: "ai" | "fallback";
-    model: string;
-  };
+  generationMeta: PromptGenerationMeta;
   updatedAt: string | null;
 };
 
@@ -78,8 +100,13 @@ export default function AdminAiPromptGeneratorPage() {
   const [ohlcvBars, setOhlcvBars] = useState("100");
 
   const [generatedPromptText, setGeneratedPromptText] = useState("");
-  const [generationMeta, setGenerationMeta] = useState<GenerateSaveResponse["generationMeta"] | null>(null);
+  const [generationMeta, setGenerationMeta] = useState<PromptGenerationMeta | null>(null);
   const [savedPrompt, setSavedPrompt] = useState<PromptTemplate | null>(null);
+  const [previewOpen, setPreviewOpen] = useState(false);
+  const [previewLoading, setPreviewLoading] = useState(false);
+  const [previewSaving, setPreviewSaving] = useState(false);
+  const [previewPromptText, setPreviewPromptText] = useState("");
+  const [previewMeta, setPreviewMeta] = useState<PromptGenerationMeta | null>(null);
 
   const indicatorGroups = useMemo(() => {
     const grouped: Record<string, IndicatorOption[]> = {};
@@ -139,7 +166,7 @@ export default function AdminAiPromptGeneratorPage() {
     });
   }
 
-  async function generateAndSave() {
+  function buildGenerateBody(): GenerateRequestBody | null {
     setError(null);
     setNotice(null);
 
@@ -147,53 +174,61 @@ export default function AdminAiPromptGeneratorPage() {
     const strategyText = strategyDescription.trim();
     if (!promptName) {
       setError(t("messages.promptNameRequired"));
-      return;
+      return null;
     }
     if (!strategyText) {
       setError(t("messages.strategyRequired"));
-      return;
+      return null;
     }
     if (timeframes.length > 0 && !runTimeframe) {
       setError(t("messages.runTimeframeRequired"));
-      return;
+      return null;
     }
     if (timeframes.length > 0 && !timeframes.includes(runTimeframe as any)) {
       setError(t("messages.runTimeframeMustBeInSet"));
-      return;
+      return null;
     }
     const confidenceTarget = Number(confidenceTargetPct);
     if (!Number.isFinite(confidenceTarget) || confidenceTarget < 0 || confidenceTarget > 100) {
       setError(t("messages.confidenceRange"));
-      return;
+      return null;
     }
     const ohlcvBarsNum = Number(ohlcvBars);
     if (!Number.isFinite(ohlcvBarsNum) || ohlcvBarsNum < 20 || ohlcvBarsNum > 500) {
       setError(t("messages.ohlcvRange"));
-      return;
+      return null;
     }
 
-    setSaving(true);
+    return {
+      name: promptName,
+      strategyDescription: strategyText,
+      indicatorKeys,
+      ohlcvBars: Math.trunc(ohlcvBarsNum),
+      timeframes,
+      runTimeframe: timeframes.length > 0 ? (runTimeframe || timeframes[0]) : null,
+      directionPreference,
+      confidenceTargetPct: confidenceTarget,
+      slTpSource,
+      newsRiskMode,
+      setActive,
+      isPublic
+    };
+  }
+
+  async function generatePreview() {
+    const body = buildGenerateBody();
+    if (!body) return;
+
+    setPreviewLoading(true);
+    setPreviewPromptText("");
+    setPreviewMeta(null);
     try {
-      const body = {
-        name: promptName,
-        strategyDescription: strategyText,
-        indicatorKeys,
-        ohlcvBars: Math.trunc(ohlcvBarsNum),
-        timeframes,
-        runTimeframe: timeframes.length > 0 ? (runTimeframe || timeframes[0]) : null,
-        directionPreference,
-        confidenceTargetPct: confidenceTarget,
-        slTpSource,
-        newsRiskMode,
-        setActive,
-        isPublic
-      };
-      const res = await apiPost<GenerateSaveResponse>("/admin/settings/ai-prompts/generate-save", body);
-      setGeneratedPromptText(res.generatedPromptText ?? "");
-      setGenerationMeta(res.generationMeta ?? null);
-      setSavedPrompt(res.prompt ?? null);
+      const res = await apiPost<GeneratePreviewResponse>("/admin/settings/ai-prompts/generate-preview", body);
+      setPreviewPromptText(res.generatedPromptText ?? "");
+      setPreviewMeta(res.generationMeta ?? null);
+      setPreviewOpen(true);
       setNotice(
-        t("messages.generatedSaved", {
+        t("messages.previewGenerated", {
           mode: res.generationMeta?.mode ?? "fallback",
           model: res.generationMeta?.model ?? "n/a"
         })
@@ -201,6 +236,41 @@ export default function AdminAiPromptGeneratorPage() {
     } catch (e) {
       setError(errMsg(e));
     } finally {
+      setPreviewLoading(false);
+    }
+  }
+
+  async function saveFromPreview() {
+    const body = buildGenerateBody();
+    if (!body) return;
+    if (!previewPromptText.trim()) {
+      setError(t("messages.previewMissing"));
+      return;
+    }
+
+    setPreviewSaving(true);
+    setSaving(true);
+    try {
+      const payload = {
+        ...body,
+        generatedPromptText: previewPromptText,
+        generationMeta: previewMeta ?? undefined
+      };
+      const res = await apiPost<GenerateSaveResponse>("/admin/settings/ai-prompts/generate-save", payload);
+      setGeneratedPromptText(res.generatedPromptText ?? "");
+      setGenerationMeta(res.generationMeta ?? null);
+      setSavedPrompt(res.prompt ?? null);
+      setPreviewOpen(false);
+      setNotice(
+        t("messages.previewSaveSuccess", {
+          mode: res.generationMeta?.mode ?? "fallback",
+          model: res.generationMeta?.model ?? "n/a"
+        })
+      );
+    } catch (e) {
+      setError(errMsg(e));
+    } finally {
+      setPreviewSaving(false);
       setSaving(false);
     }
   }
@@ -407,11 +477,68 @@ export default function AdminAiPromptGeneratorPage() {
           </div>
 
           <div className="indicatorFormActions" style={{ marginTop: 8 }}>
-            <button className="btn btnPrimary" type="button" disabled={saving} onClick={() => void generateAndSave()}>
-              {saving ? t("saving") : t("generateSave")}
+            <button
+              className="btn btnPrimary"
+              type="button"
+              disabled={saving || previewLoading}
+              onClick={() => void generatePreview()}
+            >
+              {previewLoading ? t("previewGenerating") : t("generatePreview")}
             </button>
           </div>
         </section>
+      ) : null}
+
+      {previewOpen ? (
+        <div
+          style={{
+            position: "fixed",
+            inset: 0,
+            background: "rgba(0,0,0,0.5)",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            zIndex: 60,
+            padding: 16
+          }}
+          onClick={() => {
+            if (!previewSaving) setPreviewOpen(false);
+          }}
+        >
+          <div
+            className="card"
+            style={{ width: "min(1000px, 95vw)", maxHeight: "90vh", display: "grid", gap: 10, padding: 16 }}
+            onClick={(event) => event.stopPropagation()}
+          >
+            <div className="settingsSectionHeader">
+              <h3 style={{ margin: 0 }}>{t("previewTitle")}</h3>
+            </div>
+            <div className="settingsMutedText">
+              {previewMeta
+                ? t("previewHint", { mode: previewMeta.mode, model: previewMeta.model })
+                : t("previewHint", { mode: "fallback", model: "n/a" })}
+            </div>
+            <textarea className="input" rows={18} readOnly value={previewPromptText} />
+            <div style={{ display: "flex", gap: 8, justifyContent: "flex-end", flexWrap: "wrap" }}>
+              <button
+                className="btn"
+                type="button"
+                disabled={previewSaving}
+                onClick={() => setPreviewOpen(false)}
+              >
+                {t("previewCancel")}
+              </button>
+              <button
+                className="btn btnPrimary"
+                type="button"
+                disabled={previewSaving}
+                onClick={() => void saveFromPreview()}
+              >
+                {previewSaving ? t("previewSaving") : t("previewSave")}
+              </button>
+            </div>
+          </div>
+        </div>
       ) : null}
 
       {generatedPromptText ? (

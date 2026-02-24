@@ -149,6 +149,42 @@ test("createGeneratedPromptDraft uses defaults for optional runtime fields", () 
   assert.equal(draft.payload.prompts[0]?.ohlcvBars, 100);
 });
 
+test("createGeneratedPromptDraft preserves provided preview prompt text", () => {
+  const previewText = "Strict preview prompt text from popup";
+  const draft = createGeneratedPromptDraft({
+    existingSettings: baseSettings,
+    name: "Generated from preview",
+    promptText: previewText,
+    indicatorKeys: ["rsi"],
+    timeframes: ["15m"],
+    runTimeframe: "15m",
+    setActive: false,
+    isPublic: false,
+    nowIso: "2026-02-22T10:17:00.000Z",
+    promptId: "prompt_preview_exact"
+  });
+
+  assert.equal(draft.payload.prompts[0]?.promptText, previewText);
+});
+
+test("createGeneratedPromptDraft clamps oversized preview prompt text", () => {
+  const oversized = "x".repeat(PROMPT_GENERATOR_MAX_PROMPT_CHARS + 500);
+  const draft = createGeneratedPromptDraft({
+    existingSettings: baseSettings,
+    name: "Generated from long preview",
+    promptText: oversized,
+    indicatorKeys: ["rsi"],
+    timeframes: ["15m"],
+    runTimeframe: "15m",
+    setActive: false,
+    isPublic: false,
+    nowIso: "2026-02-22T10:18:00.000Z",
+    promptId: "prompt_preview_clamp"
+  });
+
+  assert.equal(draft.payload.prompts[0]?.promptText.length, PROMPT_GENERATOR_MAX_PROMPT_CHARS);
+});
+
 test("createGeneratedPromptDraft rejects invalid runTimeframe", () => {
   assert.throws(
     () =>
