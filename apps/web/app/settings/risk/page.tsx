@@ -194,7 +194,7 @@ export default function SettingsRiskPage() {
 
   return (
     <div className="settingsWrap settingsRiskPage">
-      <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+      <div className="settingsRiskNav">
         <Link href={withLocalePath("/settings", locale)} className="btn">
           ← {tCommon("backToSettings")}
         </Link>
@@ -203,70 +203,72 @@ export default function SettingsRiskPage() {
         </Link>
       </div>
 
-      <div className="settingsRiskHead">
-        <h2 style={{ margin: 0 }}>{t("title")}</h2>
+      <div className="card settingsRiskHead">
+        <h2 className="settingsRiskTitle">{t("title")}</h2>
         <div className="settingsSectionMeta">{t("subtitle")}</div>
       </div>
 
       {error ? (
-        <div className="card" style={{ borderColor: "#ef4444" }}>
+        <div className="card settingsRiskErrorCard">
           <strong>{t("errors.load")}</strong> {error}
         </div>
       ) : null}
 
       {loading ? (
-        <div className="card settingsRiskState">{t("loading")}</div>
+        <div className="card settingsRiskState settingsRiskPanelCard">{t("loading")}</div>
       ) : isEmpty ? (
-        <div className="card settingsRiskState">{t("empty")}</div>
+        <div className="card settingsRiskState settingsRiskPanelCard">{t("empty")}</div>
       ) : (
-        <div className="settingsRiskTable" role="table" aria-label={t("title")}>
-          <div className="settingsRiskRow settingsRiskRowHead" role="row">
-            <div role="columnheader">{t("columns.account")}</div>
-            {RISK_LIMIT_FIELDS.map((field) => (
-              <div key={field.key} role="columnheader">{t(`columns.${field.labelKey}`)}</div>
-            ))}
-            <div role="columnheader">{t("columns.actions")}</div>
+        <div className="card settingsRiskPanelCard settingsRiskTableCard">
+          <div className="settingsRiskTable" role="table" aria-label={t("title")}>
+            <div className="settingsRiskRow settingsRiskRowHead" role="row">
+              <div role="columnheader">{t("columns.account")}</div>
+              {RISK_LIMIT_FIELDS.map((field) => (
+                <div key={field.key} role="columnheader">{t(`columns.${field.labelKey}`)}</div>
+              ))}
+              <div role="columnheader">{t("columns.actions")}</div>
+            </div>
+
+            {items.map((item) => {
+              const draft = drafts[item.exchangeAccountId] ?? limitsToDraft(item.limits);
+              const saving = Boolean(savingById[item.exchangeAccountId]);
+              return (
+                <div key={item.exchangeAccountId} className="settingsRiskRow" role="row">
+                  <div className="settingsRiskAccountCell" role="cell">
+                    <div className="settingsRiskAccountLabel">{item.label}</div>
+                    <div className="settingsRiskAccountMeta">{item.exchange.toUpperCase()}</div>
+                  </div>
+
+                  {RISK_LIMIT_FIELDS.map((field) => (
+                    <label key={field.key} className={`settingsRiskCell settingsRiskCellKey-${field.key}`} role="cell">
+                      <span className="settingsRiskCellLabel">{t(`columns.${field.labelKey}`)}</span>
+                      <input
+                        type="number"
+                        className="input settingsRiskInput"
+                        step={field.step}
+                        min={0}
+                        value={draft[field.key]}
+                        onChange={(event) => updateDraft(item.exchangeAccountId, field.key, event.target.value)}
+                        disabled={saving}
+                      />
+                    </label>
+                  ))}
+
+                  <div className="settingsRiskActions" role="cell">
+                    <button className="btn btnPrimary" type="button" onClick={() => void saveRow(item.exchangeAccountId)} disabled={saving}>
+                      {saving ? tCommon("saving") : t("save")}
+                    </button>
+                    <button className="btn" type="button" onClick={() => resetRow(item.exchangeAccountId)} disabled={saving}>
+                      {t("reset")}
+                    </button>
+                    {rowMessages[item.exchangeAccountId] ? (
+                      <div className="settingsRiskRowMessage">{rowMessages[item.exchangeAccountId]}</div>
+                    ) : null}
+                  </div>
+                </div>
+              );
+            })}
           </div>
-
-          {items.map((item) => {
-            const draft = drafts[item.exchangeAccountId] ?? limitsToDraft(item.limits);
-            const saving = Boolean(savingById[item.exchangeAccountId]);
-            return (
-              <div key={item.exchangeAccountId} className="settingsRiskRow" role="row">
-                <div className="settingsRiskAccountCell" role="cell">
-                  <div className="settingsRiskAccountLabel">{item.label}</div>
-                  <div className="settingsRiskAccountMeta">{item.exchange.toUpperCase()}</div>
-                </div>
-
-                {RISK_LIMIT_FIELDS.map((field) => (
-                  <label key={field.key} className="settingsRiskCell" role="cell">
-                    <span className="settingsRiskCellLabel">{t(`columns.${field.labelKey}`)}</span>
-                    <input
-                      type="number"
-                      className="input settingsRiskInput"
-                      step={field.step}
-                      min={0}
-                      value={draft[field.key]}
-                      onChange={(event) => updateDraft(item.exchangeAccountId, field.key, event.target.value)}
-                      disabled={saving}
-                    />
-                  </label>
-                ))}
-
-                <div className="settingsRiskActions" role="cell">
-                  <button className="btn btnPrimary" type="button" onClick={() => void saveRow(item.exchangeAccountId)} disabled={saving}>
-                    {saving ? tCommon("saving") : t("save")}
-                  </button>
-                  <button className="btn" type="button" onClick={() => resetRow(item.exchangeAccountId)} disabled={saving}>
-                    {t("reset")}
-                  </button>
-                  {rowMessages[item.exchangeAccountId] ? (
-                    <div className="settingsRiskRowMessage">{rowMessages[item.exchangeAccountId]}</div>
-                  ) : null}
-                </div>
-              </div>
-            );
-          })}
         </div>
       )}
     </div>
