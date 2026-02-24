@@ -277,7 +277,7 @@ export default function Page() {
           apiGet<{ events: EconomicCalendarSummary[] }>(
             `/economic-calendar?from=${today}&to=${today}&currency=USD&impacts=high,medium`
           ),
-          apiGet<DashboardNewsResponse>("/news?mode=all&limit=3&page=0"),
+          apiGet<DashboardNewsResponse>("/news?mode=all&limit=3&page=1"),
           apiGet<DashboardPerformanceResponse>(`/dashboard/performance?range=${performanceRange}`),
           apiGet<DashboardRiskAnalysisResponse>("/dashboard/risk-analysis?limit=3"),
           apiGet<DashboardOpenPositionsResponse>("/dashboard/open-positions"),
