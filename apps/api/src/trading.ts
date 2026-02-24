@@ -48,6 +48,7 @@ export type TradingChartIndicatorToggles = {
   smcStructure: boolean;
   volumeOverlay: boolean;
   pvsraVector: boolean;
+  breakerBlocks: boolean;
 };
 
 export type TradingChartPreferences = {
@@ -67,7 +68,8 @@ export const DEFAULT_TRADING_CHART_INDICATOR_TOGGLES: TradingChartIndicatorToggl
   dailyOpen: false,
   smcStructure: false,
   volumeOverlay: false,
-  pvsraVector: false
+  pvsraVector: false,
+  breakerBlocks: false
 };
 
 export const DEFAULT_TRADING_CHART_PREFERENCES: TradingChartPreferences = {
@@ -593,7 +595,11 @@ function normalizeIndicatorToggles(value: unknown): TradingChartIndicatorToggles
     pvsraVector:
       typeof record.pvsraVector === "boolean"
         ? record.pvsraVector
-        : DEFAULT_TRADING_CHART_INDICATOR_TOGGLES.pvsraVector
+        : DEFAULT_TRADING_CHART_INDICATOR_TOGGLES.pvsraVector,
+    breakerBlocks:
+      typeof record.breakerBlocks === "boolean"
+        ? record.breakerBlocks
+        : DEFAULT_TRADING_CHART_INDICATOR_TOGGLES.breakerBlocks
   };
 }
 

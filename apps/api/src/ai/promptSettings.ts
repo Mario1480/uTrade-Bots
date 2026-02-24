@@ -75,6 +75,13 @@ export const AI_PROMPT_INDICATOR_OPTIONS = [
     paths: ["indicators.vumanchu"]
   },
   {
+    key: "breaker_blocks",
+    label: "Breaker Blocks (LuxAlgo)",
+    group: "Core",
+    description: "Breaker block state, levels and all 22 signal events.",
+    paths: ["indicators.breakerBlocks"]
+  },
+  {
     key: "history_context",
     label: "History Context Pack",
     group: "Context",

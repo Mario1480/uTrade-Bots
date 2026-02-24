@@ -1,4 +1,8 @@
 import type { FvgFillRule, FvgSummary } from "../fvg.js";
+import type {
+  BreakerBlocksSettings,
+  BreakerBlocksSnapshot
+} from "@mm/futures-core";
 
 export type { Candle, Timeframe } from "../timeframe.js";
 
@@ -119,6 +123,7 @@ export type IndicatorsSnapshot = {
   };
   fvg: FvgSummary;
   vumanchu: VumanchuSnapshot;
+  breakerBlocks: BreakerBlocksSnapshot;
   atr_pct: NullableNumber;
   dataGap: boolean;
 };
@@ -167,4 +172,5 @@ export type IndicatorsComputeSettings = {
     goldRsiThreshold?: number;
     goldWtDiffMin?: number;
   };
+  breakerBlocks?: Partial<BreakerBlocksSettings>;
 };

@@ -24,6 +24,10 @@ import {
   computeSmartMoneyConcepts,
   type SmartMoneyConceptsSnapshot
 } from "./smartMoneyConcepts.js";
+import {
+  computeLiquiditySweeps,
+  type LiquiditySweepsSnapshot
+} from "./liquiditySweeps.js";
 
 export type AdvancedIndicatorsSnapshot = {
   emas: EmaSnapshot;
@@ -33,6 +37,7 @@ export type AdvancedIndicatorsSnapshot = {
   sessions: SessionsSnapshot;
   pvsra: PvsraSnapshot;
   smartMoneyConcepts: SmartMoneyConceptsSnapshot;
+  liquiditySweeps: LiquiditySweepsSnapshot;
   timeframe: Timeframe;
   dataGap: boolean;
 };
@@ -52,6 +57,13 @@ export type AdvancedIndicatorsComputeOptions = {
   smcEqualThreshold?: number;
   smcMaxOrderBlocks?: number;
   smcFvgAutoThreshold?: boolean;
+  liquiditySweepsEnabled?: boolean;
+  liquiditySweepLen?: number;
+  liquiditySweepMode?: "wicks" | "outbreak_retest" | "both";
+  liquiditySweepExtend?: boolean;
+  liquiditySweepMaxBars?: number;
+  liquiditySweepMaxRecentEvents?: number;
+  liquiditySweepMaxActiveZones?: number;
 };
 
 function emptySnapshot(tf: Timeframe): AdvancedIndicatorsSnapshot {
@@ -226,6 +238,17 @@ function emptySnapshot(tf: Timeframe): AdvancedIndicatorsSnapshot {
       },
       dataGap: true
     },
+    liquiditySweeps: {
+      lastEvent: null,
+      recentEvents: [],
+      nearestBullDistPct: null,
+      nearestBearDistPct: null,
+      activeZones: {
+        bullishCount: 0,
+        bearishCount: 0
+      },
+      dataGap: true
+    },
     dataGap: true
   };
 }
@@ -238,6 +261,7 @@ export function computeAdvancedIndicators(
   if (options.enabled === false) {
     const snapshot = emptySnapshot(timeframe);
     snapshot.dataGap = false;
+    snapshot.liquiditySweeps = computeLiquiditySweeps([], timeframe, { enabled: false });
     return snapshot;
   }
   const sorted = candles
@@ -269,6 +293,15 @@ export function computeAdvancedIndicators(
     maxOrderBlocks: options.smcMaxOrderBlocks,
     fvgAutoThreshold: options.smcFvgAutoThreshold
   });
+  const liquiditySweeps = computeLiquiditySweeps(sorted, timeframe, {
+    enabled: options.liquiditySweepsEnabled ?? true,
+    len: options.liquiditySweepLen,
+    mode: options.liquiditySweepMode,
+    extend: options.liquiditySweepExtend,
+    maxBars: options.liquiditySweepMaxBars,
+    maxRecentEvents: options.liquiditySweepMaxRecentEvents,
+    maxActiveZones: options.liquiditySweepMaxActiveZones
+  });
 
   return {
     timeframe,
@@ -279,6 +312,7 @@ export function computeAdvancedIndicators(
     sessions,
     pvsra,
     smartMoneyConcepts,
+    liquiditySweeps,
     dataGap: emaCloud.dataGap
   };
 }

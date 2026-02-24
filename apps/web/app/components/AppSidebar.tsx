@@ -223,7 +223,8 @@ export default function AppSidebar({
             bots: payload.visibility.bots !== false,
             predictionsDashboard: payload.visibility.predictionsDashboard !== false,
             economicCalendar: payload.visibility.economicCalendar !== false,
-            news: payload.visibility.news !== false
+            news: payload.visibility.news !== false,
+            strategy: payload.visibility.strategy !== false
           });
         }
       } catch {

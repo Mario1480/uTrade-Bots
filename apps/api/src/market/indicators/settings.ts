@@ -1,5 +1,9 @@
 import type { FvgFillRule } from "../fvg.js";
 import type { Timeframe, IndicatorsComputeSettings } from "./types.js";
+import {
+  normalizeBreakerBlocksSettings,
+  type BreakerBlocksSettings
+} from "@mm/futures-core";
 
 const DEFAULT_STOCHRSI = {
   rsiLen: 14,
@@ -91,6 +95,8 @@ export type NormalizedIndicatorSettings = {
     goldWtDiffMin: number;
   };
   vumanchuRequiredBars: number;
+  breakerBlocks: BreakerBlocksSettings;
+  breakerBlocksRequiredBars: number;
 };
 
 function toPositiveInt(value: unknown, fallback: number, min = 1, max = 5000): number {
@@ -155,6 +161,8 @@ export function normalizeIndicatorSettings(
     vumanchuCfg.rsiLen + 20,
     vumanchuCfg.stochRsiLen + vumanchuCfg.stochLen + vumanchuCfg.stochKSmooth + vumanchuCfg.stochDSmooth + 10
   );
+  const breakerBlocks = normalizeBreakerBlocksSettings(settings?.breakerBlocks);
+  const breakerBlocksRequiredBars = Math.max(80, breakerBlocks.len * 8);
 
   return {
     enabledV1: enabledPacks.indicatorsV1 ?? true,
@@ -167,7 +175,9 @@ export function normalizeIndicatorSettings(
       fillRule: settings?.fvg?.fillRule === "mid_touch" ? "mid_touch" : FVG_FILL_RULE
     },
     vumanchu: vumanchuCfg,
-    vumanchuRequiredBars
+    vumanchuRequiredBars,
+    breakerBlocks,
+    breakerBlocksRequiredBars
   };
 }
 
@@ -184,7 +194,10 @@ export function minimumCandlesForIndicatorsWithSettings(
     200,
     normalized.stochrsiRequiredBars,
     normalized.volume.lookback + 20,
-    normalized.vumanchuRequiredBars
+    normalized.vumanchuRequiredBars,
+    normalized.breakerBlocksRequiredBars
   );
-  return tf === "1d" ? Math.max(DAILY_MIN_BARS, normalized.vumanchuRequiredBars) : intradayMinBars;
+  return tf === "1d"
+    ? Math.max(DAILY_MIN_BARS, normalized.vumanchuRequiredBars, normalized.breakerBlocksRequiredBars)
+    : intradayMinBars;
 }

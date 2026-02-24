@@ -26,7 +26,10 @@ test("resolveIndicatorSettings applies precedence global->account->symbol->symbo
           scopeType: "global",
           configJson: {
             enabledPacks: { indicatorsV2: true },
-            indicatorsV2: { volume: { lookback: 110 } }
+            indicatorsV2: {
+              volume: { lookback: 110 },
+              breakerBlocks: { len: 4, showSPD: true }
+            }
           }
         }),
         row({
@@ -36,7 +39,8 @@ test("resolveIndicatorSettings applies precedence global->account->symbol->symbo
           configJson: {
             indicatorsV2: {
               volume: { lookback: 150 },
-              vumanchu: { wtChannelLen: 11 }
+              vumanchu: { wtChannelLen: 11 },
+              breakerBlocks: { len: 8, enableTp: true }
             }
           }
         }),
@@ -73,6 +77,8 @@ test("resolveIndicatorSettings applies precedence global->account->symbol->symbo
   assert.equal(resolved.config.indicatorsV2.volume.lookback, 150);
   assert.equal(resolved.config.indicatorsV2.vumanchu.wtChannelLen, 11);
   assert.equal(resolved.config.indicatorsV2.fvg.lookback, 500);
+  assert.equal(resolved.config.indicatorsV2.breakerBlocks.len, 8);
+  assert.equal(resolved.config.indicatorsV2.breakerBlocks.enableTp, true);
   assert.equal(resolved.config.enabledPacks.advancedIndicators, false);
   assert.equal(resolved.breakdown.length, 4);
   assert.ok(resolved.hash.length >= 12);

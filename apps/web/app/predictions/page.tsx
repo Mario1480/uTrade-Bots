@@ -52,6 +52,11 @@ type PublicAiPromptItem = {
   updatedAt: string | null;
 };
 
+type OwnAiPromptsResponse = {
+  items: PublicAiPromptItem[];
+  strategyFeatureEnabled: boolean;
+};
+
 type PublicAiPromptLicensePolicy = {
   mode: "off" | "warn" | "enforce";
   allowedPublicPromptIds: string[];
@@ -789,6 +794,9 @@ export default function PredictionsPage() {
   const [newTimeframe, setNewTimeframe] = useState<PredictionTimeframe>("15m");
   const [publicAiPrompts, setPublicAiPrompts] = useState<PublicAiPromptItem[]>([]);
   const [publicAiPromptsLoading, setPublicAiPromptsLoading] = useState(false);
+  const [ownAiPrompts, setOwnAiPrompts] = useState<PublicAiPromptItem[]>([]);
+  const [ownAiPromptsLoading, setOwnAiPromptsLoading] = useState(false);
+  const [ownStrategyFeatureEnabled, setOwnStrategyFeatureEnabled] = useState(false);
   const [publicAiPromptLicensePolicy, setPublicAiPromptLicensePolicy] = useState<PublicAiPromptLicensePolicy | null>(null);
   const [strategyEntitlements, setStrategyEntitlements] = useState<StrategyEntitlements | null>(null);
   const [localStrategies, setLocalStrategies] = useState<PublicLocalStrategyItem[]>([]);
@@ -929,21 +937,25 @@ export default function PredictionsPage() {
       if (payload.strategyEntitlements) {
         setStrategyEntitlements(payload.strategyEntitlements);
       }
-      setNewStrategySelectValue((prev) => {
-        const selected = decodeStrategySelectValue(prev);
-        if (!selected) return prev;
-        if (selected.kind !== "ai") return prev;
-        return items.some((item) => item.id === selected.id) ? prev : "ai:default";
-      });
     } catch {
       setPublicAiPrompts([]);
       setPublicAiPromptLicensePolicy(null);
-      setNewStrategySelectValue((prev) => {
-        const selected = decodeStrategySelectValue(prev);
-        return selected?.kind === "ai" ? "ai:default" : prev;
-      });
     } finally {
       setPublicAiPromptsLoading(false);
+    }
+  }
+
+  async function loadOwnAiPrompts() {
+    setOwnAiPromptsLoading(true);
+    try {
+      const payload = await apiGet<OwnAiPromptsResponse>("/settings/ai-prompts/own");
+      setOwnAiPrompts(Array.isArray(payload.items) ? payload.items : []);
+      setOwnStrategyFeatureEnabled(Boolean(payload.strategyFeatureEnabled));
+    } catch {
+      setOwnAiPrompts([]);
+      setOwnStrategyFeatureEnabled(false);
+    } finally {
+      setOwnAiPromptsLoading(false);
     }
   }
 
@@ -1062,6 +1074,7 @@ export default function PredictionsPage() {
     void loadRunningPredictions();
     void loadAccounts();
     void loadPublicAiPrompts();
+    void loadOwnAiPrompts();
     void loadStrategyEntitlements();
     void loadLocalStrategies();
     void loadCompositeStrategies();
@@ -1095,12 +1108,22 @@ export default function PredictionsPage() {
     () => decodeStrategySelectValue(newStrategySelectValue),
     [newStrategySelectValue]
   );
+  const allAiPrompts = useMemo(() => {
+    const out: PublicAiPromptItem[] = [];
+    const seen = new Set<string>();
+    for (const item of [...ownAiPrompts, ...publicAiPrompts]) {
+      if (!item?.id || seen.has(item.id)) continue;
+      seen.add(item.id);
+      out.push(item);
+    }
+    return out;
+  }, [ownAiPrompts, publicAiPrompts]);
   const selectedPrompt = useMemo(
     () =>
       selectedStrategyRef?.kind === "ai"
-        ? publicAiPrompts.find((item) => item.id === selectedStrategyRef.id) ?? null
+        ? allAiPrompts.find((item) => item.id === selectedStrategyRef.id) ?? null
         : null,
-    [selectedStrategyRef, publicAiPrompts]
+    [selectedStrategyRef, allAiPrompts]
   );
   const selectedLocalStrategy = useMemo(
     () =>
@@ -1122,6 +1145,13 @@ export default function PredictionsPage() {
         isStrategyAllowedByEntitlements(strategyEntitlements, "ai", item.id)
       ),
     [publicAiPrompts, strategyEntitlements]
+  );
+  const allowedOwnAiPrompts = useMemo(
+    () =>
+      ownStrategyFeatureEnabled
+        ? ownAiPrompts
+        : [],
+    [ownAiPrompts, ownStrategyFeatureEnabled]
   );
   const allowedLocalStrategies = useMemo(
     () =>
@@ -1192,8 +1222,24 @@ export default function PredictionsPage() {
 
   useEffect(() => {
     const selected = decodeStrategySelectValue(newStrategySelectValue);
+    const selectedOwnAi = selected?.kind === "ai"
+      ? ownAiPrompts.find((item) => item.id === selected.id) ?? null
+      : null;
+    if (selectedOwnAi && !ownStrategyFeatureEnabled && aiDefaultAllowed) {
+      setNewStrategySelectValue("ai:default");
+      return;
+    }
+    const selectedKnownAi = selected?.kind === "ai"
+      ? allAiPrompts.some((item) => item.id === selected.id)
+      : false;
     const selectedAllowed = selected
-      ? isStrategyAllowedByEntitlements(strategyEntitlements, selected.kind, selected.id)
+      ? (
+        selected.kind === "ai" && selectedOwnAi
+          ? (ownStrategyFeatureEnabled && aiKindAllowed)
+          : (selected.kind === "ai" && !selectedKnownAi)
+            ? false
+          : isStrategyAllowedByEntitlements(strategyEntitlements, selected.kind, selected.id)
+      )
       : aiDefaultAllowed;
     if (selectedAllowed) return;
 
@@ -1217,6 +1263,16 @@ export default function PredictionsPage() {
       );
       return;
     }
+    if (allowedOwnAiPrompts.length > 0) {
+      setNewStrategySelectValue(
+        encodeStrategySelectValue({
+          kind: "ai",
+          id: allowedOwnAiPrompts[0].id,
+          name: allowedOwnAiPrompts[0].name
+        })
+      );
+      return;
+    }
     if (allowedAiPrompts.length > 0) {
       setNewStrategySelectValue(
         encodeStrategySelectValue({
@@ -1233,7 +1289,12 @@ export default function PredictionsPage() {
     allowedAiPrompts,
     allowedCompositeStrategies,
     allowedLocalStrategies,
+    allowedOwnAiPrompts,
+    aiKindAllowed,
     newStrategySelectValue,
+    ownAiPrompts,
+    allAiPrompts,
+    ownStrategyFeatureEnabled,
     strategyEntitlements
   ]);
 
@@ -2008,9 +2069,9 @@ export default function PredictionsPage() {
               className="input"
               value={newStrategySelectValue}
               onChange={(e) => setNewStrategySelectValue(e.target.value)}
-              disabled={publicAiPromptsLoading || localStrategiesLoading || compositeStrategiesLoading}
+              disabled={publicAiPromptsLoading || ownAiPromptsLoading || localStrategiesLoading || compositeStrategiesLoading}
             >
-              {!aiDefaultAllowed && allowedAiPrompts.length === 0 && allowedLocalStrategies.length === 0 && allowedCompositeStrategies.length === 0 ? (
+              {!aiDefaultAllowed && allowedAiPrompts.length === 0 && allowedOwnAiPrompts.length === 0 && allowedLocalStrategies.length === 0 && allowedCompositeStrategies.length === 0 ? (
                 <option value="ai:default">{tPred("create.noLicensedStrategy")}</option>
               ) : null}
               {aiDefaultAllowed ? (
@@ -2022,6 +2083,15 @@ export default function PredictionsPage() {
                     <option key={prompt.id} value={encodeStrategySelectValue({ kind: "ai", id: prompt.id, name: prompt.name })}>
                       {prompt.name}
                       {prompt.isPublic === false ? ` (${tPred("create.private")})` : ""}
+                    </option>
+                  ))}
+                </optgroup>
+              ) : null}
+              {aiKindAllowed && ownStrategyFeatureEnabled ? (
+                <optgroup label={tPred("create.ownStrategies")}>
+                  {allowedOwnAiPrompts.map((prompt) => (
+                    <option key={prompt.id} value={encodeStrategySelectValue({ kind: "ai", id: prompt.id, name: prompt.name })}>
+                      {prompt.name}
                     </option>
                   ))}
                 </optgroup>
@@ -2175,6 +2245,11 @@ export default function PredictionsPage() {
           {aiKindAllowed && !publicAiPromptsLoading && allowedAiPrompts.length === 0 ? (
           <div className="predictionCreateAlert predictionCreateAlertInfo">
             {tPred("create.noPublicPrompts")}
+          </div>
+          ) : null}
+          {aiKindAllowed && ownStrategyFeatureEnabled && !ownAiPromptsLoading && allowedOwnAiPrompts.length === 0 ? (
+          <div className="predictionCreateAlert predictionCreateAlertInfo">
+            {tPred("create.noOwnStrategies")}
           </div>
           ) : null}
           {localKindAllowed && !localStrategiesLoading && allowedLocalStrategies.length === 0 ? (

@@ -62,6 +62,12 @@ import {
   generateHybridPromptText
 } from "./ai/promptGenerator.js";
 import {
+  createUserAiPromptTemplate,
+  deleteUserAiPromptTemplateById,
+  listUserAiPromptTemplates,
+  resolveAiPromptRuntimeForUserSelection
+} from "./ai/userPromptSettings.js";
+import {
   buildAndAttachHistoryContext
 } from "./ai/historyContext.js";
 import {
@@ -497,7 +503,8 @@ const tradingSettingsSchema = z.object({
       dailyOpen: z.boolean().optional(),
       smcStructure: z.boolean().optional(),
       volumeOverlay: z.boolean().optional(),
-      pvsraVector: z.boolean().optional()
+      pvsraVector: z.boolean().optional(),
+      breakerBlocks: z.boolean().optional()
     }).optional(),
     showUpMarkers: z.boolean().optional(),
     showDownMarkers: z.boolean().optional()
@@ -614,7 +621,8 @@ const accessSectionVisibilitySchema = z.object({
   bots: z.boolean().default(true),
   predictionsDashboard: z.boolean().default(true),
   economicCalendar: z.boolean().default(true),
-  news: z.boolean().default(true)
+  news: z.boolean().default(true),
+  strategy: z.boolean().default(true)
 });
 
 const accessSectionLimitsSchema = z.object({
@@ -763,6 +771,36 @@ const adminAiPromptsGeneratePreviewSchema = adminAiPromptsGenerateBaseSchema
   .superRefine((value, ctx) => validateAdminAiPromptGeneratorInput(value, ctx));
 
 const adminAiPromptsGenerateSaveSchema = adminAiPromptsGenerateBaseSchema
+  .extend({
+    generatedPromptText: z.string().optional(),
+    generationMeta: z.object({
+      mode: z.enum(["ai", "fallback"]),
+      model: z.string().trim().min(1).max(120)
+    }).optional()
+  })
+  .superRefine((value, ctx) => validateAdminAiPromptGeneratorInput(value, ctx));
+
+const userAiPromptTemplateIdParamSchema = z.object({
+  id: z.string().trim().min(1).max(160)
+});
+
+const userAiPromptsGenerateBaseSchema = z.object({
+  name: z.string().trim().min(1).max(64),
+  strategyDescription: z.string().trim().min(1).max(8000),
+  indicatorKeys: z.array(z.string().trim().min(1)).max(128).default([]),
+  ohlcvBars: z.number().int().min(20).max(500).default(100),
+  timeframes: z.array(z.enum(["5m", "15m", "1h", "4h", "1d"])).max(4).default([]),
+  runTimeframe: z.enum(["5m", "15m", "1h", "4h", "1d"]).nullable().optional(),
+  directionPreference: z.enum(["long", "short", "either"]).default("either"),
+  confidenceTargetPct: z.number().min(0).max(100).default(60),
+  slTpSource: z.enum(["local", "ai", "hybrid"]).default("local"),
+  newsRiskMode: z.enum(["off", "block"]).default("off")
+});
+
+const userAiPromptsGeneratePreviewSchema = userAiPromptsGenerateBaseSchema
+  .superRefine((value, ctx) => validateAdminAiPromptGeneratorInput(value, ctx));
+
+const userAiPromptsGenerateSaveSchema = userAiPromptsGenerateBaseSchema
   .extend({
     generatedPromptText: z.string().optional(),
     generationMeta: z.object({
@@ -1106,6 +1144,7 @@ type AccessSectionVisibility = {
   predictionsDashboard: boolean;
   economicCalendar: boolean;
   news: boolean;
+  strategy: boolean;
 };
 type AccessSectionLimits = {
   bots: number | null;
@@ -1401,7 +1440,8 @@ const DEFAULT_ACCESS_SECTION_SETTINGS: StoredAccessSectionSettings = {
     bots: true,
     predictionsDashboard: true,
     economicCalendar: true,
-    news: true
+    news: true,
+    strategy: true
   },
   limits: {
     bots: null,
@@ -1818,6 +1858,29 @@ function toIndicatorComputeSettings(config: IndicatorSettingsConfig) {
       useHiddenDivNoLimits: config.indicatorsV2.vumanchu.useHiddenDivNoLimits,
       goldRsiThreshold: config.indicatorsV2.vumanchu.goldRsiThreshold,
       goldWtDiffMin: config.indicatorsV2.vumanchu.goldWtDiffMin
+    },
+    breakerBlocks: {
+      len: config.indicatorsV2.breakerBlocks.len,
+      breakerCandleOnlyBody: config.indicatorsV2.breakerBlocks.breakerCandleOnlyBody,
+      breakerCandle2Last: config.indicatorsV2.breakerBlocks.breakerCandle2Last,
+      tillFirstBreak: config.indicatorsV2.breakerBlocks.tillFirstBreak,
+      onlyWhenInPDarray: config.indicatorsV2.breakerBlocks.onlyWhenInPDarray,
+      showPDarray: config.indicatorsV2.breakerBlocks.showPDarray,
+      showBreaks: config.indicatorsV2.breakerBlocks.showBreaks,
+      showSPD: config.indicatorsV2.breakerBlocks.showSPD,
+      pdTextColor: config.indicatorsV2.breakerBlocks.pdTextColor,
+      pdSwingLineColor: config.indicatorsV2.breakerBlocks.pdSwingLineColor,
+      enableTp: config.indicatorsV2.breakerBlocks.enableTp,
+      tpColor: config.indicatorsV2.breakerBlocks.tpColor,
+      rrTp1: config.indicatorsV2.breakerBlocks.rrTp1,
+      rrTp2: config.indicatorsV2.breakerBlocks.rrTp2,
+      rrTp3: config.indicatorsV2.breakerBlocks.rrTp3,
+      bbPlusColorA: config.indicatorsV2.breakerBlocks.bbPlusColorA,
+      bbPlusColorB: config.indicatorsV2.breakerBlocks.bbPlusColorB,
+      swingBullColor: config.indicatorsV2.breakerBlocks.swingBullColor,
+      bbMinusColorA: config.indicatorsV2.breakerBlocks.bbMinusColorA,
+      bbMinusColorB: config.indicatorsV2.breakerBlocks.bbMinusColorB,
+      swingBearColor: config.indicatorsV2.breakerBlocks.swingBearColor
     }
   };
 }
@@ -1837,7 +1900,14 @@ function toAdvancedIndicatorComputeSettings(config: IndicatorSettingsConfig) {
     smcEqualLength: config.advancedIndicators.smcEqualLength,
     smcEqualThreshold: config.advancedIndicators.smcEqualThreshold,
     smcMaxOrderBlocks: config.advancedIndicators.smcMaxOrderBlocks,
-    smcFvgAutoThreshold: config.advancedIndicators.smcFvgAutoThreshold
+    smcFvgAutoThreshold: config.advancedIndicators.smcFvgAutoThreshold,
+    liquiditySweepsEnabled: config.enabledPacks.liquiditySweeps,
+    liquiditySweepLen: config.liquiditySweeps.len,
+    liquiditySweepMode: config.liquiditySweeps.mode,
+    liquiditySweepExtend: config.liquiditySweeps.extend,
+    liquiditySweepMaxBars: config.liquiditySweeps.maxBars,
+    liquiditySweepMaxRecentEvents: config.liquiditySweeps.maxRecentEvents,
+    liquiditySweepMaxActiveZones: config.liquiditySweeps.maxActiveZones
   };
 }
 
@@ -1944,6 +2014,10 @@ function parseStoredAccessSectionSettings(value: unknown): StoredAccessSectionSe
       news: asBoolean(
         visibilityRaw.news,
         DEFAULT_ACCESS_SECTION_SETTINGS.visibility.news
+      ),
+      strategy: asBoolean(
+        visibilityRaw.strategy,
+        DEFAULT_ACCESS_SECTION_SETTINGS.visibility.strategy
       )
     },
     limits: {
@@ -1965,7 +2039,8 @@ function toEffectiveAccessSectionSettings(
       bots: Boolean(stored.visibility?.bots),
       predictionsDashboard: Boolean(stored.visibility?.predictionsDashboard),
       economicCalendar: Boolean(stored.visibility?.economicCalendar),
-      news: Boolean(stored.visibility?.news)
+      news: Boolean(stored.visibility?.news),
+      strategy: Boolean(stored.visibility?.strategy)
     },
     limits: {
       bots: normalizeAccessSectionLimit(stored.limits?.bots),
@@ -2062,6 +2137,15 @@ async function evaluateAccessSectionBypassForUser(
 ): Promise<boolean> {
   const ctx = await resolveUserContext(user);
   return Boolean(ctx.hasAdminBackendAccess);
+}
+
+async function isStrategyFeatureEnabledForUser(
+  user: { id: string; email: string }
+): Promise<boolean> {
+  const bypass = await evaluateAccessSectionBypassForUser(user);
+  if (bypass) return true;
+  const settings = await getAccessSectionSettings();
+  return Boolean(settings.visibility.strategy);
 }
 
 async function canCreateBotForUser(params: {
@@ -3672,6 +3756,7 @@ async function generateAutoPredictionForUser(
   options?: {
     isSuperadmin?: boolean;
     hasAdminBackendAccess?: boolean;
+    userEmail?: string;
   }
 ): Promise<{
   persisted: boolean;
@@ -3742,7 +3827,7 @@ async function generateAutoPredictionForUser(
     const selectedCompositeStrategy = requestedCompositeStrategyId
       ? await getEnabledCompositeStrategyById(requestedCompositeStrategyId)
       : null;
-    const selectedStrategyRef: PredictionStrategyRef | null =
+    let selectedStrategyRef: PredictionStrategyRef | null =
       selectedCompositeStrategy
         ? { kind: "composite", id: selectedCompositeStrategy.id, name: selectedCompositeStrategy.name }
         : selectedLocalStrategy
@@ -3772,6 +3857,46 @@ async function generateAutoPredictionForUser(
     const strategyEntitlements = await resolveStrategyEntitlementsForWorkspace({
       workspaceId: workspaceId ?? "unknown"
     });
+    const requestedPromptSelection = requestedPromptTemplateId
+      ? await resolveAiPromptRuntimeForUserSelection({
+          userId,
+          templateId: requestedPromptTemplateId,
+          context: promptScopeContextDraft,
+          requirePublicGlobalPrompt: !requestIsSuperadmin
+        })
+      : null;
+    if (requestedPromptTemplateId && !requestedPromptSelection) {
+      throw new ManualTradingError(
+        "Selected AI prompt is not available.",
+        400,
+        "invalid_ai_prompt_template"
+      );
+    }
+    const selectedPromptIsOwn = Boolean(requestedPromptSelection?.isOwnTemplate);
+    if (selectedPromptIsOwn) {
+      const strategyFeatureEnabled = options?.userEmail
+        ? await isStrategyFeatureEnabledForUser({
+            id: userId,
+            email: options.userEmail
+          })
+        : (
+            Boolean(options?.hasAdminBackendAccess || options?.isSuperadmin)
+            || Boolean((await getAccessSectionSettings()).visibility.strategy)
+          );
+      if (!strategyFeatureEnabled) {
+        throw new ManualTradingError(
+          "Own strategies are currently disabled by access settings.",
+          403,
+          "forbidden"
+        );
+      }
+    }
+    if (selectedStrategyRef?.kind === "ai" && requestedPromptSelection?.templateName) {
+      selectedStrategyRef = {
+        ...selectedStrategyRef,
+        name: requestedPromptSelection.templateName
+      };
+    }
     const selectedKind: "ai" | "local" | "composite" =
       selectedStrategyRef?.kind ?? "ai";
     const predictionLimitBucket = resolvePredictionLimitBucketFromStrategy({
@@ -3780,7 +3905,11 @@ async function generateAutoPredictionForUser(
     });
     const selectedId =
       selectedStrategyRef?.id
-      ?? (selectedKind === "ai" ? (requestedPromptTemplateId ?? "default") : null);
+      ?? (
+        selectedKind === "ai"
+          ? (selectedPromptIsOwn ? null : (requestedPromptTemplateId ?? "default"))
+          : null
+      );
     const strategyAccess = evaluateStrategySelectionAccess({
       entitlements: strategyEntitlements,
       kind: selectedKind,
@@ -3798,22 +3927,17 @@ async function generateAutoPredictionForUser(
         `strategy_license_blocked:${strategyAccess.reason}`
       );
     }
-    const promptLicenseDecision = evaluateAiPromptAccess({
-      userId,
-      selectedPromptId: requestedPromptTemplateId
-    });
-    if (requestedPromptTemplateId) {
-      const selectedPrompt = await getAiPromptTemplateById(requestedPromptTemplateId, {
-        requirePublic: !requestIsSuperadmin
-      });
-      if (!selectedPrompt) {
-        throw new ManualTradingError(
-          "Selected AI prompt is not available.",
-          400,
-          "invalid_ai_prompt_template"
-        );
-      }
-    }
+    const promptLicenseDecision = selectedPromptIsOwn
+      ? {
+          allowed: true,
+          reason: "ok" as const,
+          mode: "off" as const,
+          wouldBlock: false
+        }
+      : evaluateAiPromptAccess({
+          userId,
+          selectedPromptId: requestedPromptTemplateId
+        });
     if (!promptLicenseDecision.allowed) {
       throw new ManualTradingError(
         "Selected AI prompt is blocked by license policy.",
@@ -3830,12 +3954,15 @@ async function generateAutoPredictionForUser(
       });
     }
     const selectedPromptSettings = requestedPromptTemplateId
-      ? await getAiPromptRuntimeSettingsByTemplateId({
-          templateId: requestedPromptTemplateId,
-          context: promptScopeContextDraft,
-          requirePublic: !requestIsSuperadmin
-        })
+      ? requestedPromptSelection?.runtimeSettings ?? null
       : await getAiPromptRuntimeSettings(promptScopeContextDraft);
+    if (requestedPromptTemplateId && !selectedPromptSettings) {
+      throw new ManualTradingError(
+        "Selected AI prompt is not available.",
+        400,
+        "invalid_ai_prompt_template"
+      );
+    }
     const promptTimeframeConfig = normalizePromptTimeframeSetForRuntime(
       selectedPromptSettings,
       requestedTimeframe
@@ -7553,17 +7680,60 @@ async function refreshPredictionStateForTemplate(params: {
     const strategyEntitlements = await resolveStrategyEntitlementsForWorkspace({
       workspaceId: workspaceId ?? "unknown"
     });
+    const promptScopeContext = {
+      exchange: template.exchange,
+      accountId: template.exchangeAccountId,
+      symbol: template.symbol,
+      timeframe: template.timeframe
+    };
+    const requestedPromptTemplateId =
+      requestedStrategyRefEffective?.kind === "ai"
+        ? requestedStrategyRefEffective.id
+        : (readAiPromptTemplateId(template.featureSnapshot) ?? template.aiPromptTemplateId);
+    const requestedPromptSelection = requestedPromptTemplateId
+      ? await resolveAiPromptRuntimeForUserSelection({
+          userId: template.userId,
+          templateId: requestedPromptTemplateId,
+          context: promptScopeContext
+        })
+      : null;
+    const selectedPromptIsOwn = Boolean(requestedPromptSelection?.isOwnTemplate);
+    if (selectedPromptIsOwn) {
+      const owner = await db.user.findUnique({
+        where: { id: template.userId },
+        select: { id: true, email: true }
+      });
+      const strategyFeatureEnabled = owner
+        ? await isStrategyFeatureEnabledForUser(owner)
+        : false;
+      if (!strategyFeatureEnabled) {
+        // eslint-disable-next-line no-console
+        console.info("[predictions:refresh] own strategy blocked by access settings", {
+          stateId: template.stateId,
+          userId: template.userId,
+          requestedPromptTemplateId
+        });
+        return {
+          refreshed: false,
+          significant: false,
+          aiCalled: false
+        };
+      }
+    }
     const requestedStrategyKindForAccess: "ai" | "local" | "composite" =
       requestedStrategyRefEffective?.kind ?? "ai";
     const requestedStrategyIdForAccess =
       requestedStrategyRefEffective?.id
       ?? (
         requestedStrategyKindForAccess === "ai"
-          ? (
-            template.aiPromptTemplateId
-            ?? readAiPromptTemplateId(template.featureSnapshot)
-            ?? "default"
-          )
+          ? (selectedPromptIsOwn
+            ? null
+            : (
+              requestedPromptTemplateId
+              ?? template.aiPromptTemplateId
+              ?? readAiPromptTemplateId(template.featureSnapshot)
+              ?? "default"
+            ))
           : null
       );
     const strategyAccess = evaluateStrategySelectionAccess({
@@ -7576,17 +7746,9 @@ async function refreshPredictionStateForTemplate(params: {
           ? countCompositeStrategyNodes(selectedCompositeStrategy)
           : null
     });
-    const requestedPromptTemplateIdForNewsRisk =
-      requestedStrategyRefEffective?.kind === "ai"
-        ? requestedStrategyRefEffective.id
-        : (template.aiPromptTemplateId ?? readAiPromptTemplateId(template.featureSnapshot));
-    const promptTemplateForNewsRisk =
-      requestedPromptTemplateIdForNewsRisk
-        ? await getAiPromptTemplateById(requestedPromptTemplateIdForNewsRisk)
-        : null;
     const strategyNewsRiskMode = resolveStrategyNewsRiskMode({
       strategyRef: requestedStrategyRefEffective,
-      promptSettings: promptTemplateForNewsRisk,
+      promptSettings: requestedPromptSelection?.runtimeSettings ?? null,
       localStrategy: selectedLocalStrategy,
       compositeStrategy: selectedCompositeStrategy
     });
@@ -7707,26 +7869,25 @@ async function refreshPredictionStateForTemplate(params: {
         reason: strategyAccess.reason
       });
     }
-    const promptScopeContext = {
-      exchange: template.exchange,
-      accountId: template.exchangeAccountId,
-      symbol: template.symbol,
-      timeframe: template.timeframe
-    };
-    const requestedPromptTemplateId =
-      requestedStrategyRefEffective?.kind === "ai"
-        ? requestedStrategyRefEffective.id
-        : (readAiPromptTemplateId(template.featureSnapshot) ?? template.aiPromptTemplateId);
     const requestedPromptTemplateName =
       requestedStrategyRefEffective?.kind === "ai"
-        ? (requestedStrategyRefEffective.name ?? null)
+        ? (requestedPromptSelection?.templateName ?? requestedStrategyRefEffective.name ?? null)
         : (readAiPromptTemplateName(template.featureSnapshot) ?? template.aiPromptTemplateName);
-    const promptLicenseDecision = evaluateAiPromptAccess({
-      userId: template.userId,
-      selectedPromptId: requestedPromptTemplateId
-    });
+    const promptLicenseDecision = selectedPromptIsOwn
+      ? {
+          allowed: true,
+          reason: "ok" as const,
+          mode: "off" as const,
+          wouldBlock: false
+        }
+      : evaluateAiPromptAccess({
+          userId: template.userId,
+          selectedPromptId: requestedPromptTemplateId
+        });
     const runtimePromptTemplateId =
-      promptLicenseDecision.allowed ? requestedPromptTemplateId : null;
+      promptLicenseDecision.allowed
+        ? (requestedPromptSelection?.templateId ?? requestedPromptTemplateId)
+        : null;
     if (promptLicenseDecision.wouldBlock) {
       // eslint-disable-next-line no-console
       console.warn("[license] ai prompt selection would be blocked in enforce mode", {
@@ -7738,7 +7899,7 @@ async function refreshPredictionStateForTemplate(params: {
     }
     let runtimePromptSettings: Awaited<
       ReturnType<typeof getAiPromptRuntimeSettingsByTemplateId>
-    > | null = null;
+    > | null = requestedPromptSelection?.runtimeSettings ?? null;
     let localPrediction =
       normalizeSnapshotPrediction(asRecord(inferred.prediction)) ??
       {
@@ -8018,10 +8179,14 @@ async function refreshPredictionStateForTemplate(params: {
         strategyAccess.allowed || requestedStrategyKindForAccess !== "ai";
       if (signalMode !== "local_only" && aiDecision.shouldCallAi && aiAllowedByStrategyEntitlements) {
         try {
-          runtimePromptSettings = await getAiPromptRuntimeSettingsByTemplateId({
+          const resolvedRuntime = await resolveAiPromptRuntimeForUserSelection({
+            userId: template.userId,
             templateId: runtimePromptTemplateId,
             context: promptScopeContext
           });
+          runtimePromptSettings =
+            resolvedRuntime?.runtimeSettings
+            ?? await getAiPromptRuntimeSettings(promptScopeContext);
           explainer = await generatePredictionExplanation({
             symbol: template.symbol,
             marketType: template.marketType,
@@ -8175,10 +8340,14 @@ async function refreshPredictionStateForTemplate(params: {
       !requestedStrategyRefEffective || requestedStrategyRefEffective.kind === "ai";
     if (shouldAttachPromptMtf && runtimePromptTemplateId && !runtimePromptSettings) {
       try {
-        runtimePromptSettings = await getAiPromptRuntimeSettingsByTemplateId({
+        const resolvedRuntime = await resolveAiPromptRuntimeForUserSelection({
+          userId: template.userId,
           templateId: runtimePromptTemplateId,
           context: promptScopeContext
         });
+        runtimePromptSettings =
+          resolvedRuntime?.runtimeSettings
+          ?? await getAiPromptRuntimeSettings(promptScopeContext);
       } catch {
         runtimePromptSettings = null;
       }
@@ -11117,6 +11286,160 @@ app.post("/admin/settings/ai-prompts/preview", requireAuth, async (req, res) => 
   });
 });
 
+app.get("/settings/ai-prompts/own", requireAuth, async (_req, res) => {
+  const user = readUserFromLocals(res);
+  const strategyFeatureEnabled = await isStrategyFeatureEnabledForUser(user);
+  if (!strategyFeatureEnabled) {
+    return res.json({
+      items: [],
+      availableIndicators: getAiPromptIndicatorOptionsPublic(),
+      strategyFeatureEnabled: false,
+      updatedAt: null
+    });
+  }
+
+  const items = await listUserAiPromptTemplates(user.id);
+  return res.json({
+    items,
+    availableIndicators: getAiPromptIndicatorOptionsPublic(),
+    strategyFeatureEnabled: true,
+    updatedAt: items[0]?.updatedAt ?? null
+  });
+});
+
+app.post("/settings/ai-prompts/own/generate-preview", requireAuth, async (req, res) => {
+  const user = readUserFromLocals(res);
+  const strategyFeatureEnabled = await isStrategyFeatureEnabledForUser(user);
+  if (!strategyFeatureEnabled) {
+    return res.status(403).json({ error: "forbidden" });
+  }
+
+  const parsed = userAiPromptsGeneratePreviewSchema.safeParse(req.body ?? {});
+  if (!parsed.success) {
+    return res.status(400).json({ error: "invalid_payload", details: parsed.error.flatten() });
+  }
+
+  const selected = resolveSelectedAiPromptIndicators(parsed.data.indicatorKeys);
+  if (selected.invalidKeys.length > 0) {
+    return res.status(400).json({
+      error: "invalid_indicator_keys",
+      details: { invalidKeys: selected.invalidKeys }
+    });
+  }
+
+  const generation = await generateHybridPromptText({
+    strategyDescription: parsed.data.strategyDescription,
+    selectedIndicators: selected.selectedIndicators,
+    timeframes: parsed.data.timeframes,
+    runTimeframe: parsed.data.runTimeframe ?? null
+  }).catch(() => null);
+
+  if (!generation) {
+    return res.status(500).json({ error: "generation_failed" });
+  }
+
+  return res.json({
+    generatedPromptText: generation.promptText,
+    generationMeta: {
+      mode: generation.mode,
+      model: generation.model
+    }
+  });
+});
+
+app.post("/settings/ai-prompts/own/generate-save", requireAuth, async (req, res) => {
+  const user = readUserFromLocals(res);
+  const strategyFeatureEnabled = await isStrategyFeatureEnabledForUser(user);
+  if (!strategyFeatureEnabled) {
+    return res.status(403).json({ error: "forbidden" });
+  }
+
+  const parsed = userAiPromptsGenerateSaveSchema.safeParse(req.body ?? {});
+  if (!parsed.success) {
+    return res.status(400).json({ error: "invalid_payload", details: parsed.error.flatten() });
+  }
+
+  const selected = resolveSelectedAiPromptIndicators(parsed.data.indicatorKeys);
+  if (selected.invalidKeys.length > 0) {
+    return res.status(400).json({
+      error: "invalid_indicator_keys",
+      details: { invalidKeys: selected.invalidKeys }
+    });
+  }
+
+  let generatedPromptText = "";
+  let generationMode: "ai" | "fallback" = "fallback";
+  let generationModel = parsed.data.generationMeta?.model ?? getAiModel();
+
+  if (typeof parsed.data.generatedPromptText === "string") {
+    const provided = parsed.data.generatedPromptText.trim();
+    if (!provided) {
+      return res.status(400).json({
+        error: "invalid_payload",
+        details: { reason: "generatedPromptText must not be empty" }
+      });
+    }
+    generatedPromptText = provided;
+    generationMode = parsed.data.generationMeta?.mode ?? "fallback";
+  } else {
+    const generation = await generateHybridPromptText({
+      strategyDescription: parsed.data.strategyDescription,
+      selectedIndicators: selected.selectedIndicators,
+      timeframes: parsed.data.timeframes,
+      runTimeframe: parsed.data.runTimeframe ?? null
+    }).catch(() => null);
+    if (!generation) {
+      return res.status(500).json({ error: "generation_failed" });
+    }
+    generatedPromptText = generation.promptText;
+    generationMode = generation.mode;
+    generationModel = generation.model;
+  }
+
+  const now = new Date();
+  const prompt = await createUserAiPromptTemplate({
+    userId: user.id,
+    name: parsed.data.name,
+    promptText: generatedPromptText,
+    indicatorKeys: selected.selectedIndicators.map((item) => item.key),
+    ohlcvBars: parsed.data.ohlcvBars,
+    timeframes: parsed.data.timeframes,
+    runTimeframe: parsed.data.runTimeframe ?? null,
+    directionPreference: parsed.data.directionPreference,
+    confidenceTargetPct: parsed.data.confidenceTargetPct,
+    slTpSource: parsed.data.slTpSource,
+    newsRiskMode: parsed.data.newsRiskMode,
+    now
+  });
+
+  return res.json({
+    prompt,
+    generatedPromptText: prompt.promptText,
+    generationMeta: {
+      mode: generationMode,
+      model: generationModel
+    },
+    updatedAt: prompt.updatedAt
+  });
+});
+
+app.delete("/settings/ai-prompts/own/:id", requireAuth, async (req, res) => {
+  const user = readUserFromLocals(res);
+  const strategyFeatureEnabled = await isStrategyFeatureEnabledForUser(user);
+  if (!strategyFeatureEnabled) {
+    return res.status(403).json({ error: "forbidden" });
+  }
+  const parsed = userAiPromptTemplateIdParamSchema.safeParse(req.params ?? {});
+  if (!parsed.success) {
+    return res.status(400).json({ error: "invalid_params", details: parsed.error.flatten() });
+  }
+  const deleted = await deleteUserAiPromptTemplateById(user.id, parsed.data.id);
+  if (!deleted) {
+    return res.status(404).json({ error: "not_found" });
+  }
+  return res.json({ ok: true });
+});
+
 app.get("/settings/ai-prompts/public", requireAuth, async (_req, res) => {
   const user = readUserFromLocals(res);
   const strategyEntitlements = await resolveStrategyEntitlementsPublicForUser(user);
@@ -12223,6 +12546,18 @@ app.post("/api/predictions/generate", requireAuth, async (req, res) => {
   const requestedSignalMode = normalizePredictionSignalMode(payload.signalMode);
   const tsCreated = payload.tsCreated ?? new Date().toISOString();
   const inputFeatureSnapshot = asRecord(payload.featureSnapshot);
+  const promptScopeContext = {
+    exchange:
+      typeof inputFeatureSnapshot.prefillExchange === "string"
+        ? normalizeExchangeValue(inputFeatureSnapshot.prefillExchange)
+        : null,
+    accountId:
+      typeof inputFeatureSnapshot.prefillExchangeAccountId === "string"
+        ? inputFeatureSnapshot.prefillExchangeAccountId.trim()
+        : null,
+    symbol: normalizeSymbolInput(payload.symbol) ?? payload.symbol,
+    timeframe: payload.timeframe
+  };
   const payloadStrategyKind = normalizePredictionStrategyKind(payload.strategyRef?.kind);
   const payloadStrategyId =
     typeof payload.strategyRef?.id === "string" && payload.strategyRef.id.trim()
@@ -12250,7 +12585,7 @@ app.post("/api/predictions/generate", requireAuth, async (req, res) => {
   const selectedCompositeStrategy = requestedCompositeStrategyId
     ? await getEnabledCompositeStrategyById(requestedCompositeStrategyId)
     : null;
-  const selectedStrategyRef: PredictionStrategyRef | null =
+  let selectedStrategyRef: PredictionStrategyRef | null =
     selectedCompositeStrategy
       ? { kind: "composite", id: selectedCompositeStrategy.id, name: selectedCompositeStrategy.name }
       : selectedLocalStrategy
@@ -12272,6 +12607,27 @@ app.post("/api/predictions/generate", requireAuth, async (req, res) => {
   const strategyEntitlements = await resolveStrategyEntitlementsForWorkspace({
     workspaceId: userCtx.workspaceId
   });
+  const requestedPromptSelection = requestedPromptTemplateId
+    ? await resolveAiPromptRuntimeForUserSelection({
+        userId: user.id,
+        templateId: requestedPromptTemplateId,
+        context: promptScopeContext,
+        requirePublicGlobalPrompt: !requestIsSuperadmin
+      })
+    : null;
+  if (requestedPromptTemplateId && !requestedPromptSelection) {
+    return res.status(400).json({ error: "invalid_ai_prompt_template" });
+  }
+  const selectedPromptIsOwn = Boolean(requestedPromptSelection?.isOwnTemplate);
+  if (selectedPromptIsOwn && !(await isStrategyFeatureEnabledForUser(user))) {
+    return res.status(403).json({ error: "forbidden" });
+  }
+  if (selectedStrategyRef?.kind === "ai" && requestedPromptSelection?.templateName) {
+    selectedStrategyRef = {
+      ...selectedStrategyRef,
+      name: requestedPromptSelection.templateName
+    };
+  }
   const selectedKind: "ai" | "local" | "composite" =
     selectedStrategyRef?.kind ?? "ai";
   const predictionLimitBucket = resolvePredictionLimitBucketFromStrategy({
@@ -12281,7 +12637,11 @@ app.post("/api/predictions/generate", requireAuth, async (req, res) => {
   const normalizedSymbol = normalizeSymbolInput(payload.symbol) ?? payload.symbol;
   const selectedId =
     selectedStrategyRef?.id
-    ?? (selectedKind === "ai" ? (requestedPromptTemplateId ?? "default") : null);
+    ?? (
+      selectedKind === "ai"
+        ? (selectedPromptIsOwn ? null : (requestedPromptTemplateId ?? "default"))
+        : null
+    );
   const strategyAccess = evaluateStrategySelectionAccess({
     entitlements: strategyEntitlements,
     kind: selectedKind,
@@ -12299,18 +12659,17 @@ app.post("/api/predictions/generate", requireAuth, async (req, res) => {
       maxCompositeNodes: strategyAccess.maxCompositeNodes
     });
   }
-  const promptLicenseDecision = evaluateAiPromptAccess({
-    userId: user.id,
-    selectedPromptId: requestedPromptTemplateId
-  });
-  if (requestedPromptTemplateId) {
-    const selectedPrompt = await getAiPromptTemplateById(requestedPromptTemplateId, {
-      requirePublic: !requestIsSuperadmin
-    });
-    if (!selectedPrompt) {
-      return res.status(400).json({ error: "invalid_ai_prompt_template" });
-    }
-  }
+  const promptLicenseDecision = selectedPromptIsOwn
+    ? {
+        allowed: true,
+        reason: "ok" as const,
+        mode: "off" as const,
+        wouldBlock: false
+      }
+    : evaluateAiPromptAccess({
+        userId: user.id,
+        selectedPromptId: requestedPromptTemplateId
+      });
   if (!promptLicenseDecision.allowed) {
     return res.status(403).json({ error: "ai_prompt_license_blocked" });
   }
@@ -12322,28 +12681,15 @@ app.post("/api/predictions/generate", requireAuth, async (req, res) => {
       mode: promptLicenseDecision.mode
     });
   }
-  const promptScopeContext = {
-    exchange:
-      typeof inputFeatureSnapshot.prefillExchange === "string"
-        ? normalizeExchangeValue(inputFeatureSnapshot.prefillExchange)
-        : null,
-    accountId:
-      typeof inputFeatureSnapshot.prefillExchangeAccountId === "string"
-        ? inputFeatureSnapshot.prefillExchangeAccountId.trim()
-        : null,
-    symbol: normalizeSymbolInput(payload.symbol) ?? payload.symbol,
-    timeframe: payload.timeframe
-  };
   const selectedPromptSettings =
     signalMode === "local_only"
       ? null
       : requestedPromptTemplateId
-        ? await getAiPromptRuntimeSettingsByTemplateId({
-            templateId: requestedPromptTemplateId,
-            context: promptScopeContext,
-            requirePublic: !requestIsSuperadmin
-          })
+        ? (requestedPromptSelection?.runtimeSettings ?? null)
         : await getAiPromptRuntimeSettings(promptScopeContext);
+  if (requestedPromptTemplateId && !selectedPromptSettings) {
+    return res.status(400).json({ error: "invalid_ai_prompt_template" });
+  }
   const promptTimeframeConfig = normalizePromptTimeframeSetForRuntime(
     selectedPromptSettings,
     payload.timeframe
@@ -12734,7 +13080,8 @@ app.post("/api/predictions/generate-auto", requireAuth, async (req, res) => {
   try {
     const created = await generateAutoPredictionForUser(user.id, payload, {
       isSuperadmin: isSuperadminEmail(user.email),
-      hasAdminBackendAccess: userCtx.hasAdminBackendAccess
+      hasAdminBackendAccess: userCtx.hasAdminBackendAccess,
+      userEmail: user.email
     });
     return res.status(created.persisted ? 201 : 202).json({
       persisted: created.persisted,

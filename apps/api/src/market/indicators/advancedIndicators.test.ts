@@ -41,6 +41,7 @@ test("advancedIndicators computes EMA set + cloud with bounded cloud position", 
   assert.equal(snapshot.smartMoneyConcepts.dataGap, false);
   assert.ok(snapshot.smartMoneyConcepts.internal.bullishBreaks >= 0);
   assert.ok(snapshot.smartMoneyConcepts.swing.bearishBreaks >= 0);
+  assert.ok(Array.isArray(snapshot.liquiditySweeps.recentEvents));
 });
 
 test("advancedIndicators keeps data gap false when core EMA set is available", () => {
@@ -63,6 +64,39 @@ test("advancedIndicators forwards SMC settings to smartMoneyConcepts", () => {
   assert.ok(snapshot.smartMoneyConcepts.orderBlocks.internal.bullishCount <= 1);
   assert.ok(snapshot.smartMoneyConcepts.orderBlocks.internal.bearishCount <= 1);
   assert.ok(snapshot.smartMoneyConcepts.fairValueGaps.autoThresholdPct !== null);
+});
+
+test("advancedIndicators wires liquidity sweep settings and strict toggle", () => {
+  const enabledSnapshot = computeAdvancedIndicators(buildCandles(900), "5m", {
+    liquiditySweepsEnabled: true,
+    liquiditySweepLen: 4,
+    liquiditySweepMode: "both",
+    liquiditySweepExtend: true,
+    liquiditySweepMaxBars: 120,
+    liquiditySweepMaxRecentEvents: 3,
+    liquiditySweepMaxActiveZones: 2
+  });
+  const disabledSnapshot = computeAdvancedIndicators(buildCandles(900), "5m", {
+    liquiditySweepsEnabled: false,
+    liquiditySweepLen: 4,
+    liquiditySweepMode: "both"
+  });
+
+  assert.equal(enabledSnapshot.liquiditySweeps.dataGap, false);
+  assert.ok(enabledSnapshot.liquiditySweeps.recentEvents.length <= 3);
+  assert.ok(
+    enabledSnapshot.liquiditySweeps.activeZones.bullishCount
+      + enabledSnapshot.liquiditySweeps.activeZones.bearishCount
+      <= 2
+  );
+
+  assert.equal(disabledSnapshot.liquiditySweeps.lastEvent, null);
+  assert.equal(disabledSnapshot.liquiditySweeps.recentEvents.length, 0);
+  assert.equal(disabledSnapshot.liquiditySweeps.nearestBullDistPct, null);
+  assert.equal(disabledSnapshot.liquiditySweeps.nearestBearDistPct, null);
+  assert.equal(disabledSnapshot.liquiditySweeps.activeZones.bullishCount, 0);
+  assert.equal(disabledSnapshot.liquiditySweeps.activeZones.bearishCount, 0);
+  assert.equal(disabledSnapshot.liquiditySweeps.dataGap, false);
 });
 
 test("daily pivots follow classic floor equations", () => {

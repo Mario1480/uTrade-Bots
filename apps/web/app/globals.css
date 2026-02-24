@@ -1696,6 +1696,27 @@ a { color: inherit; }
   --settings-group-accent: #34d399;
 }
 
+.settingsLandingGroupStrategy {
+  --settings-group-accent: #d8b97a;
+  border-color: color-mix(in oklab, var(--settings-group-accent) 18%, transparent);
+  background: linear-gradient(
+    180deg,
+    color-mix(in oklab, var(--settings-group-accent) 1.2%, transparent),
+    rgba(255, 255, 255, 0.01) 68%,
+    rgba(255, 255, 255, 0.01)
+  );
+}
+
+.settingsLandingGroupStrategy::before {
+  background: color-mix(in oklab, var(--settings-group-accent) 40%, #ffffff 60%);
+  opacity: 0.55;
+}
+
+.settingsLandingGroupStrategy .settingsAccordionItemStrategy.settingsAccordionItemOpen {
+  border-color: rgba(245, 158, 11, 0.34);
+  background: rgba(245, 158, 11, 0.02);
+}
+
 .settingsSectionHeader {
   display: flex;
   align-items: center;

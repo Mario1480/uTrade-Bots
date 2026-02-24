@@ -116,6 +116,31 @@ function advancedMock() {
         discountBottom: 69510
       },
       dataGap: false
+    },
+    liquiditySweeps: {
+      lastEvent: {
+        ts: 1_739_086_500_000,
+        side: "bull",
+        kind: "wick",
+        price: 70010,
+        level: 69995
+      },
+      recentEvents: [
+        {
+          ts: 1_739_086_500_000,
+          side: "bull",
+          kind: "wick",
+          price: 70010,
+          level: 69995
+        }
+      ],
+      nearestBullDistPct: -0.12,
+      nearestBearDistPct: 0.28,
+      activeZones: {
+        bullishCount: 1,
+        bearishCount: 1
+      },
+      dataGap: false
     }
   };
 }
@@ -179,6 +204,22 @@ test("buildHistoryContext creates v1 compact schema deterministically", () => {
   assert.equal(typeof one.reg.state, "string");
   assert.ok(one.bud.bytes <= HISTORY_CONTEXT_HARD_CAP_BYTES);
   assertNoNaN(one);
+});
+
+test("buildHistoryContext maps liquidity sweep snapshot into ls and events", () => {
+  const candles = makeCandles({ count: 320, driftPerBar: 2.8, waveAmp: 12 });
+  const ctx = buildHistoryContext({
+    candles,
+    timeframe: "5m",
+    indicators: { adx: { adx_14: 24 } } as any,
+    advancedIndicators: advancedMock() as any
+  });
+
+  assert.equal(ctx.ls.le?.s, "bull");
+  assert.equal(ctx.ls.le?.k, "wick");
+  assert.equal(typeof ctx.ls.nb === "number" || ctx.ls.nb === null, true);
+  assert.equal(typeof ctx.ls.ns === "number" || ctx.ls.ns === null, true);
+  assert.equal(ctx.ev.some((event) => event.ty === "liq_sweep"), true);
 });
 
 test("buildHistoryContext handles insufficient candles with null-safe output", () => {

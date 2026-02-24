@@ -20,6 +20,29 @@ type IndicatorSettingsConfig = {
     stochrsi: { rsiLen: number; stochLen: number; smoothK: number; smoothD: number };
     volume: { lookback: number; emaFast: number; emaSlow: number };
     fvg: { lookback: number; fillRule: "overlap" | "mid_touch" };
+    breakerBlocks: {
+      len: number;
+      breakerCandleOnlyBody: boolean;
+      breakerCandle2Last: boolean;
+      tillFirstBreak: boolean;
+      onlyWhenInPDarray: boolean;
+      showPDarray: boolean;
+      showBreaks: boolean;
+      showSPD: boolean;
+      pdTextColor: string;
+      pdSwingLineColor: string;
+      enableTp: boolean;
+      tpColor: string;
+      rrTp1: number;
+      rrTp2: number;
+      rrTp3: number;
+      bbPlusColorA: string;
+      bbPlusColorB: string;
+      swingBullColor: string;
+      bbMinusColorA: string;
+      bbMinusColorB: string;
+      swingBearColor: string;
+    };
     vumanchu: {
       wtChannelLen: number;
       wtAverageLen: number;
@@ -129,6 +152,7 @@ type IndicatorCatalogGroup = {
 type StochRsiKey = keyof IndicatorSettingsConfig["indicatorsV2"]["stochrsi"];
 type VolumeKey = keyof IndicatorSettingsConfig["indicatorsV2"]["volume"];
 type FvgKey = keyof IndicatorSettingsConfig["indicatorsV2"]["fvg"];
+type BreakerBlocksKey = keyof IndicatorSettingsConfig["indicatorsV2"]["breakerBlocks"];
 type AdvancedIndicatorsKey = Exclude<
   keyof IndicatorSettingsConfig["advancedIndicators"],
   "sessionsUseDST" | "smcFvgAutoThreshold"
@@ -148,6 +172,7 @@ type IndicatorSectionKey =
   | "stochRsi"
   | "volume"
   | "fvg"
+  | "breakerBlocks"
   | "rangesSessions"
   | "smc"
   | "aiGating"
@@ -167,6 +192,29 @@ const FALLBACK_DEFAULTS: IndicatorSettingsConfig = {
     stochrsi: { rsiLen: 14, stochLen: 14, smoothK: 3, smoothD: 3 },
     volume: { lookback: 100, emaFast: 10, emaSlow: 30 },
     fvg: { lookback: 300, fillRule: "overlap" },
+    breakerBlocks: {
+      len: 5,
+      breakerCandleOnlyBody: false,
+      breakerCandle2Last: false,
+      tillFirstBreak: true,
+      onlyWhenInPDarray: false,
+      showPDarray: false,
+      showBreaks: false,
+      showSPD: true,
+      pdTextColor: "#c0c0c0",
+      pdSwingLineColor: "#c0c0c0",
+      enableTp: false,
+      tpColor: "#2157f3",
+      rrTp1: 2,
+      rrTp2: 3,
+      rrTp3: 4,
+      bbPlusColorA: "rgba(12,181,26,0.365)",
+      bbPlusColorB: "rgba(12,181,26,0.333)",
+      swingBullColor: "rgba(255,82,82,0.333)",
+      bbMinusColorA: "rgba(255,17,0,0.373)",
+      bbMinusColorB: "rgba(255,17,0,0.333)",
+      swingBearColor: "rgba(0,137,123,0.333)"
+    },
     vumanchu: {
       wtChannelLen: 9,
       wtAverageLen: 12,
@@ -338,6 +386,20 @@ const INDICATOR_CATALOG_GROUPS: IndicatorCatalogGroup[] = [
           "config.indicatorsV2.vumanchu.stoch*",
           "config.indicatorsV2.vumanchu.useHiddenDiv*",
           "config.indicatorsV2.vumanchu.gold*"
+        ]
+      },
+      {
+        key: "breaker-blocks",
+        name: "Breaker Blocks with Signals (LuxAlgo)",
+        live: true,
+        outputs: [
+          "indicators.breakerBlocks.dir",
+          "indicators.breakerBlocks.top|bottom|mid",
+          "indicators.breakerBlocks.signals.*",
+          "indicators.breakerBlocks.eventCounts.*"
+        ],
+        params: [
+          "config.indicatorsV2.breakerBlocks.*"
         ]
       }
     ]
@@ -590,6 +652,7 @@ export default function AdminIndicatorSettingsPage() {
     stochRsi: false,
     volume: false,
     fvg: false,
+    breakerBlocks: false,
     rangesSessions: false,
     smc: false,
     aiGating: false,
@@ -640,6 +703,19 @@ export default function AdminIndicatorSettingsPage() {
       indicatorsV2: {
         ...prev.indicatorsV2,
         fvg: { ...prev.indicatorsV2.fvg, [field]: value }
+      }
+    }));
+  }
+
+  function setIndicatorsV2BreakerBlocks(
+    field: BreakerBlocksKey,
+    value: IndicatorSettingsConfig["indicatorsV2"]["breakerBlocks"][BreakerBlocksKey]
+  ) {
+    setConfig((prev) => ({
+      ...prev,
+      indicatorsV2: {
+        ...prev.indicatorsV2,
+        breakerBlocks: { ...prev.indicatorsV2.breakerBlocks, [field]: value }
       }
     }));
   }
@@ -1080,6 +1156,42 @@ export default function AdminIndicatorSettingsPage() {
                     <div className="indicatorConfigGrid">
                       <label className="settingsField"><span className="mutedTiny">{t("fields.lookback")}</span><input className="input" type="number" value={config.indicatorsV2.fvg.lookback} onChange={(e) => setIndicatorsV2Fvg("lookback", parseNumber(e.target.value))} /></label>
                       <label className="settingsField"><span className="mutedTiny">{t("fields.fillRule")}</span><select className="input" value={config.indicatorsV2.fvg.fillRule} onChange={(e) => setIndicatorsV2Fvg("fillRule", parseFvgFillRule(e.target.value))}><option value="overlap">overlap</option><option value="mid_touch">mid_touch</option></select></label>
+                    </div>
+                  </div>
+                ) : null}
+              </div>
+
+              <div className={`settingsAccordionItem ${openIndicatorSections.breakerBlocks ? "settingsAccordionItemOpen" : ""}`}>
+                <button type="button" className="settingsAccordionTrigger" onClick={() => toggleIndicatorSection("breakerBlocks")} aria-expanded={openIndicatorSections.breakerBlocks}>
+                  <span>{t("sections.breakerBlocks")}</span>
+                  <span className={`settingsAccordionChevron ${openIndicatorSections.breakerBlocks ? "settingsAccordionChevronOpen" : ""}`}>▾</span>
+                </button>
+                {openIndicatorSections.breakerBlocks ? (
+                  <div className="settingsAccordionBody">
+                    <div className="indicatorConfigGrid">
+                      <label className="settingsField"><span className="mutedTiny">{t("fields.breakerLen")}</span><input className="input" type="number" min={1} max={10} value={config.indicatorsV2.breakerBlocks.len} onChange={(e) => setIndicatorsV2BreakerBlocks("len", parseNumber(e.target.value))} /></label>
+                      <label className="settingsField"><span className="mutedTiny">{t("fields.rrTp1")}</span><input className="input" type="number" min={0.2} max={100} step={0.1} value={config.indicatorsV2.breakerBlocks.rrTp1} onChange={(e) => setIndicatorsV2BreakerBlocks("rrTp1", parseNumber(e.target.value))} /></label>
+                      <label className="settingsField"><span className="mutedTiny">{t("fields.rrTp2")}</span><input className="input" type="number" min={0.2} max={100} step={0.1} value={config.indicatorsV2.breakerBlocks.rrTp2} onChange={(e) => setIndicatorsV2BreakerBlocks("rrTp2", parseNumber(e.target.value))} /></label>
+                      <label className="settingsField"><span className="mutedTiny">{t("fields.rrTp3")}</span><input className="input" type="number" min={0.2} max={100} step={0.1} value={config.indicatorsV2.breakerBlocks.rrTp3} onChange={(e) => setIndicatorsV2BreakerBlocks("rrTp3", parseNumber(e.target.value))} /></label>
+                      <label className="settingsField"><span className="mutedTiny">{t("fields.pdTextColor")}</span><input className="input" type="text" value={config.indicatorsV2.breakerBlocks.pdTextColor} onChange={(e) => setIndicatorsV2BreakerBlocks("pdTextColor", e.target.value)} /></label>
+                      <label className="settingsField"><span className="mutedTiny">{t("fields.pdSwingLineColor")}</span><input className="input" type="text" value={config.indicatorsV2.breakerBlocks.pdSwingLineColor} onChange={(e) => setIndicatorsV2BreakerBlocks("pdSwingLineColor", e.target.value)} /></label>
+                      <label className="settingsField"><span className="mutedTiny">{t("fields.tpColor")}</span><input className="input" type="text" value={config.indicatorsV2.breakerBlocks.tpColor} onChange={(e) => setIndicatorsV2BreakerBlocks("tpColor", e.target.value)} /></label>
+                      <label className="settingsField"><span className="mutedTiny">{t("fields.bbPlusColorA")}</span><input className="input" type="text" value={config.indicatorsV2.breakerBlocks.bbPlusColorA} onChange={(e) => setIndicatorsV2BreakerBlocks("bbPlusColorA", e.target.value)} /></label>
+                      <label className="settingsField"><span className="mutedTiny">{t("fields.bbPlusColorB")}</span><input className="input" type="text" value={config.indicatorsV2.breakerBlocks.bbPlusColorB} onChange={(e) => setIndicatorsV2BreakerBlocks("bbPlusColorB", e.target.value)} /></label>
+                      <label className="settingsField"><span className="mutedTiny">{t("fields.swingBullColor")}</span><input className="input" type="text" value={config.indicatorsV2.breakerBlocks.swingBullColor} onChange={(e) => setIndicatorsV2BreakerBlocks("swingBullColor", e.target.value)} /></label>
+                      <label className="settingsField"><span className="mutedTiny">{t("fields.bbMinusColorA")}</span><input className="input" type="text" value={config.indicatorsV2.breakerBlocks.bbMinusColorA} onChange={(e) => setIndicatorsV2BreakerBlocks("bbMinusColorA", e.target.value)} /></label>
+                      <label className="settingsField"><span className="mutedTiny">{t("fields.bbMinusColorB")}</span><input className="input" type="text" value={config.indicatorsV2.breakerBlocks.bbMinusColorB} onChange={(e) => setIndicatorsV2BreakerBlocks("bbMinusColorB", e.target.value)} /></label>
+                      <label className="settingsField"><span className="mutedTiny">{t("fields.swingBearColor")}</span><input className="input" type="text" value={config.indicatorsV2.breakerBlocks.swingBearColor} onChange={(e) => setIndicatorsV2BreakerBlocks("swingBearColor", e.target.value)} /></label>
+                    </div>
+                    <div className="indicatorInlineChecks">
+                      <label className="inlineCheck"><input type="checkbox" checked={config.indicatorsV2.breakerBlocks.breakerCandleOnlyBody} onChange={(e) => setIndicatorsV2BreakerBlocks("breakerCandleOnlyBody", e.target.checked)} /> {t("fields.breakerCandleOnlyBody")}</label>
+                      <label className="inlineCheck"><input type="checkbox" checked={config.indicatorsV2.breakerBlocks.breakerCandle2Last} onChange={(e) => setIndicatorsV2BreakerBlocks("breakerCandle2Last", e.target.checked)} /> {t("fields.breakerCandle2Last")}</label>
+                      <label className="inlineCheck"><input type="checkbox" checked={config.indicatorsV2.breakerBlocks.tillFirstBreak} onChange={(e) => setIndicatorsV2BreakerBlocks("tillFirstBreak", e.target.checked)} /> {t("fields.tillFirstBreak")}</label>
+                      <label className="inlineCheck"><input type="checkbox" checked={config.indicatorsV2.breakerBlocks.onlyWhenInPDarray} onChange={(e) => setIndicatorsV2BreakerBlocks("onlyWhenInPDarray", e.target.checked)} /> {t("fields.onlyWhenInPDarray")}</label>
+                      <label className="inlineCheck"><input type="checkbox" checked={config.indicatorsV2.breakerBlocks.showPDarray} onChange={(e) => setIndicatorsV2BreakerBlocks("showPDarray", e.target.checked)} /> {t("fields.showPDarray")}</label>
+                      <label className="inlineCheck"><input type="checkbox" checked={config.indicatorsV2.breakerBlocks.showBreaks} onChange={(e) => setIndicatorsV2BreakerBlocks("showBreaks", e.target.checked)} /> {t("fields.showBreaks")}</label>
+                      <label className="inlineCheck"><input type="checkbox" checked={config.indicatorsV2.breakerBlocks.showSPD} onChange={(e) => setIndicatorsV2BreakerBlocks("showSPD", e.target.checked)} /> {t("fields.showSPD")}</label>
+                      <label className="inlineCheck"><input type="checkbox" checked={config.indicatorsV2.breakerBlocks.enableTp} onChange={(e) => setIndicatorsV2BreakerBlocks("enableTp", e.target.checked)} /> {t("fields.enableTp")}</label>
                     </div>
                   </div>
                 ) : null}

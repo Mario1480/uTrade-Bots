@@ -446,6 +446,7 @@ model User {
   configPresets      BotConfigPreset[]
   auditEvents        AuditEvent[]
   dashboardPerformanceSnapshots DashboardPerformanceSnapshot[]
+  aiPromptTemplates  UserAiPromptTemplate[]
 }
 
 model DashboardPerformanceSnapshot {
@@ -603,6 +604,31 @@ model GlobalSetting {
   key       String   @id
   value     Json?
   updatedAt DateTime @updatedAt
+}
+
+model UserAiPromptTemplate {
+  id                         String   @id @default(cuid())
+  userId                     String   @map("user_id")
+  user                       User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  name                       String
+  promptText                 String   @map("prompt_text")
+  indicatorKeys              String[] @map("indicator_keys")
+  ohlcvBars                  Int      @default(100) @map("ohlcv_bars")
+  timeframes                 String[] @default([])
+  runTimeframe               String?  @map("run_timeframe")
+  timeframe                  String?
+  directionPreference        String   @default("either") @map("direction_preference")
+  confidenceTargetPct        Float    @default(60) @map("confidence_target_pct")
+  slTpSource                 String   @default("local") @map("sl_tp_source")
+  newsRiskMode               String   @default("off") @map("news_risk_mode")
+  marketAnalysisUpdateEnabled Boolean @default(false) @map("market_analysis_update_enabled")
+  isPublic                   Boolean  @default(false) @map("is_public")
+  createdAt                  DateTime @default(now()) @map("created_at")
+  updatedAt                  DateTime @updatedAt @map("updated_at")
+
+  @@index([userId, updatedAt(sort: Desc)], map: "user_ai_prompt_templates_user_updated_idx")
+  @@index([userId, isPublic], map: "user_ai_prompt_templates_user_public_idx")
+  @@map("user_ai_prompt_templates")
 }
 
 model LicenseEntitlement {

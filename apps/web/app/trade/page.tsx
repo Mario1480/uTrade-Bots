@@ -40,6 +40,7 @@ type TradingSettings = {
       smcStructure: boolean;
       volumeOverlay: boolean;
       pvsraVector: boolean;
+      breakerBlocks: boolean;
     };
     showUpMarkers: boolean;
     showDownMarkers: boolean;
@@ -134,7 +135,8 @@ const DEFAULT_CHART_PREFERENCES: TradingSettings["chartPreferences"] = {
     dailyOpen: false,
     smcStructure: false,
     volumeOverlay: false,
-    pvsraVector: false
+    pvsraVector: false,
+    breakerBlocks: false
   },
   showUpMarkers: false,
   showDownMarkers: false

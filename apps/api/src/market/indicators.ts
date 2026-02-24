@@ -31,6 +31,8 @@ import type {
   IndicatorsComputeSettings,
   IndicatorsSnapshot
 } from "./indicators/types.js";
+import type { BreakerBlocksSnapshot } from "@mm/futures-core";
+import { computeBreakerBlocksSnapshot } from "@mm/futures-core";
 
 export type {
   Candle,
@@ -46,6 +48,17 @@ export {
 };
 
 const VWAP_ROLLING_LEN_DAILY = 20;
+
+function emptyBreakerBlocksSnapshot(
+  dataGap: boolean,
+  settings: NormalizedIndicatorSettings
+): BreakerBlocksSnapshot {
+  const snapshot = computeBreakerBlocksSnapshot([], settings.breakerBlocks);
+  return {
+    ...snapshot,
+    dataGap
+  };
+}
 
 function emptyIndicators(
   mode: "session_utc" | "rolling_20",
@@ -86,6 +99,7 @@ function emptyIndicators(
       last_filled: { type: null, age_bars: null }
     },
     vumanchu: emptyVuManChuSnapshot(settings.vumanchu, dataGap),
+    breakerBlocks: emptyBreakerBlocksSnapshot(dataGap, settings),
     atr_pct: null,
     dataGap
   };
@@ -158,6 +172,9 @@ export function computeIndicators(
   const vumanchu = settings.enabledV2
     ? computeVuManChuCipher(bucketedCandles, settings.vumanchu)
     : emptyVuManChuSnapshot(settings.vumanchu, false);
+  const breakerBlocks = settings.enabledV2
+    ? computeBreakerBlocksSnapshot(bucketedCandles, settings.breakerBlocks)
+    : emptyBreakerBlocksSnapshot(false, settings);
 
   let vwapValue: number | null = null;
   let vwapDistPct: number | null = null;
@@ -227,8 +244,9 @@ export function computeIndicators(
     },
     fvg,
     vumanchu,
+    breakerBlocks,
     atr_pct: round(atrPct, 6),
-    dataGap: bucketedMeta.candleBucketed || vwapDataGap || vumanchu.dataGap
+    dataGap: bucketedMeta.candleBucketed || vwapDataGap || vumanchu.dataGap || breakerBlocks.dataGap
   };
 
   const hasInvalid = [

@@ -62,7 +62,8 @@ export default function AppHeader({
           bots: accessResult.value.visibility.bots !== false,
           predictionsDashboard: accessResult.value.visibility.predictionsDashboard !== false,
           economicCalendar: accessResult.value.visibility.economicCalendar !== false,
-          news: accessResult.value.visibility.news !== false
+          news: accessResult.value.visibility.news !== false,
+          strategy: accessResult.value.visibility.strategy !== false
         });
       } else {
         setVisibility(DEFAULT_ACCESS_SECTION_VISIBILITY);

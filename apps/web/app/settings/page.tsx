@@ -6,6 +6,7 @@ import { useEffect, useState } from "react";
 import { useLocale, useTranslations } from "next-intl";
 import { ApiError, apiDelete, apiGet, apiPost, apiPut } from "../../lib/api";
 import { LOCALE_COOKIE_NAME, withLocalePath, type AppLocale } from "../../i18n/config";
+import type { AccessSectionSettingsResponse } from "../../src/access/accessSection";
 
 type MeResponse = {
   user: { id: string; email: string };
@@ -58,7 +59,65 @@ type ExchangeOption = {
   enabled: boolean;
 };
 
-type SettingsAccordionKey = "exchange_settings" | "security" | "notifications" | "license_management" | "language";
+type StrategyIndicatorOption = {
+  key: string;
+  label: string;
+  group: string;
+  description: string;
+};
+
+type StrategyPromptTemplate = {
+  id: string;
+  name: string;
+  promptText: string;
+  indicatorKeys: string[];
+  ohlcvBars: number;
+  timeframes: Array<"5m" | "15m" | "1h" | "4h" | "1d">;
+  runTimeframe: "5m" | "15m" | "1h" | "4h" | "1d" | null;
+  timeframe: "5m" | "15m" | "1h" | "4h" | "1d" | null;
+  directionPreference: "long" | "short" | "either";
+  confidenceTargetPct: number;
+  slTpSource: "local" | "ai" | "hybrid";
+  newsRiskMode: "off" | "block";
+  isPublic: boolean;
+  createdAt: string;
+  updatedAt: string;
+};
+
+type StrategyPromptGenerationMeta = {
+  mode: "ai" | "fallback";
+  model: string;
+};
+
+type StrategyOwnPromptsResponse = {
+  items: StrategyPromptTemplate[];
+  availableIndicators: StrategyIndicatorOption[];
+  strategyFeatureEnabled: boolean;
+  updatedAt: string | null;
+};
+
+type StrategyGenerateBody = {
+  name: string;
+  strategyDescription: string;
+  indicatorKeys: string[];
+  ohlcvBars: number;
+  timeframes: Array<"5m" | "15m" | "1h" | "4h" | "1d">;
+  runTimeframe: "5m" | "15m" | "1h" | "4h" | "1d" | null;
+  directionPreference: "long" | "short" | "either";
+  confidenceTargetPct: number;
+  slTpSource: "local" | "ai" | "hybrid";
+  newsRiskMode: "off" | "block";
+};
+
+type SettingsAccordionKey =
+  | "exchange_settings"
+  | "security"
+  | "notifications"
+  | "license_management"
+  | "language"
+  | "strategy";
+
+const STRATEGY_TIMEFRAME_OPTIONS = ["5m", "15m", "1h", "4h", "1d"] as const;
 
 function errMsg(e: unknown): string {
   if (e instanceof ApiError) return `${e.message} (HTTP ${e.status})`;
@@ -107,7 +166,8 @@ export default function SettingsPage() {
     security: false,
     notifications: false,
     license_management: false,
-    language: false
+    language: false,
+    strategy: false
   });
   const [notificationSending, setNotificationSending] = useState(false);
   const [notificationMsg, setNotificationMsg] = useState<string | null>(null);
@@ -132,6 +192,28 @@ export default function SettingsPage() {
   const [autoLogoutEnabled, setAutoLogoutEnabled] = useState(true);
   const [autoLogoutMinutes, setAutoLogoutMinutes] = useState(60);
   const [otpEnabled, setOtpEnabled] = useState(true);
+  const [strategyFeatureEnabled, setStrategyFeatureEnabled] = useState(false);
+  const [strategyPrompts, setStrategyPrompts] = useState<StrategyPromptTemplate[]>([]);
+  const [strategyIndicators, setStrategyIndicators] = useState<StrategyIndicatorOption[]>([]);
+  const [strategyLoading, setStrategyLoading] = useState(false);
+  const [strategyGenerating, setStrategyGenerating] = useState(false);
+  const [strategySaving, setStrategySaving] = useState(false);
+  const [strategyDeletingId, setStrategyDeletingId] = useState<string | null>(null);
+  const [strategyName, setStrategyName] = useState("");
+  const [strategyDescription, setStrategyDescription] = useState("");
+  const [strategyIndicatorKeys, setStrategyIndicatorKeys] = useState<string[]>([]);
+  const [strategyTimeframes, setStrategyTimeframes] = useState<Array<"5m" | "15m" | "1h" | "4h" | "1d">>([]);
+  const [strategyRunTimeframe, setStrategyRunTimeframe] = useState<"" | "5m" | "15m" | "1h" | "4h" | "1d">("");
+  const [strategyDirectionPreference, setStrategyDirectionPreference] = useState<"long" | "short" | "either">("either");
+  const [strategyConfidenceTargetPct, setStrategyConfidenceTargetPct] = useState("60");
+  const [strategySlTpSource, setStrategySlTpSource] = useState<"local" | "ai" | "hybrid">("local");
+  const [strategyNewsRiskMode, setStrategyNewsRiskMode] = useState<"off" | "block">("off");
+  const [strategyOhlcvBars, setStrategyOhlcvBars] = useState("100");
+  const [strategyPreviewOpen, setStrategyPreviewOpen] = useState(false);
+  const [strategyPreviewPromptText, setStrategyPreviewPromptText] = useState("");
+  const [strategyPreviewMeta, setStrategyPreviewMeta] = useState<StrategyPromptGenerationMeta | null>(null);
+  const [strategyLastSavedPromptText, setStrategyLastSavedPromptText] = useState("");
+  const [strategyLastSavedMeta, setStrategyLastSavedMeta] = useState<StrategyPromptGenerationMeta | null>(null);
   const licenseManagementEnabled = false;
   const passphraseRequired = exchange === "bitget";
   const paperMode = exchange === "paper";
@@ -158,15 +240,178 @@ export default function SettingsPage() {
     window.location.assign(targetPath);
   }
 
+  function toggleStrategyIndicator(key: string) {
+    setStrategyIndicatorKeys((prev) =>
+      prev.includes(key) ? prev.filter((entry) => entry !== key) : [...prev, key]
+    );
+  }
+
+  function toggleStrategyTimeframe(value: "5m" | "15m" | "1h" | "4h" | "1d") {
+    setStrategyTimeframes((prev) => {
+      if (prev.includes(value)) {
+        const next = prev.filter((entry) => entry !== value);
+        if (!next.includes(strategyRunTimeframe as any)) {
+          setStrategyRunTimeframe(next[0] ?? "");
+        }
+        return next;
+      }
+      if (prev.length >= 4) return prev;
+      const next = [...prev, value];
+      if (!strategyRunTimeframe) setStrategyRunTimeframe(value);
+      return next;
+    });
+  }
+
+  function buildStrategyGenerateBody(): StrategyGenerateBody | null {
+    setError(null);
+    setNotice(null);
+
+    const name = strategyName.trim();
+    const description = strategyDescription.trim();
+    if (!name) {
+      setError(tMain("strategy.messages.promptNameRequired"));
+      return null;
+    }
+    if (!description) {
+      setError(tMain("strategy.messages.strategyRequired"));
+      return null;
+    }
+    if (strategyTimeframes.length > 0 && !strategyRunTimeframe) {
+      setError(tMain("strategy.messages.runTimeframeRequired"));
+      return null;
+    }
+    if (strategyTimeframes.length > 0 && !strategyTimeframes.includes(strategyRunTimeframe as any)) {
+      setError(tMain("strategy.messages.runTimeframeMustBeInSet"));
+      return null;
+    }
+    const confidenceTarget = Number(strategyConfidenceTargetPct);
+    if (!Number.isFinite(confidenceTarget) || confidenceTarget < 0 || confidenceTarget > 100) {
+      setError(tMain("strategy.messages.confidenceRange"));
+      return null;
+    }
+    const ohlcvBars = Number(strategyOhlcvBars);
+    if (!Number.isFinite(ohlcvBars) || ohlcvBars < 20 || ohlcvBars > 500) {
+      setError(tMain("strategy.messages.ohlcvRange"));
+      return null;
+    }
+
+    return {
+      name,
+      strategyDescription: description,
+      indicatorKeys: strategyIndicatorKeys,
+      ohlcvBars: Math.trunc(ohlcvBars),
+      timeframes: strategyTimeframes,
+      runTimeframe: strategyTimeframes.length > 0 ? (strategyRunTimeframe || strategyTimeframes[0]) : null,
+      directionPreference: strategyDirectionPreference,
+      confidenceTargetPct: confidenceTarget,
+      slTpSource: strategySlTpSource,
+      newsRiskMode: strategyNewsRiskMode
+    };
+  }
+
+  async function loadStrategyPrompts() {
+    setStrategyLoading(true);
+    try {
+      const payload = await apiGet<StrategyOwnPromptsResponse>("/settings/ai-prompts/own");
+      setStrategyFeatureEnabled(Boolean(payload.strategyFeatureEnabled));
+      setStrategyPrompts(Array.isArray(payload.items) ? payload.items : []);
+      setStrategyIndicators(Array.isArray(payload.availableIndicators) ? payload.availableIndicators : []);
+    } catch {
+      setStrategyFeatureEnabled(false);
+      setStrategyPrompts([]);
+      setStrategyIndicators([]);
+    } finally {
+      setStrategyLoading(false);
+    }
+  }
+
+  async function generateStrategyPreview() {
+    const body = buildStrategyGenerateBody();
+    if (!body) return;
+    setStrategyGenerating(true);
+    try {
+      const payload = await apiPost<{
+        generatedPromptText: string;
+        generationMeta: StrategyPromptGenerationMeta;
+      }>("/settings/ai-prompts/own/generate-preview", body);
+      setStrategyPreviewPromptText(payload.generatedPromptText ?? "");
+      setStrategyPreviewMeta(payload.generationMeta ?? null);
+      setStrategyPreviewOpen(true);
+      setNotice(
+        tMain("strategy.messages.previewGenerated", {
+          mode: payload.generationMeta?.mode ?? "fallback",
+          model: payload.generationMeta?.model ?? "n/a"
+        })
+      );
+    } catch (e) {
+      setError(errMsg(e));
+    } finally {
+      setStrategyGenerating(false);
+    }
+  }
+
+  async function saveStrategyFromPreview() {
+    const body = buildStrategyGenerateBody();
+    if (!body) return;
+    const promptText = strategyPreviewPromptText.trim();
+    if (!promptText) {
+      setError(tMain("strategy.messages.previewMissing"));
+      return;
+    }
+    setStrategySaving(true);
+    try {
+      const payload = await apiPost<{
+        prompt: StrategyPromptTemplate;
+        generatedPromptText: string;
+        generationMeta: StrategyPromptGenerationMeta;
+      }>("/settings/ai-prompts/own/generate-save", {
+        ...body,
+        generatedPromptText: promptText,
+        generationMeta: strategyPreviewMeta ?? undefined
+      });
+      setStrategyLastSavedPromptText(payload.generatedPromptText ?? "");
+      setStrategyLastSavedMeta(payload.generationMeta ?? null);
+      setStrategyPreviewOpen(false);
+      setNotice(
+        tMain("strategy.messages.previewSaveSuccess", {
+          mode: payload.generationMeta?.mode ?? "fallback",
+          model: payload.generationMeta?.model ?? "n/a"
+        })
+      );
+      await loadStrategyPrompts();
+    } catch (e) {
+      setError(errMsg(e));
+    } finally {
+      setStrategySaving(false);
+    }
+  }
+
+  async function deleteStrategyPrompt(id: string) {
+    if (!window.confirm(tMain("strategy.messages.confirmDelete"))) return;
+    setStrategyDeletingId(id);
+    setError(null);
+    setNotice(null);
+    try {
+      await apiDelete(`/settings/ai-prompts/own/${encodeURIComponent(id)}`);
+      await loadStrategyPrompts();
+      setNotice(tMain("strategy.messages.deleted"));
+    } catch (e) {
+      setError(errMsg(e));
+    } finally {
+      setStrategyDeletingId(null);
+    }
+  }
+
   async function loadAll() {
     setLoading(true);
     setError(null);
     try {
-      const [meRes, accountRes, exchangesRes, serverInfoRes] = await Promise.all([
+      const [meRes, accountRes, exchangesRes, serverInfoRes, accessRes] = await Promise.all([
         apiGet<MeResponse>("/auth/me"),
         apiGet<{ items: ExchangeAccountItem[] }>("/exchange-accounts"),
         apiGet<{ options: ExchangeOption[] }>("/settings/exchange-options"),
-        apiGet<{ serverIpAddress?: string | null }>("/settings/server-info")
+        apiGet<{ serverIpAddress?: string | null }>("/settings/server-info"),
+        apiGet<AccessSectionSettingsResponse>("/settings/access-section").catch(() => null)
       ]);
       setMe(meRes.user);
       if (!resetEmail && meRes.user?.email) {
@@ -188,6 +433,16 @@ export default function SettingsPage() {
       );
       if (allowedOptions.length > 0 && !allowedOptions.some((item) => item.value === exchange)) {
         setExchange(allowedOptions[0].value);
+      }
+      const strategyEnabled = Boolean(
+        accessRes?.bypass || accessRes?.visibility?.strategy !== false
+      );
+      setStrategyFeatureEnabled(strategyEnabled);
+      if (strategyEnabled) {
+        await loadStrategyPrompts();
+      } else {
+        setStrategyPrompts([]);
+        setStrategyIndicators([]);
       }
     } catch (e) {
       setError(errMsg(e));
@@ -784,6 +1039,256 @@ export default function SettingsPage() {
           </div>
         </section>
 
+        <section className="card settingsSection settingsLandingGroupCard settingsLandingGroupStrategy">
+          <div className="settingsSectionHeader">
+            <h3 style={{ margin: 0 }}>{tMain("sections.strategies")}</h3>
+            <div className="settingsSectionMeta">{tMain("sections.aiStrategy")}</div>
+          </div>
+          <div className="settingsAccordion">
+            <div className={`settingsAccordionItem settingsAccordionItemStrategy ${openSettingsSections.strategy ? "settingsAccordionItemOpen" : ""}`}>
+              <button
+                className="settingsAccordionTrigger"
+                type="button"
+                onClick={() => toggleSettingsSection("strategy")}
+                aria-expanded={openSettingsSections.strategy}
+              >
+                <span>{tMain("sections.aiStrategy")}</span>
+                <span className={`settingsAccordionChevron ${openSettingsSections.strategy ? "settingsAccordionChevronOpen" : ""}`}>▾</span>
+              </button>
+              {openSettingsSections.strategy ? (
+                <div className="settingsAccordionBody">
+                  <div className="settingsSectionMeta" style={{ marginBottom: 8 }}>
+                    {tMain("strategy.description")}
+                  </div>
+                  {!strategyFeatureEnabled ? (
+                    <div className="settingsMutedText">{tMain("strategy.featureDisabled")}</div>
+                  ) : (
+                    <div style={{ display: "grid", gap: 10 }}>
+                      <div className="settingsInlineTitle">{tMain("strategy.ownPromptsTitle")}</div>
+                      {strategyLoading ? (
+                        <div className="settingsMutedText">{tCommon("loading")}</div>
+                      ) : strategyPrompts.length === 0 ? (
+                        <div className="settingsMutedText">{tMain("strategy.noPrompts")}</div>
+                      ) : (
+                        <div style={{ display: "grid", gap: 8 }}>
+                          {strategyPrompts.map((item) => (
+                            <div key={item.id} className="card" style={{ padding: 10, display: "grid", gap: 6 }}>
+                              <div style={{ display: "flex", justifyContent: "space-between", gap: 8, flexWrap: "wrap" }}>
+                                <strong>{item.name}</strong>
+                                <span className="settingsMutedText">
+                                  {new Date(item.updatedAt).toLocaleString()}
+                                </span>
+                              </div>
+                              <div className="settingsMutedText">
+                                {tMain("strategy.timeframesLabel")}: {item.timeframes.join(", ") || tMain("strategy.none")}
+                                {" · "}
+                                {tMain("strategy.runTimeframeLabel")}: {item.runTimeframe ?? tMain("strategy.none")}
+                              </div>
+                              <div>
+                                <button
+                                  className="btn"
+                                  type="button"
+                                  disabled={strategyDeletingId === item.id}
+                                  onClick={() => void deleteStrategyPrompt(item.id)}
+                                >
+                                  {strategyDeletingId === item.id ? tCommon("deleting") : tMain("actions.delete")}
+                                </button>
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+
+                      <div className="settingsAccordionDivider" />
+                      <div className="settingsInlineTitle">{tMain("strategy.generatorTitle")}</div>
+
+                      <label className="settingsField">
+                        <span className="settingsFieldLabel">{tMain("strategy.promptName")}</span>
+                        <input
+                          className="input"
+                          value={strategyName}
+                          maxLength={64}
+                          onChange={(event) => setStrategyName(event.target.value)}
+                          placeholder={tMain("strategy.promptNamePlaceholder")}
+                        />
+                      </label>
+                      <label className="settingsField">
+                        <span className="settingsFieldLabel">{tMain("strategy.strategyDescription")}</span>
+                        <textarea
+                          className="input"
+                          rows={6}
+                          maxLength={8000}
+                          value={strategyDescription}
+                          onChange={(event) => setStrategyDescription(event.target.value)}
+                          placeholder={tMain("strategy.strategyPlaceholder")}
+                        />
+                      </label>
+
+                      <div className="settingsTwoColGrid">
+                        <label className="settingsField">
+                          <span className="settingsFieldLabel">{tMain("strategy.timeframes")}</span>
+                          <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginTop: 6 }}>
+                            {STRATEGY_TIMEFRAME_OPTIONS.map((tf) => (
+                              <label key={`strategy-tf-${tf}`} className="inlineCheck">
+                                <input
+                                  type="checkbox"
+                                  checked={strategyTimeframes.includes(tf)}
+                                  onChange={() => toggleStrategyTimeframe(tf)}
+                                />
+                                {tf}
+                              </label>
+                            ))}
+                          </div>
+                        </label>
+                        <label className="settingsField">
+                          <span className="settingsFieldLabel">{tMain("strategy.runTimeframe")}</span>
+                          <select
+                            className="input"
+                            value={strategyRunTimeframe}
+                            onChange={(event) => setStrategyRunTimeframe(event.target.value as "" | "5m" | "15m" | "1h" | "4h" | "1d")}
+                            disabled={strategyTimeframes.length === 0}
+                          >
+                            {strategyTimeframes.length === 0 ? <option value="">{tMain("strategy.noTimeframeLock")}</option> : null}
+                            {strategyTimeframes.map((tf) => (
+                              <option key={`strategy-run-${tf}`} value={tf}>{tf}</option>
+                            ))}
+                          </select>
+                        </label>
+                      </div>
+
+                      <div className="settingsTwoColGrid">
+                        <label className="settingsField">
+                          <span className="settingsFieldLabel">{tMain("strategy.directionPreference")}</span>
+                          <select
+                            className="input"
+                            value={strategyDirectionPreference}
+                            onChange={(event) => setStrategyDirectionPreference(event.target.value as "long" | "short" | "either")}
+                          >
+                            <option value="either">{tMain("strategy.directionEither")}</option>
+                            <option value="long">{tMain("strategy.directionLong")}</option>
+                            <option value="short">{tMain("strategy.directionShort")}</option>
+                          </select>
+                        </label>
+                        <label className="settingsField">
+                          <span className="settingsFieldLabel">{tMain("strategy.confidenceTargetPct")}</span>
+                          <input
+                            className="input"
+                            type="number"
+                            min={0}
+                            max={100}
+                            step={1}
+                            value={strategyConfidenceTargetPct}
+                            onChange={(event) => setStrategyConfidenceTargetPct(event.target.value)}
+                          />
+                        </label>
+                        <label className="settingsField">
+                          <span className="settingsFieldLabel">{tMain("strategy.slTpSource")}</span>
+                          <select
+                            className="input"
+                            value={strategySlTpSource}
+                            onChange={(event) => setStrategySlTpSource(event.target.value as "local" | "ai" | "hybrid")}
+                          >
+                            <option value="local">{tMain("strategy.slTpSourceLocal")}</option>
+                            <option value="ai">{tMain("strategy.slTpSourceAi")}</option>
+                            <option value="hybrid">{tMain("strategy.slTpSourceHybrid")}</option>
+                          </select>
+                        </label>
+                        <label className="settingsField">
+                          <span className="settingsFieldLabel">{tMain("strategy.newsRiskMode")}</span>
+                          <select
+                            className="input"
+                            value={strategyNewsRiskMode}
+                            onChange={(event) => setStrategyNewsRiskMode(event.target.value as "off" | "block")}
+                          >
+                            <option value="off">{tMain("strategy.newsRiskModeOff")}</option>
+                            <option value="block">{tMain("strategy.newsRiskModeBlock")}</option>
+                          </select>
+                        </label>
+                        <label className="settingsField">
+                          <span className="settingsFieldLabel">{tMain("strategy.ohlcvBars")}</span>
+                          <input
+                            className="input"
+                            type="number"
+                            min={20}
+                            max={500}
+                            step={1}
+                            value={strategyOhlcvBars}
+                            onChange={(event) => setStrategyOhlcvBars(event.target.value)}
+                          />
+                        </label>
+                      </div>
+
+                      <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                        <button
+                          className="btn"
+                          type="button"
+                          onClick={() => setStrategyIndicatorKeys(strategyIndicators.map((item) => item.key))}
+                        >
+                          {tMain("strategy.selectAllIndicators")}
+                        </button>
+                        <button className="btn" type="button" onClick={() => setStrategyIndicatorKeys([])}>
+                          {tMain("strategy.clearIndicators")}
+                        </button>
+                      </div>
+                      <div style={{ display: "grid", gap: 8, gridTemplateColumns: "repeat(auto-fit,minmax(220px,1fr))" }}>
+                        {strategyIndicators.map((item) => (
+                          <label
+                            key={`strategy-ind-${item.key}`}
+                            className="inlineCheck"
+                            style={{
+                              border: "1px solid rgba(255, 193, 7, 0.2)",
+                              borderRadius: 8,
+                              padding: "8px 10px",
+                              alignItems: "flex-start",
+                              gap: 8
+                            }}
+                          >
+                            <input
+                              type="checkbox"
+                              checked={strategyIndicatorKeys.includes(item.key)}
+                              onChange={() => toggleStrategyIndicator(item.key)}
+                              style={{ marginTop: 2 }}
+                            />
+                            <span style={{ display: "grid", gap: 2 }}>
+                              <span style={{ fontSize: 13, fontWeight: 700 }}>{item.label}</span>
+                              <span className="settingsMutedText">{item.description}</span>
+                            </span>
+                          </label>
+                        ))}
+                      </div>
+
+                      <div>
+                        <button
+                          className="btn btnPrimary"
+                          type="button"
+                          disabled={strategyGenerating || strategySaving}
+                          onClick={() => void generateStrategyPreview()}
+                        >
+                          {strategyGenerating ? tMain("strategy.previewGenerating") : tMain("strategy.generatePreview")}
+                        </button>
+                      </div>
+
+                      {strategyLastSavedPromptText ? (
+                        <div style={{ display: "grid", gap: 6 }}>
+                          <div className="settingsMutedText">
+                            {strategyLastSavedMeta
+                              ? tMain("strategy.resultMeta", {
+                                mode: strategyLastSavedMeta.mode,
+                                model: strategyLastSavedMeta.model
+                              })
+                              : ""}
+                          </div>
+                          <textarea className="input" rows={12} readOnly value={strategyLastSavedPromptText} />
+                        </div>
+                      ) : null}
+                    </div>
+                  )}
+                </div>
+              ) : null}
+            </div>
+          </div>
+        </section>
+
         <section className="card settingsSection settingsLandingGroupCard settingsLandingGroupSettings">
           <div className="settingsSectionHeader">
             <h3 style={{ margin: 0 }}>{tMain("sections.cexTradingSettings")}</h3>
@@ -976,6 +1481,61 @@ export default function SettingsPage() {
           </div>
         </section>
       </div>
+
+      {strategyPreviewOpen ? (
+        <div
+          style={{
+            position: "fixed",
+            inset: 0,
+            background: "rgba(0,0,0,0.5)",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            zIndex: 60,
+            padding: 16
+          }}
+          onClick={() => {
+            if (!strategySaving) setStrategyPreviewOpen(false);
+          }}
+        >
+          <div
+            className="card"
+            style={{ width: "min(1000px, 95vw)", maxHeight: "90vh", display: "grid", gap: 10, padding: 16 }}
+            onClick={(event) => event.stopPropagation()}
+          >
+            <div className="settingsSectionHeader">
+              <h3 style={{ margin: 0 }}>{tMain("strategy.previewTitle")}</h3>
+            </div>
+            <div className="settingsMutedText">
+              {strategyPreviewMeta
+                ? tMain("strategy.previewHint", {
+                  mode: strategyPreviewMeta.mode,
+                  model: strategyPreviewMeta.model
+                })
+                : tMain("strategy.previewHint", { mode: "fallback", model: "n/a" })}
+            </div>
+            <textarea className="input" rows={18} readOnly value={strategyPreviewPromptText} />
+            <div style={{ display: "flex", gap: 8, justifyContent: "flex-end", flexWrap: "wrap" }}>
+              <button
+                className="btn"
+                type="button"
+                disabled={strategySaving}
+                onClick={() => setStrategyPreviewOpen(false)}
+              >
+                {tMain("strategy.previewCancel")}
+              </button>
+              <button
+                className="btn btnPrimary"
+                type="button"
+                disabled={strategySaving}
+                onClick={() => void saveStrategyFromPreview()}
+              >
+                {strategySaving ? tMain("strategy.previewSaving") : tMain("strategy.previewSave")}
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
     </div>
   );
 }

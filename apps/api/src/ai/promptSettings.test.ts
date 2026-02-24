@@ -109,6 +109,25 @@ test("filterFeatureSnapshotForAiPrompt includes selected core indicator paths", 
   assert.equal((filtered as any).indicators?.macd, undefined);
 });
 
+test("filterFeatureSnapshotForAiPrompt includes breaker blocks when selected", () => {
+  const snapshot = {
+    indicators: {
+      breakerBlocks: {
+        dir: 1,
+        top: 105.2,
+        signals: { BBplus: true }
+      },
+      vumanchu: {
+        waveTrend: { wt1: 10 }
+      }
+    }
+  } as Record<string, unknown>;
+
+  const filtered = filterFeatureSnapshotForAiPrompt(snapshot, ["breaker_blocks"]);
+  assert.equal((filtered as any).indicators?.breakerBlocks?.dir, 1);
+  assert.equal((filtered as any).indicators?.vumanchu, undefined);
+});
+
 test("ai prompt template defaults marketAnalysisUpdateEnabled to false", () => {
   const parsed = parseStoredAiPromptSettings({
     activePromptId: "prompt_a",

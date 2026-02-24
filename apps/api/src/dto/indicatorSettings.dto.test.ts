@@ -25,7 +25,8 @@ test("mergeIndicatorSettings applies nested overrides", () => {
     advancedIndicators: { openingRangeMin: 45, smcEqualThreshold: 0.2 },
     indicatorsV2: {
       fvg: { fillRule: "mid_touch" },
-      vumanchu: { wtChannelLen: 11, useHiddenDiv: true }
+      vumanchu: { wtChannelLen: 11, useHiddenDiv: true },
+      breakerBlocks: { len: 7, enableTp: true, rrTp2: 5.5 }
     }
   });
 
@@ -35,6 +36,15 @@ test("mergeIndicatorSettings applies nested overrides", () => {
   assert.equal(merged.indicatorsV2.fvg.fillRule, "mid_touch");
   assert.equal(merged.indicatorsV2.vumanchu.wtChannelLen, 11);
   assert.equal(merged.indicatorsV2.vumanchu.useHiddenDiv, true);
+  assert.equal(merged.indicatorsV2.breakerBlocks.len, 7);
+  assert.equal(merged.indicatorsV2.breakerBlocks.enableTp, true);
+  assert.equal(merged.indicatorsV2.breakerBlocks.rrTp2, 5.5);
+});
+
+test("default indicator settings include breaker blocks defaults", () => {
+  assert.equal(DEFAULT_INDICATOR_SETTINGS.indicatorsV2.breakerBlocks.len, 5);
+  assert.equal(DEFAULT_INDICATOR_SETTINGS.indicatorsV2.breakerBlocks.tillFirstBreak, true);
+  assert.equal(DEFAULT_INDICATOR_SETTINGS.indicatorsV2.breakerBlocks.enableTp, false);
 });
 
 test("normalizeIndicatorSettingsPatch maps legacy tradersReality keys", () => {

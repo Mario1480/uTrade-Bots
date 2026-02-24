@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
+import { computeBreakerBlocksOverlay } from "@mm/futures-core";
 import {
   CandlestickSeries,
   ColorType,
@@ -93,6 +94,7 @@ type IndicatorToggleState = {
   smcStructure: boolean;
   volumeOverlay: boolean;
   pvsraVector: boolean;
+  breakerBlocks: boolean;
 };
 
 type IndicatorPresetKey = "scalping" | "trend" | "off" | "all";
@@ -108,7 +110,8 @@ const DEFAULT_INDICATOR_TOGGLES: IndicatorToggleState = {
   dailyOpen: false,
   smcStructure: false,
   volumeOverlay: false,
-  pvsraVector: false
+  pvsraVector: false,
+  breakerBlocks: false
 };
 
 const INDICATOR_PRESETS: Record<IndicatorPresetKey, { labelKey: string; toggles: IndicatorToggleState }> = {
@@ -125,7 +128,8 @@ const INDICATOR_PRESETS: Record<IndicatorPresetKey, { labelKey: string; toggles:
       dailyOpen: true,
       smcStructure: false,
       volumeOverlay: true,
-      pvsraVector: false
+      pvsraVector: false,
+      breakerBlocks: false
     }
   },
   trend: {
@@ -141,7 +145,8 @@ const INDICATOR_PRESETS: Record<IndicatorPresetKey, { labelKey: string; toggles:
       dailyOpen: true,
       smcStructure: true,
       volumeOverlay: false,
-      pvsraVector: false
+      pvsraVector: false,
+      breakerBlocks: true
     }
   },
   off: {
@@ -157,7 +162,8 @@ const INDICATOR_PRESETS: Record<IndicatorPresetKey, { labelKey: string; toggles:
       dailyOpen: false,
       smcStructure: false,
       volumeOverlay: false,
-      pvsraVector: false
+      pvsraVector: false,
+      breakerBlocks: false
     }
   },
   all: {
@@ -173,7 +179,8 @@ const INDICATOR_PRESETS: Record<IndicatorPresetKey, { labelKey: string; toggles:
       dailyOpen: true,
       smcStructure: true,
       volumeOverlay: true,
-      pvsraVector: true
+      pvsraVector: true,
+      breakerBlocks: true
     }
   }
 };
@@ -190,7 +197,8 @@ function togglesEqual(a: IndicatorToggleState, b: IndicatorToggleState): boolean
     a.dailyOpen === b.dailyOpen &&
     a.smcStructure === b.smcStructure &&
     a.volumeOverlay === b.volumeOverlay &&
-    a.pvsraVector === b.pvsraVector
+    a.pvsraVector === b.pvsraVector &&
+    a.breakerBlocks === b.breakerBlocks
   );
 }
 
@@ -365,6 +373,48 @@ function buildDailyOpenLine(items: Array<CandleApiItem & { ts: number }>): LineD
   return out;
 }
 
+type BreakerSeriesKey =
+  | "bbTop"
+  | "bbBottom"
+  | "bbMid"
+  | "line1"
+  | "line2"
+  | "pd1"
+  | "pd2"
+  | "tp1"
+  | "tp2"
+  | "tp3";
+
+const BREAKER_SERIES_KEYS: BreakerSeriesKey[] = [
+  "bbTop",
+  "bbBottom",
+  "bbMid",
+  "line1",
+  "line2",
+  "pd1",
+  "pd2",
+  "tp1",
+  "tp2",
+  "tp3"
+];
+
+function buildBreakerLine(
+  candles: Array<CandleApiItem & { ts: number }>,
+  values: Array<number | null>
+): LineData<Time>[] {
+  const out: LineData<Time>[] = [];
+  const size = Math.min(candles.length, values.length);
+  for (let i = 0; i < size; i += 1) {
+    const value = values[i];
+    if (value === null || !Number.isFinite(value)) continue;
+    out.push({
+      time: Math.floor(candles[i].ts / 1000) as UTCTimestamp,
+      value
+    });
+  }
+  return out;
+}
+
 type SmcPivotState = {
   level: number | null;
   crossed: boolean;
@@ -497,6 +547,18 @@ export function LightweightChart({
   const emaCloudLowerRef = useRef<ISeriesApi<"Line"> | null>(null);
   const vwapSeriesRef = useRef<ISeriesApi<"Line"> | null>(null);
   const dailyOpenSeriesRef = useRef<ISeriesApi<"Line"> | null>(null);
+  const breakerSeriesRef = useRef<Record<BreakerSeriesKey, ISeriesApi<"Line"> | null>>({
+    bbTop: null,
+    bbBottom: null,
+    bbMid: null,
+    line1: null,
+    line2: null,
+    pd1: null,
+    pd2: null,
+    tp1: null,
+    tp2: null,
+    tp3: null
+  });
   const markerPluginRef = useRef<ISeriesMarkersPluginApi<Time> | null>(null);
   const shouldResetViewportRef = useRef(true);
   const serializedPrefsRef = useRef<string>("");
@@ -508,6 +570,7 @@ export function LightweightChart({
   const [showDownMarkers, setShowDownMarkers] = useState(Boolean(chartPreferences?.showDownMarkers));
   const [predictionMarkers, setPredictionMarkers] = useState<SeriesMarker<Time>[]>([]);
   const [smcMarkers, setSmcMarkers] = useState<SeriesMarker<Time>[]>([]);
+  const [breakerMarkers, setBreakerMarkers] = useState<SeriesMarker<Time>[]>([]);
   const [indicatorToggles, setIndicatorToggles] = useState<IndicatorToggleState>(
     {
       ...DEFAULT_INDICATOR_TOGGLES,
@@ -668,6 +731,86 @@ export function LightweightChart({
       lastValueVisible: false,
       visible: false
     });
+    breakerSeriesRef.current.bbTop = chart.addSeries(LineSeries, {
+      color: "rgba(34,197,94,.8)",
+      lineWidth: 1,
+      lineStyle: LineStyle.Solid,
+      priceLineVisible: false,
+      lastValueVisible: false,
+      visible: false
+    });
+    breakerSeriesRef.current.bbBottom = chart.addSeries(LineSeries, {
+      color: "rgba(34,197,94,.8)",
+      lineWidth: 1,
+      lineStyle: LineStyle.Solid,
+      priceLineVisible: false,
+      lastValueVisible: false,
+      visible: false
+    });
+    breakerSeriesRef.current.bbMid = chart.addSeries(LineSeries, {
+      color: "rgba(192,192,192,.85)",
+      lineWidth: 1,
+      lineStyle: LineStyle.Dashed,
+      priceLineVisible: false,
+      lastValueVisible: false,
+      visible: false
+    });
+    breakerSeriesRef.current.line1 = chart.addSeries(LineSeries, {
+      color: "rgba(148,163,184,.9)",
+      lineWidth: 1,
+      lineStyle: LineStyle.Dashed,
+      priceLineVisible: false,
+      lastValueVisible: false,
+      visible: false
+    });
+    breakerSeriesRef.current.line2 = chart.addSeries(LineSeries, {
+      color: "rgba(148,163,184,.9)",
+      lineWidth: 1,
+      lineStyle: LineStyle.Dashed,
+      priceLineVisible: false,
+      lastValueVisible: false,
+      visible: false
+    });
+    breakerSeriesRef.current.pd1 = chart.addSeries(LineSeries, {
+      color: "rgba(239,68,68,.75)",
+      lineWidth: 1,
+      lineStyle: LineStyle.Dotted,
+      priceLineVisible: false,
+      lastValueVisible: false,
+      visible: false
+    });
+    breakerSeriesRef.current.pd2 = chart.addSeries(LineSeries, {
+      color: "rgba(20,184,166,.75)",
+      lineWidth: 1,
+      lineStyle: LineStyle.Dotted,
+      priceLineVisible: false,
+      lastValueVisible: false,
+      visible: false
+    });
+    breakerSeriesRef.current.tp1 = chart.addSeries(LineSeries, {
+      color: "rgba(33,87,243,.9)",
+      lineWidth: 1,
+      lineStyle: LineStyle.Dotted,
+      priceLineVisible: false,
+      lastValueVisible: false,
+      visible: false
+    });
+    breakerSeriesRef.current.tp2 = chart.addSeries(LineSeries, {
+      color: "rgba(33,87,243,.9)",
+      lineWidth: 1,
+      lineStyle: LineStyle.Dotted,
+      priceLineVisible: false,
+      lastValueVisible: false,
+      visible: false
+    });
+    breakerSeriesRef.current.tp3 = chart.addSeries(LineSeries, {
+      color: "rgba(33,87,243,.9)",
+      lineWidth: 1,
+      lineStyle: LineStyle.Dotted,
+      priceLineVisible: false,
+      lastValueVisible: false,
+      visible: false
+    });
     markerPluginRef.current = createSeriesMarkers(candleSeries, []);
 
     chartRef.current = chart;
@@ -687,6 +830,18 @@ export function LightweightChart({
       emaCloudLowerRef.current = null;
       vwapSeriesRef.current = null;
       dailyOpenSeriesRef.current = null;
+      breakerSeriesRef.current = {
+        bbTop: null,
+        bbBottom: null,
+        bbMid: null,
+        line1: null,
+        line2: null,
+        pd1: null,
+        pd2: null,
+        tp1: null,
+        tp2: null,
+        tp3: null
+      };
       for (const line of selectedPositionLinesRef.current) {
         candleSeries.removePriceLine(line);
       }
@@ -895,7 +1050,12 @@ export function LightweightChart({
       vwapSeriesRef.current?.applyOptions({ visible: false });
       dailyOpenSeriesRef.current?.setData([]);
       dailyOpenSeriesRef.current?.applyOptions({ visible: false });
+      for (const key of BREAKER_SERIES_KEYS) {
+        breakerSeriesRef.current[key]?.setData([]);
+        breakerSeriesRef.current[key]?.applyOptions({ visible: false });
+      }
       setSmcMarkers([]);
+      setBreakerMarkers([]);
       return;
     }
 
@@ -979,6 +1139,94 @@ export function LightweightChart({
     } else {
       setSmcMarkers([]);
     }
+
+    if (indicatorToggles.breakerBlocks) {
+      const overlay = computeBreakerBlocksOverlay(
+        normalized.map((row) => ({
+          ts: row.ts,
+          open: row.open,
+          high: row.high,
+          low: row.low,
+          close: row.close,
+          volume: row.volume
+        }))
+      );
+
+      breakerSeriesRef.current.bbTop?.applyOptions({
+        color: overlay.state.dir === -1 ? overlay.colors.bbMinusB : overlay.colors.bbPlusB
+      });
+      breakerSeriesRef.current.bbBottom?.applyOptions({
+        color: overlay.state.dir === -1 ? overlay.colors.bbMinusB : overlay.colors.bbPlusB
+      });
+      breakerSeriesRef.current.bbMid?.applyOptions({
+        color: overlay.colors.pdLine
+      });
+      breakerSeriesRef.current.line1?.applyOptions({
+        color: overlay.colors.pdLine
+      });
+      breakerSeriesRef.current.line2?.applyOptions({
+        color: overlay.colors.pdLine
+      });
+      breakerSeriesRef.current.pd1?.applyOptions({
+        color: overlay.colors.swingBull
+      });
+      breakerSeriesRef.current.pd2?.applyOptions({
+        color: overlay.colors.swingBear
+      });
+      breakerSeriesRef.current.tp1?.applyOptions({
+        color: overlay.colors.tp
+      });
+      breakerSeriesRef.current.tp2?.applyOptions({
+        color: overlay.colors.tp
+      });
+      breakerSeriesRef.current.tp3?.applyOptions({
+        color: overlay.colors.tp
+      });
+
+      for (const key of BREAKER_SERIES_KEYS) {
+        const points = buildBreakerLine(normalized, overlay.series[key]);
+        breakerSeriesRef.current[key]?.setData(points);
+        breakerSeriesRef.current[key]?.applyOptions({ visible: points.length > 0 });
+      }
+
+      const events = overlay.events.length > 250
+        ? overlay.events.slice(overlay.events.length - 250)
+        : overlay.events;
+      const markers: SeriesMarker<Time>[] = [];
+      for (const event of events) {
+        if (!Number.isFinite(event.ts)) continue;
+        const direction = event.direction;
+        markers.push({
+          time: Math.floor((event.ts as number) / 1000) as UTCTimestamp,
+          position:
+            direction === "up"
+              ? "belowBar"
+              : direction === "down"
+                ? "aboveBar"
+                : "inBar",
+          shape:
+            direction === "up"
+              ? "arrowUp"
+              : direction === "down"
+                ? "arrowDown"
+                : "circle",
+          color:
+            direction === "up"
+              ? "#22c55e"
+              : direction === "down"
+                ? "#ef4444"
+                : "#eab308",
+          text: event.key
+        });
+      }
+      setBreakerMarkers(markers);
+    } else {
+      for (const key of BREAKER_SERIES_KEYS) {
+        breakerSeriesRef.current[key]?.setData([]);
+        breakerSeriesRef.current[key]?.applyOptions({ visible: false });
+      }
+      setBreakerMarkers([]);
+    }
   }, [rawCandles, indicatorToggles, normalizedTimeframe]);
 
   useEffect(() => {
@@ -1056,11 +1304,11 @@ export function LightweightChart({
 
   useEffect(() => {
     if (!markerPluginRef.current) return;
-    const merged = [...predictionMarkers, ...smcMarkers].sort(
+    const merged = [...predictionMarkers, ...smcMarkers, ...breakerMarkers].sort(
       (a, b) => Number(a.time) - Number(b.time)
     );
     markerPluginRef.current.setMarkers(merged);
-  }, [predictionMarkers, smcMarkers]);
+  }, [predictionMarkers, smcMarkers, breakerMarkers]);
 
   return (
     <div>
@@ -1102,7 +1350,8 @@ export function LightweightChart({
           { key: "dailyOpen", label: t("indicators.dailyOpen") },
           { key: "smcStructure", label: t("indicators.smcStructure") },
           { key: "volumeOverlay", label: t("indicators.volumeOverlay") },
-          { key: "pvsraVector", label: t("indicators.pvsraVector") }
+          { key: "pvsraVector", label: t("indicators.pvsraVector") },
+          { key: "breakerBlocks", label: t("indicators.breakerBlocks") }
         ].map((item) => (
           <label key={item.key} style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
             <input

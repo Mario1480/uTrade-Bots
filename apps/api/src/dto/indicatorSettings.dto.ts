@@ -50,6 +50,30 @@ const vumanchuSchema = z.object({
   goldWtDiffMin: z.number().min(1).max(30).default(5)
 });
 
+const breakerBlocksSchema = z.object({
+  len: positiveInt(1, 10).default(5),
+  breakerCandleOnlyBody: z.boolean().default(false),
+  breakerCandle2Last: z.boolean().default(false),
+  tillFirstBreak: z.boolean().default(true),
+  onlyWhenInPDarray: z.boolean().default(false),
+  showPDarray: z.boolean().default(false),
+  showBreaks: z.boolean().default(false),
+  showSPD: z.boolean().default(true),
+  pdTextColor: z.string().trim().min(1).max(64).default("#c0c0c0"),
+  pdSwingLineColor: z.string().trim().min(1).max(64).default("#c0c0c0"),
+  enableTp: z.boolean().default(false),
+  tpColor: z.string().trim().min(1).max(64).default("#2157f3"),
+  rrTp1: z.number().min(0.2).max(100).default(2),
+  rrTp2: z.number().min(0.2).max(100).default(3),
+  rrTp3: z.number().min(0.2).max(100).default(4),
+  bbPlusColorA: z.string().trim().min(1).max(64).default("rgba(12,181,26,0.365)"),
+  bbPlusColorB: z.string().trim().min(1).max(64).default("rgba(12,181,26,0.333)"),
+  swingBullColor: z.string().trim().min(1).max(64).default("rgba(255,82,82,0.333)"),
+  bbMinusColorA: z.string().trim().min(1).max(64).default("rgba(255,17,0,0.373)"),
+  bbMinusColorB: z.string().trim().min(1).max(64).default("rgba(255,17,0,0.333)"),
+  swingBearColor: z.string().trim().min(1).max(64).default("rgba(0,137,123,0.333)")
+});
+
 const advancedIndicatorsSchema = z.object({
   adrLen: positiveInt(1, 365).default(14),
   awrLen: positiveInt(1, 52).default(4),
@@ -110,7 +134,8 @@ export const indicatorSettingsConfigSchema = z.object({
     stochrsi: stochrsiSchema,
     volume: volumeSchema,
     fvg: fvgSchema,
-    vumanchu: vumanchuSchema
+    vumanchu: vumanchuSchema,
+    breakerBlocks: breakerBlocksSchema
   }),
   advancedIndicators: advancedIndicatorsSchema,
   liquiditySweeps: liquiditySweepsSchema,
@@ -229,6 +254,29 @@ export const DEFAULT_INDICATOR_SETTINGS: IndicatorSettingsConfig = {
       useHiddenDivNoLimits: true,
       goldRsiThreshold: 30,
       goldWtDiffMin: 5
+    },
+    breakerBlocks: {
+      len: 5,
+      breakerCandleOnlyBody: false,
+      breakerCandle2Last: false,
+      tillFirstBreak: true,
+      onlyWhenInPDarray: false,
+      showPDarray: false,
+      showBreaks: false,
+      showSPD: true,
+      pdTextColor: "#c0c0c0",
+      pdSwingLineColor: "#c0c0c0",
+      enableTp: false,
+      tpColor: "#2157f3",
+      rrTp1: 2,
+      rrTp2: 3,
+      rrTp3: 4,
+      bbPlusColorA: "rgba(12,181,26,0.365)",
+      bbPlusColorB: "rgba(12,181,26,0.333)",
+      swingBullColor: "rgba(255,82,82,0.333)",
+      bbMinusColorA: "rgba(255,17,0,0.373)",
+      bbMinusColorB: "rgba(255,17,0,0.333)",
+      swingBearColor: "rgba(0,137,123,0.333)"
     }
   },
   advancedIndicators: {
@@ -442,6 +490,71 @@ export function mergeIndicatorSettings(
         goldWtDiffMin:
           patch.indicatorsV2?.vumanchu?.goldWtDiffMin
           ?? base.indicatorsV2.vumanchu.goldWtDiffMin
+      },
+      breakerBlocks: {
+        len:
+          patch.indicatorsV2?.breakerBlocks?.len
+          ?? base.indicatorsV2.breakerBlocks.len,
+        breakerCandleOnlyBody:
+          patch.indicatorsV2?.breakerBlocks?.breakerCandleOnlyBody
+          ?? base.indicatorsV2.breakerBlocks.breakerCandleOnlyBody,
+        breakerCandle2Last:
+          patch.indicatorsV2?.breakerBlocks?.breakerCandle2Last
+          ?? base.indicatorsV2.breakerBlocks.breakerCandle2Last,
+        tillFirstBreak:
+          patch.indicatorsV2?.breakerBlocks?.tillFirstBreak
+          ?? base.indicatorsV2.breakerBlocks.tillFirstBreak,
+        onlyWhenInPDarray:
+          patch.indicatorsV2?.breakerBlocks?.onlyWhenInPDarray
+          ?? base.indicatorsV2.breakerBlocks.onlyWhenInPDarray,
+        showPDarray:
+          patch.indicatorsV2?.breakerBlocks?.showPDarray
+          ?? base.indicatorsV2.breakerBlocks.showPDarray,
+        showBreaks:
+          patch.indicatorsV2?.breakerBlocks?.showBreaks
+          ?? base.indicatorsV2.breakerBlocks.showBreaks,
+        showSPD:
+          patch.indicatorsV2?.breakerBlocks?.showSPD
+          ?? base.indicatorsV2.breakerBlocks.showSPD,
+        pdTextColor:
+          patch.indicatorsV2?.breakerBlocks?.pdTextColor
+          ?? base.indicatorsV2.breakerBlocks.pdTextColor,
+        pdSwingLineColor:
+          patch.indicatorsV2?.breakerBlocks?.pdSwingLineColor
+          ?? base.indicatorsV2.breakerBlocks.pdSwingLineColor,
+        enableTp:
+          patch.indicatorsV2?.breakerBlocks?.enableTp
+          ?? base.indicatorsV2.breakerBlocks.enableTp,
+        tpColor:
+          patch.indicatorsV2?.breakerBlocks?.tpColor
+          ?? base.indicatorsV2.breakerBlocks.tpColor,
+        rrTp1:
+          patch.indicatorsV2?.breakerBlocks?.rrTp1
+          ?? base.indicatorsV2.breakerBlocks.rrTp1,
+        rrTp2:
+          patch.indicatorsV2?.breakerBlocks?.rrTp2
+          ?? base.indicatorsV2.breakerBlocks.rrTp2,
+        rrTp3:
+          patch.indicatorsV2?.breakerBlocks?.rrTp3
+          ?? base.indicatorsV2.breakerBlocks.rrTp3,
+        bbPlusColorA:
+          patch.indicatorsV2?.breakerBlocks?.bbPlusColorA
+          ?? base.indicatorsV2.breakerBlocks.bbPlusColorA,
+        bbPlusColorB:
+          patch.indicatorsV2?.breakerBlocks?.bbPlusColorB
+          ?? base.indicatorsV2.breakerBlocks.bbPlusColorB,
+        swingBullColor:
+          patch.indicatorsV2?.breakerBlocks?.swingBullColor
+          ?? base.indicatorsV2.breakerBlocks.swingBullColor,
+        bbMinusColorA:
+          patch.indicatorsV2?.breakerBlocks?.bbMinusColorA
+          ?? base.indicatorsV2.breakerBlocks.bbMinusColorA,
+        bbMinusColorB:
+          patch.indicatorsV2?.breakerBlocks?.bbMinusColorB
+          ?? base.indicatorsV2.breakerBlocks.bbMinusColorB,
+        swingBearColor:
+          patch.indicatorsV2?.breakerBlocks?.swingBearColor
+          ?? base.indicatorsV2.breakerBlocks.swingBearColor
       }
     },
     advancedIndicators: {

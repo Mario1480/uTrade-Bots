@@ -205,6 +205,16 @@ export default function AdminAccessSectionPage() {
               />
               <span>{t("visibility.news")}</span>
             </label>
+            <label style={{ display: "flex", gap: 8, alignItems: "center" }}>
+              <input
+                type="checkbox"
+                checked={visibility.strategy}
+                onChange={(event) =>
+                  setVisibility((prev) => ({ ...prev, strategy: event.target.checked }))
+                }
+              />
+              <span>{t("visibility.strategy")}</span>
+            </label>
           </div>
 
           <div style={{ display: "grid", gap: 10, marginTop: 14 }}>
