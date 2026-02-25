@@ -167,6 +167,38 @@ function asRecord(value: unknown): Record<string, unknown> | null {
   return value as Record<string, unknown>;
 }
 
+function parseRecord(value: unknown): Record<string, unknown> | null {
+  const direct = asRecord(value);
+  if (direct) return direct;
+  if (typeof value !== "string") return null;
+  const trimmed = value.trim();
+  if (!trimmed.startsWith("{") || !trimmed.endsWith("}")) return null;
+  try {
+    const parsed = JSON.parse(trimmed) as unknown;
+    return asRecord(parsed);
+  } catch {
+    return null;
+  }
+}
+
+function toPaperStateRecord(value: unknown): Record<string, unknown> {
+  const direct = parseRecord(value);
+  if (!direct) return {};
+  const nested =
+    parseRecord(direct.paperState) ??
+    parseRecord(direct.state) ??
+    parseRecord(direct.payload) ??
+    null;
+  const directLooksLikePaperState =
+    "balanceUsd" in direct ||
+    "realizedPnlUsd" in direct ||
+    "nextOrderSeq" in direct ||
+    Array.isArray(direct.positions) ||
+    Array.isArray(direct.orders);
+  if (directLooksLikePaperState || !nested) return direct;
+  return nested;
+}
+
 function pickNumber(snapshot: Record<string, unknown> | null, keys: string[]): number | null {
   if (!snapshot) return null;
   const readPathValue = (obj: Record<string, unknown>, key: string): unknown => {
@@ -203,8 +235,27 @@ function getPaperStateKey(exchangeAccountId: string): string {
 }
 
 function toNumber(value: unknown): number | null {
-  const parsed = Number(value);
-  return Number.isFinite(parsed) ? parsed : null;
+  if (value === null || value === undefined) return null;
+  if (typeof value === "number") {
+    return Number.isFinite(value) ? value : null;
+  }
+  if (typeof value === "string") {
+    const trimmed = value.trim();
+    if (!trimmed) return null;
+    const parsed = Number(trimmed);
+    return Number.isFinite(parsed) ? parsed : null;
+  }
+  if (typeof value === "bigint") {
+    const parsed = Number(value);
+    return Number.isFinite(parsed) ? parsed : null;
+  }
+  return null;
+}
+
+function toPositiveNumber(value: unknown): number | null {
+  const parsed = toNumber(value);
+  if (parsed === null || !Number.isFinite(parsed) || parsed <= 0) return null;
+  return parsed;
 }
 
 function decodeCredentials(row: {
@@ -245,9 +296,17 @@ async function resolvePaperMarketDataAccountId(exchangeAccountId: string): Promi
 }
 
 function coercePaperState(value: unknown): RunnerPaperState {
-  const record = asRecord(value) ?? {};
-  const positionsRaw = Array.isArray(record.positions) ? record.positions : [];
-  const ordersRaw = Array.isArray(record.orders) ? record.orders : [];
+  const record = toPaperStateRecord(value);
+  const positionsRaw = Array.isArray(record.positions)
+    ? record.positions
+    : Array.isArray(record.openPositions)
+      ? record.openPositions
+      : [];
+  const ordersRaw = Array.isArray(record.orders)
+    ? record.orders
+    : Array.isArray(record.openOrders)
+      ? record.openOrders
+      : [];
 
   const positions: RunnerPaperPosition[] = [];
   for (const row of positionsRaw) {
@@ -265,8 +324,8 @@ function coercePaperState(value: unknown): RunnerPaperState {
       side,
       qty,
       entryPrice,
-      takeProfitPrice: toNumber(item?.takeProfitPrice),
-      stopLossPrice: toNumber(item?.stopLossPrice),
+      takeProfitPrice: toPositiveNumber(item?.takeProfitPrice),
+      stopLossPrice: toPositiveNumber(item?.stopLossPrice),
       openedAt: typeof item?.openedAt === "string" ? item.openedAt : new Date().toISOString(),
       updatedAt: typeof item?.updatedAt === "string" ? item.updatedAt : new Date().toISOString()
     });
@@ -297,9 +356,9 @@ function coercePaperState(value: unknown): RunnerPaperState {
       qty,
       price,
       reduceOnly: Boolean(item?.reduceOnly),
-      triggerPrice: toNumber(item?.triggerPrice),
-      takeProfitPrice: toNumber(item?.takeProfitPrice),
-      stopLossPrice: toNumber(item?.stopLossPrice),
+      triggerPrice: toPositiveNumber(item?.triggerPrice),
+      takeProfitPrice: toPositiveNumber(item?.takeProfitPrice),
+      stopLossPrice: toPositiveNumber(item?.stopLossPrice),
       status,
       createdAt: typeof item?.createdAt === "string" ? item.createdAt : new Date().toISOString(),
       updatedAt: typeof item?.updatedAt === "string" ? item.updatedAt : new Date().toISOString()
@@ -307,9 +366,13 @@ function coercePaperState(value: unknown): RunnerPaperState {
   }
 
   return {
-    balanceUsd: Math.max(0, toNumber(record.balanceUsd) ?? DEFAULT_PAPER_BALANCE_USD),
-    realizedPnlUsd: toNumber(record.realizedPnlUsd) ?? 0,
-    nextOrderSeq: Math.max(1, Math.trunc(toNumber(record.nextOrderSeq) ?? 1)),
+    balanceUsd: Math.max(
+      0,
+      toNumber(record.balanceUsd ?? record.balance ?? record.walletBalanceUsd ?? record.walletBalance) ??
+        DEFAULT_PAPER_BALANCE_USD
+    ),
+    realizedPnlUsd: toNumber(record.realizedPnlUsd ?? record.realizedPnl) ?? 0,
+    nextOrderSeq: Math.max(1, Math.trunc(toNumber(record.nextOrderSeq ?? record.orderSeq ?? record.sequence) ?? 1)),
     positions,
     orders: orders.slice(0, 200),
     updatedAt: typeof record.updatedAt === "string" ? record.updatedAt : new Date().toISOString()
@@ -362,6 +425,85 @@ function replacePaperPosition(
   if (nextPosition) state.positions.push(nextPosition);
 }
 
+function signedPaperPositionQty(position: RunnerPaperPosition): number {
+  return position.side === "long" ? position.qty : -position.qty;
+}
+
+function applyRunnerPaperFill(params: {
+  state: RunnerPaperState;
+  symbol: string;
+  qty: number;
+  side: "buy" | "sell";
+  reduceOnly: boolean;
+  fillPrice: number;
+}): { filledQty: number; realizedPnlUsd: number; nextPosition: RunnerPaperPosition | null } {
+  const current = params.state.positions.find((row) => row.symbol === params.symbol) ?? null;
+  const currentSignedQty = current ? signedPaperPositionQty(current) : 0;
+  let deltaSignedQty = params.side === "buy" ? Math.abs(params.qty) : -Math.abs(params.qty);
+
+  if (params.reduceOnly) {
+    if (currentSignedQty === 0 || Math.sign(currentSignedQty) === Math.sign(deltaSignedQty)) {
+      return {
+        filledQty: 0,
+        realizedPnlUsd: 0,
+        nextPosition: current
+      };
+    }
+    const maxReduceQty = Math.abs(currentSignedQty);
+    deltaSignedQty = Math.sign(deltaSignedQty) * Math.min(Math.abs(deltaSignedQty), maxReduceQty);
+  }
+
+  const nextSignedQty = currentSignedQty + deltaSignedQty;
+  let realizedPnlUsd = 0;
+
+  if (current && currentSignedQty !== 0 && Math.sign(currentSignedQty) !== Math.sign(deltaSignedQty)) {
+    const closedQty = Math.min(Math.abs(currentSignedQty), Math.abs(deltaSignedQty));
+    const pnlPerUnit =
+      current.side === "long"
+        ? params.fillPrice - current.entryPrice
+        : current.entryPrice - params.fillPrice;
+    realizedPnlUsd = Number((closedQty * pnlPerUnit).toFixed(8));
+  }
+
+  if (nextSignedQty === 0) {
+    return {
+      filledQty: Number(Math.abs(deltaSignedQty).toFixed(8)),
+      realizedPnlUsd,
+      nextPosition: null
+    };
+  }
+
+  const nextSide: "long" | "short" = nextSignedQty > 0 ? "long" : "short";
+  const nextQty = Math.abs(nextSignedQty);
+  const nowIso = new Date().toISOString();
+  let nextEntryPrice = params.fillPrice;
+
+  if (current && Math.sign(currentSignedQty) === Math.sign(nextSignedQty)) {
+    if (Math.abs(deltaSignedQty) > 0 && Math.sign(currentSignedQty) === Math.sign(deltaSignedQty)) {
+      const weightedNotional =
+        current.entryPrice * Math.abs(currentSignedQty) + params.fillPrice * Math.abs(deltaSignedQty);
+      nextEntryPrice = weightedNotional / (Math.abs(currentSignedQty) + Math.abs(deltaSignedQty));
+    } else {
+      nextEntryPrice = current.entryPrice;
+    }
+  }
+
+  return {
+    filledQty: Number(Math.abs(deltaSignedQty).toFixed(8)),
+    realizedPnlUsd,
+    nextPosition: {
+      symbol: params.symbol,
+      side: nextSide,
+      qty: Number(nextQty.toFixed(8)),
+      entryPrice: Number(nextEntryPrice.toFixed(8)),
+      takeProfitPrice: current?.takeProfitPrice ?? null,
+      stopLossPrice: current?.stopLossPrice ?? null,
+      openedAt: current?.openedAt ?? nowIso,
+      updatedAt: nowIso
+    }
+  };
+}
+
 export async function listPaperPositionsForRunner(params: {
   exchangeAccountId: string;
   symbol?: string;
@@ -402,67 +544,44 @@ export async function placePaperPositionForRunner(params: {
   if (!Number.isFinite(fillPrice) || fillPrice <= 0) throw new Error("paper_fill_price_invalid");
 
   const state = await getPaperState(params.exchangeAccountId);
-  const nowIso = new Date().toISOString();
   const existing = state.positions.find((row) => row.symbol === symbol) ?? null;
-  let nextPosition: RunnerPaperPosition | null = null;
-
-  if (!existing) {
-    nextPosition = {
-      symbol,
-      side: params.side,
-      qty,
-      entryPrice: fillPrice,
-      takeProfitPrice: toNumber(params.takeProfitPrice),
-      stopLossPrice: toNumber(params.stopLossPrice),
-      openedAt: nowIso,
-      updatedAt: nowIso
-    };
-  } else if (existing.side === params.side) {
-    const nextQty = existing.qty + qty;
-    const nextEntry = ((existing.entryPrice * existing.qty) + (fillPrice * qty)) / nextQty;
-    nextPosition = {
-      ...existing,
-      qty: Number(nextQty.toFixed(8)),
-      entryPrice: Number(nextEntry.toFixed(8)),
-      takeProfitPrice:
-        params.takeProfitPrice !== undefined ? toNumber(params.takeProfitPrice) : existing.takeProfitPrice,
-      stopLossPrice:
-        params.stopLossPrice !== undefined ? toNumber(params.stopLossPrice) : existing.stopLossPrice,
-      updatedAt: nowIso
-    };
-  } else if (existing.qty > qty) {
-    nextPosition = {
-      ...existing,
-      qty: Number((existing.qty - qty).toFixed(8)),
-      updatedAt: nowIso
-    };
-  } else if (existing.qty < qty) {
-    nextPosition = {
-      symbol,
-      side: params.side,
-      qty: Number((qty - existing.qty).toFixed(8)),
-      entryPrice: fillPrice,
-      takeProfitPrice: toNumber(params.takeProfitPrice),
-      stopLossPrice: toNumber(params.stopLossPrice),
-      openedAt: nowIso,
-      updatedAt: nowIso
-    };
+  const fill = applyRunnerPaperFill({
+    state,
+    symbol,
+    qty,
+    side: params.side === "long" ? "buy" : "sell",
+    reduceOnly: false,
+    fillPrice
+  });
+  if (fill.filledQty <= 0) {
+    throw new Error("paper_fill_rejected");
   }
+  state.realizedPnlUsd = Number((state.realizedPnlUsd + fill.realizedPnlUsd).toFixed(8));
+  state.balanceUsd = Number((state.balanceUsd + fill.realizedPnlUsd).toFixed(8));
+  if (fill.nextPosition) {
+    if (params.takeProfitPrice !== undefined) {
+      fill.nextPosition.takeProfitPrice = toPositiveNumber(params.takeProfitPrice);
+    }
+    if (params.stopLossPrice !== undefined) {
+      fill.nextPosition.stopLossPrice = toPositiveNumber(params.stopLossPrice);
+    }
+  }
+  replacePaperPosition(state, symbol, fill.nextPosition);
 
-  replacePaperPosition(state, symbol, nextPosition);
   const orderId = toPaperOrderId(params.exchangeAccountId, state.nextOrderSeq);
   state.nextOrderSeq += 1;
+  const nowIso = new Date().toISOString();
   const filledOrder: RunnerPaperOrder = {
     orderId,
     symbol,
     side: params.side === "long" ? "buy" : "sell",
     type: "market",
-    qty,
+    qty: fill.filledQty,
     price: Number(fillPrice.toFixed(8)),
     reduceOnly: Boolean(existing && existing.side !== params.side),
     triggerPrice: null,
-    takeProfitPrice: toNumber(params.takeProfitPrice),
-    stopLossPrice: toNumber(params.stopLossPrice),
+    takeProfitPrice: toPositiveNumber(params.takeProfitPrice),
+    stopLossPrice: toPositiveNumber(params.stopLossPrice),
     status: "filled",
     createdAt: nowIso,
     updatedAt: nowIso
@@ -487,19 +606,31 @@ export async function closePaperPositionForRunner(params: {
   );
   if (!position) return { orderId: null, closedQty: 0 };
 
-  replacePaperPosition(state, symbol, null);
-  const orderId = toPaperOrderId(params.exchangeAccountId, state.nextOrderSeq);
-  state.nextOrderSeq += 1;
   const safePrice = Number.isFinite(fillPrice) && fillPrice > 0
     ? fillPrice
     : position.entryPrice;
+  const fill = applyRunnerPaperFill({
+    state,
+    symbol,
+    qty: position.qty,
+    side: position.side === "long" ? "sell" : "buy",
+    reduceOnly: true,
+    fillPrice: safePrice
+  });
+  if (fill.filledQty <= 0) return { orderId: null, closedQty: 0 };
+  state.realizedPnlUsd = Number((state.realizedPnlUsd + fill.realizedPnlUsd).toFixed(8));
+  state.balanceUsd = Number((state.balanceUsd + fill.realizedPnlUsd).toFixed(8));
+  replacePaperPosition(state, symbol, fill.nextPosition);
+
+  const orderId = toPaperOrderId(params.exchangeAccountId, state.nextOrderSeq);
+  state.nextOrderSeq += 1;
   const nowIso = new Date().toISOString();
   const filledOrder: RunnerPaperOrder = {
     orderId,
     symbol,
     side: position.side === "long" ? "sell" : "buy",
     type: "market",
-    qty: position.qty,
+    qty: fill.filledQty,
     price: Number(safePrice.toFixed(8)),
     reduceOnly: true,
     triggerPrice: null,
@@ -511,7 +642,7 @@ export async function closePaperPositionForRunner(params: {
   };
   state.orders = [filledOrder, ...state.orders].slice(0, 200);
   await savePaperState(params.exchangeAccountId, state);
-  return { orderId, closedQty: position.qty };
+  return { orderId, closedQty: fill.filledQty };
 }
 
 async function resolveMarketDataForBot(bot: any): Promise<{

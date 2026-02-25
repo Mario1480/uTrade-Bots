@@ -642,6 +642,7 @@
     "alerts": {
       "error": "Error",
       "actionFailed": "Action failed",
+      "actionSuccess": "Action successful",
       "warning": "Warning"
     },
     "prefill": {
@@ -676,7 +677,8 @@
       "suggested": "Suggested",
       "cancelAll": "Cancel All",
       "cancel": "Cancel",
-      "confirm": "Confirm"
+      "confirm": "Confirm",
+      "submitting": "Submitting..."
     },
     "fields": {
       "exchangeAccount": "Exchange account",
@@ -813,7 +815,9 @@
       "limitRequiresPrice": "Limit orders require a valid price.",
       "takeProfitGtZero": "Take profit must be greater than 0.",
       "stopLossGtZero": "Stop loss must be greater than 0.",
-      "noChanges": "No changes to save."
+      "noChanges": "No changes to save.",
+      "orderSubmitted": "Order accepted (ID: {orderId}).",
+      "orderSubmittedRefreshWarning": "Order was accepted, but live tables could not be fully refreshed ({details})."
     },
     "misc": {
       "na": "n/a",

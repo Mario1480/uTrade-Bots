@@ -231,6 +231,7 @@ export async function generateAndPersistPrediction(
             }, {
               promptSettings: input.promptSettings,
               promptScopeContext: input.promptScopeContext,
+              traceUserId: input.userId ?? null,
               requireSuccessfulAi: signalMode === "ai_only"
             });
     } catch (error) {

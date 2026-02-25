@@ -447,6 +447,7 @@ model User {
   auditEvents        AuditEvent[]
   dashboardPerformanceSnapshots DashboardPerformanceSnapshot[]
   aiPromptTemplates  UserAiPromptTemplate[]
+  aiTraceLogs        AiTraceLog[]
 }
 
 model DashboardPerformanceSnapshot {
@@ -896,6 +897,8 @@ model CompositeStrategy {
 
 model AiTraceLog {
   id                 String   @id @default(cuid())
+  userId             String?  @map("user_id")
+  user               User?    @relation(fields: [userId], references: [id], onDelete: SetNull)
   scope              String
   provider           String?
   model              String?
@@ -919,5 +922,6 @@ model AiTraceLog {
   @@index([createdAt(sort: Desc)])
   @@index([scope, createdAt(sort: Desc)])
   @@index([symbol, timeframe, createdAt(sort: Desc)])
+  @@index([userId, createdAt(sort: Desc)], map: "ai_trace_logs_user_id_created_at_idx")
   @@map("ai_trace_logs")
 }

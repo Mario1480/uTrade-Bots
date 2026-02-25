@@ -280,6 +280,7 @@ function TradePageContent() {
   const [error, setError] = useState<string | null>(null);
   const [softWarning, setSoftWarning] = useState<string | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
+  const [actionSuccess, setActionSuccess] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [isApplyingLeverage, setIsApplyingLeverage] = useState(false);
   const [activePrefill, setActivePrefill] = useState<TradeDeskPrefillPayload | null>(null);
@@ -711,7 +712,10 @@ function TradePageContent() {
     }
   }
 
-  async function reloadLiveTables(accountId: string, symbol: string) {
+  async function reloadLiveTables(
+    accountId: string,
+    symbol: string
+  ): Promise<{ partialFailures: string[] }> {
     const [positionsResult, ordersResult, summaryResult] = await Promise.allSettled([
       apiGet<{ items: PositionItem[] }>(
         `/api/positions?exchangeAccountId=${encodeURIComponent(accountId)}&symbol=${encodeURIComponent(symbol)}`
@@ -721,16 +725,24 @@ function TradePageContent() {
       ),
       apiGet<AccountSummary>(`/api/account/summary?exchangeAccountId=${encodeURIComponent(accountId)}`)
     ]);
+    const partialFailures: string[] = [];
 
     if (positionsResult.status === "fulfilled") {
       setPositions(positionsResult.value.items ?? []);
+    } else {
+      partialFailures.push(`positions (${errMsg(positionsResult.reason)})`);
     }
     if (ordersResult.status === "fulfilled") {
       setOpenOrders(ordersResult.value.items ?? []);
+    } else {
+      partialFailures.push(`open orders (${errMsg(ordersResult.reason)})`);
     }
     if (summaryResult.status === "fulfilled") {
       setSummary(summaryResult.value);
+    } else {
+      partialFailures.push(`account summary (${errMsg(summaryResult.reason)})`);
     }
+    return { partialFailures };
   }
 
   useEffect(() => {
@@ -945,6 +957,7 @@ function TradePageContent() {
     setSelectedPositionKey(null);
     setPositionEditDrafts({});
     setOrderEditDrafts({});
+    setActionSuccess(null);
   }, [selectedAccountId, selectedSymbol]);
 
   async function applyLeverage() {
@@ -1038,10 +1051,11 @@ function TradePageContent() {
     }
 
     setActionError(null);
+    setActionSuccess(null);
     setIsSubmitting(true);
 
     try {
-      await apiPost<{ orderId: string }>("/api/orders", {
+      const response = await apiPost<{ orderId: string }>("/api/orders", {
         exchangeAccountId: selectedAccountId,
         symbol: selectedSymbol,
         type: orderType,
@@ -1055,11 +1069,16 @@ function TradePageContent() {
         reduceOnly: entryMode === "close"
       });
 
-      await reloadLiveTables(selectedAccountId, selectedSymbol);
+      const refreshed = await reloadLiveTables(selectedAccountId, selectedSymbol);
+      setActionSuccess(t("messages.orderSubmitted", { orderId: response.orderId }));
+      if (refreshed.partialFailures.length > 0) {
+        setSoftWarning(t("messages.orderSubmittedRefreshWarning", { details: refreshed.partialFailures.join(", ") }));
+      }
       if (orderType === "limit") {
         setPrice("");
       }
     } catch (e) {
+      setActionSuccess(null);
       setActionError(errMsg(e));
     } finally {
       setIsSubmitting(false);
@@ -1289,6 +1308,12 @@ function TradePageContent() {
       {actionError ? (
         <div className="card tradeDeskNotice tradeDeskNoticeError">
           <strong>{t("alerts.actionFailed")}:</strong> {actionError}
+        </div>
+      ) : null}
+
+      {actionSuccess ? (
+        <div className="card tradeDeskNotice tradeDeskNoticeInfo">
+          <strong>{t("alerts.actionSuccess")}:</strong> {actionSuccess}
         </div>
       ) : null}
 
@@ -1767,7 +1792,7 @@ function TradePageContent() {
                     onClick={() => void submitOrder("long")}
                     type="button"
                   >
-                    {entryMode === "open" ? t("actions.openLong") : t("actions.closeShort")}
+                    {isSubmitting ? t("actions.submitting") : entryMode === "open" ? t("actions.openLong") : t("actions.closeShort")}
                     {activePrefill?.side === "long" ? ` (${t("actions.suggested")})` : ""}
                   </button>
                   <button
@@ -1777,10 +1802,20 @@ function TradePageContent() {
                     onClick={() => void submitOrder("short")}
                     type="button"
                   >
-                    {entryMode === "open" ? t("actions.openShort") : t("actions.closeLong")}
+                    {isSubmitting ? t("actions.submitting") : entryMode === "open" ? t("actions.openShort") : t("actions.closeLong")}
                     {activePrefill?.side === "short" ? ` (${t("actions.suggested")})` : ""}
                   </button>
                 </div>
+                {actionError ? (
+                  <div className="tradeOrderInlineNotice tradeOrderInlineNoticeError">
+                    <strong>{t("alerts.actionFailed")}:</strong> {actionError}
+                  </div>
+                ) : null}
+                {actionSuccess ? (
+                  <div className="tradeOrderInlineNotice tradeOrderInlineNoticeSuccess">
+                    <strong>{t("alerts.actionSuccess")}:</strong> {actionSuccess}
+                  </div>
+                ) : null}
 
                 <div className="tradeOrderMetaRow">
                   <span>{t("fields.max")}</span>

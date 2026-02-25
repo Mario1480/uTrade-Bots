@@ -194,14 +194,54 @@ function isPaperExchange(exchange: string): boolean {
   return exchange.trim().toLowerCase() === PAPER_EXCHANGE;
 }
 
+function parseRecord(value: unknown): Record<string, unknown> | null {
+  const direct = toRecord(value);
+  if (direct) return direct;
+  if (typeof value !== "string") return null;
+  const trimmed = value.trim();
+  if (!trimmed.startsWith("{") || !trimmed.endsWith("}")) return null;
+  try {
+    const parsed = JSON.parse(trimmed) as unknown;
+    return toRecord(parsed);
+  } catch {
+    return null;
+  }
+}
+
+function toPaperStateRecord(value: unknown): Record<string, unknown> {
+  const direct = parseRecord(value);
+  if (!direct) return {};
+  const nested =
+    parseRecord(direct.paperState) ??
+    parseRecord(direct.state) ??
+    parseRecord(direct.payload) ??
+    null;
+  const directLooksLikePaperState =
+    "balanceUsd" in direct ||
+    "realizedPnlUsd" in direct ||
+    "nextOrderSeq" in direct ||
+    Array.isArray(direct.positions) ||
+    Array.isArray(direct.orders);
+  if (directLooksLikePaperState || !nested) return direct;
+  return nested;
+}
+
 function coercePaperState(value: unknown): PaperState {
-  const record = toRecord(value);
-  const balanceUsd = Math.max(0, toNumber(record?.balanceUsd) ?? DEFAULT_PAPER_BALANCE_USD);
-  const realizedPnlUsd = toNumber(record?.realizedPnlUsd) ?? 0;
-  const nextOrderSeq = Math.max(1, Math.trunc(toNumber(record?.nextOrderSeq) ?? 1));
+  const record = toPaperStateRecord(value);
+  const balanceUsd = Math.max(
+    0,
+    toNumber(record.balanceUsd ?? record.balance ?? record.walletBalanceUsd ?? record.walletBalance) ??
+      DEFAULT_PAPER_BALANCE_USD
+  );
+  const realizedPnlUsd = toNumber(record.realizedPnlUsd ?? record.realizedPnl) ?? 0;
+  const nextOrderSeq = Math.max(1, Math.trunc(toNumber(record.nextOrderSeq ?? record.orderSeq ?? record.sequence) ?? 1));
   const updatedAt = typeof record?.updatedAt === "string" ? record.updatedAt : new Date().toISOString();
 
-  const positionsRaw = Array.isArray(record?.positions) ? record.positions : [];
+  const positionsRaw = Array.isArray(record?.positions)
+    ? record.positions
+    : Array.isArray(record?.openPositions)
+      ? record.openPositions
+      : [];
   const positions: PaperPositionState[] = [];
   for (const row of positionsRaw) {
     const pos = toRecord(row);
@@ -216,14 +256,18 @@ function coercePaperState(value: unknown): PaperState {
       side,
       qty,
       entryPrice,
-      takeProfitPrice: toNumber(pos?.takeProfitPrice),
-      stopLossPrice: toNumber(pos?.stopLossPrice),
+      takeProfitPrice: toPositiveNumber(pos?.takeProfitPrice),
+      stopLossPrice: toPositiveNumber(pos?.stopLossPrice),
       openedAt: typeof pos?.openedAt === "string" ? pos.openedAt : new Date().toISOString(),
       updatedAt: typeof pos?.updatedAt === "string" ? pos.updatedAt : new Date().toISOString()
     });
   }
 
-  const ordersRaw = Array.isArray(record?.orders) ? record.orders : [];
+  const ordersRaw = Array.isArray(record?.orders)
+    ? record.orders
+    : Array.isArray(record?.openOrders)
+      ? record.openOrders
+      : [];
   const orders: PaperOrderState[] = [];
   for (const row of ordersRaw) {
     const order = toRecord(row);
@@ -244,9 +288,9 @@ function coercePaperState(value: unknown): PaperState {
       qty,
       price,
       reduceOnly: Boolean(order?.reduceOnly),
-      triggerPrice: toNumber(order?.triggerPrice),
-      takeProfitPrice: toNumber(order?.takeProfitPrice),
-      stopLossPrice: toNumber(order?.stopLossPrice),
+      triggerPrice: toPositiveNumber(order?.triggerPrice),
+      takeProfitPrice: toPositiveNumber(order?.takeProfitPrice),
+      stopLossPrice: toPositiveNumber(order?.stopLossPrice),
       status:
         getString(order, ["status"]) === "open" || getString(order, ["status"]) === "cancelled"
           ? (getString(order, ["status"]) as "open" | "cancelled")
@@ -498,8 +542,27 @@ export class BitgetExchangeBridge implements ExchangeClient, ExchangeStream {
 }
 
 function toNumber(value: unknown): number | null {
-  const parsed = Number(value);
-  return Number.isFinite(parsed) ? parsed : null;
+  if (value === null || value === undefined) return null;
+  if (typeof value === "number") {
+    return Number.isFinite(value) ? value : null;
+  }
+  if (typeof value === "string") {
+    const trimmed = value.trim();
+    if (!trimmed) return null;
+    const parsed = Number(trimmed);
+    return Number.isFinite(parsed) ? parsed : null;
+  }
+  if (typeof value === "bigint") {
+    const parsed = Number(value);
+    return Number.isFinite(parsed) ? parsed : null;
+  }
+  return null;
+}
+
+function toPositiveNumber(value: unknown): number | null {
+  const parsed = toNumber(value);
+  if (parsed === null || !Number.isFinite(parsed) || parsed <= 0) return null;
+  return parsed;
 }
 
 function toIsoFromMs(value: unknown): string | null {
@@ -1003,8 +1066,24 @@ export async function listPositions(
   return rows
     .map((row) => {
       const parsedSymbol = normalizeCanonicalSymbol(String(row.symbol ?? ""));
-      const side = String(row.holdSide ?? "").toLowerCase().includes("long") ? "long" : "short";
-      const size = Math.abs(toNumber(row.total) ?? 0);
+      const holdSideRaw = String(row.holdSide ?? "").toLowerCase();
+      const total = toNumber(row.total);
+      const available = toNumber((row as unknown as Record<string, unknown>)?.available);
+      const signedQty =
+        total !== null && Number.isFinite(total) && total !== 0
+          ? total
+          : available !== null && Number.isFinite(available) && available !== 0
+            ? available
+            : null;
+      const side: "long" | "short" =
+        holdSideRaw.includes("long")
+          ? "long"
+          : holdSideRaw.includes("short")
+            ? "short"
+            : signedQty !== null && signedQty > 0
+              ? "long"
+              : "short";
+      const size = Math.abs(signedQty ?? total ?? available ?? 0);
       return {
         symbol: parsedSymbol,
         side,
@@ -1018,6 +1097,15 @@ export async function listPositions(
     })
     .filter((row) => row.symbol.length > 0 && row.size > 0)
     .filter((row) => (normalizedSymbol ? row.symbol === normalizedSymbol : true));
+}
+
+function isNoPositionToCloseError(error: unknown): boolean {
+  const text = String(error ?? "").toLowerCase();
+  return (
+    text.includes("no position to close") ||
+    text.includes("position does not exist") ||
+    text.includes("position not exists")
+  );
 }
 
 function signedQty(position: PaperPositionState): number {
@@ -1034,15 +1122,81 @@ function toPaperOrderId(exchangeAccountId: string, seq: number): string {
 
 async function fetchTickerPrice(adapter: BitgetFuturesAdapter, symbol: string): Promise<number> {
   const exchangeSymbol = await adapter.toExchangeSymbol(symbol);
-  const ticker = await adapter.marketApi.getTicker(exchangeSymbol, adapter.productType);
-  const row = toRecord(Array.isArray(ticker) ? ticker[0] : ticker);
-  const price =
-    getNumber(row, ["markPrice", "lastPr", "last", "price", "close", "indexPrice"]) ??
-    getNumber(toRecord((row as any)?.data), ["markPrice", "lastPr", "last", "price", "close", "indexPrice"]);
-  if (!price || !Number.isFinite(price) || price <= 0) {
-    throw new ManualTradingError("paper_price_unavailable", 422, "paper_price_unavailable");
+  const readTickerPrice = (value: unknown): number | null => {
+    const candidates = Array.isArray(value) ? value : [value];
+    for (const candidate of candidates) {
+      const row = toRecord(candidate);
+      if (!row) continue;
+      const direct = getNumber(row, ["markPrice", "lastPr", "last", "price", "close", "indexPrice"]);
+      if (direct !== null && Number.isFinite(direct) && direct > 0) return direct;
+      const nestedData = row.data;
+      if (Array.isArray(nestedData)) {
+        for (const item of nestedData) {
+          const nested = toRecord(item);
+          const nestedPrice = getNumber(nested, ["markPrice", "lastPr", "last", "price", "close", "indexPrice"]);
+          if (nestedPrice !== null && Number.isFinite(nestedPrice) && nestedPrice > 0) return nestedPrice;
+        }
+      } else {
+        const nested = toRecord(nestedData);
+        const nestedPrice = getNumber(nested, ["markPrice", "lastPr", "last", "price", "close", "indexPrice"]);
+        if (nestedPrice !== null && Number.isFinite(nestedPrice) && nestedPrice > 0) return nestedPrice;
+      }
+    }
+    return null;
+  };
+
+  const readLatestCandleClose = (value: unknown): number | null => {
+    if (!Array.isArray(value)) return null;
+    let latestTs = Number.NEGATIVE_INFINITY;
+    let latestClose: number | null = null;
+    for (const entry of value) {
+      if (Array.isArray(entry)) {
+        const close = toNumber(entry[4]);
+        const ts = toNumber(entry[0]) ?? Number.NEGATIVE_INFINITY;
+        if (close === null || !Number.isFinite(close) || close <= 0) continue;
+        if (ts >= latestTs) {
+          latestTs = ts;
+          latestClose = close;
+        }
+        continue;
+      }
+      const row = toRecord(entry);
+      if (!row) continue;
+      const close = getNumber(row, ["close", "c", "lastPr", "last", "price"]);
+      if (close === null || !Number.isFinite(close) || close <= 0) continue;
+      const ts =
+        getNumber(row, ["ts", "t", "time", "timestamp", "T"]) ??
+        Number.NEGATIVE_INFINITY;
+      if (ts >= latestTs) {
+        latestTs = ts;
+        latestClose = close;
+      }
+    }
+    return latestClose;
+  };
+
+  try {
+    const ticker = await adapter.marketApi.getTicker(exchangeSymbol, adapter.productType);
+    const tickerPrice = readTickerPrice(ticker);
+    if (tickerPrice !== null) return tickerPrice;
+  } catch {
+    // Fallback below uses latest candle close if ticker endpoint is unavailable.
   }
-  return price;
+
+  try {
+    const candles = await adapter.marketApi.getCandles({
+      symbol: exchangeSymbol,
+      granularity: "1m",
+      limit: 3,
+      productType: adapter.productType
+    });
+    const candlePrice = readLatestCandleClose(candles);
+    if (candlePrice !== null) return candlePrice;
+  } catch {
+    // ignore and throw canonical manual-trading error below
+  }
+
+  throw new ManualTradingError("paper_price_unavailable", 422, "paper_price_unavailable");
 }
 
 async function fetchMarkPriceMap(
@@ -1599,15 +1753,28 @@ export async function closePositionsMarket(
 
   const orderIds: string[] = [];
   for (const position of targets) {
-    const closeSide = position.side === "long" ? "sell" : "buy";
-    const placed = await adapter.placeOrder({
-      symbol: position.symbol,
-      side: closeSide,
-      type: "market",
-      qty: position.size,
-      reduceOnly: true
-    });
-    orderIds.push(placed.orderId);
+    const preferredCloseSide = position.side === "long" ? "sell" : "buy";
+    const placeClose = async (orderSide: "buy" | "sell") =>
+      adapter.placeOrder({
+        symbol: position.symbol,
+        side: orderSide,
+        type: "market",
+        qty: position.size,
+        reduceOnly: true
+      });
+    try {
+      const placed = await placeClose(preferredCloseSide);
+      orderIds.push(placed.orderId);
+    } catch (error) {
+      if (!isNoPositionToCloseError(error)) throw error;
+      const fallbackCloseSide: "buy" | "sell" = preferredCloseSide === "buy" ? "sell" : "buy";
+      try {
+        const placed = await placeClose(fallbackCloseSide);
+        orderIds.push(placed.orderId);
+      } catch (fallbackError) {
+        if (!isNoPositionToCloseError(fallbackError)) throw fallbackError;
+      }
+    }
   }
 
   return orderIds;

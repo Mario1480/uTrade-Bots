@@ -5,13 +5,31 @@ const serverApi =
   process.env.NEXT_PUBLIC_API_URL ??
   "http://localhost:4000";
 
-const browserApi =
-  process.env.NEXT_PUBLIC_API_URL ??
-  process.env.API_URL ??
-  process.env.API_BASE_URL ??
-  "http://localhost:4000";
+function resolveBrowserApi(): string {
+  const configured =
+    process.env.NEXT_PUBLIC_API_URL ??
+    process.env.API_URL ??
+    process.env.API_BASE_URL ??
+    "";
 
-const API = typeof window === "undefined" ? serverApi : browserApi;
+  const fallback = `http://${window.location.hostname}:4000`;
+  if (!configured) return fallback;
+
+  try {
+    const parsed = new URL(configured);
+    const host = parsed.hostname.trim().toLowerCase();
+    const browserHost = window.location.hostname.trim();
+    if ((host === "localhost" || host === "127.0.0.1") && browserHost && browserHost !== "localhost" && browserHost !== "127.0.0.1") {
+      parsed.hostname = browserHost;
+      return parsed.toString().replace(/\/$/, "");
+    }
+    return configured;
+  } catch {
+    return configured;
+  }
+}
+
+const API = typeof window === "undefined" ? serverApi : resolveBrowserApi();
 
 export class ApiError extends Error {
   status: number;

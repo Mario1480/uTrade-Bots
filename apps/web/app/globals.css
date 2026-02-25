@@ -746,6 +746,26 @@ a { color: inherit; }
   gap: 8px;
 }
 
+.tradeOrderInlineNotice {
+  margin-top: 8px;
+  border-radius: 10px;
+  padding: 8px 10px;
+  font-size: 12px;
+  line-height: 1.4;
+}
+
+.tradeOrderInlineNoticeError {
+  border: 1px solid rgba(239, 68, 68, 0.4);
+  background: rgba(127, 29, 29, 0.28);
+  color: #fecaca;
+}
+
+.tradeOrderInlineNoticeSuccess {
+  border: 1px solid rgba(16, 185, 129, 0.4);
+  background: rgba(6, 78, 59, 0.28);
+  color: #a7f3d0;
+}
+
 .tradeOrderDivider {
   height: 1px;
   background: rgba(255,255,255,.08);

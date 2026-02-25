@@ -175,6 +175,7 @@ function isAiTraceLogModelReady(): boolean {
 }
 
 export type AiTraceLogRecordInput = {
+  userId?: string | null;
   scope: string;
   provider?: string | null;
   model?: string | null;
@@ -204,6 +205,7 @@ export async function recordAiTraceLog(input: AiTraceLogRecordInput): Promise<vo
   try {
     await db.aiTraceLog.create({
       data: {
+        userId: truncateText(input.userId ?? null, 191),
         scope: input.scope,
         provider: truncateText(input.provider ?? null, 64),
         model: truncateText(input.model ?? null, 128),

@@ -110,6 +110,7 @@ type GenerateDeps = {
   callAiFn?: typeof callAi;
   promptSettings?: AiPromptRuntimeSettings;
   promptScopeContext?: AiPromptScopeContext;
+  traceUserId?: string | null;
   requireSuccessfulAi?: boolean;
 };
 
@@ -1226,6 +1227,7 @@ export async function generatePredictionExplanation(
   const aiFallbackModel = resolveExplainerFallbackModel(aiModel);
   const callAiFn = deps.callAiFn ?? callAi;
   const traceBase = {
+    userId: deps.traceUserId ?? null,
     scope: "prediction_explainer",
     provider: "openai",
     model: aiModel,

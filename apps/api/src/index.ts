@@ -261,11 +261,39 @@ if (origins.includes("http://127.0.0.1:3000") && !origins.includes("http://local
   origins.push("http://localhost:3000");
 }
 
+function isPrivateIpv4Host(hostname: string): boolean {
+  const match = hostname.match(/^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/);
+  if (!match) return false;
+  const octets = match.slice(1).map((part) => Number(part));
+  if (octets.some((part) => !Number.isFinite(part) || part < 0 || part > 255)) return false;
+  if (octets[0] === 10) return true;
+  if (octets[0] === 192 && octets[1] === 168) return true;
+  if (octets[0] === 172 && octets[1] >= 16 && octets[1] <= 31) return true;
+  return false;
+}
+
+function isDevLocalOrigin(origin: string): boolean {
+  try {
+    const parsed = new URL(origin);
+    if (parsed.protocol !== "http:" && parsed.protocol !== "https:") return false;
+    if (parsed.port && parsed.port !== "3000") return false;
+    const host = parsed.hostname.trim().toLowerCase();
+    if (!host) return false;
+    if (host === "localhost" || host === "127.0.0.1") return true;
+    if (host.endsWith(".local")) return true;
+    if (!host.includes(".")) return true;
+    return isPrivateIpv4Host(host);
+  } catch {
+    return false;
+  }
+}
+
 app.use(
   cors({
     origin(origin, callback) {
       if (!origin) return callback(null, true);
       if (origins.includes("*") || origins.includes(origin)) return callback(null, true);
+      if (process.env.NODE_ENV !== "production" && isDevLocalOrigin(origin)) return callback(null, true);
       return callback(new Error("not_allowed_by_cors"));
     },
     credentials: true
@@ -658,7 +686,12 @@ const adminAiTraceSettingsSchema = z.object({
 });
 
 const adminAiTraceLogsQuerySchema = z.object({
-  limit: z.coerce.number().int().min(1).max(500).default(100)
+  limit: z.coerce.number().int().min(1).max(500).default(100),
+  userId: z.preprocess((value) => {
+    if (typeof value !== "string") return undefined;
+    const trimmed = value.trim();
+    return trimmed.length > 0 ? trimmed : undefined;
+  }, z.string().max(191).optional())
 });
 
 const adminAiTraceCleanupSchema = z.object({
@@ -8337,6 +8370,7 @@ async function refreshPredictionStateForTemplate(params: {
           }, {
             promptScopeContext,
             promptSettings: runtimePromptSettings,
+            traceUserId: template.userId ?? null,
             requireSuccessfulAi: signalMode === "ai_only"
           });
           aiCalled = true;
@@ -12404,14 +12438,73 @@ app.get("/admin/ai-trace/logs", requireAuth, async (req, res) => {
     return res.status(503).json({ error: "ai_trace_not_ready" });
   }
 
-  const [items, total, traceSettings] = await Promise.all([
+  const selectedUserId =
+    typeof parsed.data.userId === "string" && parsed.data.userId === "__none__"
+      ? "__none__"
+      : (parsed.data.userId ?? null);
+  const where =
+    selectedUserId === "__none__"
+      ? { userId: null }
+      : (selectedUserId
+          ? { userId: selectedUserId }
+          : {});
+
+  const [items, total, traceSettings, userIdRows, unassignedCount] = await Promise.all([
     db.aiTraceLog.findMany({
+      where,
       orderBy: { createdAt: "desc" },
       take: parsed.data.limit
     }),
-    db.aiTraceLog.count(),
-    getAiTraceSettingsCached()
+    db.aiTraceLog.count({ where }),
+    getAiTraceSettingsCached(),
+    db.aiTraceLog.findMany({
+      where: { userId: { not: null } },
+      select: { userId: true },
+      distinct: ["userId"],
+      orderBy: { userId: "asc" },
+      take: 2_000
+    }),
+    db.aiTraceLog.count({ where: { userId: null } })
   ]);
+
+  const userIdsForLookup = new Set<string>();
+  for (const row of userIdRows) {
+    if (row?.userId && typeof row.userId === "string") {
+      userIdsForLookup.add(row.userId);
+    }
+  }
+  for (const row of items) {
+    if (row?.userId && typeof row.userId === "string") {
+      userIdsForLookup.add(row.userId);
+    }
+  }
+
+  const userIdList = Array.from(userIdsForLookup);
+  const usersById = new Map<string, string>();
+  if (
+    userIdList.length > 0 &&
+    db.user &&
+    typeof db.user.findMany === "function"
+  ) {
+    const users = await db.user.findMany({
+      where: { id: { in: userIdList } },
+      select: { id: true, email: true }
+    });
+    for (const user of users) {
+      if (typeof user?.id === "string" && typeof user?.email === "string") {
+        usersById.set(user.id, user.email);
+      }
+    }
+  }
+
+  const filterUsers = userIdList
+    .map((id) => ({
+      id,
+      email: usersById.get(id) ?? null
+    }))
+    .sort((a, b) =>
+      (a.email ?? a.id).localeCompare(b.email ?? b.id, undefined, { sensitivity: "base" })
+    );
 
   const readTraceMeta = (payload: unknown): { retryUsed: boolean; retryCount: number } => {
     if (!payload || typeof payload !== "object" || Array.isArray(payload)) {
@@ -12436,10 +12529,18 @@ app.get("/admin/ai-trace/logs", requireAuth, async (req, res) => {
     source: traceSettings.source,
     total,
     limit: parsed.data.limit,
+    selectedUserId,
+    users: filterUsers,
+    hasUnassigned: unassignedCount > 0,
     items: items.map((row: any) => ({
       ...(readTraceMeta(row.userPayload ?? null)),
       id: row.id,
       createdAt: row.createdAt instanceof Date ? row.createdAt.toISOString() : null,
+      userId: row.userId ?? null,
+      userEmail:
+        typeof row.userId === "string" && row.userId
+          ? (usersById.get(row.userId) ?? null)
+          : null,
       scope: row.scope,
       provider: row.provider ?? null,
       model: row.model ?? null,

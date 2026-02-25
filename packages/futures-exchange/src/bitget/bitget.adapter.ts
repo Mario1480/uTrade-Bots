@@ -49,16 +49,29 @@ function isMarginModeLockedError(error: unknown): boolean {
   );
 }
 
-function toPositionSide(raw: unknown): "long" | "short" {
-  return String(raw ?? "").toLowerCase().includes("long") ? "long" : "short";
+function toPositionSide(raw: unknown, signedQty?: number | null): "long" | "short" {
+  const text = String(raw ?? "").toLowerCase();
+  if (text.includes("long")) return "long";
+  if (text.includes("short")) return "short";
+  if (typeof signedQty === "number" && Number.isFinite(signedQty) && signedQty > 0) return "long";
+  return "short";
 }
 
 function mapPosition(row: BitgetPositionRaw): FuturesPosition {
   const canonical = normalizeCanonicalSymbol(String(row.symbol ?? ""));
+  const total = toNumber(row.total);
+  const available = toNumber(row.available);
+  const signedQty =
+    total !== null && Number.isFinite(total) && total !== 0
+      ? total
+      : available !== null && Number.isFinite(available) && available !== 0
+        ? available
+        : null;
+  const size = Math.abs(signedQty ?? total ?? available ?? 0);
   return {
     symbol: canonical,
-    side: toPositionSide(row.holdSide),
-    size: toNumber(row.total) ?? 0,
+    side: toPositionSide(row.holdSide, signedQty),
+    size,
     entryPrice: toNumber(row.avgOpenPrice) ?? 0,
     markPrice: toNumber(row.markPrice) ?? undefined,
     unrealizedPnl: toNumber(row.unrealizedPL) ?? undefined

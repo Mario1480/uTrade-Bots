@@ -55,6 +55,8 @@ type AiTraceSettingsResponse = {
 type AiTraceLogItem = {
   id: string;
   createdAt: string | null;
+  userId: string | null;
+  userEmail: string | null;
   retryUsed: boolean;
   retryCount: number;
   scope: string;
@@ -77,11 +79,19 @@ type AiTraceLogItem = {
   latencyMs: number | null;
 };
 
+type AiTraceLogUserOption = {
+  id: string;
+  email: string | null;
+};
+
 type AiTraceLogsResponse = {
   enabled: boolean;
   source: "db" | "default";
   total: number;
   limit: number;
+  selectedUserId: string | "__none__" | null;
+  users: AiTraceLogUserOption[];
+  hasUnassigned: boolean;
   items: AiTraceLogItem[];
 };
 
@@ -119,20 +129,43 @@ export default function AdminAiTracePage() {
 
   const [logs, setLogs] = useState<AiTraceLogItem[]>([]);
   const [totalLogs, setTotalLogs] = useState(0);
+  const [logUsers, setLogUsers] = useState<AiTraceLogUserOption[]>([]);
+  const [hasUnassignedLogs, setHasUnassignedLogs] = useState(false);
+  const [logUserFilter, setLogUserFilter] = useState("all");
   const [logLimit, setLogLimit] = useState("100");
   const [olderThanDays, setOlderThanDays] = useState("30");
 
-  async function loadLogs(limitOverride?: number) {
+  async function loadLogs(limitOverride?: number, userFilterOverride?: string) {
     setLoadingLogs(true);
     try {
       const limit = Number.isFinite(limitOverride) && limitOverride ? limitOverride : Number(logLimit);
-      const payload = await apiGet<AiTraceLogsResponse>(`/admin/ai-trace/logs?limit=${encodeURIComponent(String(limit))}`);
+      const selectedFilter =
+        typeof userFilterOverride === "string" ? userFilterOverride : logUserFilter;
+      const params = new URLSearchParams();
+      params.set("limit", String(limit));
+      if (selectedFilter === "__none__") {
+        params.set("userId", "__none__");
+      } else if (selectedFilter !== "all") {
+        params.set("userId", selectedFilter);
+      }
+      const payload = await apiGet<AiTraceLogsResponse>(`/admin/ai-trace/logs?${params.toString()}`);
       setLogs(Array.isArray(payload.items) ? payload.items : []);
       setTotalLogs(Number.isFinite(Number(payload.total)) ? Number(payload.total) : 0);
+      setLogUsers(Array.isArray(payload.users) ? payload.users : []);
+      setHasUnassignedLogs(Boolean(payload.hasUnassigned));
+      if (payload.selectedUserId === "__none__") {
+        setLogUserFilter("__none__");
+      } else if (typeof payload.selectedUserId === "string" && payload.selectedUserId.trim()) {
+        setLogUserFilter(payload.selectedUserId);
+      } else {
+        setLogUserFilter("all");
+      }
     } catch (e) {
       setError(errMsg(e));
       setLogs([]);
       setTotalLogs(0);
+      setLogUsers([]);
+      setHasUnassignedLogs(false);
     } finally {
       setLoadingLogs(false);
     }
@@ -157,7 +190,7 @@ export default function AdminAiTracePage() {
       setMaxSystemMessageChars(String(settingsRes.maxSystemMessageChars));
       setMaxUserPayloadChars(String(settingsRes.maxUserPayloadChars));
       setMaxRawResponseChars(String(settingsRes.maxRawResponseChars));
-      await loadLogs(Number(logLimit));
+      await loadLogs(Number(logLimit), logUserFilter);
     } catch (e) {
       setError(errMsg(e));
     } finally {
@@ -206,7 +239,7 @@ export default function AdminAiTracePage() {
         olderThanDays: days
       });
       setNotice(t("messages.deletedOld", { count: res.deletedCount }));
-      await loadLogs(Number(logLimit));
+      await loadLogs(Number(logLimit), logUserFilter);
     } catch (e) {
       setError(errMsg(e));
     } finally {
@@ -224,7 +257,7 @@ export default function AdminAiTracePage() {
         deleteAll: true
       });
       setNotice(t("messages.deletedAll", { count: res.deletedCount }));
-      await loadLogs(Number(logLimit));
+      await loadLogs(Number(logLimit), logUserFilter);
     } catch (e) {
       setError(errMsg(e));
     } finally {
@@ -420,6 +453,29 @@ export default function AdminAiTracePage() {
                 </select>
               </label>
 
+              <label className="settingsField" style={{ minWidth: 280 }}>
+                <span className="settingsFieldLabel">{t("filterByUser")}</span>
+                <select
+                  className="input"
+                  value={logUserFilter}
+                  onChange={(e) => {
+                    const nextFilter = e.target.value;
+                    setLogUserFilter(nextFilter);
+                    void loadLogs(Number(logLimit), nextFilter);
+                  }}
+                >
+                  <option value="all">{t("allUsers")}</option>
+                  {hasUnassignedLogs ? (
+                    <option value="__none__">{t("unassignedUser")}</option>
+                  ) : null}
+                  {logUsers.map((user) => (
+                    <option key={user.id} value={user.id}>
+                      {user.email ? `${user.email} (${user.id})` : user.id}
+                    </option>
+                  ))}
+                </select>
+              </label>
+
               <label className="settingsField" style={{ minWidth: 200 }}>
                 <span className="settingsFieldLabel">Delete logs older than (days)</span>
                 <input
@@ -434,7 +490,7 @@ export default function AdminAiTracePage() {
             </div>
 
             <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 12 }}>
-              <button className="btn" type="button" disabled={loadingLogs} onClick={() => void loadLogs(Number(logLimit))}>
+              <button className="btn" type="button" disabled={loadingLogs} onClick={() => void loadLogs(Number(logLimit), logUserFilter)}>
                 {loadingLogs ? t("loading") : t("refreshLogs")}
               </button>
               <button className="btn" type="button" disabled={cleanupLoading} onClick={() => void cleanupOldLogs()}>
@@ -456,6 +512,8 @@ export default function AdminAiTracePage() {
                       {" · "}
                       {row.symbol ?? "-"} {row.timeframe ?? "-"} {row.marketType ?? "-"}
                       {" · "}
+                      {t("user")}: {row.userEmail ?? row.userId ?? t("unassignedUser")}
+                      {" · "}
                       {row.success ? "success" : "error"}
                       {row.fallbackUsed ? " · fallback" : ""}
                       {row.retryUsed ? ` · retry x${row.retryCount}` : ""}
@@ -464,6 +522,10 @@ export default function AdminAiTracePage() {
                       {row.latencyMs !== null ? ` · ${row.latencyMs}ms` : ""}
                     </summary>
                     <div style={{ marginTop: 8, display: "grid", gap: 8 }}>
+                      <div className="settingsMutedText">
+                        {t("user")}:{" "}
+                        <strong>{row.userEmail ?? row.userId ?? t("unassignedUser")}</strong>
+                      </div>
                       <div className="settingsMutedText">
                         {t("prompt")}: <strong>{row.promptTemplateName ?? t("systemDefault")}</strong>
                         {row.promptTemplateId ? ` (${row.promptTemplateId})` : ""}

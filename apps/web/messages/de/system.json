@@ -642,6 +642,7 @@
     "alerts": {
       "error": "Fehler",
       "actionFailed": "Aktion fehlgeschlagen",
+      "actionSuccess": "Aktion erfolgreich",
       "warning": "Warnung"
     },
     "prefill": {
@@ -676,7 +677,8 @@
       "suggested": "Vorgeschlagen",
       "cancelAll": "Alle stornieren",
       "cancel": "Stornieren",
-      "confirm": "Bestätigen"
+      "confirm": "Bestätigen",
+      "submitting": "Sende..."
     },
     "fields": {
       "exchangeAccount": "Exchange-Konto",
@@ -813,7 +815,9 @@
       "limitRequiresPrice": "Limit-Orders benötigen einen gültigen Preis.",
       "takeProfitGtZero": "Take Profit muss größer als 0 sein.",
       "stopLossGtZero": "Stop Loss muss größer als 0 sein.",
-      "noChanges": "Keine Änderungen zum Speichern."
+      "noChanges": "Keine Änderungen zum Speichern.",
+      "orderSubmitted": "Order akzeptiert (ID: {orderId}).",
+      "orderSubmittedRefreshWarning": "Order wurde akzeptiert, aber die Live-Ansicht konnte nicht vollständig aktualisiert werden ({details})."
     },
     "misc": {
       "na": "k. A.",
