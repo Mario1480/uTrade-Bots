@@ -3,6 +3,7 @@ import test from "node:test";
 import type { ActiveFuturesBot, BotTradeState, PredictionGateState } from "./db.js";
 import {
   buildPredictionHash,
+  computePredictionCopierCandidateNotionalUsd,
   evaluatePredictionCopierDecision,
   inferExternalCloseOutcome,
   readPredictionCopierConfig,
@@ -212,6 +213,34 @@ test("base leverage remains effective even when legacy risk.maxLeverage is prese
   const cfg = readPredictionCopierConfig(bot);
   assert.equal(cfg.risk.maxOpenPositions, 3);
   assert.equal(resolvePredictionCopierLeverage(bot.leverage), 10);
+});
+
+test("candidate notional scales equity sizing with leverage", () => {
+  const candidate = computePredictionCopierCandidateNotionalUsd({
+    config: makeConfig({
+      positionSizing: {
+        type: "equity_pct",
+        value: 100
+      }
+    }),
+    accountEquity: 10_000,
+    leverage: 7.5
+  });
+  assert.equal(candidate, 70_000);
+});
+
+test("candidate notional uses leverage floor of 1", () => {
+  const candidate = computePredictionCopierCandidateNotionalUsd({
+    config: makeConfig({
+      positionSizing: {
+        type: "fixed_usd",
+        value: 250
+      }
+    }),
+    accountEquity: 10_000,
+    leverage: 0
+  });
+  assert.equal(candidate, 250);
 });
 
 test("buildPredictionHash is deterministic", () => {

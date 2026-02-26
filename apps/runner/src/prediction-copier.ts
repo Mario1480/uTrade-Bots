@@ -506,6 +506,17 @@ function computeSizingNotionalUsd(config: PredictionCopierConfig, accountEquity:
   return riskUsd;
 }
 
+export function computePredictionCopierCandidateNotionalUsd(params: {
+  config: PredictionCopierConfig;
+  accountEquity: number;
+  leverage: number;
+}): number {
+  const baseNotionalUsd = computeSizingNotionalUsd(params.config, params.accountEquity);
+  if (!Number.isFinite(baseNotionalUsd) || baseNotionalUsd <= 0) return 0;
+  const effectiveLeverage = resolvePredictionCopierLeverage(params.leverage);
+  return Number((baseNotionalUsd * effectiveLeverage).toFixed(8));
+}
+
 function toCanonicalPositionSide(raw: string | null | undefined): PredictionCopierSide {
   return String(raw ?? "").toLowerCase().includes("long") ? "long" : "short";
 }
@@ -951,7 +962,12 @@ export async function runPredictionCopierTick(
     markPrice = parseTickerPrice(ticker);
   }
 
-  const desiredNotionalUsd = computeSizingNotionalUsd(config, Number(accountState.equity ?? 0));
+  const leverage = resolvePredictionCopierLeverage(bot.leverage);
+  const desiredNotionalUsd = computePredictionCopierCandidateNotionalUsd({
+    config,
+    accountEquity: Number(accountState.equity ?? 0),
+    leverage
+  });
   const candidateNotionalUsd = Number.isFinite(desiredNotionalUsd) && desiredNotionalUsd > 0
     ? desiredNotionalUsd
     : null;
@@ -1267,7 +1283,6 @@ export async function runPredictionCopierTick(
     };
   }
 
-  const leverage = resolvePredictionCopierLeverage(bot.leverage);
   if (executionExchange !== "paper") {
     await adapter.setLeverage(symbol, leverage, bot.marginMode);
   }
