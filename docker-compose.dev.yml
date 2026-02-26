@@ -96,6 +96,7 @@ services:
         max-file: "5"
     environment:
       PY_STRATEGY_AUTH_TOKEN: ${PY_STRATEGY_AUTH_TOKEN:-dev-local-token}
+      PY_TA_BACKEND: ${PY_TA_BACKEND:-auto}
     ports:
       - "9000:9000"
     healthcheck:

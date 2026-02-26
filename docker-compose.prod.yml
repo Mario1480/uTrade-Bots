@@ -100,6 +100,7 @@ services:
       - .env.prod
     environment:
       PY_STRATEGY_AUTH_TOKEN: ${PY_STRATEGY_AUTH_TOKEN}
+      PY_TA_BACKEND: ${PY_TA_BACKEND:-auto}
     ports:
       - "9000:9000"
     healthcheck:
