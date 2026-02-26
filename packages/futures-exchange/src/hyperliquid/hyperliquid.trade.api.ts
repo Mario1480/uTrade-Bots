@@ -314,14 +314,17 @@ export class HyperliquidTradeApi {
   }): Promise<unknown> {
     this.assertTradingReady();
 
-    const orderId = Number(params.orderId);
-    if (!Number.isFinite(orderId) || orderId <= 0) {
-      throw new Error(`hyperliquid_invalid_order_id:${String(params.orderId ?? "")}`);
+    const rawOrderId = String(params.orderId ?? "").trim();
+    if (!rawOrderId) throw new Error("hyperliquid_order_id_required");
+
+    const numericOrderId = Number(rawOrderId);
+    if (!Number.isFinite(numericOrderId) || numericOrderId <= 0) {
+      return this.sdk.exchange.cancelOrderByCloid(params.symbol, rawOrderId);
     }
 
     return this.sdk.exchange.cancelOrder({
       coin: params.symbol,
-      o: Math.trunc(orderId)
+      o: Math.trunc(numericOrderId)
     });
   }
 

@@ -11,6 +11,7 @@ from strategies import (
     regime_gate,
     signal_filter,
     smart_money_concept,
+    ta_trend_vol_gate_v2,
     trend_vol_gate,
     vmc_cipher_gate,
     vmc_divergence_reversal,
@@ -122,6 +123,39 @@ def register_strategies() -> None:
             },
         },
         handler=trend_vol_gate.run,
+    )
+
+    registry.register(
+        "ta_trend_vol_gate_v2",
+        name="TA Trend+Vol Gate v2",
+        version="1.0.0",
+        default_config={
+            "allowedStates": ["trend_up", "trend_down"],
+            "minRegimeConf": 50,
+            "minAdx": 18,
+            "maxAtrPct": 2.0,
+            "rsiLongMin": 52,
+            "rsiShortMax": 48,
+            "requireEmaAlignment": True,
+            "minPassScore": 65,
+            "allowNeutralSignal": False,
+        },
+        ui_schema={
+            "title": "TA Trend+Vol Gate v2",
+            "description": "Trend/volume gate with TA backend (TA-Lib or pandas-ta) on OHLCV series.",
+            "fields": {
+                "allowedStates": {"type": "multiselect", "options": ["trend_up", "trend_down", "range", "transition", "unknown"]},
+                "minRegimeConf": {"type": "number", "min": 0, "max": 100, "step": 1},
+                "minAdx": {"type": "number", "min": 0, "max": 100, "step": 1},
+                "maxAtrPct": {"type": "number", "min": 0, "max": 20, "step": 0.1},
+                "rsiLongMin": {"type": "number", "min": 0, "max": 100, "step": 1},
+                "rsiShortMax": {"type": "number", "min": 0, "max": 100, "step": 1},
+                "requireEmaAlignment": {"type": "boolean"},
+                "minPassScore": {"type": "number", "min": 0, "max": 100, "step": 1},
+                "allowNeutralSignal": {"type": "boolean"},
+            },
+        },
+        handler=ta_trend_vol_gate_v2.run,
     )
 
     registry.register(

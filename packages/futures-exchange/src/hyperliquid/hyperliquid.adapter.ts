@@ -83,6 +83,10 @@ function parseOrderId(row: { orderId?: string; clientOid?: string }): string | n
   return clientOid || null;
 }
 
+function createClientOid(): string {
+  return `utrade-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+}
+
 export class HyperliquidFuturesAdapter implements FuturesExchange {
   readonly sdk: Hyperliquid;
   readonly marketApi: HyperliquidMarketApi;
@@ -227,6 +231,7 @@ export class HyperliquidFuturesAdapter implements FuturesExchange {
 
   async placeOrder(req: PlaceOrderRequest): Promise<{ orderId: string }> {
     const contract = await this.requireTradeableContract(req.symbol);
+    const clientOid = createClientOid();
 
     const qty = normalizeQty(Number(req.qty), contract.stepSize);
     if (!Number.isFinite(qty) || qty <= 0) {
@@ -242,6 +247,7 @@ export class HyperliquidFuturesAdapter implements FuturesExchange {
       orderType: req.type,
       size: String(qty),
       price: req.price !== undefined ? String(req.price) : undefined,
+      clientOid,
       presetStopSurplusPrice:
         req.takeProfitPrice !== undefined ? String(req.takeProfitPrice) : undefined,
       presetStopLossPrice:

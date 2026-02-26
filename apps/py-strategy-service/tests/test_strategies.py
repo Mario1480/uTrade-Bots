@@ -9,7 +9,7 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from models import StrategyRunRequest
-from strategies import regime_gate, signal_filter
+from strategies import regime_gate, signal_filter, ta_trend_vol_gate_v2
 
 
 class StrategyTests(unittest.TestCase):
@@ -44,6 +44,26 @@ class StrategyTests(unittest.TestCase):
         )
         result = signal_filter.run(payload).model_dump()
         # pydantic validator normalizes numeric output, no nan on score
+        self.assertIsInstance(result["score"], float)
+
+    def test_ta_trend_vol_gate_v2_no_nan(self) -> None:
+        payload = StrategyRunRequest(
+            strategyType="ta_trend_vol_gate_v2",
+            featureSnapshot={
+                "historyContext": {
+                    "reg": {"state": "trend_up", "conf": 80},
+                    "ema": {"ema20": 110.0, "ema50": 100.0},
+                },
+                "indicators": {
+                    "rsi_14": 58.0,
+                    "atr_pct": 1.1,
+                    "adx": {"adx_14": 24.0},
+                },
+            },
+            context={"signal": "up"},
+            config={},
+        )
+        result = ta_trend_vol_gate_v2.run(payload).model_dump()
         self.assertIsInstance(result["score"], float)
 
 

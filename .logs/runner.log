@@ -1,0 +1,9 @@
+
+> dev:runner
+> npm -w apps/runner run dev
+
+
+> runner@0.0.1 dev
+> tsx src/index.ts
+
+{"level":30,"time":1772017669816,"pid":79304,"hostname":"MacBook-Pro.fritz.box","port":8091,"mode":"poll","msg":"runner health server listening"}

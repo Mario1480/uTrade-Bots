@@ -99,6 +99,56 @@ def normalize_signal(value: Any) -> str:
     return "neutral"
 
 
+def normalize_ohlcv_series(value: Any) -> dict[str, Any] | None:
+    raw = as_record(value)
+    if not raw:
+        return None
+
+    bars_raw = raw.get("bars")
+    if not isinstance(bars_raw, list):
+        return None
+
+    fmt_raw = raw.get("format")
+    fmt = ["ts", "open", "high", "low", "close", "volume"]
+    if isinstance(fmt_raw, list) and len(fmt_raw) >= 6 and all(isinstance(item, str) for item in fmt_raw):
+        fmt = [str(item) for item in fmt_raw[:6]]
+
+    bars: list[list[Any]] = []
+    for item in bars_raw:
+        if isinstance(item, list) and len(item) >= 6:
+            row = [item[idx] for idx in range(6)]
+            open_v = to_float(row[1])
+            high_v = to_float(row[2])
+            low_v = to_float(row[3])
+            close_v = to_float(row[4])
+            volume_v = to_float(row[5])
+            if None in {open_v, high_v, low_v, close_v, volume_v}:
+                continue
+            bars.append([row[0], open_v, high_v, low_v, close_v, volume_v])
+            continue
+
+        if isinstance(item, dict):
+            ts = item.get("ts")
+            open_v = to_float(item.get("open"))
+            high_v = to_float(item.get("high"))
+            low_v = to_float(item.get("low"))
+            close_v = to_float(item.get("close"))
+            volume_v = to_float(item.get("volume"))
+            if None in {open_v, high_v, low_v, close_v, volume_v}:
+                continue
+            bars.append([ts, open_v, high_v, low_v, close_v, volume_v])
+
+    if len(bars) < 5:
+        return None
+
+    timeframe = str(raw.get("timeframe") or "").strip() or None
+    return {
+        "timeframe": timeframe,
+        "format": fmt,
+        "bars": bars,
+    }
+
+
 def build_sql(scope: QueryScope) -> tuple[str, dict[str, Any]]:
     clauses = ['"outcomePnlPct" IS NOT NULL']
     params: dict[str, Any] = {}
@@ -162,6 +212,7 @@ def extract_row(row: dict[str, Any]) -> dict[str, Any]:
     vol = as_record(history.get("vol"))
     risk = as_record(features.get("riskFlags"))
     local_prediction = as_record(features.get("localPrediction"))
+    ohlcv_series = normalize_ohlcv_series(features.get("ohlcvSeries"))
 
     outcome_pnl_pct = to_float(row.get("outcomePnlPct"))
 
@@ -185,6 +236,10 @@ def extract_row(row: dict[str, Any]) -> dict[str, Any]:
         "vol_z": to_float(deep_get(vol, ["z"])),
         "vol_rv": to_float(deep_get(vol, ["rv"])),
         "risk_data_gap": deep_get(risk, ["dataGap"], False) is True,
+        "ohlcv_timeframe": ohlcv_series.get("timeframe") if isinstance(ohlcv_series, dict) else None,
+        "ohlcv_bars_count": len(ohlcv_series.get("bars", [])) if isinstance(ohlcv_series, dict) else 0,
+        "ohlcv_series_json": json.dumps(ohlcv_series, separators=(",", ":")) if isinstance(ohlcv_series, dict) else None,
+        "ohlcv_missing": not isinstance(ohlcv_series, dict),
     }
 
 

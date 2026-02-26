@@ -638,6 +638,37 @@ const FALLBACK_PYTHON_STRATEGIES: PythonRegistryItem[] = [
     }
   },
   {
+    type: "ta_trend_vol_gate_v2",
+    name: "TA Trend+Vol Gate v2",
+    version: "1.0.0",
+    defaultConfig: {
+      allowedStates: ["trend_up", "trend_down"],
+      minRegimeConf: 50,
+      minAdx: 18,
+      maxAtrPct: 2.0,
+      rsiLongMin: 52,
+      rsiShortMax: 48,
+      requireEmaAlignment: true,
+      minPassScore: 65,
+      allowNeutralSignal: false
+    },
+    uiSchema: {
+      title: "TA Trend+Vol Gate v2",
+      description: "Trend/volume gate with TA backend (TA-Lib or pandas-ta) on OHLCV series.",
+      fields: {
+        allowedStates: { type: "multiselect", options: ["trend_up", "trend_down", "range", "transition", "unknown"] },
+        minRegimeConf: { type: "number", min: 0, max: 100, step: 1 },
+        minAdx: { type: "number", min: 0, max: 100, step: 1 },
+        maxAtrPct: { type: "number", min: 0, max: 20, step: 0.1 },
+        rsiLongMin: { type: "number", min: 0, max: 100, step: 1 },
+        rsiShortMax: { type: "number", min: 0, max: 100, step: 1 },
+        requireEmaAlignment: { type: "boolean" },
+        minPassScore: { type: "number", min: 0, max: 100, step: 1 },
+        allowNeutralSignal: { type: "boolean" }
+      }
+    }
+  },
+  {
     type: "smart_money_concept",
     name: "Smart Money Concept",
     version: "1.0.0",

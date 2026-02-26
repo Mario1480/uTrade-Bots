@@ -1,0 +1,68 @@
+
+> dev:api
+> npm -w apps/api run dev
+
+
+> api@0.0.1 dev
+> tsx watch src/index.ts
+
+[api] listening on :::4000
+[predictions:outcome] cycle group failed {
+  key: 'cmlfbcm1l0000t270t1t2ef6r:cmlfbcm1u0004t270yy0z05du',
+  reason: 'Error: exchange_not_supported:mexc'
+}
+[predictions:outcome] cycle group failed {
+  key: 'cmlfbdny70000t26i5uts3cgj:cmlfbdnyf0004t26i2zlb3idy',
+  reason: 'Error: exchange_not_supported:mexc'
+}
+[predictions:outcome] cycle group failed {
+  key: 'cmlfc4n3p0005t26iz02glgvh:cmlfc4n420009t26izh8dr8iz',
+  reason: 'Error: exchange_not_supported:mexc'
+}
+[predictions:outcome] cycle group failed {
+  key: 'cmlfc4xzw000at26iw6qbl7ad:cmlfc4y08000et26iy098xm6b',
+  reason: 'Error: exchange_not_supported:mexc'
+}
+[predictions:outcome] cycle group failed {
+  key: 'cmlfc5kw50000t26i2aeoujqs:cmlfc5kwi0004t26i29g6paas',
+  reason: 'Error: exchange_not_supported:mexc'
+}
+[predictions:evaluator] cycle group failed {
+  key: 'cmlfbcm1l0000t270t1t2ef6r:cmlfbcm1u0004t270yy0z05du',
+  reason: 'Error: exchange_not_supported:mexc'
+}
+[predictions:evaluator] cycle group failed {
+  key: 'cmlfbdny70000t26i5uts3cgj:cmlfbdnyf0004t26i2zlb3idy',
+  reason: 'Error: exchange_not_supported:mexc'
+}
+[predictions:evaluator] cycle group failed {
+  key: 'cmlfc4n3p0005t26iz02glgvh:cmlfc4n420009t26izh8dr8iz',
+  reason: 'Error: exchange_not_supported:mexc'
+}
+[predictions:evaluator] cycle group failed {
+  key: 'cmlfc4xzw000at26iw6qbl7ad:cmlfc4y08000et26iy098xm6b',
+  reason: 'Error: exchange_not_supported:mexc'
+}
+[predictions:evaluator] cycle group failed {
+  key: 'cmlfc5kw50000t26i2aeoujqs:cmlfc5kwi0004t26i29g6paas',
+  reason: 'Error: exchange_not_supported:mexc'
+}
+{"level":"info","msg":"vwap_session_computed","time":1772017671252,"exchange":"paper","symbol":"BTCUSDT","marketType":"perp","timeframe":"4h","vwap_cache_hit":false,"vwap_compute_ms":0,"candle_bucketed":false,"bucket_mismatch_count":0,"session_start_utc":"2026-02-25T00:00:00.000Z","vwap_null_reason":null}
+{"level":"info","msg":"ai_quality_gate_decision","time":1772017671366,"gate_allow":false,"gate_priority":"high","gate_reasons":["confidence_jump","regime_state_changed","high_importance_event_recent","near_key_level_setup","neutral_low_confidence"],"gate_decision_hash":"be00056eb9ddff2685ba1e5c29db81b059347aec404ec0f2e528db0ba184e7ba","gate_timeframe":"4h","gate_allow_count":0,"gate_block_count":1,"ai_calls_saved":1}
+[ai_quality_gate_blocked_refresh] {
+  gate_allow: false,
+  gate_reasons: [
+    'confidence_jump',
+    'regime_state_changed',
+    'high_importance_event_recent',
+    'near_key_level_setup',
+    'neutral_low_confidence'
+  ],
+  gate_priority: 'high',
+  stateId: 'ba328ae7-6718-4d35-806c-d204cf5ab9f3',
+  symbol: 'BTCUSDT',
+  timeframe: '4h',
+  ai_calls_saved: 1
+}
+{"level":"info","msg":"economic_calendar_refresh_done","time":1772017671554,"fetched_count":331,"upserted_count":331,"currencies":"USD,EUR,GBP,JPY,CHF,CAD,AUD,NZD,CNY","from":"2026-02-25","to":"2026-02-28"}
+{"level":"info","msg":"economic_calendar_refresh_cycle","time":1772017671554,"reason":"startup","fetched_count":331,"upserted_count":331,"window_from":"2026-02-25","window_to":"2026-02-28"}

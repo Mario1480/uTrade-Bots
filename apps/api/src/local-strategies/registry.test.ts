@@ -69,6 +69,7 @@ test("python registry exposes fallback catalog when sidecar is disabled", async 
     const registry = await listPythonStrategyRegistry();
     const types = registry.items.map((item) => item.type).sort();
     assert.equal(registry.enabled, false);
+    assert.equal(types.includes("ta_trend_vol_gate_v2"), true);
     assert.equal(types.includes("vmc_cipher_gate"), true);
     assert.equal(types.includes("vmc_divergence_reversal"), true);
   } finally {
@@ -120,6 +121,7 @@ test("python registry merges fallback catalog when sidecar list is partial", asy
     const types = registry.items.map((item) => item.type);
     assert.equal(registry.enabled, true);
     assert.equal(types.includes("regime_gate"), true);
+    assert.equal(types.includes("ta_trend_vol_gate_v2"), true);
     assert.equal(types.includes("vmc_cipher_gate"), true);
     assert.equal(types.includes("vmc_divergence_reversal"), true);
   } finally {

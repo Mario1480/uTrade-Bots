@@ -1,6 +1,8 @@
 numpy==2.2.2
 pandas==2.2.3
 vectorbt==0.28.1
+backtrader==1.9.78.123
+pandas-ta==0.3.14b0
 sqlalchemy==2.0.38
 psycopg[binary]==3.2.13
 requests==2.32.3
