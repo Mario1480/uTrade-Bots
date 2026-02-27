@@ -46,36 +46,40 @@
     "deleted": "{name} gelöscht"
   },
   "subscription": {
-    "title": "Lizenzverwaltung",
-    "confirmRemove": "Gespeicherten Lizenzschlüssel entfernen? Lizenzierte Features bleiben deaktiviert, bis ein neuer Schlüssel gespeichert wird.",
+    "title": "Abo & Abrechnung",
     "messages": {
-      "savedVerified": "Gespeichert und verifiziert.",
-      "removed": "Lizenz entfernt."
+      "noData": "Keine Abo-Daten verfügbar."
     },
     "status": {
-      "title": "Lizenzstatus",
-      "status": "Status",
-      "unknown": "UNBEKANNT",
-      "notConfigured": "NICHT KONFIGURIERT",
+      "plan": "Plan",
+      "state": "Status",
       "validUntil": "Gültig bis",
-      "checkedAt": "Geprüft am",
-      "source": "Quelle",
-      "error": "Fehler",
-      "limits": "Limits",
-      "usage": "Nutzung",
-      "features": "Features",
-      "overrides": "Overrides",
-      "bots": "Bots"
+      "botLimits": "Bot-Limits",
+      "exchanges": "Erlaubte Exchanges",
+      "aiBalance": "AI-Token-Guthaben",
+      "aiMonthlyIncluded": "Monatlich inkludierte Tokens",
+      "aiUsedLifetime": "Verbrauchte Tokens (gesamt)"
     },
-    "config": {
-      "title": "Lizenzkonfiguration",
-      "description": "Lizenzänderungen werden vom Runner im nächsten Verifizierungszyklus automatisch übernommen.",
-      "licenseKey": "Lizenzschlüssel",
-      "currentKeyPlaceholder": "Aktuell: {key}",
-      "instanceId": "Die Instanz-ID wird automatisch aus deiner Workspace-ID gesetzt:",
-      "saveVerify": "Speichern & verifizieren",
-      "refreshStatus": "Status aktualisieren",
-      "removeLicense": "Lizenz entfernen"
+    "packages": {
+      "title": "Pakete",
+      "description": "Plan kaufen/verlängern und AI-Token-Topups buchen.",
+      "kindPlan": "Plan-Paket",
+      "kindTopup": "AI-Topup-Paket",
+      "price": "Preis",
+      "planDetails": "{months} Monat(e), laufende Bots: {running}, Bots gesamt: {total}, inkludierte AI-Tokens: {tokens}",
+      "topupDetails": "Fügt {tokens} AI-Tokens hinzu",
+      "buy": "Jetzt kaufen"
+    },
+    "orders": {
+      "title": "Bestellhistorie",
+      "refresh": "Aktualisieren",
+      "createdAt": "Erstellt am",
+      "package": "Paket",
+      "amount": "Betrag",
+      "status": "Status",
+      "action": "Aktion",
+      "payNow": "Jetzt bezahlen",
+      "empty": "Noch keine Bestellungen."
     }
   },
   "users": {

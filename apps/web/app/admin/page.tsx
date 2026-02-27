@@ -63,6 +63,11 @@ const ADMIN_LINKS: AdminLinkItem[] = [
     category: "Integrations"
   },
   {
+    href: "/admin/billing",
+    i18nKey: "billing",
+    category: "Integrations"
+  },
+  {
     href: "/admin/indicator-settings",
     i18nKey: "indicatorSettings",
     category: "Strategy"

@@ -3,7 +3,9 @@
     "backToAdmin": "Zurück zu Admin",
     "backToSettings": "Zurück zu Einstellungen",
     "backToDashboard": "Zurück zum Dashboard",
-    "openSection": "{title} öffnen"
+    "openSection": "{title} öffnen",
+    "loading": "Lädt...",
+    "saving": "Speichern..."
   },
   "landing": {
     "title": "Admin-Backend",
@@ -775,6 +777,128 @@
     "aiTrace": {
       "title": "AI-Trace-Logs",
       "description": "AI-Requests/Responses mit On/Off-Schalter und Cleanup prüfen."
+    },
+    "billing": {
+      "title": "Billing",
+      "description": "Abo-Pakete, Preise und manuelle AI-Token-Korrekturen verwalten."
+    }
+  },
+  "billing": {
+    "title": "Billing-Pakete",
+    "description": "Konfiguriere Plan- und AI-Topup-Pakete für den CCPayments-Checkout.",
+    "featureFlags": {
+      "title": "Billing-Feature-Flags",
+      "description": "Steuert, ob Checkout, Webhook-Verarbeitung und AI-Token-Billing aktiv sind.",
+      "source": "Quelle",
+      "updatedAt": "Zuletzt aktualisiert",
+      "never": "nie",
+      "enabledValue": "Aktiv",
+      "save": "Billing-Einstellungen speichern",
+      "saved": "Billing-Einstellungen gespeichert.",
+      "billingEnabled": {
+        "label": "Subscription-Checkout aktiv",
+        "hint": "Wenn deaktiviert, können User kein Abo/Topup kaufen oder verlängern."
+      },
+      "billingWebhookEnabled": {
+        "label": "CCPayments-Webhook aktiv",
+        "hint": "Wenn deaktiviert, werden eingehende CCPayments-Webhooks ignoriert."
+      },
+      "aiTokenBillingEnabled": {
+        "label": "AI-Token-Billing aktiv",
+        "hint": "Wenn deaktiviert, werden AI-Token-Gating und Abbuchung übersprungen."
+      }
+    },
+    "createTitle": "Paket erstellen",
+    "createHelp": "Definiere Pakettyp, Preis und Limits. Änderungen gelten für zukünftige Checkouts.",
+    "create": "Paket erstellen",
+    "listTitle": "Vorhandene Pakete",
+    "save": "Paket speichern",
+    "delete": "Paket löschen",
+    "confirmDelete": "Dieses Paket löschen?",
+    "refresh": "Aktualisieren",
+    "tokenAdjustTitle": "Manuelle AI-Token-Anpassung",
+    "tokenAdjustHelp": "Passe das Token-Wallet eines Users manuell an (z. B. für Refunds oder Korrekturen).",
+    "userId": "User-ID",
+    "userIdHint": "Interne ID des Ziel-Users.",
+    "userIdPlaceholder": "z. B. clx123...",
+    "deltaTokens": "Token-Differenz (+/-)",
+    "deltaTokensHint": "Positiv erhöht Tokens, negativ zieht Tokens ab.",
+    "note": "Notiz (optional)",
+    "noteHint": "Wird zur Nachvollziehbarkeit in den Ledger-Metadaten gespeichert.",
+    "notePlaceholder": "Grund für diese manuelle Anpassung",
+    "adjust": "Anpassung anwenden",
+    "adjusted": "Token-Guthaben angepasst.",
+    "saved": "Paket gespeichert.",
+    "deleted": "Paket gelöscht.",
+    "fields": {
+      "code": {
+        "label": "Code",
+        "hint": "Eindeutiger interner Schlüssel für API und Checkout-Flow."
+      },
+      "name": {
+        "label": "Anzeigename",
+        "hint": "Name, der im Subscription-UI angezeigt wird.",
+        "placeholder": "Pro Monthly"
+      },
+      "description": {
+        "label": "Beschreibung",
+        "hint": "Kurze Paketbeschreibung, sichtbar im UI.",
+        "placeholder": "Monatliches Pro-Abonnement"
+      },
+      "kind": {
+        "label": "Pakettyp",
+        "hint": "Plan = Abo-Paket, AI Topup = reiner Tokenkauf.",
+        "plan": "Plan",
+        "aiTopup": "AI Topup"
+      },
+      "plan": {
+        "label": "Ziel-Plan",
+        "hint": "Für Plan-Pakete setzen. Bei AI Topup auf 'Keine' lassen.",
+        "none": "Keine",
+        "free": "Free",
+        "pro": "Pro"
+      },
+      "sortOrder": {
+        "label": "Sortierung",
+        "hint": "Niedrigere Werte erscheinen zuerst in Paketlisten."
+      },
+      "currency": {
+        "label": "Währung",
+        "hint": "Fiat-Anzeigewährung (normalerweise USD)."
+      },
+      "priceCents": {
+        "label": "Preis (Cents)",
+        "hint": "Preis in kleinster Fiat-Einheit. Beispiel: 2900 = 29,00 USD."
+      },
+      "billingMonths": {
+        "label": "Laufzeit (Monate)",
+        "hint": "Wie viele Monate pro erfolgreicher Zahlung gutgeschrieben werden."
+      },
+      "maxRunningBots": {
+        "label": "Max. laufende Bots",
+        "hint": "Limit für gleichzeitig laufende Bots in diesem Plan."
+      },
+      "maxBotsTotal": {
+        "label": "Max. Bots gesamt",
+        "hint": "Maximal erlaubte Gesamtzahl an Bots für diesen Plan."
+      },
+      "allowedExchanges": {
+        "label": "Erlaubte Exchanges",
+        "hint": "Kommagetrennte Liste. Mit * sind alle Exchanges erlaubt."
+      },
+      "monthlyAiTokens": {
+        "label": "Monatliche AI-Tokens",
+        "hint": "Token-Gutschrift bei erfolgreicher Plan-Zahlung."
+      },
+      "topupAiTokens": {
+        "label": "Topup AI-Tokens",
+        "hint": "Token-Menge, die bei AI-Topup gutgeschrieben wird."
+      },
+      "isActive": {
+        "label": "Verfügbarkeit",
+        "hint": "Inaktive Pakete bleiben in der DB, sind aber nicht kaufbar.",
+        "value": "Aktiv"
+      }
     }
   }
 }

@@ -201,13 +201,19 @@ const EXPLAINER_CACHE_TTL_1D_SEC = readEnvNumber(
 function withTraceMetaPayload(
   userPayload: Record<string, unknown>,
   retryUsed: boolean,
-  retryCount: number
+  retryCount: number,
+  totalTokens: number | null
 ): Record<string, unknown> {
+  const normalizedTokens =
+    Number.isFinite(Number(totalTokens)) && totalTokens !== null
+      ? Math.max(0, Math.trunc(Number(totalTokens)))
+      : null;
   return {
     ...userPayload,
     __trace: {
       retryUsed,
-      retryCount: Math.max(0, Math.trunc(retryCount))
+      retryCount: Math.max(0, Math.trunc(retryCount)),
+      totalTokens: normalizedTokens
     }
   };
 }
@@ -1247,7 +1253,7 @@ export async function generatePredictionExplanation(
     recordAiPayloadBudgetTelemetry(metrics);
     await recordAiTraceLog({
       ...traceBase,
-      userPayload: withTraceMetaPayload(userPayload, false, 0),
+      userPayload: withTraceMetaPayload(userPayload, false, 0, null),
       rawResponse: null,
       parsedResponse: null,
       success: false,
@@ -1279,6 +1285,7 @@ export async function generatePredictionExplanation(
       const startedAt = Date.now();
       let raw: string | null = null;
       let parsedJson: unknown = null;
+      let lastUsageTotalTokens: number | null = null;
       let totalCalls = 0;
       const modelCandidates = aiFallbackModel ? [aiModel, aiFallbackModel] : [aiModel];
       try {
@@ -1305,7 +1312,17 @@ export async function generatePredictionExplanation(
                 model: currentModel,
                 temperature: 0,
                 timeoutMs: EXPLAINER_TIMEOUT_MS,
-                maxTokens: attempt === 1 ? EXPLAINER_MAX_TOKENS : EXPLAINER_RETRY_MAX_TOKENS
+                maxTokens: attempt === 1 ? EXPLAINER_MAX_TOKENS : EXPLAINER_RETRY_MAX_TOKENS,
+                billingUserId: deps.traceUserId ?? null,
+                billingScope: "prediction_explainer",
+                onUsage: (usage) => {
+                  const derived =
+                    usage.totalTokens
+                    ?? ((usage.promptTokens ?? 0) + (usage.completionTokens ?? 0));
+                  if (Number.isFinite(derived)) {
+                    lastUsageTotalTokens = Math.max(0, Math.trunc(derived));
+                  }
+                }
               });
               parsedJson = parseAiResponseJson(raw);
               validated = validateExplainerOutput(
@@ -1328,7 +1345,12 @@ export async function generatePredictionExplanation(
             await recordAiTraceLog({
               ...traceBase,
               model: currentModel,
-              userPayload: withTraceMetaPayload(userPayload, retryUsed, retryCount),
+              userPayload: withTraceMetaPayload(
+                userPayload,
+                retryUsed,
+                retryCount,
+                lastUsageTotalTokens
+              ),
               rawResponse: raw ?? null,
               parsedResponse: validated,
               success: true,
@@ -1363,7 +1385,12 @@ export async function generatePredictionExplanation(
         });
         await recordAiTraceLog({
           ...traceBase,
-          userPayload: withTraceMetaPayload(userPayload, retryUsed, retryCount),
+          userPayload: withTraceMetaPayload(
+            userPayload,
+            retryUsed,
+            retryCount,
+            lastUsageTotalTokens
+          ),
           rawResponse: raw,
           parsedResponse: parsedJson,
           success: false,

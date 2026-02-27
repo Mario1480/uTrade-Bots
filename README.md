@@ -131,10 +131,20 @@ Prediction Indicator Pack v1 (backend, deterministic from OHLCV):
   - `VWAP_SESSION_CACHE_TTL_MS` (default `120000`)
   - `VWAP_SESSION_GAP_THRESHOLD` (default `0.03`)
 
-License:
-- `LICENSE_ENFORCEMENT` (`on`/`off`)
-- `LICENSE_STUB_ENABLED`
-- `LICENSE_SERVER_URL`
+Billing / Subscription (CCPayments):
+- Billing feature flags are managed in Admin Backend (`/admin/billing`)
+- `CCPAY_APP_ID`
+- `CCPAY_APP_SECRET`
+- `CCPAY_BASE_URL`
+- `CCPAY_PRICE_FIAT_ID`
+- `WEB_BASE_URL`
+- `BILLING_PRO_MONTHLY_PRICE_CENTS`
+- `BILLING_PRO_MONTHLY_AI_TOKENS`
+- `BILLING_AI_TOPUP_PRICE_CENTS`
+- `BILLING_AI_TOPUP_TOKENS`
+
+License Gate (internal, subscription-backed):
+- `LICENSE_ENFORCEMENT`
 
 Telegram:
 - `TELEGRAM_BOT_TOKEN`

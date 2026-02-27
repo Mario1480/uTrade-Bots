@@ -29,10 +29,29 @@ import {
   isStrategyIdAllowed,
   isStrategyKindAllowed,
   resolveStrategyEntitlementsForWorkspace,
-  getStubEntitlements,
-  isLicenseEnforcementEnabled,
-  isLicenseStubEnabled
+  isLicenseEnforcementEnabled
 } from "./license.js";
+import {
+  adjustAiTokenBalanceByAdmin,
+  applyPaidOrder,
+  createBillingCheckout,
+  deleteBillingPackage,
+  downgradeExpiredSubscriptions,
+  ensureBillingDefaults,
+  getBillingFeatureFlagsSettings,
+  isBillingEnabled,
+  isBillingWebhookEnabled,
+  listBillingPackages,
+  listSubscriptionOrders,
+  markOrderFailed,
+  recordWebhookEvent,
+  resolveEffectivePlanForUser,
+  syncPrimaryWorkspaceEntitlementsForUser,
+  updateBillingFeatureFlags,
+  upsertBillingPackage,
+  getSubscriptionSummary
+} from "./billing/service.js";
+import { verifyCcpayWebhook } from "./billing/ccpayment.js";
 import {
   closeOrchestration,
   cancelBotRun,
@@ -307,7 +326,11 @@ app.use(
   })
 );
 app.use(cookieParser());
-app.use(express.json());
+app.use(express.json({
+  verify: (req, _res, buf) => {
+    (req as any).rawBody = buf.toString("utf8");
+  }
+}));
 
 const registerSchema = z.object({
   email: z.string().trim().email(),
@@ -1084,6 +1107,44 @@ const settingsRiskUpdateSchema = z.object({
   (value) => Object.values(value).some((entry) => entry !== undefined),
   { message: "Provide at least one field to update." }
 );
+
+const subscriptionCheckoutSchema = z.object({
+  packageId: z.string().trim().min(1)
+});
+
+const billingPackageIdParamSchema = z.object({
+  id: z.string().trim().min(1)
+});
+
+const adminBillingPackageSchema = z.object({
+  code: z.string().trim().min(2).max(120),
+  name: z.string().trim().min(2).max(120),
+  description: z.string().trim().max(1000).nullish(),
+  kind: z.enum(["plan", "ai_topup"]),
+  isActive: z.boolean().default(true),
+  sortOrder: z.number().int().min(0).default(0),
+  currency: z.string().trim().min(3).max(8).default("USD"),
+  priceCents: z.number().int().min(0),
+  billingMonths: z.number().int().min(1).max(36).default(1),
+  plan: z.enum(["free", "pro"]).nullable().default(null),
+  maxRunningBots: z.number().int().min(0).nullable().default(null),
+  maxBotsTotal: z.number().int().min(0).nullable().default(null),
+  allowedExchanges: z.array(z.string().trim().min(1)).default(["*"]),
+  monthlyAiTokens: z.number().int().min(0).default(0),
+  topupAiTokens: z.number().int().min(0).default(0),
+  meta: z.record(z.unknown()).nullable().optional()
+});
+
+const adminBillingAdjustTokensSchema = z.object({
+  deltaTokens: z.number().int(),
+  note: z.string().trim().max(500).optional()
+});
+
+const adminBillingFeatureFlagsSchema = z.object({
+  billingEnabled: z.coerce.boolean(),
+  billingWebhookEnabled: z.coerce.boolean(),
+  aiTokenBillingEnabled: z.coerce.boolean()
+});
 
 const dashboardRiskAnalysisQuerySchema = z.object({
   limit: z.coerce.number().int().min(1).max(10).default(3)
@@ -2748,6 +2809,15 @@ async function ensureWorkspaceMembership(userId: string, userEmail: string) {
 
 async function resolveUserContext(user: { id: string; email: string }) {
   const member = await ensureWorkspaceMembership(user.id, user.email);
+  try {
+    const resolvedPlan = await resolveEffectivePlanForUser(user.id);
+    await syncPrimaryWorkspaceEntitlementsForUser({
+      userId: user.id,
+      effectivePlan: resolvedPlan.plan
+    });
+  } catch {
+    // billing sync is best-effort and must not block auth context resolution
+  }
   const isSuperadmin = isSuperadminEmail(user.email);
   const hasAdminAccess = isSuperadmin || (await hasAdminBackendAccess(user));
   const permissions = hasAdminAccess
@@ -8920,23 +8990,74 @@ app.get("/system/settings", (_req, res) => {
   });
 });
 
-app.get("/license/state", (_req, res) => {
+app.get("/license/state", async (_req, res) => {
+  const billingEnabled = await isBillingEnabled();
   res.json({
     enforcement: isLicenseEnforcementEnabled() ? "on" : "off",
-    stubEnabled: isLicenseStubEnabled() ? "on" : "off"
+    billingEnabled: billingEnabled ? "on" : "off"
   });
 });
 
-app.get("/license-server-stub/entitlements", (req, res) => {
-  if (!isLicenseStubEnabled()) {
-    return res.status(404).json({ error: "stub_disabled" });
+app.post("/webhooks/ccpayment", async (req, res) => {
+  if (!(await isBillingWebhookEnabled())) {
+    return res.status(404).json({ error: "billing_webhook_disabled" });
   }
 
-  const userId = typeof req.query.userId === "string" ? req.query.userId : "";
-  return res.json({
-    userId,
-    ...getStubEntitlements()
+  const rawBody = typeof (req as any).rawBody === "string"
+    ? (req as any).rawBody
+    : JSON.stringify(req.body ?? {});
+  if (!verifyCcpayWebhook(rawBody, req.headers as Record<string, string | string[] | undefined>)) {
+    return res.status(401).json({ error: "invalid_signature" });
+  }
+
+  const payload = (req.body ?? {}) as {
+    type?: string;
+    record_id?: string;
+    pay_status?: string;
+    extend?: { merchant_order_id?: string };
+    msg?: {
+      recordId?: string;
+      orderId?: string;
+      status?: string;
+    };
+  };
+
+  if (payload.type === "ActivateWebhookURL") {
+    return res.status(200).send("Success");
+  }
+
+  const recordId = String(payload.msg?.recordId ?? payload.record_id ?? "").trim();
+  const merchantOrderId = String(payload.msg?.orderId ?? payload.extend?.merchant_order_id ?? "").trim();
+  const statusRaw = String(payload.pay_status ?? payload.msg?.status ?? "").trim();
+
+  if (!recordId) {
+    return res.status(200).send("Success");
+  }
+
+  const created = await recordWebhookEvent({
+    recordId,
+    merchantOrderId,
+    payload
   });
+  if (created === "duplicate") {
+    return res.status(200).send("Success");
+  }
+
+  if (!merchantOrderId) {
+    return res.status(200).send("Success");
+  }
+
+  const normalized = statusRaw.toLowerCase();
+  if (normalized === "processing") {
+    return res.status(200).send("Success");
+  }
+  if (normalized === "success") {
+    await applyPaidOrder(merchantOrderId, statusRaw || "Success");
+    return res.status(200).send("Success");
+  }
+
+  await markOrderFailed(merchantOrderId, normalized || "failed");
+  return res.status(200).send("Success");
 });
 
 app.get("/admin/queue/metrics", requireAuth, async (_req, res) => {
@@ -8974,6 +9095,15 @@ app.post("/auth/register", async (req, res) => {
   });
 
   await ensureWorkspaceMembership(user.id, user.email);
+  try {
+    const resolvedPlan = await resolveEffectivePlanForUser(user.id);
+    await syncPrimaryWorkspaceEntitlementsForUser({
+      userId: user.id,
+      effectivePlan: resolvedPlan.plan
+    });
+  } catch {
+    // ignore billing sync issues during registration
+  }
   await createSession(res, user.id);
   return res.status(201).json({ user: toSafeUser(user) });
 });
@@ -8999,6 +9129,15 @@ app.post("/auth/login", async (req, res) => {
   if (!passwordOk) return res.status(401).json({ error: "invalid_credentials" });
 
   await ensureWorkspaceMembership(user.id, user.email);
+  try {
+    const resolvedPlan = await resolveEffectivePlanForUser(user.id);
+    await syncPrimaryWorkspaceEntitlementsForUser({
+      userId: user.id,
+      effectivePlan: resolvedPlan.plan
+    });
+  } catch {
+    // ignore billing sync issues during login
+  }
   await createSession(res, user.id);
   return res.json({ user: toSafeUser(user) });
 });
@@ -10201,6 +10340,134 @@ app.put("/admin/settings/server-info", requireAuth, async (req, res) => {
   return res.json(settings);
 });
 
+app.get("/admin/settings/billing", requireAuth, async (_req, res) => {
+  if (!(await requireSuperadmin(res))) return;
+  const settings = await getBillingFeatureFlagsSettings();
+  return res.json(settings);
+});
+
+app.put("/admin/settings/billing", requireAuth, async (req, res) => {
+  if (!(await requireSuperadmin(res))) return;
+  const parsed = adminBillingFeatureFlagsSchema.safeParse(req.body ?? {});
+  if (!parsed.success) {
+    return res.status(400).json({ error: "invalid_payload", details: parsed.error.flatten() });
+  }
+  const saved = await updateBillingFeatureFlags(parsed.data);
+  return res.json(saved);
+});
+
+app.get("/admin/billing/packages", requireAuth, async (_req, res) => {
+  if (!(await requireSuperadmin(res))) return;
+  const packages = await listBillingPackages();
+  return res.json({
+    items: packages.map((pkg: any) => ({
+      id: pkg.id,
+      code: pkg.code,
+      name: pkg.name,
+      description: pkg.description ?? null,
+      kind: pkg.kind === "AI_TOPUP" ? "ai_topup" : "plan",
+      isActive: Boolean(pkg.isActive),
+      sortOrder: Number(pkg.sortOrder ?? 0),
+      currency: String(pkg.currency ?? "USD"),
+      priceCents: Number(pkg.priceCents ?? 0),
+      billingMonths: Number(pkg.billingMonths ?? 1),
+      plan: pkg.plan === "PRO" ? "pro" : pkg.plan === "FREE" ? "free" : null,
+      maxRunningBots: pkg.maxRunningBots ?? null,
+      maxBotsTotal: pkg.maxBotsTotal ?? null,
+      allowedExchanges: Array.isArray(pkg.allowedExchanges) ? pkg.allowedExchanges : ["*"],
+      monthlyAiTokens: typeof pkg.monthlyAiTokens === "bigint" ? pkg.monthlyAiTokens.toString() : String(pkg.monthlyAiTokens ?? "0"),
+      topupAiTokens: typeof pkg.topupAiTokens === "bigint" ? pkg.topupAiTokens.toString() : String(pkg.topupAiTokens ?? "0"),
+      meta: pkg.meta ?? null,
+      createdAt: pkg.createdAt instanceof Date ? pkg.createdAt.toISOString() : null,
+      updatedAt: pkg.updatedAt instanceof Date ? pkg.updatedAt.toISOString() : null
+    }))
+  });
+});
+
+app.post("/admin/billing/packages", requireAuth, async (req, res) => {
+  if (!(await requireSuperadmin(res))) return;
+  const parsed = adminBillingPackageSchema.safeParse(req.body ?? {});
+  if (!parsed.success) {
+    return res.status(400).json({ error: "invalid_payload", details: parsed.error.flatten() });
+  }
+  try {
+    const saved = await upsertBillingPackage(parsed.data);
+    return res.status(201).json({ id: saved.id });
+  } catch (error) {
+    const code = (error as any)?.code;
+    if (code === "P2002") {
+      return res.status(409).json({ error: "package_code_exists" });
+    }
+    return res.status(500).json({ error: "save_failed", reason: String(error) });
+  }
+});
+
+app.put("/admin/billing/packages/:id", requireAuth, async (req, res) => {
+  if (!(await requireSuperadmin(res))) return;
+  const params = billingPackageIdParamSchema.safeParse(req.params ?? {});
+  if (!params.success) {
+    return res.status(400).json({ error: "invalid_params", details: params.error.flatten() });
+  }
+  const parsed = adminBillingPackageSchema.safeParse(req.body ?? {});
+  if (!parsed.success) {
+    return res.status(400).json({ error: "invalid_payload", details: parsed.error.flatten() });
+  }
+  try {
+    await upsertBillingPackage({
+      id: params.data.id,
+      ...parsed.data
+    });
+    return res.json({ ok: true });
+  } catch (error) {
+    return res.status(500).json({ error: "save_failed", reason: String(error) });
+  }
+});
+
+app.delete("/admin/billing/packages/:id", requireAuth, async (req, res) => {
+  if (!(await requireSuperadmin(res))) return;
+  const params = billingPackageIdParamSchema.safeParse(req.params ?? {});
+  if (!params.success) {
+    return res.status(400).json({ error: "invalid_params", details: params.error.flatten() });
+  }
+  try {
+    await deleteBillingPackage(params.data.id);
+    return res.json({ ok: true });
+  } catch (error) {
+    const code = (error as any)?.code;
+    if (code === "P2025") return res.status(404).json({ error: "not_found" });
+    return res.status(500).json({ error: "delete_failed", reason: String(error) });
+  }
+});
+
+app.get("/admin/billing/users/:id/subscription", requireAuth, async (req, res) => {
+  if (!(await requireSuperadmin(res))) return;
+  const userId = String(req.params?.id ?? "").trim();
+  if (!userId) return res.status(400).json({ error: "invalid_params" });
+  const summary = await getSubscriptionSummary(userId);
+  return res.json(summary);
+});
+
+app.post("/admin/billing/users/:id/tokens/adjust", requireAuth, async (req, res) => {
+  if (!(await requireSuperadmin(res))) return;
+  const userId = String(req.params?.id ?? "").trim();
+  if (!userId) return res.status(400).json({ error: "invalid_params" });
+  const parsed = adminBillingAdjustTokensSchema.safeParse(req.body ?? {});
+  if (!parsed.success) {
+    return res.status(400).json({ error: "invalid_payload", details: parsed.error.flatten() });
+  }
+  const user = readUserFromLocals(res);
+  const result = await adjustAiTokenBalanceByAdmin({
+    userId,
+    deltaTokens: parsed.data.deltaTokens,
+    note: parsed.data.note,
+    actorUserId: user.id
+  });
+  return res.json({
+    ok: true,
+    balance: result.balance.toString()
+  });
+});
+
 app.get("/settings/access-section", requireAuth, async (_req, res) => {
   const user = readUserFromLocals(res);
   const bypass = await evaluateAccessSectionBypassForUser(user);
@@ -10228,6 +10495,135 @@ app.get("/settings/access-section", requireAuth, async (_req, res) => {
       predictionsComposite: computeRemaining(limits.predictionsComposite, usage.predictionsComposite)
     }
   });
+});
+
+app.get("/settings/subscription", requireAuth, async (_req, res) => {
+  const user = readUserFromLocals(res);
+  if (!(await isBillingEnabled())) {
+    return res.json({
+      billingEnabled: false,
+      plan: "free",
+      status: "inactive",
+      proValidUntil: null,
+      limits: {
+        maxRunningBots: 1,
+        maxBotsTotal: 2,
+        allowedExchanges: ["*"]
+      },
+      usage: {
+        totalBots: 0,
+        runningBots: 0
+      },
+      ai: {
+        tokenBalance: "0",
+        tokenUsedLifetime: "0",
+        monthlyIncluded: "0",
+        billingEnabled: false
+      },
+      packages: [],
+      orders: []
+    });
+  }
+
+  const summary = await getSubscriptionSummary(user.id);
+  return res.json({
+    billingEnabled: true,
+    ...summary,
+    packages: summary.packages.map((pkg: any) => ({
+      id: pkg.id,
+      code: pkg.code,
+      name: pkg.name,
+      description: pkg.description ?? null,
+      kind: pkg.kind === "AI_TOPUP" ? "ai_topup" : "plan",
+      isActive: Boolean(pkg.isActive),
+      sortOrder: Number(pkg.sortOrder ?? 0),
+      currency: String(pkg.currency ?? "USD"),
+      priceCents: Number(pkg.priceCents ?? 0),
+      billingMonths: Number(pkg.billingMonths ?? 1),
+      plan: pkg.plan === "PRO" ? "pro" : pkg.plan === "FREE" ? "free" : null,
+      maxRunningBots: pkg.maxRunningBots ?? null,
+      maxBotsTotal: pkg.maxBotsTotal ?? null,
+      allowedExchanges: Array.isArray(pkg.allowedExchanges) ? pkg.allowedExchanges : ["*"],
+      monthlyAiTokens: typeof pkg.monthlyAiTokens === "bigint" ? pkg.monthlyAiTokens.toString() : String(pkg.monthlyAiTokens ?? "0"),
+      topupAiTokens: typeof pkg.topupAiTokens === "bigint" ? pkg.topupAiTokens.toString() : String(pkg.topupAiTokens ?? "0")
+    })),
+    orders: summary.orders.map((order: any) => ({
+      id: order.id,
+      merchantOrderId: order.merchantOrderId,
+      status: String(order.status ?? "PENDING").toLowerCase(),
+      amountCents: Number(order.amountCents ?? 0),
+      currency: order.currency ?? "USD",
+      payUrl: order.payUrl ?? null,
+      paymentStatusRaw: order.paymentStatusRaw ?? null,
+      paidAt: order.paidAt instanceof Date ? order.paidAt.toISOString() : null,
+      createdAt: order.createdAt instanceof Date ? order.createdAt.toISOString() : null,
+      package: order.pkg ? {
+        id: order.pkg.id,
+        code: order.pkg.code,
+        name: order.pkg.name,
+        kind: order.pkg.kind === "AI_TOPUP" ? "ai_topup" : "plan"
+      } : null
+    }))
+  });
+});
+
+app.get("/settings/subscription/orders", requireAuth, async (_req, res) => {
+  const user = readUserFromLocals(res);
+  const items = await listSubscriptionOrders(user.id);
+  return res.json({
+    items: items.map((order: any) => ({
+      id: order.id,
+      merchantOrderId: order.merchantOrderId,
+      status: String(order.status ?? "PENDING").toLowerCase(),
+      amountCents: Number(order.amountCents ?? 0),
+      currency: order.currency ?? "USD",
+      payUrl: order.payUrl ?? null,
+      paymentStatusRaw: order.paymentStatusRaw ?? null,
+      paidAt: order.paidAt instanceof Date ? order.paidAt.toISOString() : null,
+      createdAt: order.createdAt instanceof Date ? order.createdAt.toISOString() : null,
+      package: order.pkg ? {
+        id: order.pkg.id,
+        code: order.pkg.code,
+        name: order.pkg.name,
+        kind: order.pkg.kind === "AI_TOPUP" ? "ai_topup" : "plan"
+      } : null
+    }))
+  });
+});
+
+app.post("/settings/subscription/checkout", requireAuth, async (req, res) => {
+  if (!(await isBillingEnabled())) {
+    return res.status(503).json({ error: "billing_disabled" });
+  }
+  const user = readUserFromLocals(res);
+  const parsed = subscriptionCheckoutSchema.safeParse(req.body ?? {});
+  if (!parsed.success) {
+    return res.status(400).json({ error: "invalid_payload", details: parsed.error.flatten() });
+  }
+
+  try {
+    const checkout = await createBillingCheckout({
+      userId: user.id,
+      packageId: parsed.data.packageId
+    });
+    return res.json({
+      payUrl: checkout.payUrl,
+      orderId: checkout.order.id,
+      merchantOrderId: checkout.order.merchantOrderId
+    });
+  } catch (error) {
+    const reason = error instanceof Error ? error.message : String(error);
+    if (reason === "pro_required_for_topup") {
+      return res.status(409).json({ error: "pro_required_for_topup" });
+    }
+    if (reason === "package_not_found") {
+      return res.status(404).json({ error: "package_not_found" });
+    }
+    if (reason === "ccpay_not_configured") {
+      return res.status(503).json({ error: "ccpay_not_configured" });
+    }
+    return res.status(502).json({ error: "checkout_failed", reason });
+  }
 });
 
 app.get("/settings/risk", requireAuth, async (_req, res) => {
@@ -11224,7 +11620,8 @@ app.post("/settings/ai-prompts/own/generate-preview", requireAuth, async (req, r
     strategyDescription: parsed.data.strategyDescription,
     selectedIndicators: selected.selectedIndicators,
     timeframes: parsed.data.timeframes,
-    runTimeframe: parsed.data.runTimeframe ?? null
+    runTimeframe: parsed.data.runTimeframe ?? null,
+    billingUserId: user.id
   }).catch(() => null);
 
   if (!generation) {
@@ -11279,7 +11676,8 @@ app.post("/settings/ai-prompts/own/generate-save", requireAuth, async (req, res)
       strategyDescription: parsed.data.strategyDescription,
       selectedIndicators: selected.selectedIndicators,
       timeframes: parsed.data.timeframes,
-      runTimeframe: parsed.data.runTimeframe ?? null
+      runTimeframe: parsed.data.runTimeframe ?? null,
+      billingUserId: user.id
     }).catch(() => null);
     if (!generation) {
       return res.status(500).json({ error: "generation_failed" });
@@ -12202,21 +12600,31 @@ app.get("/admin/ai-trace/logs", requireAuth, async (req, res) => {
       (a.email ?? a.id).localeCompare(b.email ?? b.id, undefined, { sensitivity: "base" })
     );
 
-  const readTraceMeta = (payload: unknown): { retryUsed: boolean; retryCount: number } => {
+  const readTraceMeta = (payload: unknown): {
+    retryUsed: boolean;
+    retryCount: number;
+    totalTokens: number | null;
+  } => {
     if (!payload || typeof payload !== "object" || Array.isArray(payload)) {
-      return { retryUsed: false, retryCount: 0 };
+      return { retryUsed: false, retryCount: 0, totalTokens: null };
     }
     const meta = (payload as Record<string, unknown>).__trace;
     if (!meta || typeof meta !== "object" || Array.isArray(meta)) {
-      return { retryUsed: false, retryCount: 0 };
+      return { retryUsed: false, retryCount: 0, totalTokens: null };
     }
     const record = meta as Record<string, unknown>;
     const retryUsed = record.retryUsed === true;
     const retryCountRaw = Number(record.retryCount);
     const retryCount = Number.isFinite(retryCountRaw) ? Math.max(0, Math.trunc(retryCountRaw)) : 0;
+    const totalTokensRaw = Number(record.totalTokens);
+    const totalTokens =
+      Number.isFinite(totalTokensRaw) && totalTokensRaw >= 0
+        ? Math.max(0, Math.trunc(totalTokensRaw))
+        : null;
     return {
       retryUsed,
-      retryCount
+      retryCount,
+      totalTokens
     };
   };
 
@@ -17794,6 +18202,27 @@ async function handleUserWsConnection(
 const marketWss = new WebSocketServer({ noServer: true });
 const userWss = new WebSocketServer({ noServer: true });
 
+let billingDowngradeTimer: NodeJS.Timeout | null = null;
+
+function startBillingDowngradeScheduler() {
+  if (billingDowngradeTimer) return;
+  const intervalMs = Math.max(
+    60_000,
+    Number(process.env.BILLING_DOWNGRADE_SYNC_INTERVAL_MS ?? String(60 * 60 * 1000))
+  );
+  billingDowngradeTimer = setInterval(() => {
+    void downgradeExpiredSubscriptions().catch(() => {
+      // ignore scheduler errors
+    });
+  }, intervalMs);
+}
+
+function stopBillingDowngradeScheduler() {
+  if (!billingDowngradeTimer) return;
+  clearInterval(billingDowngradeTimer);
+  billingDowngradeTimer = null;
+}
+
 const port = Number(process.env.API_PORT ?? "4000");
 const listenHost = process.env.API_HOST?.trim() || "::";
 const server = http.createServer(app);
@@ -17837,6 +18266,13 @@ async function startApiServer() {
     console.error("[admin] seed failed", String(error));
   }
 
+  try {
+    await ensureBillingDefaults();
+  } catch (error) {
+    // eslint-disable-next-line no-console
+    console.error("[billing] default package seed failed", String(error));
+  }
+
   server.listen(
     {
       port,
@@ -17852,6 +18288,7 @@ async function startApiServer() {
     startPredictionOutcomeEvalScheduler();
     startPredictionPerformanceEvalScheduler();
     startBotQueueRecoveryScheduler();
+    startBillingDowngradeScheduler();
     economicCalendarRefreshJob.start();
     }
   );
@@ -17866,6 +18303,7 @@ process.on("SIGTERM", () => {
   stopPredictionOutcomeEvalScheduler();
   stopPredictionPerformanceEvalScheduler();
   stopBotQueueRecoveryScheduler();
+  stopBillingDowngradeScheduler();
   economicCalendarRefreshJob.stop();
   marketWss.close();
   userWss.close();
@@ -17880,6 +18318,7 @@ process.on("SIGINT", () => {
   stopPredictionOutcomeEvalScheduler();
   stopPredictionPerformanceEvalScheduler();
   stopBotQueueRecoveryScheduler();
+  stopBillingDowngradeScheduler();
   economicCalendarRefreshJob.stop();
   marketWss.close();
   userWss.close();

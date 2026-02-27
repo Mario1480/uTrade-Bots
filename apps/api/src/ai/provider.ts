@@ -1,6 +1,7 @@
 import { prisma } from "@mm/db";
 import { decryptSecret } from "../secret-crypto.js";
 import { logger } from "../logger.js";
+import { checkAiTokenAccess, debitAiTokens } from "../billing/service.js";
 
 type ChatCompletionResponse = {
   choices?: Array<{
@@ -10,6 +11,11 @@ type ChatCompletionResponse = {
   }>;
   error?: {
     message?: string;
+  };
+  usage?: {
+    prompt_tokens?: number;
+    completion_tokens?: number;
+    total_tokens?: number;
   };
 };
 
@@ -27,6 +33,11 @@ type ResponsesApiResponse = OpenAiErrorPayload & {
       text?: string;
     }>;
   }>;
+  usage?: {
+    input_tokens?: number;
+    output_tokens?: number;
+    total_tokens?: number;
+  };
 };
 
 export type CallAiOptions = {
@@ -35,6 +46,20 @@ export type CallAiOptions = {
   timeoutMs?: number;
   temperature?: number;
   maxTokens?: number;
+  billingUserId?: string | null;
+  billingScope?: string;
+  onUsage?: (usage: AiUsageTokens) => void;
+};
+
+export type AiUsageTokens = {
+  promptTokens: number | null;
+  completionTokens: number | null;
+  totalTokens: number | null;
+};
+
+type AiCallResult = {
+  text: string;
+  usage: AiUsageTokens;
 };
 
 const OPENAI_CHAT_COMPLETIONS_ENDPOINT = "https://api.openai.com/v1/chat/completions";
@@ -115,6 +140,42 @@ function readProviderError(status: number, payload: unknown, prefix: string): st
   return `${prefix}_${status}`;
 }
 
+function normalizeTokenCount(value: unknown): number | null {
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed) || parsed < 0) return null;
+  return Math.trunc(parsed);
+}
+
+function readChatUsage(payload: ChatCompletionResponse | null | undefined): AiUsageTokens {
+  const promptTokens = normalizeTokenCount(payload?.usage?.prompt_tokens);
+  const completionTokens = normalizeTokenCount(payload?.usage?.completion_tokens);
+  const totalTokens =
+    normalizeTokenCount(payload?.usage?.total_tokens)
+    ?? (promptTokens !== null || completionTokens !== null
+      ? (promptTokens ?? 0) + (completionTokens ?? 0)
+      : null);
+  return {
+    promptTokens,
+    completionTokens,
+    totalTokens
+  };
+}
+
+function readResponsesUsage(payload: ResponsesApiResponse | null | undefined): AiUsageTokens {
+  const promptTokens = normalizeTokenCount(payload?.usage?.input_tokens);
+  const completionTokens = normalizeTokenCount(payload?.usage?.output_tokens);
+  const totalTokens =
+    normalizeTokenCount(payload?.usage?.total_tokens)
+    ?? (promptTokens !== null || completionTokens !== null
+      ? (promptTokens ?? 0) + (completionTokens ?? 0)
+      : null);
+  return {
+    promptTokens,
+    completionTokens,
+    totalTokens
+  };
+}
+
 function isGpt5Model(model: string): boolean {
   return model.startsWith("gpt-5");
 }
@@ -133,7 +194,7 @@ async function callOpenAiChatCompletions(params: {
   temperature?: number;
   maxTokens?: number;
   signal: AbortSignal;
-}): Promise<string> {
+}): Promise<AiCallResult> {
   const requestedMaxTokens = params.maxTokens ?? 220;
   const gpt5 = isGpt5Model(params.model);
   const completionTokensParam = gpt5
@@ -171,7 +232,10 @@ async function callOpenAiChatCompletions(params: {
   if (!response.ok) {
     throw new Error(readProviderError(response.status, payload, "openai_http"));
   }
-  return readContent(payload ?? {});
+  return {
+    text: readContent(payload ?? {}),
+    usage: readChatUsage(payload)
+  };
 }
 
 async function callOpenAiResponses(params: {
@@ -181,7 +245,7 @@ async function callOpenAiResponses(params: {
   systemMessage?: string;
   maxTokens?: number;
   signal: AbortSignal;
-}): Promise<string> {
+}): Promise<AiCallResult> {
   const response = await fetch(OPENAI_RESPONSES_ENDPOINT, {
     method: "POST",
     headers: {
@@ -217,7 +281,10 @@ async function callOpenAiResponses(params: {
   if (!response.ok) {
     throw new Error(readProviderError(response.status, payload, "openai_responses_http"));
   }
-  return readResponsesContent(payload ?? {});
+  return {
+    text: readResponsesContent(payload ?? {}),
+    usage: readResponsesUsage(payload)
+  };
 }
 
 function parseStoredOpenAiKeyEnc(value: unknown): string | null {
@@ -376,11 +443,24 @@ export async function callAi(prompt: string, options: CallAiOptions = {}): Promi
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), Math.max(1000, timeoutMs));
   const startedAt = Date.now();
+  const billingUserId =
+    typeof options.billingUserId === "string" && options.billingUserId.trim()
+      ? options.billingUserId.trim()
+      : null;
+  if (billingUserId) {
+    const access = await checkAiTokenAccess(billingUserId);
+    if (!access.allowed && access.reason !== "billing_disabled") {
+      if (access.reason === "pro_required") throw new Error("ai_billing_requires_pro");
+      if (access.reason === "token_exhausted") throw new Error("ai_token_balance_exhausted");
+      throw new Error("ai_billing_blocked");
+    }
+  }
 
   try {
+    let result: AiCallResult;
     if (isGpt5Model(model)) {
       try {
-        return await callOpenAiResponses({
+        result = await callOpenAiResponses({
           apiKey,
           model,
           prompt,
@@ -398,7 +478,7 @@ export async function callAi(prompt: string, options: CallAiOptions = {}): Promi
           fallback_model: fallbackModel,
           reason: String(primaryError)
         });
-        return await callOpenAiChatCompletions({
+        result = await callOpenAiChatCompletions({
           apiKey,
           model: fallbackModel,
           prompt,
@@ -408,17 +488,42 @@ export async function callAi(prompt: string, options: CallAiOptions = {}): Promi
           signal: controller.signal
         });
       }
+    } else {
+      result = await callOpenAiChatCompletions({
+        apiKey,
+        model,
+        prompt,
+        systemMessage: options.systemMessage,
+        temperature: options.temperature,
+        maxTokens: options.maxTokens,
+        signal: controller.signal
+      });
     }
 
-    return await callOpenAiChatCompletions({
-      apiKey,
-      model,
-      prompt,
-      systemMessage: options.systemMessage,
-      temperature: options.temperature,
-      maxTokens: options.maxTokens,
-      signal: controller.signal
-    });
+    if (billingUserId) {
+      const tokenDebit =
+        result.usage.totalTokens
+        ?? ((result.usage.promptTokens ?? 0) + (result.usage.completionTokens ?? 0));
+      const debit = await debitAiTokens({
+        userId: billingUserId,
+        tokens: tokenDebit,
+        scope: options.billingScope ?? "ai_call",
+        meta: {
+          model,
+          promptChars: prompt.length
+        }
+      });
+      if (!debit.charged && debit.reason !== "billing_disabled" && tokenDebit > 0) {
+        if (debit.reason === "pro_required") throw new Error("ai_billing_requires_pro");
+        if (debit.reason === "token_exhausted") throw new Error("ai_token_balance_exhausted");
+        throw new Error("ai_billing_debit_failed");
+      }
+    }
+
+    if (options.onUsage) {
+      options.onUsage(result.usage);
+    }
+    return result.text;
   } catch (error) {
     const isAbort = error instanceof Error && error.name === "AbortError";
     logger.warn("ai_provider_call_failed", {

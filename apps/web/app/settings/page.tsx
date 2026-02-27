@@ -214,7 +214,7 @@ export default function SettingsPage() {
   const [strategyPreviewMeta, setStrategyPreviewMeta] = useState<StrategyPromptGenerationMeta | null>(null);
   const [strategyLastSavedPromptText, setStrategyLastSavedPromptText] = useState("");
   const [strategyLastSavedMeta, setStrategyLastSavedMeta] = useState<StrategyPromptGenerationMeta | null>(null);
-  const licenseManagementEnabled = false;
+  const licenseManagementEnabled = true;
   const passphraseRequired = exchange === "bitget";
   const paperMode = exchange === "paper";
   const marketDataAccounts = accounts.filter((item) => item.exchange !== "paper");
@@ -1031,7 +1031,11 @@ export default function SettingsPage() {
                     {tMain("license.onceEnabled")}
                   </div>
                   <div className="settingsMutedText">
-                    {licenseManagementEnabled ? tMain("license.open") : tMain("license.currentlyDisabled")}
+                    {licenseManagementEnabled ? (
+                      <Link href={withLocalePath("/settings/subscription", locale)} className="btn btnPrimary">
+                        {tMain("license.open")}
+                      </Link>
+                    ) : tMain("license.currentlyDisabled")}
                   </div>
                 </div>
               ) : null}

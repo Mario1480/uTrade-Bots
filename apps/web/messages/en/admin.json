@@ -3,7 +3,9 @@
     "backToAdmin": "Back to admin",
     "backToSettings": "Back to settings",
     "backToDashboard": "Back to dashboard",
-    "openSection": "Open {title}"
+    "openSection": "Open {title}",
+    "loading": "Loading...",
+    "saving": "Saving..."
   },
   "landing": {
     "title": "Admin Backend",
@@ -775,6 +777,128 @@
     "aiTrace": {
       "title": "AI Trace Logs",
       "description": "Inspect AI request payloads/responses with on/off toggle and cleanup."
+    },
+    "billing": {
+      "title": "Billing",
+      "description": "Manage subscription packages, prices and manual AI token adjustments."
+    }
+  },
+  "billing": {
+    "title": "Billing Packages",
+    "description": "Configure plan and AI topup packages used for CCPayments checkout.",
+    "featureFlags": {
+      "title": "Billing feature flags",
+      "description": "Control whether billing checkout, webhook processing and AI token billing are active.",
+      "source": "Source",
+      "updatedAt": "Last updated",
+      "never": "never",
+      "enabledValue": "Enabled",
+      "save": "Save billing settings",
+      "saved": "Billing settings saved.",
+      "billingEnabled": {
+        "label": "Subscription checkout enabled",
+        "hint": "When disabled, users cannot buy/renew subscriptions or topups."
+      },
+      "billingWebhookEnabled": {
+        "label": "CCPayments webhook enabled",
+        "hint": "When disabled, incoming CCPayments webhooks are ignored."
+      },
+      "aiTokenBillingEnabled": {
+        "label": "AI token billing enabled",
+        "hint": "When disabled, AI token gating/debits are bypassed."
+      }
+    },
+    "createTitle": "Create package",
+    "createHelp": "Define package type, pricing and limits. Changes apply to future checkouts.",
+    "create": "Create package",
+    "listTitle": "Existing packages",
+    "save": "Save package",
+    "delete": "Delete package",
+    "confirmDelete": "Delete this package?",
+    "refresh": "Refresh",
+    "tokenAdjustTitle": "Manual AI token adjustment",
+    "tokenAdjustHelp": "Adjust a user's token wallet manually (for refunds, support cases, or corrections).",
+    "userId": "User ID",
+    "userIdHint": "Internal ID of the target user.",
+    "userIdPlaceholder": "e.g. clx123...",
+    "deltaTokens": "Delta tokens (+/-)",
+    "deltaTokensHint": "Positive adds tokens, negative removes tokens.",
+    "note": "Note (optional)",
+    "noteHint": "Stored in ledger metadata for audit tracing.",
+    "notePlaceholder": "Reason for this manual adjustment",
+    "adjust": "Apply adjustment",
+    "adjusted": "Token balance adjusted.",
+    "saved": "Package saved.",
+    "deleted": "Package deleted.",
+    "fields": {
+      "code": {
+        "label": "Code",
+        "hint": "Unique internal key used by API and checkout flow."
+      },
+      "name": {
+        "label": "Display name",
+        "hint": "Name shown in user subscription UI.",
+        "placeholder": "Pro Monthly"
+      },
+      "description": {
+        "label": "Description",
+        "hint": "Short package explanation visible in UI.",
+        "placeholder": "Monthly Pro subscription"
+      },
+      "kind": {
+        "label": "Package type",
+        "hint": "Plan = subscription package, AI topup = token-only purchase.",
+        "plan": "Plan",
+        "aiTopup": "AI topup"
+      },
+      "plan": {
+        "label": "Target plan",
+        "hint": "Set for plan packages. Keep 'none' for AI topups.",
+        "none": "None",
+        "free": "Free",
+        "pro": "Pro"
+      },
+      "sortOrder": {
+        "label": "Sort order",
+        "hint": "Lower values appear first in package lists."
+      },
+      "currency": {
+        "label": "Currency",
+        "hint": "Fiat display currency (normally USD)."
+      },
+      "priceCents": {
+        "label": "Price (cents)",
+        "hint": "Price in smallest fiat unit. Example: 2900 = $29.00."
+      },
+      "billingMonths": {
+        "label": "Billing period (months)",
+        "hint": "How many months are granted per successful payment."
+      },
+      "maxRunningBots": {
+        "label": "Max running bots",
+        "hint": "Concurrent running-bot limit for this plan."
+      },
+      "maxBotsTotal": {
+        "label": "Max bots total",
+        "hint": "Maximum total bot count allowed for this plan."
+      },
+      "allowedExchanges": {
+        "label": "Allowed exchanges",
+        "hint": "Comma-separated list. Use * to allow all exchanges."
+      },
+      "monthlyAiTokens": {
+        "label": "Monthly AI tokens",
+        "hint": "Token grant added when this plan payment is processed."
+      },
+      "topupAiTokens": {
+        "label": "Topup AI tokens",
+        "hint": "Token amount credited for AI topup packages."
+      },
+      "isActive": {
+        "label": "Availability",
+        "hint": "Inactive packages stay in DB but cannot be bought.",
+        "value": "Active"
+      }
     }
   }
 }

@@ -18,6 +18,39 @@ enum FuturesMarginMode {
   cross
 }
 
+enum EffectivePlan {
+  FREE
+  PRO
+}
+
+enum SubscriptionStatus {
+  INACTIVE
+  ACTIVE
+}
+
+enum BillingProvider {
+  CCPAYMENT
+}
+
+enum BillingPackageKind {
+  PLAN
+  AI_TOPUP
+}
+
+enum BillingOrderStatus {
+  PENDING
+  PAID
+  FAILED
+  EXPIRED
+}
+
+enum AiLedgerReason {
+  MONTHLY_GRANT
+  TOPUP
+  USAGE_DEBIT
+  ADMIN_ADJUST
+}
+
 model Bot {
   id                   String           @id @default(uuid())
   name                 String
@@ -448,6 +481,120 @@ model User {
   dashboardPerformanceSnapshots DashboardPerformanceSnapshot[]
   aiPromptTemplates  UserAiPromptTemplate[]
   aiTraceLogs        AiTraceLog[]
+  subscription       UserSubscription?
+  billingOrders      BillingOrder[]
+  aiTokenLedger      AiTokenLedger[]
+}
+
+model UserSubscription {
+  id                     String             @id @default(cuid())
+  userId                 String             @unique @map("user_id")
+  user                   User               @relation(fields: [userId], references: [id], onDelete: Cascade)
+  effectivePlan          EffectivePlan      @default(FREE) @map("effective_plan")
+  status                 SubscriptionStatus @default(INACTIVE)
+  proValidUntil          DateTime?          @map("pro_valid_until")
+  maxRunningBots         Int                @default(1) @map("max_running_bots")
+  maxBotsTotal           Int                @default(2) @map("max_bots_total")
+  allowedExchanges       String[]           @default(["*"]) @map("allowed_exchanges")
+  aiTokenBalance         BigInt             @default(0) @map("ai_token_balance")
+  aiTokenUsedLifetime    BigInt             @default(0) @map("ai_token_used_lifetime")
+  monthlyAiTokensIncluded BigInt            @default(0) @map("monthly_ai_tokens_included")
+  createdAt              DateTime           @default(now()) @map("created_at")
+  updatedAt              DateTime           @updatedAt @map("updated_at")
+
+  orders BillingOrder[]
+  tokenLedger AiTokenLedger[]
+
+  @@index([effectivePlan, proValidUntil], map: "user_subscriptions_plan_valid_until_idx")
+  @@map("user_subscriptions")
+}
+
+model BillingPackage {
+  id               String             @id @default(cuid())
+  code             String             @unique
+  name             String
+  description      String?
+  kind             BillingPackageKind
+  isActive         Boolean            @default(true) @map("is_active")
+  sortOrder        Int                @default(0) @map("sort_order")
+  currency         String             @default("USD")
+  priceCents       Int                @default(0) @map("price_cents")
+  billingMonths    Int                @default(1) @map("billing_months")
+  plan             EffectivePlan?     @default(PRO)
+  maxRunningBots   Int?               @map("max_running_bots")
+  maxBotsTotal     Int?               @map("max_bots_total")
+  allowedExchanges String[]           @default(["*"]) @map("allowed_exchanges")
+  monthlyAiTokens  BigInt             @default(0) @map("monthly_ai_tokens")
+  topupAiTokens    BigInt             @default(0) @map("topup_ai_tokens")
+  meta             Json?
+  createdAt        DateTime           @default(now()) @map("created_at")
+  updatedAt        DateTime           @updatedAt @map("updated_at")
+
+  orders BillingOrder[]
+
+  @@index([kind, isActive, sortOrder], map: "billing_packages_kind_active_sort_idx")
+  @@map("billing_packages")
+}
+
+model BillingOrder {
+  id                 String            @id @default(cuid())
+  provider           BillingProvider
+  userId             String            @map("user_id")
+  user               User              @relation(fields: [userId], references: [id], onDelete: Cascade)
+  subscriptionId     String?           @map("subscription_id")
+  subscription       UserSubscription? @relation(fields: [subscriptionId], references: [id], onDelete: SetNull)
+  packageId          String            @map("package_id")
+  pkg                BillingPackage    @relation(fields: [packageId], references: [id], onDelete: Restrict)
+  merchantOrderId    String            @unique @map("merchant_order_id")
+  status             BillingOrderStatus @default(PENDING)
+  amountCents        Int               @map("amount_cents")
+  currency           String            @default("USD")
+  payUrl             String?           @map("pay_url")
+  externalOrderId    String?           @map("external_order_id")
+  paymentStatusRaw   String?           @map("payment_status_raw")
+  paidAt             DateTime?         @map("paid_at")
+  expiresAt          DateTime?         @map("expires_at")
+  createPayload      Json?             @map("create_payload")
+  createResponse     Json?             @map("create_response")
+  createdAt          DateTime          @default(now()) @map("created_at")
+  updatedAt          DateTime          @updatedAt @map("updated_at")
+
+  tokenLedger AiTokenLedger[]
+
+  @@index([userId, createdAt(sort: Desc)], map: "billing_orders_user_created_idx")
+  @@index([status, createdAt(sort: Desc)], map: "billing_orders_status_created_idx")
+  @@map("billing_orders")
+}
+
+model BillingWebhookEvent {
+  id              String          @id @default(cuid())
+  provider        BillingProvider
+  recordId        String          @unique @map("record_id")
+  merchantOrderId String          @map("merchant_order_id")
+  payload         Json
+  receivedAt      DateTime        @default(now()) @map("received_at")
+
+  @@index([merchantOrderId], map: "billing_webhook_events_merchant_idx")
+  @@map("billing_webhook_events")
+}
+
+model AiTokenLedger {
+  id             String            @id @default(cuid())
+  userId         String            @map("user_id")
+  user           User              @relation(fields: [userId], references: [id], onDelete: Cascade)
+  subscriptionId String?           @map("subscription_id")
+  subscription   UserSubscription? @relation(fields: [subscriptionId], references: [id], onDelete: SetNull)
+  orderId        String?           @map("order_id")
+  order          BillingOrder?     @relation(fields: [orderId], references: [id], onDelete: SetNull)
+  reason         AiLedgerReason
+  deltaTokens    BigInt            @map("delta_tokens")
+  balanceAfter   BigInt            @map("balance_after")
+  meta           Json?
+  createdAt      DateTime          @default(now()) @map("created_at")
+
+  @@index([userId, createdAt(sort: Desc)], map: "ai_token_ledger_user_created_idx")
+  @@index([reason, createdAt(sort: Desc)], map: "ai_token_ledger_reason_created_idx")
+  @@map("ai_token_ledger")
 }
 
 model DashboardPerformanceSnapshot {

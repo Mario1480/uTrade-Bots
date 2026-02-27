@@ -595,11 +595,11 @@
       }
     },
     "license": {
-      "prepared": "License controls are prepared but currently disabled in this environment.",
-      "onceEnabled": "Once enabled, this section will provide license status, key management, and verification actions.",
-      "open": "Open license management",
-      "currentlyDisabled": "Currently disabled",
-      "disabledLabel": "License Management (Disabled)"
+      "prepared": "Manage your active plan, renewals and AI token topups here.",
+      "onceEnabled": "Billing updates are applied automatically after successful CCPayments webhook processing.",
+      "open": "Open subscription & billing",
+      "currentlyDisabled": "Billing currently disabled",
+      "disabledLabel": "Subscription & Billing (Disabled)"
     },
     "actions": {
       "delete": "Delete"

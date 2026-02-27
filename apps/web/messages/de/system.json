@@ -595,11 +595,11 @@
       }
     },
     "license": {
-      "prepared": "Lizenzfunktionen sind vorbereitet, in dieser Umgebung aber aktuell deaktiviert.",
-      "onceEnabled": "Sobald aktiviert, bietet dieser Bereich Lizenzstatus, Key-Management und Verifizierungsaktionen.",
-      "open": "Lizenzverwaltung öffnen",
-      "currentlyDisabled": "Aktuell deaktiviert",
-      "disabledLabel": "Lizenzverwaltung (deaktiviert)"
+      "prepared": "Verwalte hier deinen aktiven Plan, Verlängerungen und AI-Token-Topups.",
+      "onceEnabled": "Billing-Änderungen werden nach erfolgreichem CCPayments-Webhook automatisch übernommen.",
+      "open": "Abo & Abrechnung öffnen",
+      "currentlyDisabled": "Billing aktuell deaktiviert",
+      "disabledLabel": "Abo & Abrechnung (deaktiviert)"
     },
     "actions": {
       "delete": "Löschen"

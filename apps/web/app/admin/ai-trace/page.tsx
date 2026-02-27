@@ -59,6 +59,7 @@ type AiTraceLogItem = {
   userEmail: string | null;
   retryUsed: boolean;
   retryCount: number;
+  totalTokens: number | null;
   scope: string;
   provider: string | null;
   model: string | null;
@@ -520,6 +521,7 @@ export default function AdminAiTracePage() {
                       {row.cacheHit ? " · cache-hit" : ""}
                       {row.rateLimited ? " · rate-limited" : ""}
                       {row.latencyMs !== null ? ` · ${row.latencyMs}ms` : ""}
+                      {row.totalTokens !== null ? ` · tokens: ${row.totalTokens}` : ""}
                     </summary>
                     <div style={{ marginTop: 8, display: "grid", gap: 8 }}>
                       <div className="settingsMutedText">

@@ -38,6 +38,7 @@ export type GenerateHybridPromptTextInput = {
   selectedIndicators: SelectedIndicator[];
   timeframes: AiPromptTimeframe[];
   runTimeframe: AiPromptTimeframe | null;
+  billingUserId?: string | null;
   callAiFn?: CallAiFn;
 };
 
@@ -369,6 +370,7 @@ async function summarizeStrategyWithAi(params: {
   selectedIndicators: SelectedIndicator[];
   timeframes: AiPromptTimeframe[];
   runTimeframe: AiPromptTimeframe | null;
+  billingUserId?: string | null;
   callAiFn: CallAiFn;
   model: string;
 }): Promise<string | null> {
@@ -396,7 +398,9 @@ async function summarizeStrategyWithAi(params: {
     model: params.model,
     temperature: 0.2,
     timeoutMs: PROMPT_GENERATOR_AI_TIMEOUT_MS,
-    maxTokens: PROMPT_GENERATOR_AI_MAX_TOKENS
+    maxTokens: PROMPT_GENERATOR_AI_MAX_TOKENS,
+    billingUserId: params.billingUserId ?? null,
+    billingScope: "prompt_generator"
   });
 
   return sanitizeAiSummary(aiText);
@@ -419,6 +423,7 @@ export async function generateHybridPromptText(
       selectedIndicators: input.selectedIndicators,
       timeframes,
       runTimeframe,
+      billingUserId: input.billingUserId ?? null,
       callAiFn,
       model
     });

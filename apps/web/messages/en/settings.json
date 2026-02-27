@@ -46,36 +46,40 @@
     "deleted": "deleted {name}"
   },
   "subscription": {
-    "title": "License Management",
-    "confirmRemove": "Remove the stored license key? This will disable licensed features until a new key is saved.",
+    "title": "Subscription & Billing",
     "messages": {
-      "savedVerified": "Saved and verified.",
-      "removed": "License removed."
+      "noData": "No subscription data available."
     },
     "status": {
-      "title": "License status",
-      "status": "Status",
-      "unknown": "UNKNOWN",
-      "notConfigured": "NOT CONFIGURED",
+      "plan": "Plan",
+      "state": "State",
       "validUntil": "Valid until",
-      "checkedAt": "Checked at",
-      "source": "Source",
-      "error": "Error",
-      "limits": "Limits",
-      "usage": "Usage",
-      "features": "Features",
-      "overrides": "Overrides",
-      "bots": "bots"
+      "botLimits": "Bot limits",
+      "exchanges": "Allowed exchanges",
+      "aiBalance": "AI token balance",
+      "aiMonthlyIncluded": "Monthly included tokens",
+      "aiUsedLifetime": "Used tokens (lifetime)"
     },
-    "config": {
-      "title": "License configuration",
-      "description": "License changes are picked up automatically by the runner during the next verification cycle.",
-      "licenseKey": "License key",
-      "currentKeyPlaceholder": "Current: {key}",
-      "instanceId": "Instance ID is automatically set to your workspace ID:",
-      "saveVerify": "Save & verify",
-      "refreshStatus": "Refresh status",
-      "removeLicense": "Remove license"
+    "packages": {
+      "title": "Packages",
+      "description": "Purchase or renew your plan and buy AI token topups.",
+      "kindPlan": "Plan package",
+      "kindTopup": "AI topup package",
+      "price": "Price",
+      "planDetails": "{months} month(s), running bots: {running}, total bots: {total}, included AI tokens: {tokens}",
+      "topupDetails": "Adds {tokens} AI tokens",
+      "buy": "Buy now"
+    },
+    "orders": {
+      "title": "Order history",
+      "refresh": "Refresh",
+      "createdAt": "Created at",
+      "package": "Package",
+      "amount": "Amount",
+      "status": "Status",
+      "action": "Action",
+      "payNow": "Pay now",
+      "empty": "No orders yet."
     }
   },
   "users": {

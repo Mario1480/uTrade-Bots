@@ -159,16 +159,19 @@ SMTP_FROM="uLiquid <no-reply@uliquid.vip>"
 SMTP_SECURE=true
 INVITE_BASE_URL=https://test.uliquid.vip
 
-# ===== License =====
-LICENSE_KEY=UUID
-LICENSE_INSTANCE_ID=vps-123
-LICENSE_SERVER_URL=https://license-server.uliquid.vip
-LICENSE_SERVER_SECRET=
-LICENSE_VERIFY_INTERVAL_MIN=15
-LICENSE_GRACE_MIN=120
-APP_VERSION=
+# ===== Billing / Subscription (CCPayments) =====
+CCPAY_APP_ID=
+CCPAY_APP_SECRET=
+CCPAY_BASE_URL=https://ccpayment.com
+CCPAY_PRICE_FIAT_ID=1033
+WEB_BASE_URL=https://test.uliquid.vip
+BILLING_PRO_MONTHLY_PRICE_CENTS=2900
+BILLING_PRO_MONTHLY_AI_TOKENS=1000000
+BILLING_AI_TOPUP_PRICE_CENTS=900
+BILLING_AI_TOPUP_TOKENS=250000
 
-Hinweis: Du kannst den License Key + Instance ID auch im UI unter Settings → Subscription setzen.
+Hinweis: Abo, Verlängerung und AI-Topups werden im UI unter Settings → Subscription verwaltet.
+Hinweis: Billing-Feature-Flags (Checkout/Webhook/AI-Token-Billing) werden im Admin Backend unter /admin/billing verwaltet.
 
 Optional: Falls Tools noch .env erwarten, kannst du .env.prod nach .env kopieren:
 cp .env.prod .env
