@@ -137,7 +137,7 @@ export default function AdminBillingPage() {
   const [items, setItems] = useState<BillingPackage[]>([]);
   const [drafts, setDrafts] = useState<Record<string, PackageDraft>>({});
   const [createDraft, setCreateDraft] = useState<PackageDraft>(emptyDraft());
-  const [adjustUserId, setAdjustUserId] = useState("");
+  const [adjustUserLookup, setAdjustUserLookup] = useState("");
   const [adjustDelta, setAdjustDelta] = useState("0");
   const [adjustNote, setAdjustNote] = useState("");
   const [featureFlags, setFeatureFlags] = useState<BillingFeatureFlagsResponse | null>(null);
@@ -221,12 +221,12 @@ export default function AdminBillingPage() {
   }
 
   async function adjustTokens() {
-    const userId = adjustUserId.trim();
-    if (!userId) return;
+    const userLookup = adjustUserLookup.trim();
+    if (!userLookup) return;
     setSavingId("adjust");
     setMsg(null);
     try {
-      await apiPost(`/admin/billing/users/${encodeURIComponent(userId)}/tokens/adjust`, {
+      await apiPost(`/admin/billing/users/${encodeURIComponent(userLookup)}/tokens/adjust`, {
         deltaTokens: Number(adjustDelta) || 0,
         note: adjustNote.trim() || undefined
       });
@@ -322,8 +322,8 @@ export default function AdminBillingPage() {
             <input
               className="input"
               placeholder={t("userIdPlaceholder")}
-              value={adjustUserId}
-              onChange={(e) => setAdjustUserId(e.target.value)}
+              value={adjustUserLookup}
+              onChange={(e) => setAdjustUserLookup(e.target.value)}
             />
           </FormField>
           <FormField label={t("deltaTokens")} hint={t("deltaTokensHint")}>

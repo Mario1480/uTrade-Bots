@@ -10826,18 +10826,57 @@ app.delete("/admin/billing/packages/:id", requireAuth, async (req, res) => {
   }
 });
 
+async function resolveUserIdFromLookup(rawLookup: string): Promise<string | null> {
+  const lookup = rawLookup.trim();
+  if (!lookup) return null;
+
+  if (lookup.includes("@")) {
+    const row = await db.user.findFirst({
+      where: {
+        email: {
+          equals: lookup,
+          mode: "insensitive"
+        }
+      },
+      select: { id: true }
+    });
+    return row?.id ?? null;
+  }
+
+  const byId = await db.user.findUnique({
+    where: { id: lookup },
+    select: { id: true }
+  });
+  if (byId?.id) return byId.id;
+
+  const byEmail = await db.user.findFirst({
+    where: {
+      email: {
+        equals: lookup,
+        mode: "insensitive"
+      }
+    },
+    select: { id: true }
+  });
+  return byEmail?.id ?? null;
+}
+
 app.get("/admin/billing/users/:id/subscription", requireAuth, async (req, res) => {
   if (!(await requireSuperadmin(res))) return;
-  const userId = String(req.params?.id ?? "").trim();
-  if (!userId) return res.status(400).json({ error: "invalid_params" });
+  const lookup = String(req.params?.id ?? "").trim();
+  if (!lookup) return res.status(400).json({ error: "invalid_params" });
+  const userId = await resolveUserIdFromLookup(lookup);
+  if (!userId) return res.status(404).json({ error: "user_not_found" });
   const summary = await getSubscriptionSummary(userId);
   return res.json(summary);
 });
 
 app.post("/admin/billing/users/:id/tokens/adjust", requireAuth, async (req, res) => {
   if (!(await requireSuperadmin(res))) return;
-  const userId = String(req.params?.id ?? "").trim();
-  if (!userId) return res.status(400).json({ error: "invalid_params" });
+  const lookup = String(req.params?.id ?? "").trim();
+  if (!lookup) return res.status(400).json({ error: "invalid_params" });
+  const userId = await resolveUserIdFromLookup(lookup);
+  if (!userId) return res.status(404).json({ error: "user_not_found" });
   const parsed = adminBillingAdjustTokensSchema.safeParse(req.body ?? {});
   if (!parsed.success) {
     return res.status(400).json({ error: "invalid_payload", details: parsed.error.flatten() });

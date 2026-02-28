@@ -566,14 +566,14 @@ export async function syncPrimaryWorkspaceEntitlementsForUser(params: {
     select: { monthlyAiTokensIncluded: true }
   });
   const freeAiIncluded = !isPro && toBigInt(sub?.monthlyAiTokensIncluded) > 0n;
-  const allowAi = isPro || freeAiIncluded;
+  const allowAdvancedStrategies = isPro || freeAiIncluded;
   const allowedStrategyKinds: Array<"local" | "ai" | "composite"> = isPro
     ? ["local", "ai", "composite"]
-    : allowAi
-      ? ["local", "ai"]
+    : allowAdvancedStrategies
+      ? ["local", "ai", "composite"]
       : ["local"];
-  const maxCompositeNodes = isPro ? 12 : 0;
-  const aiAllowedModels = allowAi ? ["*"] : [];
+  const maxCompositeNodes = allowAdvancedStrategies ? 12 : 0;
+  const aiAllowedModels = allowAdvancedStrategies ? ["*"] : [];
 
   await db.licenseEntitlement.upsert({
     where: { workspaceId },
