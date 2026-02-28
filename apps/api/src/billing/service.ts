@@ -325,9 +325,9 @@ async function getOrCreateSubscription(userId: string, tx: any = db): Promise<an
       maxRunningBots: freeDefaults.maxRunningBots,
       maxBotsTotal: freeDefaults.maxBotsTotal,
       allowedExchanges: freeDefaults.allowedExchanges,
-      aiTokenBalance: 0n,
+      aiTokenBalance: freeDefaults.monthlyAiTokens,
       aiTokenUsedLifetime: 0n,
-      monthlyAiTokensIncluded: 0n
+      monthlyAiTokensIncluded: freeDefaults.monthlyAiTokens
     }
   });
 }
@@ -336,20 +336,23 @@ async function getFreePlanDefaults(tx: any = db): Promise<{
   maxRunningBots: number;
   maxBotsTotal: number;
   allowedExchanges: string[];
+  monthlyAiTokens: bigint;
 }> {
   const pkg = await tx.billingPackage.findUnique({
     where: { code: "free" },
     select: {
       maxRunningBots: true,
       maxBotsTotal: true,
-      allowedExchanges: true
+      allowedExchanges: true,
+      monthlyAiTokens: true
     }
   });
 
   return {
     maxRunningBots: normalizeInt(pkg?.maxRunningBots, FREE_MAX_RUNNING_BOTS, 0),
     maxBotsTotal: normalizeInt(pkg?.maxBotsTotal, FREE_MAX_BOTS_TOTAL, 0),
-    allowedExchanges: normalizeStringArray(pkg?.allowedExchanges, [...FREE_ALLOWED_EXCHANGES])
+    allowedExchanges: normalizeStringArray(pkg?.allowedExchanges, [...FREE_ALLOWED_EXCHANGES]),
+    monthlyAiTokens: toBigInt(pkg?.monthlyAiTokens)
   };
 }
 
@@ -364,6 +367,7 @@ async function syncPlanPackageToSubscriptions(pkg: {
   if (pkg.kind !== "PLAN" || !pkg.plan) return;
 
   if (pkg.plan === "FREE") {
+    const freeMonthlyTokens = toBigInt(pkg.monthlyAiTokens);
     await db.userSubscription.updateMany({
       where: { effectivePlan: "FREE" },
       data: {
@@ -371,9 +375,67 @@ async function syncPlanPackageToSubscriptions(pkg: {
         maxRunningBots: normalizeInt(pkg.maxRunningBots, FREE_MAX_RUNNING_BOTS, 0),
         maxBotsTotal: normalizeInt(pkg.maxBotsTotal, FREE_MAX_BOTS_TOTAL, 0),
         allowedExchanges: normalizeStringArray(pkg.allowedExchanges, [...FREE_ALLOWED_EXCHANGES]),
-        monthlyAiTokensIncluded: 0n
+        monthlyAiTokensIncluded: freeMonthlyTokens
       }
     });
+
+    if (freeMonthlyTokens > 0n) {
+      const rows = await db.userSubscription.findMany({
+        where: {
+          effectivePlan: "FREE",
+          aiTokenBalance: {
+            lt: freeMonthlyTokens
+          }
+        },
+        select: {
+          id: true,
+          userId: true
+        }
+      });
+
+      for (const row of rows) {
+        await db.$transaction(async (tx: any) => {
+          const latest = await tx.userSubscription.findUnique({
+            where: { id: row.id },
+            select: {
+              id: true,
+              userId: true,
+              aiTokenBalance: true
+            }
+          });
+          if (!latest) return;
+
+          const current = toBigInt(latest.aiTokenBalance);
+          if (current >= freeMonthlyTokens) return;
+
+          const next = freeMonthlyTokens;
+          const granted = next - current;
+
+          await tx.userSubscription.update({
+            where: { id: latest.id },
+            data: {
+              aiTokenBalance: next
+            }
+          });
+
+          if (granted > 0n) {
+            await tx.aiTokenLedger.create({
+              data: {
+                userId: latest.userId,
+                subscriptionId: latest.id,
+                reason: "MONTHLY_GRANT",
+                deltaTokens: granted,
+                balanceAfter: next,
+                meta: {
+                  source: "free_package_sync",
+                  packagePlan: "FREE"
+                }
+              }
+            });
+          }
+        });
+      }
+    }
     return;
   }
 
@@ -409,6 +471,10 @@ export async function setUserToFreePlan(params: {
   await db.$transaction(async (tx: any) => {
     const defaults = await getFreePlanDefaults(tx);
     const sub = await getOrCreateSubscription(params.userId, tx);
+    const currentBalance = toBigInt(sub.aiTokenBalance);
+    const nextBalance =
+      currentBalance < defaults.monthlyAiTokens ? defaults.monthlyAiTokens : currentBalance;
+
     await tx.userSubscription.update({
       where: { id: sub.id },
       data: {
@@ -418,9 +484,27 @@ export async function setUserToFreePlan(params: {
         maxRunningBots: defaults.maxRunningBots,
         maxBotsTotal: defaults.maxBotsTotal,
         allowedExchanges: defaults.allowedExchanges,
-        monthlyAiTokensIncluded: 0n
+        aiTokenBalance: nextBalance,
+        monthlyAiTokensIncluded: defaults.monthlyAiTokens
       }
     });
+
+    const granted = nextBalance - currentBalance;
+    if (granted > 0n) {
+      await tx.aiTokenLedger.create({
+        data: {
+          userId: params.userId,
+          subscriptionId: sub.id,
+          reason: "MONTHLY_GRANT",
+          deltaTokens: granted,
+          balanceAfter: nextBalance,
+          meta: {
+            source: "set_user_to_free_plan",
+            packageCode: "free"
+          }
+        }
+      });
+    }
   });
 
   if (params.syncWorkspaceEntitlements !== false) {
@@ -516,7 +600,7 @@ export async function resolveEffectivePlanForUser(userId: string): Promise<{
     allowedExchanges: normalizeStringArray(row.allowedExchanges, [...FREE_ALLOWED_EXCHANGES]),
     aiTokenBalance: toBigInt(row.aiTokenBalance),
     aiTokenUsedLifetime: toBigInt(row.aiTokenUsedLifetime),
-    monthlyAiTokensIncluded: 0n
+    monthlyAiTokensIncluded: toBigInt(row.monthlyAiTokensIncluded)
   };
 }
 
@@ -861,7 +945,9 @@ export async function checkAiTokenAccess(userId: string): Promise<{
   }
 
   const resolved = await resolveEffectivePlanForUser(userId);
-  if (resolved.plan !== "pro") {
+  const freeHasIncludedTokens =
+    resolved.plan === "free" && toBigInt(resolved.monthlyAiTokensIncluded) > 0n;
+  if (resolved.plan !== "pro" && !freeHasIncludedTokens) {
     return {
       allowed: false,
       reason: "pro_required",
