@@ -196,6 +196,10 @@ const OLLAMA_EXPLAINER_MAX_ATTEMPTS = Math.max(
   1,
   Math.trunc(readEnvNumber(process.env.AI_OLLAMA_EXPLAINER_MAX_ATTEMPTS, 1, 1))
 );
+const GPT5_EXPLAINER_MAX_ATTEMPTS = Math.max(
+  2,
+  Math.trunc(readEnvNumber(process.env.AI_GPT5_EXPLAINER_MAX_ATTEMPTS, 3, 2))
+);
 const OLLAMA_4H_MIN_EXPLANATION_CHARS = readEnvNumber(
   process.env.AI_OLLAMA_4H_MIN_EXPLANATION_CHARS,
   420,
@@ -224,6 +228,11 @@ const GPT5_EXPLAINER_RETRY_MAX_TOKENS = readEnvNumber(
   process.env.AI_GPT5_EXPLAINER_RETRY_MAX_TOKENS,
   Math.max(GPT5_EXPLAINER_MAX_TOKENS + 800, Math.trunc(GPT5_EXPLAINER_MAX_TOKENS * 1.5)),
   GPT5_EXPLAINER_MAX_TOKENS
+);
+const GPT5_EXPLAINER_FINAL_MAX_TOKENS = readEnvNumber(
+  process.env.AI_GPT5_EXPLAINER_FINAL_MAX_TOKENS,
+  Math.max(GPT5_EXPLAINER_RETRY_MAX_TOKENS, Math.trunc(GPT5_EXPLAINER_RETRY_MAX_TOKENS * 1.6)),
+  GPT5_EXPLAINER_RETRY_MAX_TOKENS
 );
 const EXPLAINER_HISTORY_CONTEXT_MAX_EVENTS = normalizeHistoryContextMaxEvents(
   process.env.AI_EXPLAINER_HISTORY_CONTEXT_MAX_EVENTS
@@ -1495,6 +1504,25 @@ function resolveExplainerTokenBudget(model: string): {
   };
 }
 
+function resolveExplainerMaxAttemptsPerModel(
+  provider: "openai" | "ollama" | "disabled",
+  model: string
+): number {
+  if (provider === "ollama") return OLLAMA_EXPLAINER_MAX_ATTEMPTS;
+  if (isGpt5Model(model)) return GPT5_EXPLAINER_MAX_ATTEMPTS;
+  return 2;
+}
+
+function resolveExplainerAttemptMaxTokens(model: string, attempt: number): number {
+  const tokenBudget = resolveExplainerTokenBudget(model);
+  if (!isGpt5Model(model)) {
+    return attempt === 1 ? tokenBudget.maxTokens : tokenBudget.retryMaxTokens;
+  }
+  if (attempt <= 1) return tokenBudget.maxTokens;
+  if (attempt === 2) return tokenBudget.retryMaxTokens;
+  return GPT5_EXPLAINER_FINAL_MAX_TOKENS;
+}
+
 function resolveExplainerFallbackModel(primaryModel: string): string | null {
   if (!isGpt5Model(primaryModel)) return null;
   const fallback = (process.env.AI_FALLBACK_MODEL ?? "gpt-4o-mini").trim();
@@ -1650,7 +1678,6 @@ export async function generatePredictionExplanation(
     aiProvider === "ollama"
       ? Math.max(EXPLAINER_TIMEOUT_MS, OLLAMA_EXPLAINER_TIMEOUT_MS)
       : EXPLAINER_TIMEOUT_MS;
-  const maxAttemptsPerModel = aiProvider === "ollama" ? OLLAMA_EXPLAINER_MAX_ATTEMPTS : 2;
   const traceBase = {
     userId: deps.traceUserId ?? null,
     scope: "prediction_explainer",
@@ -1901,7 +1928,7 @@ export async function generatePredictionExplanation(
         const modelCandidates = aiFallbackModel ? [aiModel, aiFallbackModel] : [aiModel];
         for (let modelIndex = 0; modelIndex < modelCandidates.length; modelIndex += 1) {
           const currentModel = modelCandidates[modelIndex];
-          const tokenBudget = resolveExplainerTokenBudget(currentModel);
+          const maxAttemptsPerModel = resolveExplainerMaxAttemptsPerModel(aiProvider, currentModel);
           rememberAttemptedModel(currentModel);
           let validated: ExplainerOutput | null = null;
           let validatedQualityMetrics: ExplanationQualityMetrics | null = null;
@@ -1929,7 +1956,7 @@ export async function generatePredictionExplanation(
                 model: currentModel,
                 temperature: 0,
                 timeoutMs: effectiveExplainerTimeoutMs,
-                maxTokens: attempt === 1 ? tokenBudget.maxTokens : tokenBudget.retryMaxTokens,
+                maxTokens: resolveExplainerAttemptMaxTokens(currentModel, attempt),
                 billingUserId: deps.traceUserId ?? null,
                 billingScope: "prediction_explainer",
                 onUsage: (usage) => {
