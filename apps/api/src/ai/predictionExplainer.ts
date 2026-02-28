@@ -215,6 +215,16 @@ const EXPLAINER_RETRY_MAX_TOKENS = readEnvNumber(
   Math.max(EXPLAINER_MAX_TOKENS + 350, Math.trunc(EXPLAINER_MAX_TOKENS * 1.5)),
   EXPLAINER_MAX_TOKENS
 );
+const GPT5_EXPLAINER_MAX_TOKENS = readEnvNumber(
+  process.env.AI_GPT5_EXPLAINER_MAX_TOKENS,
+  3200,
+  EXPLAINER_MAX_TOKENS
+);
+const GPT5_EXPLAINER_RETRY_MAX_TOKENS = readEnvNumber(
+  process.env.AI_GPT5_EXPLAINER_RETRY_MAX_TOKENS,
+  Math.max(GPT5_EXPLAINER_MAX_TOKENS + 800, Math.trunc(GPT5_EXPLAINER_MAX_TOKENS * 1.5)),
+  GPT5_EXPLAINER_MAX_TOKENS
+);
 const EXPLAINER_HISTORY_CONTEXT_MAX_EVENTS = normalizeHistoryContextMaxEvents(
   process.env.AI_EXPLAINER_HISTORY_CONTEXT_MAX_EVENTS
 );
@@ -1469,6 +1479,22 @@ function isGpt5Model(model: string): boolean {
   return model.startsWith("gpt-5");
 }
 
+function resolveExplainerTokenBudget(model: string): {
+  maxTokens: number;
+  retryMaxTokens: number;
+} {
+  if (isGpt5Model(model)) {
+    return {
+      maxTokens: GPT5_EXPLAINER_MAX_TOKENS,
+      retryMaxTokens: GPT5_EXPLAINER_RETRY_MAX_TOKENS
+    };
+  }
+  return {
+    maxTokens: EXPLAINER_MAX_TOKENS,
+    retryMaxTokens: EXPLAINER_RETRY_MAX_TOKENS
+  };
+}
+
 function resolveExplainerFallbackModel(primaryModel: string): string | null {
   if (!isGpt5Model(primaryModel)) return null;
   const fallback = (process.env.AI_FALLBACK_MODEL ?? "gpt-4o-mini").trim();
@@ -1772,7 +1798,7 @@ export async function generatePredictionExplanation(
               model: inputArgs.model,
               temperature: 0,
               timeoutMs: effectiveExplainerTimeoutMs,
-              maxTokens: EXPLAINER_RETRY_MAX_TOKENS,
+              maxTokens: resolveExplainerTokenBudget(inputArgs.model).retryMaxTokens,
               billingUserId: deps.traceUserId ?? null,
               billingScope: "prediction_explainer",
               onUsage: (usage) => {
@@ -1816,7 +1842,7 @@ export async function generatePredictionExplanation(
             userPayload,
             model: aiModel,
             timeoutMs: effectiveExplainerTimeoutMs,
-            maxTokens: EXPLAINER_RETRY_MAX_TOKENS,
+            maxTokens: resolveExplainerTokenBudget(aiModel).retryMaxTokens,
             billingUserId: deps.traceUserId ?? null,
             billingScope: "prediction_explainer",
             profile: runtimeProfile.agentSignalProfile
@@ -1875,6 +1901,7 @@ export async function generatePredictionExplanation(
         const modelCandidates = aiFallbackModel ? [aiModel, aiFallbackModel] : [aiModel];
         for (let modelIndex = 0; modelIndex < modelCandidates.length; modelIndex += 1) {
           const currentModel = modelCandidates[modelIndex];
+          const tokenBudget = resolveExplainerTokenBudget(currentModel);
           rememberAttemptedModel(currentModel);
           let validated: ExplainerOutput | null = null;
           let validatedQualityMetrics: ExplanationQualityMetrics | null = null;
@@ -1902,7 +1929,7 @@ export async function generatePredictionExplanation(
                 model: currentModel,
                 temperature: 0,
                 timeoutMs: effectiveExplainerTimeoutMs,
-                maxTokens: attempt === 1 ? EXPLAINER_MAX_TOKENS : EXPLAINER_RETRY_MAX_TOKENS,
+                maxTokens: attempt === 1 ? tokenBudget.maxTokens : tokenBudget.retryMaxTokens,
                 billingUserId: deps.traceUserId ?? null,
                 billingScope: "prediction_explainer",
                 onUsage: (usage) => {
@@ -2027,7 +2054,7 @@ export async function generatePredictionExplanation(
               userPayload,
               model: aiModel,
               timeoutMs: effectiveExplainerTimeoutMs,
-              maxTokens: EXPLAINER_RETRY_MAX_TOKENS,
+              maxTokens: resolveExplainerTokenBudget(aiModel).retryMaxTokens,
               billingUserId: deps.traceUserId ?? null,
               billingScope: "prediction_explainer",
               profile: runtimeProfile.agentSignalProfile
