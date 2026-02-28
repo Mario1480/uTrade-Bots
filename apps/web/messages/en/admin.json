@@ -681,36 +681,41 @@
     "no": "no",
     "never": "never",
     "removeStoredKey": "Remove stored key",
-    "openAi": {
-      "sectionTitle": "OpenAI Key (Global)",
-      "statusLabel": "OpenAI status",
-      "modelLabel": "OpenAI model",
-      "modelPlaceholder": "Select model",
+    "ai": {
+      "sectionTitle": "AI Provider (Global)",
+      "statusLabel": "AI status",
+      "providerLabel": "Provider",
+      "providerSave": "Save provider/base URL",
+      "baseUrlLabel": "Base URL",
+      "modelLabel": "Model",
+      "modelPlaceholder": "Enter model name",
       "modelSave": "Save model",
       "modelReset": "Reset model",
+      "currentProvider": "Current effective provider",
+      "currentBaseUrl": "Current effective base URL",
       "currentModel": "Current effective model",
-      "currentModelSource": "Model source",
-      "modelOptionsHint": "Model setting is global and applies immediately.",
-      "newKey": "New OpenAI API key",
-      "save": "Save OpenAI key",
-      "envOverrideHint": "ENV `AI_API_KEY` is still set. Remove it from `.env.prod` if you want DB-only key handling."
+      "modelOptionsHint": "For Ollama you can enter any local model name (e.g. qwen3:8b).",
+      "newKey": "New AI API key",
+      "save": "Save AI key",
+      "envOverrideHint": "ENV `AI_API_KEY` is configured as fallback and is only used when no DB key exists for the active provider."
     },
     "fmp": {
       "sectionTitle": "FMP Key (Economic Calendar)",
       "statusLabel": "FMP status",
       "newKey": "New FMP API key",
       "save": "Save FMP key",
-      "envOverrideHint": "ENV `FMP_API_KEY` is still set. Remove it from `.env.prod` if you want DB-only key handling."
+      "envOverrideHint": "ENV `FMP_API_KEY` is configured as fallback and is only used when no DB key exists."
     },
     "messages": {
       "accessRequired": "Admin backend access required.",
-      "openAiKeyRequired": "Please enter an OpenAI API key.",
-      "openAiKeySaved": "OpenAI API key saved.",
-      "openAiKeyRemoved": "OpenAI API key removed.",
-      "openAiModelRequired": "Please select an OpenAI model.",
-      "openAiModelSaved": "OpenAI model saved.",
-      "openAiModelReset": "OpenAI model reset to ENV/default fallback.",
-      "confirmClearOpenAi": "Remove the stored OpenAI API key?",
+      "aiKeyRequired": "Please enter an AI API key.",
+      "aiKeySaved": "AI API key saved.",
+      "aiKeyRemoved": "AI API key removed.",
+      "aiModelRequired": "Please enter an AI model.",
+      "aiModelSaved": "AI model saved.",
+      "aiModelReset": "AI model reset to ENV/default fallback.",
+      "aiProviderSaved": "AI provider/base URL saved.",
+      "confirmClearAi": "Remove the stored AI API key?",
       "fmpKeyRequired": "Please enter an FMP API key.",
       "fmpKeySaved": "FMP API key saved.",
       "fmpKeyRemoved": "FMP API key removed.",
@@ -744,7 +749,7 @@
     },
     "apiKeys": {
       "title": "API Keys",
-      "description": "Store global API keys (starting with OpenAI) encrypted in DB."
+      "description": "Store global AI/FMP API keys encrypted in DB."
     },
     "indicatorSettings": {
       "title": "Indicator Settings",

@@ -60,6 +60,10 @@ type AiTraceLogItem = {
   retryUsed: boolean;
   retryCount: number;
   totalTokens: number | null;
+  analysisMode: "market_analysis" | "trading_explainer";
+  neutralEnforced: boolean;
+  explanationLength: number | null;
+  explanationSentenceCount: number | null;
   scope: string;
   provider: string | null;
   model: string | null;
@@ -520,6 +524,10 @@ export default function AdminAiTracePage() {
                       {row.retryUsed ? ` · retry x${row.retryCount}` : ""}
                       {row.cacheHit ? " · cache-hit" : ""}
                       {row.rateLimited ? " · rate-limited" : ""}
+                      {row.analysisMode === "market_analysis" ? " · market-analysis" : ""}
+                      {row.neutralEnforced ? " · neutral-enforced" : ""}
+                      {row.explanationLength !== null ? ` · chars: ${row.explanationLength}` : ""}
+                      {row.explanationSentenceCount !== null ? ` · sentences: ${row.explanationSentenceCount}` : ""}
                       {row.latencyMs !== null ? ` · ${row.latencyMs}ms` : ""}
                       {row.totalTokens !== null ? ` · tokens: ${row.totalTokens}` : ""}
                     </summary>

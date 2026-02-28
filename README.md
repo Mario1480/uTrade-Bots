@@ -85,9 +85,18 @@ Queue/Runner:
 - `WORKER_CONCURRENCY`
 
 AI Predictions:
-- `AI_PROVIDER` (`none` oder `openai`)
+- `AI_PROVIDER` (`openai`, `ollama`, `disabled`)
+- `AI_BASE_URL` (`https://api.openai.com/v1` oder `http://localhost:11434/v1`)
 - `AI_API_KEY`
+- `AI_SIGNAL_ENGINE` (`legacy` default, `agent_v1` für Tool-Calling-Agent)
+- `AI_SIGNAL_ENGINE_OLLAMA` (optional; `legacy` nur als Kompatibilitäts-Override)
 - `AI_MODEL`
+- `AI_OLLAMA_4H_MIN_EXPLANATION_CHARS` (default `420`)
+- `AI_OLLAMA_4H_MIN_EXPLANATION_SENTENCES` (default `8`)
+- `AI_AGENT_MAX_TOOL_ITERATIONS` (default `3`)
+- `AI_TOOL_TIMEOUT_MS`
+- `AI_TOOL_CACHE_TTL_MS`
+- `AI_TOOL_RATE_LIMIT_PER_MIN`
 - `FEATURE_THRESHOLDS_CALIBRATION_ENABLED`
 - `FEATURE_THRESHOLDS_SYMBOLS`
 - `FEATURE_THRESHOLDS_TIMEFRAMES`
@@ -111,6 +120,25 @@ AI Predictions:
 - Bot Entry Gating (Prediction filter only, no auto-trading):
   - `PREDICTION_GATE_FAIL_OPEN` (`false` default)
   - Gate-Config liegt je Bot in `futuresConfig.paramsJson.gating`
+
+Lokales Ollama-Setup (OpenAI-kompatibler Chat-Completions Transport):
+```bash
+ollama pull qwen3:8b
+```
+```env
+AI_PROVIDER=ollama
+AI_BASE_URL=http://localhost:11434/v1
+AI_MODEL=qwen3:8b
+AI_API_KEY=ollama
+AI_SIGNAL_ENGINE=agent_v1
+# optional:
+# AI_SIGNAL_ENGINE_OLLAMA=legacy
+```
+
+Ollama Prompt-Fit Runtime:
+- Es werden keine separaten Prompt-Kopien gepflegt; provider/timeframe-spezifische Runtime-Hints werden an den System-Prompt angehängt.
+- Für `ollama + 4h` wird eine lange Analyse erzwungen (8-12 Sätze, Fließtext).
+- Wenn `marketAnalysisUpdateEnabled=true` bei `4h`, wird `aiPrediction` neutral-only normalisiert (`neutral/0/0`).
 
 Economic Calendar (FMP) + News Blackout:
 - `FMP_API_KEY` (optional ENV fallback; preferred via Admin-UI)
@@ -172,7 +200,7 @@ SMTP:
   - Default currencies (refresh/config fallback): `USD,EUR,GBP,JPY,CHF,CAD,AUD,NZD,CNY`
 - Telegram Settings: `/settings/notifications`
 - Admin Backend: `/admin` (Superadmin)
-- Global OpenAI Key (encrypted DB): `/admin/api-keys`
+- Global AI Provider Key (encrypted DB): `/admin/api-keys`
 - Global FMP Key (encrypted DB): `/admin/api-keys`
 - Indicator Settings (global/account/symbol/tf overrides): `/admin/indicator-settings`
 - Paper Trading Smoke Test: `docs/paper-trading-smoke-test.md`

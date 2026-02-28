@@ -46,3 +46,23 @@ test("resolveAiModelFromConfig ignores invalid env model and uses default", () =
   assert.equal(resolved.model, "gpt-4o-mini");
   assert.equal(resolved.source, "default");
 });
+
+test("resolveAiModelFromConfig allows free-form ollama model names", () => {
+  const resolved = resolveAiModelFromConfig({
+    provider: "ollama",
+    dbModel: "qwen3:8b",
+    envModel: "llama3.1:8b"
+  });
+  assert.equal(resolved.model, "qwen3:8b");
+  assert.equal(resolved.source, "db");
+});
+
+test("resolveAiModelFromConfig falls back to ollama default model", () => {
+  const resolved = resolveAiModelFromConfig({
+    provider: "ollama",
+    dbModel: null,
+    envModel: null
+  });
+  assert.equal(resolved.model, "qwen3:8b");
+  assert.equal(resolved.source, "default");
+});

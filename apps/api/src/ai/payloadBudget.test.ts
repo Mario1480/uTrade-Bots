@@ -122,6 +122,79 @@ test("applyAiPayloadBudget marks over-budget payloads after last-resort trim", (
   assert.equal((trimmed.meta as any).trim.includes("payload_budget_exceeded"), true);
 });
 
+test("applyAiPayloadBudget can drop heavy mtf/ohlcv payload sections to meet tight budget", () => {
+  const bars = Array.from({ length: 120 }, (_, idx) => ({
+    t: 1_771_000_000 + idx * 300,
+    o: 70_000 + idx,
+    h: 70_100 + idx,
+    l: 69_900 + idx,
+    c: 70_050 + idx,
+    v: 100 + idx
+  }));
+  const payload = {
+    symbol: "BTCUSDT",
+    marketType: "perp",
+    timeframe: "5m",
+    prediction: { signal: "up", expectedMovePct: 1.2, confidence: 0.62 },
+    featureSnapshot: {
+      ohlcvSeries: {
+        timeframe: "5m",
+        count: bars.length,
+        bars
+      },
+      mtf: {
+        runTimeframe: "5m",
+        frames: {
+          "5m": {
+            ohlcvSeries: {
+              timeframe: "5m",
+              count: bars.length,
+              bars
+            },
+            advancedIndicators: {
+              pvsra: {
+                vectorTier: "extreme",
+                score: 99
+              }
+            }
+          },
+          "1h": {
+            ohlcvSeries: {
+              timeframe: "1h",
+              count: bars.length,
+              bars
+            },
+            advancedIndicators: {
+              cloud: {
+                pricePos: 0.84
+              }
+            }
+          }
+        }
+      },
+      advancedIndicators: {
+        emas: {
+          ema_50: 70_000,
+          ema_200: 69_000
+        }
+      }
+    }
+  } as Record<string, unknown>;
+
+  const { payload: trimmed, metrics } = applyAiPayloadBudget(payload, {
+    maxPayloadBytes: 4500,
+    maxHistoryBytes: 2000
+  });
+  assert.equal(metrics.overBudget, false);
+  assert.equal(metrics.trimFlags.length > 0, true);
+  assert.equal(
+    metrics.trimFlags.some((flag) =>
+      flag.includes("trimmed") || flag.endsWith("_dropped")
+    ),
+    true
+  );
+});
+
 test("budget telemetry emits high-water and trim-rate alert snapshots", () => {
   resetAiPayloadBudgetTelemetry();
   const base: AiPayloadBudgetMetrics = {

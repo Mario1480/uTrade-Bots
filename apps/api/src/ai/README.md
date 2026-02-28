@@ -6,16 +6,76 @@
 - Never depend on AI output for trading execution.
 
 ## Environment Variables
-- `AI_PROVIDER` (`openai` default, `off`/`disabled` to disable AI)
-- `AI_API_KEY` (required for OpenAI calls)
-- `AI_MODEL` (default: `gpt-4o-mini`)
+- `AI_PROVIDER` (`openai` default, `ollama`, `off`/`disabled` to disable AI)
+- `AI_BASE_URL` (OpenAI: `https://api.openai.com/v1`, Ollama: `http://localhost:11434/v1`)
+- `AI_API_KEY` (required for OpenAI; for Ollama a dummy key like `ollama` is supported)
+- `AI_MODEL` (OpenAI default: `gpt-4o-mini`, Ollama default: `qwen3:8b`)
+- `AI_SIGNAL_ENGINE` (`legacy` default, `agent_v1` enables tool-calling agent loop)
+- `AI_SIGNAL_ENGINE_OLLAMA` (optional, default auto-agent; set `legacy` only for forced compatibility mode)
 - `AI_TIMEOUT_MS` (default: `15000`)
 - `AI_EXPLAINER_TIMEOUT_MS` (optional override for prediction explainer calls)
 - `AI_EXPLAINER_MAX_TOKENS` (default: `650` for prediction explainer calls)
 - `AI_EXPLAINER_RETRY_MAX_TOKENS` (default: max(`AI_EXPLAINER_MAX_TOKENS` + 350, 1.5x))
+- `AI_OLLAMA_4H_MIN_EXPLANATION_CHARS` (default: `420`)
+- `AI_OLLAMA_4H_MIN_EXPLANATION_SENTENCES` (default: `8`)
 - `AI_PROMPT_OHLCV_MAX_BARS` (default: `500`, min `20`, max `500`) - hard cap for stored OHLCV bars
 - `AI_CACHE_TTL_SEC` (default: `300`)
 - `AI_RATE_LIMIT_PER_MIN` (default: `60`)
+- `AI_AGENT_MAX_TOOL_ITERATIONS` (default: `3`)
+- `AI_TOOL_TIMEOUT_MS` (default: `8000`)
+- `AI_TOOL_CACHE_TTL_MS` (default: `3000`)
+- `AI_TOOL_RATE_LIMIT_PER_MIN` (default: `120`)
+
+## Signal Agent v1 (Tool Calling + Structured Output)
+- Uses OpenAI-compatible `POST /chat/completions` transport for both OpenAI and Ollama.
+- Orchestrator loop:
+  - call model with tools + JSON schema
+  - execute requested tools in backend
+  - append tool results as `tool` messages
+  - repeat until final schema-valid response or iteration cap
+- Built-in tools:
+  - `get_ohlcv`
+  - `get_indicators`
+  - `get_ticker`
+  - `get_orderbook`
+- Signal schema (internal):
+  - `decision`: `long | short | no_trade`
+  - `entry`, `stop_loss`, `take_profit`
+  - `confidence` (`0..1`)
+  - `reason`
+- Final output is mapped back to the existing external prediction contract (`up/down/neutral`).
+- Structured schema is runtime-profile aware (`explanation` required, min length adjustable by provider/timeframe profile).
+
+## Ollama Runtime Hints (Prompt-Fit)
+- Single prompt templates are kept; provider/timeframe hints are appended at runtime.
+- For `ollama + 4h`, explanation quality target is long-form (8-12 sentences) with a fixed narrative order:
+  - trend -> momentum -> structure -> liquidity/FVG -> volume -> volatility -> uncertainty -> conclusion
+- If explanation quality is below threshold, one targeted correction pass is triggered:
+  - keep all fields unchanged
+  - expand only `explanation`
+  - return strict JSON only
+
+## 4h Market Analysis Neutral-Only
+- If `marketAnalysisUpdateEnabled=true` and timeframe is `4h`, prediction normalization enforces:
+  - `aiPrediction.signal = neutral`
+  - `aiPrediction.confidence = 0`
+  - `aiPrediction.expectedMovePct = 0`
+- This keeps analysis mode informational and avoids directional trade output.
+
+## Local Ollama Quickstart
+```bash
+ollama pull qwen3:8b
+```
+
+```env
+AI_PROVIDER=ollama
+AI_BASE_URL=http://localhost:11434/v1
+AI_MODEL=qwen3:8b
+AI_API_KEY=ollama
+AI_SIGNAL_ENGINE=agent_v1
+# optional hard override if needed:
+# AI_SIGNAL_ENGINE_OLLAMA=legacy
+```
 
 ## Safety Guarantees
 - Output validation uses zod with strict constraints:

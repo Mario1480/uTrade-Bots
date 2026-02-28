@@ -6,7 +6,7 @@
     "dev": "tsx watch src/index.ts",
     "build": "tsc -p tsconfig.json",
     "typecheck": "tsc -p tsconfig.json --noEmit",
-    "test:ai": "tsx --test src/ai/qualityGate.test.ts src/ai/payloadBudget.test.ts src/ai/historyContext.test.ts src/ai/promptSettings.test.ts src/ai/predictionExplainer.test.ts src/ai/promptGenerator.test.ts src/ai/userPromptSettings.test.ts src/ai/provider.model.test.ts src/telegram/telegramChatIdUniqueness.test.ts",
+    "test:ai": "tsx --test src/ai/qualityGate.test.ts src/ai/payloadBudget.test.ts src/ai/historyContext.test.ts src/ai/promptSettings.test.ts src/ai/predictionExplainer.test.ts src/ai/promptGenerator.test.ts src/ai/userPromptSettings.test.ts src/ai/provider.model.test.ts src/ai/agent.test.ts src/ai/tools/index.test.ts src/telegram/telegramChatIdUniqueness.test.ts",
     "test:composite-strategies": "tsx --test src/composite-strategies/graph.test.ts src/composite-strategies/runner.test.ts",
     "test:local-strategies": "tsx --test src/local-strategies/registry.test.ts src/local-strategies/pythonClient.test.ts src/local-strategies/pythonRunner.test.ts",
     "test:predictions-detail": "tsx --test src/dto/predictions.dto.test.ts src/controllers/predictionsController.test.ts",
@@ -14,7 +14,9 @@
     "test:predictions-evaluator": "tsx --test src/jobs/predictionEvaluatorJob.test.ts",
     "test:indicator-settings": "tsx --test src/dto/indicatorSettings.dto.test.ts src/config/indicatorSettingsResolver.test.ts",
     "test:bots-overview": "tsx --test src/bots/overview.test.ts src/bots/tradeHistory.test.ts",
-    "backfill:prediction-copier-exit-flags": "tsx src/scripts/backfill-prediction-copier-exit-flags.ts"
+    "backfill:prediction-copier-exit-flags": "tsx src/scripts/backfill-prediction-copier-exit-flags.ts",
+    "set-user-plan": "tsx src/scripts/set-user-plan.ts",
+    "set-all-users-free": "tsx src/scripts/set-all-users-free.ts"
   },
   "dependencies": {
     "@mm/db": "0.0.1",

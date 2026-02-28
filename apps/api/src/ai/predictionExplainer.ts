@@ -1,7 +1,14 @@
 import { z } from "zod";
 import { logger } from "../logger.js";
 import { analyzeWithAiGuards, hashStableObject } from "./analyzer.js";
-import { callAi, getAiModelAsync } from "./provider.js";
+import {
+  runSignalAgent,
+  mapDecisionToSignal,
+  type AgentSignal,
+  type AgentAnalysisMode,
+  type AgentSignalProfile
+} from "./agent.js";
+import { callAi, getAiModelAsync, getAiProviderAsync } from "./provider.js";
 import {
   filterFeatureSnapshotForAiPrompt,
   getAiPromptRuntimeSettings,
@@ -74,13 +81,13 @@ const baseOutputSchema = z.object({
   // Keep this loose and enforce final constraints in validateExplainerOutput.
   // Some model responses are valid enough except explanation length/emptiness.
   explanation: z.string().max(4000).optional(),
-  tags: z.array(z.string()).max(5),
+  tags: z.array(z.string()).max(5).optional(),
   keyDrivers: z.array(
     z.object({
       name: z.string().min(1).max(120),
       value: z.unknown()
     })
-  ).max(5),
+  ).max(5).optional(),
   aiPrediction: z
     .object({
       signal: z.enum(["up", "down", "neutral"]),
@@ -103,7 +110,7 @@ const baseOutputSchema = z.object({
       tp: z.number().optional()
     })
     .optional(),
-  disclaimer: z.literal("grounded_features_only")
+  disclaimer: z.literal("grounded_features_only").optional()
 });
 
 type GenerateDeps = {
@@ -115,13 +122,35 @@ type GenerateDeps = {
 };
 
 export type ExplainerPromptPreview = {
+  aiProvider: "openai" | "ollama" | "disabled";
   scopeContext: AiPromptScopeContext;
   runtimeSettings: AiPromptRuntimeSettings;
+  runtimeProfile: ExplainerRuntimeProfile;
   systemMessage: string;
   userPayload: Record<string, unknown>;
   payloadBudgetMetrics: AiPayloadBudgetMetrics;
   promptInput: ExplainerInput;
   cacheKey: string;
+};
+
+type ExplainerAnalysisMode = AgentAnalysisMode;
+
+type ExplanationQualityMetrics = {
+  explanationLength: number;
+  explanationSentenceCount: number;
+  meetsLength: boolean;
+  meetsSentenceCount: boolean;
+};
+
+type ExplainerRuntimeProfile = {
+  provider: "openai" | "ollama" | "disabled";
+  timeframe: ExplainerInput["timeframe"];
+  analysisMode: ExplainerAnalysisMode;
+  enforceNeutralPrediction: boolean;
+  explanationMinChars: number;
+  explanationMinSentences: number;
+  runtimeHints: string[];
+  agentSignalProfile: AgentSignalProfile;
 };
 
 const SYSTEM_MESSAGE =
@@ -147,6 +176,34 @@ const EXPLAINER_TIMEOUT_MS = readEnvNumber(
   process.env.AI_EXPLAINER_TIMEOUT_MS ?? process.env.AI_TIMEOUT_MS,
   15000,
   1000
+);
+const OLLAMA_EXPLAINER_TIMEOUT_MS = readEnvNumber(
+  process.env.AI_OLLAMA_EXPLAINER_TIMEOUT_MS,
+  90000,
+  1000
+);
+const OLLAMA_MAX_PAYLOAD_BYTES = readEnvNumber(
+  process.env.AI_OLLAMA_MAX_PAYLOAD_BYTES,
+  8 * 1024,
+  1024
+);
+const OLLAMA_MAX_HISTORY_BYTES = readEnvNumber(
+  process.env.AI_OLLAMA_MAX_HISTORY_BYTES,
+  3 * 1024,
+  512
+);
+const OLLAMA_EXPLAINER_MAX_ATTEMPTS = Math.max(
+  1,
+  Math.trunc(readEnvNumber(process.env.AI_OLLAMA_EXPLAINER_MAX_ATTEMPTS, 1, 1))
+);
+const OLLAMA_4H_MIN_EXPLANATION_CHARS = readEnvNumber(
+  process.env.AI_OLLAMA_4H_MIN_EXPLANATION_CHARS,
+  420,
+  120
+);
+const OLLAMA_4H_MIN_EXPLANATION_SENTENCES = Math.max(
+  2,
+  Math.trunc(readEnvNumber(process.env.AI_OLLAMA_4H_MIN_EXPLANATION_SENTENCES, 8, 2))
 );
 const EXPLAINER_MAX_TOKENS = readEnvNumber(
   process.env.AI_EXPLAINER_MAX_TOKENS,
@@ -200,28 +257,158 @@ const EXPLAINER_CACHE_TTL_1D_SEC = readEnvNumber(
 
 function withTraceMetaPayload(
   userPayload: Record<string, unknown>,
-  retryUsed: boolean,
-  retryCount: number,
-  totalTokens: number | null
+  input: {
+    retryUsed: boolean;
+    retryCount: number;
+    totalTokens: number | null;
+    analysisMode?: ExplainerAnalysisMode;
+    neutralEnforced?: boolean;
+    explanationLength?: number | null;
+    explanationSentenceCount?: number | null;
+  }
 ): Record<string, unknown> {
   const normalizedTokens =
-    Number.isFinite(Number(totalTokens)) && totalTokens !== null
-      ? Math.max(0, Math.trunc(Number(totalTokens)))
+    Number.isFinite(Number(input.totalTokens)) && input.totalTokens !== null
+      ? Math.max(0, Math.trunc(Number(input.totalTokens)))
+      : null;
+  const normalizedExplanationLength =
+    Number.isFinite(Number(input.explanationLength)) && input.explanationLength !== null
+      ? Math.max(0, Math.trunc(Number(input.explanationLength)))
+      : null;
+  const normalizedExplanationSentenceCount =
+    Number.isFinite(Number(input.explanationSentenceCount)) && input.explanationSentenceCount !== null
+      ? Math.max(0, Math.trunc(Number(input.explanationSentenceCount)))
       : null;
   return {
     ...userPayload,
     __trace: {
-      retryUsed,
-      retryCount: Math.max(0, Math.trunc(retryCount)),
-      totalTokens: normalizedTokens
+      retryUsed: input.retryUsed,
+      retryCount: Math.max(0, Math.trunc(input.retryCount)),
+      totalTokens: normalizedTokens,
+      analysisMode: input.analysisMode ?? "trading_explainer",
+      neutralEnforced: input.neutralEnforced === true,
+      explanationLength: normalizedExplanationLength,
+      explanationSentenceCount: normalizedExplanationSentenceCount
     }
   };
 }
 
-function buildSystemMessage(customPromptText: string): string {
+function buildSystemMessage(customPromptText: string, runtimeHints: string[] = []): string {
   const trimmed = customPromptText.trim();
-  if (!trimmed) return SYSTEM_MESSAGE;
-  return `${SYSTEM_MESSAGE}\n\nOperator instructions:\n${trimmed}`;
+  const hintText = runtimeHints
+    .map((item) => item.trim())
+    .filter((item) => item.length > 0)
+    .join("\n");
+  const sections: string[] = [SYSTEM_MESSAGE];
+  if (trimmed) {
+    sections.push(`Operator instructions:\n${trimmed}`);
+  }
+  if (hintText) {
+    sections.push(`Runtime output hints:\n${hintText}`);
+  }
+  return sections.join("\n\n");
+}
+
+function countSentences(value: string): number {
+  const trimmed = value.trim();
+  if (!trimmed) return 0;
+  const matches = trimmed.match(/[.!?]+(?=\s|$)/g);
+  if (matches && matches.length > 0) return matches.length;
+  return trimmed
+    .split(/\n+/)
+    .map((row) => row.trim())
+    .filter((row) => row.length > 0).length;
+}
+
+function evaluateExplanationQuality(
+  explanation: string,
+  profile: ExplainerRuntimeProfile
+): ExplanationQualityMetrics {
+  const explanationLength = explanation.trim().length;
+  const explanationSentenceCount = countSentences(explanation);
+  return {
+    explanationLength,
+    explanationSentenceCount,
+    meetsLength: explanationLength >= profile.explanationMinChars,
+    meetsSentenceCount: explanationSentenceCount >= profile.explanationMinSentences
+  };
+}
+
+function buildProviderRuntimeHints(profile: ExplainerRuntimeProfile): string[] {
+  const hints: string[] = [];
+  if (profile.provider !== "ollama") return hints;
+
+  hints.push("For local Ollama: return strict JSON only and avoid prefacing text.");
+
+  if (profile.timeframe === "4h") {
+    hints.push("Write explanation as 8-12 complete sentences in flowing prose.");
+    hints.push(
+      "Follow this order in explanation: trend, momentum, structure, liquidity/FVG, volume, volatility, uncertainty, conclusion."
+    );
+    hints.push("Do not use bullet points inside explanation.");
+  }
+
+  if (profile.enforceNeutralPrediction) {
+    hints.push("Set aiPrediction.signal to neutral.");
+    hints.push("Set aiPrediction.confidence to 0 and aiPrediction.expectedMovePct to 0.");
+    hints.push("Do not include long/short trade recommendations.");
+  }
+
+  return hints;
+}
+
+function buildExplainerRuntimeProfile(input: {
+  aiProvider: "openai" | "ollama" | "disabled";
+  timeframe: ExplainerInput["timeframe"];
+  runtimeSettings: AiPromptRuntimeSettings;
+}): ExplainerRuntimeProfile {
+  const isMarketAnalysis = input.runtimeSettings.marketAnalysisUpdateEnabled && input.timeframe === "4h";
+  const analysisMode: ExplainerAnalysisMode = isMarketAnalysis
+    ? "market_analysis"
+    : "trading_explainer";
+  const explanationMinChars =
+    input.aiProvider === "ollama" && input.timeframe === "4h"
+      ? OLLAMA_4H_MIN_EXPLANATION_CHARS
+      : 0;
+  const explanationMinSentences =
+    input.aiProvider === "ollama" && input.timeframe === "4h"
+      ? OLLAMA_4H_MIN_EXPLANATION_SENTENCES
+      : 0;
+  const profileBase: ExplainerRuntimeProfile = {
+    provider: input.aiProvider,
+    timeframe: input.timeframe,
+    analysisMode,
+    enforceNeutralPrediction: isMarketAnalysis,
+    explanationMinChars,
+    explanationMinSentences,
+    runtimeHints: [],
+    agentSignalProfile: {
+      analysisMode,
+      explanationRequired: true,
+      explanationMinLength: Math.max(1, Math.min(900, explanationMinChars))
+    }
+  };
+  const runtimeHints = buildProviderRuntimeHints(profileBase);
+  return {
+    ...profileBase,
+    runtimeHints
+  };
+}
+
+function appendQualityRepairInstruction(
+  systemMessage: string,
+  profile: ExplainerRuntimeProfile
+): string {
+  if (profile.explanationMinChars <= 0 && profile.explanationMinSentences <= 0) {
+    return systemMessage;
+  }
+  const instructionLines = [
+    "Quality correction:",
+    "You already returned valid JSON. Keep all fields and values unchanged except `explanation`.",
+    `Expand explanation to at least ${Math.max(1, profile.explanationMinSentences)} sentences and at least ${Math.max(1, profile.explanationMinChars)} characters.`,
+    "Use flowing prose and keep factual grounding unchanged."
+  ];
+  return `${systemMessage}\n\n${instructionLines.join("\n")}`;
 }
 
 function toNumber(value: unknown): number | null {
@@ -737,14 +924,18 @@ function normalizeKeyDriverPath(path: string): string {
 export function validateExplainerOutput(
   rawValue: unknown,
   featureSnapshot: Record<string, unknown>,
-  baselinePrediction?: ExplainerInput["prediction"]
+  baselinePrediction?: ExplainerInput["prediction"],
+  options: {
+    runtimeProfile?: ExplainerRuntimeProfile;
+  } = {}
 ): ExplainerOutput {
   const parsed = baseOutputSchema.safeParse(rawValue);
   if (!parsed.success) {
     throw new Error(`schema_validation_failed:${parsed.error.issues.map((i) => i.path.join(".")).join(",")}`);
   }
 
-  const normalizedDrivers = parsed.data.keyDrivers.map((driver) => ({
+  const inputDrivers = Array.isArray(parsed.data.keyDrivers) ? parsed.data.keyDrivers : [];
+  const normalizedDrivers = inputDrivers.map((driver) => ({
     ...driver,
     name: normalizeKeyDriverPath(driver.name)
   }));
@@ -759,7 +950,7 @@ export function validateExplainerOutput(
     });
   }
 
-  const tags = normalizeTags(parsed.data.tags);
+  const tags = normalizeTags(Array.isArray(parsed.data.tags) ? parsed.data.tags : []);
   const aiPrediction =
     normalizeAiPrediction(parsed.data.aiPrediction) ??
     deriveFallbackAiPrediction({
@@ -776,8 +967,7 @@ export function validateExplainerOutput(
           `and expected move ${aiPrediction.expectedMovePct.toFixed(2)}% based on provided features.`
         );
   const levels = normalizeAiLevels(parsed.data.levels);
-
-  return {
+  const output: ExplainerOutput = {
     explanation,
     tags,
     keyDrivers: validDrivers.slice(0, 5).map((driver) => ({
@@ -787,6 +977,45 @@ export function validateExplainerOutput(
     ...(levels ? { levels } : {}),
     aiPrediction,
     disclaimer: "grounded_features_only"
+  };
+
+  if (options.runtimeProfile) {
+    const quality = evaluateExplanationQuality(output.explanation, options.runtimeProfile);
+    if (!quality.meetsLength || !quality.meetsSentenceCount) {
+      throw new Error(
+        `explanation_quality_failed:length=${quality.explanationLength},sentences=${quality.explanationSentenceCount},` +
+        `required_chars=${options.runtimeProfile.explanationMinChars},required_sentences=${options.runtimeProfile.explanationMinSentences}`
+      );
+    }
+  }
+
+  return output;
+}
+
+function applyAnalysisModePolicy(
+  output: ExplainerOutput,
+  runtimeProfile: ExplainerRuntimeProfile
+): { output: ExplainerOutput; neutralEnforced: boolean } {
+  if (!runtimeProfile.enforceNeutralPrediction) {
+    return { output, neutralEnforced: false };
+  }
+  if (
+    output.aiPrediction.signal === "neutral"
+    && output.aiPrediction.confidence === 0
+    && output.aiPrediction.expectedMovePct === 0
+  ) {
+    return { output, neutralEnforced: false };
+  }
+  return {
+    output: {
+      ...output,
+      aiPrediction: {
+        signal: "neutral",
+        confidence: 0,
+        expectedMovePct: 0
+      }
+    },
+    neutralEnforced: true
   };
 }
 
@@ -1025,7 +1254,10 @@ function resolveExplainerCacheTtlSec(timeframe: ExplainerInput["timeframe"]): nu
   return EXPLAINER_CACHE_TTL_DEFAULT_SEC;
 }
 
-function buildPromptVersion(settings: AiPromptRuntimeSettings): string {
+function buildPromptVersion(
+  settings: AiPromptRuntimeSettings,
+  runtimeProfile: ExplainerRuntimeProfile
+): string {
   const revision = hashStableObject({
     promptText: settings.promptText,
     indicatorKeys: settings.indicatorKeys,
@@ -1040,7 +1272,16 @@ function buildPromptVersion(settings: AiPromptRuntimeSettings): string {
     activePromptName: settings.activePromptName,
     selectedFrom: settings.selectedFrom,
     matchedScopeType: settings.matchedScopeType,
-    matchedOverrideId: settings.matchedOverrideId
+    matchedOverrideId: settings.matchedOverrideId,
+    runtimeProfile: {
+      provider: runtimeProfile.provider,
+      timeframe: runtimeProfile.timeframe,
+      analysisMode: runtimeProfile.analysisMode,
+      enforceNeutralPrediction: runtimeProfile.enforceNeutralPrediction,
+      explanationMinChars: runtimeProfile.explanationMinChars,
+      explanationMinSentences: runtimeProfile.explanationMinSentences,
+      runtimeHints: runtimeProfile.runtimeHints
+    }
   }).slice(0, 16);
   const promptId = settings.activePromptId ?? "default";
   return `${promptId}:${revision}`;
@@ -1145,6 +1386,44 @@ function resolveExplainerFallbackModel(primaryModel: string): string | null {
   return fallback;
 }
 
+function useAgentSignalEngine(aiProvider: "openai" | "ollama" | "disabled"): boolean {
+  if (aiProvider === "ollama") {
+    const ollamaMode = (process.env.AI_SIGNAL_ENGINE_OLLAMA ?? "").trim().toLowerCase();
+    return ollamaMode !== "legacy";
+  }
+  const mode = (process.env.AI_SIGNAL_ENGINE ?? "").trim().toLowerCase();
+  if (mode === "agent_v1") return true;
+  if (mode === "legacy") return false;
+  return false;
+}
+
+function normalizeAgentSignalToExplainerRaw(
+  signal: AgentSignal,
+  baselinePrediction: ExplainerInput["prediction"]
+): Record<string, unknown> {
+  const mappedSignal = mapDecisionToSignal(signal.decision);
+  return {
+    explanation: (signal.explanation ?? signal.reason ?? "").trim(),
+    tags: Array.isArray(signal.tags) ? signal.tags : [],
+    keyDrivers: Array.isArray(signal.keyDrivers) ? signal.keyDrivers : [],
+    aiPrediction: {
+      signal: mappedSignal,
+      expectedMovePct: Number.isFinite(Number(baselinePrediction.expectedMovePct))
+        ? Number(Math.max(0, Math.abs(Number(baselinePrediction.expectedMovePct))).toFixed(2))
+        : 0,
+      confidence: Number.isFinite(Number(signal.confidence))
+        ? Number(Math.max(0, Math.min(1, Number(signal.confidence))).toFixed(4))
+        : 0
+    },
+    levels: {
+      entry: Number.isFinite(Number(signal.entry)) ? Number(signal.entry) : undefined,
+      stop_loss: Number.isFinite(Number(signal.stop_loss)) ? Number(signal.stop_loss) : undefined,
+      take_profit: Number.isFinite(Number(signal.take_profit)) ? Number(signal.take_profit) : undefined
+    },
+    disclaimer: "grounded_features_only"
+  };
+}
+
 function deriveScopeContext(
   input: ExplainerInput,
   explicitContext: AiPromptScopeContext | undefined
@@ -1169,6 +1448,7 @@ export async function buildPredictionExplainerPromptPreview(
   input: ExplainerInput,
   deps: GenerateDeps = {}
 ): Promise<ExplainerPromptPreview> {
+  const aiProvider = await getAiProviderAsync();
   const scopeContext = deriveScopeContext(input, deps.promptScopeContext);
   const runtimeSettings =
     deps.promptSettings ?? (await getAiPromptRuntimeSettings(scopeContext));
@@ -1188,14 +1468,27 @@ export async function buildPredictionExplainerPromptPreview(
     featureSnapshot: runtimeFeatureSnapshotWithHistory
   };
   const rawPayload = buildPromptPayload(promptInput, runtimeSettings);
-  const payloadBudget = applyAiPayloadBudget(rawPayload);
+  const payloadBudget = applyAiPayloadBudget(
+    rawPayload,
+    aiProvider === "ollama"
+      ? {
+          maxPayloadBytes: OLLAMA_MAX_PAYLOAD_BYTES,
+          maxHistoryBytes: OLLAMA_MAX_HISTORY_BYTES
+        }
+      : undefined
+  );
   const userPayload = payloadBudget.payload;
-  const systemMessage = buildSystemMessage(runtimeSettings.promptText);
+  const runtimeProfile = buildExplainerRuntimeProfile({
+    aiProvider,
+    timeframe: input.timeframe,
+    runtimeSettings
+  });
+  const systemMessage = buildSystemMessage(runtimeSettings.promptText, runtimeProfile.runtimeHints);
   const featureSnapshot = asObject(userPayload.featureSnapshot) ?? {};
   const resolvedModel = await getAiModelAsync();
   const cacheKey = buildPredictionExplainerCacheKey({
     model: resolvedModel,
-    promptVersion: buildPromptVersion(runtimeSettings),
+    promptVersion: buildPromptVersion(runtimeSettings, runtimeProfile),
     symbol: promptInput.symbol,
     timeframe: promptInput.timeframe,
     signal: promptInput.prediction.signal,
@@ -1205,8 +1498,10 @@ export async function buildPredictionExplainerPromptPreview(
   });
 
   return {
+    aiProvider,
     scopeContext,
     runtimeSettings,
+    runtimeProfile,
     systemMessage,
     userPayload,
     payloadBudgetMetrics: payloadBudget.metrics,
@@ -1221,21 +1516,29 @@ export async function generatePredictionExplanation(
 ): Promise<ExplainerOutput> {
   const preview = await buildPredictionExplainerPromptPreview(input, deps);
   const {
+    aiProvider,
     promptInput,
     runtimeSettings,
+    runtimeProfile,
     systemMessage,
     userPayload,
     payloadBudgetMetrics,
     cacheKey
   } = preview;
-  const fallback = () => fallbackExplain(promptInput);
+  const fallback = () => applyAnalysisModePolicy(fallbackExplain(promptInput), runtimeProfile).output;
   const aiModel = await getAiModelAsync();
   const aiFallbackModel = resolveExplainerFallbackModel(aiModel);
   const callAiFn = deps.callAiFn ?? callAi;
+  const agentEnabled = useAgentSignalEngine(aiProvider);
+  const effectiveExplainerTimeoutMs =
+    aiProvider === "ollama"
+      ? Math.max(EXPLAINER_TIMEOUT_MS, OLLAMA_EXPLAINER_TIMEOUT_MS)
+      : EXPLAINER_TIMEOUT_MS;
+  const maxAttemptsPerModel = aiProvider === "ollama" ? OLLAMA_EXPLAINER_MAX_ATTEMPTS : 2;
   const traceBase = {
     userId: deps.traceUserId ?? null,
     scope: "prediction_explainer",
-    provider: "openai",
+    provider: aiProvider,
     model: aiModel,
     symbol: promptInput.symbol,
     marketType: promptInput.marketType,
@@ -1251,9 +1554,23 @@ export async function generatePredictionExplanation(
       toolCallsUsed: 0
     };
     recordAiPayloadBudgetTelemetry(metrics);
+    const payloadBudgetMeta: ExplanationQualityMetrics = {
+      explanationLength: 0,
+      explanationSentenceCount: 0,
+      meetsLength: true,
+      meetsSentenceCount: true
+    };
     await recordAiTraceLog({
       ...traceBase,
-      userPayload: withTraceMetaPayload(userPayload, false, 0, null),
+      userPayload: withTraceMetaPayload(userPayload, {
+        retryUsed: false,
+        retryCount: 0,
+        totalTokens: null,
+        analysisMode: runtimeProfile.analysisMode,
+        neutralEnforced: false,
+        explanationLength: payloadBudgetMeta.explanationLength,
+        explanationSentenceCount: payloadBudgetMeta.explanationSentenceCount
+      }),
       rawResponse: null,
       parsedResponse: null,
       success: false,
@@ -1286,14 +1603,152 @@ export async function generatePredictionExplanation(
       let raw: string | null = null;
       let parsedJson: unknown = null;
       let lastUsageTotalTokens: number | null = null;
+      let lastExplanationMetrics: ExplanationQualityMetrics | null = null;
+      let lastNeutralEnforced = false;
       let totalCalls = 0;
-      const modelCandidates = aiFallbackModel ? [aiModel, aiFallbackModel] : [aiModel];
+
+      const finalizeValidatedOutput = async (inputArgs: {
+        parsedCandidate: unknown;
+        rawCandidate: string | null;
+        model: string;
+        allowQualityRepair: boolean;
+      }): Promise<{
+        output: ExplainerOutput;
+        parsedCandidate: unknown;
+        rawCandidate: string | null;
+        qualityRepairUsed: boolean;
+        qualityMetrics: ExplanationQualityMetrics;
+        neutralEnforced: boolean;
+      }> => {
+        let validated: ExplainerOutput;
+        let qualityRepairUsed = false;
+        let parsedCandidate = inputArgs.parsedCandidate;
+        let rawCandidate = inputArgs.rawCandidate;
+
+        try {
+          validated = validateExplainerOutput(
+            parsedCandidate,
+            promptInput.featureSnapshot,
+            promptInput.prediction,
+            { runtimeProfile }
+          );
+        } catch (error) {
+          const reason = String(error);
+          const isQualityError = /\bexplanation_quality_failed\b/.test(reason);
+          if (!isQualityError || !inputArgs.allowQualityRepair) {
+            throw error;
+          }
+          totalCalls += 1;
+          aiAttemptsUsed = totalCalls;
+          qualityRepairUsed = true;
+          const repairPrompt = [
+            "Your previous JSON object failed explanation quality requirements.",
+            "Keep all values unchanged except the `explanation` field.",
+            "Return only one valid JSON object (no markdown).",
+            "Previous JSON:",
+            JSON.stringify(parsedCandidate)
+          ].join("\n");
+          rawCandidate = await callAiFn(repairPrompt, {
+            systemMessage: appendQualityRepairInstruction(systemMessage, runtimeProfile),
+            model: inputArgs.model,
+            temperature: 0,
+            timeoutMs: effectiveExplainerTimeoutMs,
+            maxTokens: EXPLAINER_RETRY_MAX_TOKENS,
+            billingUserId: deps.traceUserId ?? null,
+            billingScope: "prediction_explainer",
+            onUsage: (usage) => {
+              const derived =
+                usage.totalTokens
+                ?? ((usage.promptTokens ?? 0) + (usage.completionTokens ?? 0));
+              if (Number.isFinite(derived)) {
+                lastUsageTotalTokens = Math.max(0, Math.trunc(derived));
+              }
+            }
+          });
+          parsedCandidate = parseAiResponseJson(rawCandidate);
+          validated = validateExplainerOutput(
+            parsedCandidate,
+            promptInput.featureSnapshot,
+            promptInput.prediction,
+            { runtimeProfile }
+          );
+        }
+
+        const policy = applyAnalysisModePolicy(validated, runtimeProfile);
+        const qualityMetrics = evaluateExplanationQuality(policy.output.explanation, runtimeProfile);
+        return {
+          output: policy.output,
+          parsedCandidate,
+          rawCandidate,
+          qualityRepairUsed,
+          qualityMetrics,
+          neutralEnforced: policy.neutralEnforced
+        };
+      };
+
       try {
+        if (agentEnabled) {
+          totalCalls += 1;
+          aiAttemptsUsed = totalCalls;
+          const agentResult = await runSignalAgent({
+            systemMessage,
+            userPayload,
+            model: aiModel,
+            timeoutMs: effectiveExplainerTimeoutMs,
+            maxTokens: EXPLAINER_RETRY_MAX_TOKENS,
+            billingUserId: deps.traceUserId ?? null,
+            billingScope: "prediction_explainer",
+            profile: runtimeProfile.agentSignalProfile
+          });
+          raw = agentResult.content;
+          lastUsageTotalTokens = agentResult.usageTotalTokens;
+          parsedJson = normalizeAgentSignalToExplainerRaw(
+            agentResult.signal,
+            promptInput.prediction
+          );
+          const finalized = await finalizeValidatedOutput({
+            parsedCandidate: parsedJson,
+            rawCandidate: raw,
+            model: agentResult.model,
+            allowQualityRepair: aiProvider === "ollama"
+          });
+          parsedJson = finalized.parsedCandidate;
+          raw = finalized.rawCandidate;
+          lastExplanationMetrics = finalized.qualityMetrics;
+          lastNeutralEnforced = finalized.neutralEnforced;
+          const retryCount = Math.max(0, totalCalls - 1);
+          const retryUsed = retryCount > 0 || agentResult.toolIterations > 0 || finalized.qualityRepairUsed;
+          await recordAiTraceLog({
+            ...traceBase,
+            model: agentResult.model,
+            userPayload: withTraceMetaPayload(userPayload, {
+              retryUsed,
+              retryCount,
+              totalTokens: lastUsageTotalTokens,
+              analysisMode: runtimeProfile.analysisMode,
+              neutralEnforced: lastNeutralEnforced,
+              explanationLength: lastExplanationMetrics.explanationLength,
+              explanationSentenceCount: lastExplanationMetrics.explanationSentenceCount
+            }),
+            rawResponse: raw ?? null,
+            parsedResponse: finalized.output,
+            success: true,
+            fallbackUsed: false,
+            cacheHit: false,
+            rateLimited: false,
+            latencyMs: Date.now() - startedAt
+          });
+          return finalized.output;
+        }
+
+        const modelCandidates = aiFallbackModel ? [aiModel, aiFallbackModel] : [aiModel];
         for (let modelIndex = 0; modelIndex < modelCandidates.length; modelIndex += 1) {
           const currentModel = modelCandidates[modelIndex];
           let validated: ExplainerOutput | null = null;
+          let validatedQualityMetrics: ExplanationQualityMetrics | null = null;
+          let validatedNeutralEnforced = false;
           let modelError: unknown = null;
-          for (let attempt = 1; attempt <= 2; attempt += 1) {
+          for (let attempt = 1; attempt <= maxAttemptsPerModel; attempt += 1) {
             totalCalls += 1;
             aiAttemptsUsed = totalCalls;
             const callPayload =
@@ -1311,7 +1766,7 @@ export async function generatePredictionExplanation(
                 systemMessage,
                 model: currentModel,
                 temperature: 0,
-                timeoutMs: EXPLAINER_TIMEOUT_MS,
+                timeoutMs: effectiveExplainerTimeoutMs,
                 maxTokens: attempt === 1 ? EXPLAINER_MAX_TOKENS : EXPLAINER_RETRY_MAX_TOKENS,
                 billingUserId: deps.traceUserId ?? null,
                 billingScope: "prediction_explainer",
@@ -1325,15 +1780,21 @@ export async function generatePredictionExplanation(
                 }
               });
               parsedJson = parseAiResponseJson(raw);
-              validated = validateExplainerOutput(
-                parsedJson,
-                promptInput.featureSnapshot,
-                promptInput.prediction
-              );
+              const finalized = await finalizeValidatedOutput({
+                parsedCandidate: parsedJson,
+                rawCandidate: raw,
+                model: currentModel,
+                allowQualityRepair: aiProvider === "ollama"
+              });
+              validated = finalized.output;
+              parsedJson = finalized.parsedCandidate;
+              raw = finalized.rawCandidate;
+              validatedQualityMetrics = finalized.qualityMetrics;
+              validatedNeutralEnforced = finalized.neutralEnforced;
               break;
             } catch (error) {
               modelError = error;
-              if (attempt < 2) {
+              if (attempt < maxAttemptsPerModel) {
                 continue;
               }
             }
@@ -1342,15 +1803,22 @@ export async function generatePredictionExplanation(
           if (validated) {
             const retryCount = Math.max(0, totalCalls - 1);
             const retryUsed = retryCount > 0;
+            if (validatedQualityMetrics) {
+              lastExplanationMetrics = validatedQualityMetrics;
+            }
+            lastNeutralEnforced = validatedNeutralEnforced;
             await recordAiTraceLog({
               ...traceBase,
               model: currentModel,
-              userPayload: withTraceMetaPayload(
-                userPayload,
+              userPayload: withTraceMetaPayload(userPayload, {
                 retryUsed,
                 retryCount,
-                lastUsageTotalTokens
-              ),
+                totalTokens: lastUsageTotalTokens,
+                analysisMode: runtimeProfile.analysisMode,
+                neutralEnforced: lastNeutralEnforced,
+                explanationLength: lastExplanationMetrics?.explanationLength ?? null,
+                explanationSentenceCount: lastExplanationMetrics?.explanationSentenceCount ?? null
+              }),
               rawResponse: raw ?? null,
               parsedResponse: validated,
               success: true,
@@ -1374,27 +1842,105 @@ export async function generatePredictionExplanation(
           throw modelError ?? new Error("invalid_json");
         }
         throw new Error("invalid_json");
-      } catch (error) {
-        const isInvalidJson = error instanceof SyntaxError;
+      } catch (caughtError) {
+        let error: unknown = caughtError;
+        const initialReason = String(caughtError);
+        const initialInvalidJson =
+          caughtError instanceof SyntaxError
+          || /\binvalid_json\b/i.test(initialReason)
+          || /\bai_empty_response\b/i.test(initialReason)
+          || /\bschema_validation_failed\b/i.test(initialReason);
+
+        if (aiProvider === "ollama" && !agentEnabled && initialInvalidJson) {
+          logger.warn("ai_ollama_legacy_rescue_attempt", {
+            ai_model: aiModel,
+            reason: initialReason
+          });
+          totalCalls += 1;
+          aiAttemptsUsed = totalCalls;
+          try {
+            const agentResult = await runSignalAgent({
+              systemMessage,
+              userPayload,
+              model: aiModel,
+              timeoutMs: effectiveExplainerTimeoutMs,
+              maxTokens: EXPLAINER_RETRY_MAX_TOKENS,
+              billingUserId: deps.traceUserId ?? null,
+              billingScope: "prediction_explainer",
+              profile: runtimeProfile.agentSignalProfile
+            });
+            raw = agentResult.content;
+            lastUsageTotalTokens = agentResult.usageTotalTokens;
+            parsedJson = normalizeAgentSignalToExplainerRaw(
+              agentResult.signal,
+              promptInput.prediction
+            );
+            const finalized = await finalizeValidatedOutput({
+              parsedCandidate: parsedJson,
+              rawCandidate: raw,
+              model: agentResult.model,
+              allowQualityRepair: aiProvider === "ollama"
+            });
+            parsedJson = finalized.parsedCandidate;
+            raw = finalized.rawCandidate;
+            lastExplanationMetrics = finalized.qualityMetrics;
+            lastNeutralEnforced = finalized.neutralEnforced;
+            const retryCount = Math.max(0, totalCalls - 1);
+            const retryUsed = retryCount > 0 || agentResult.toolIterations > 0 || finalized.qualityRepairUsed;
+            await recordAiTraceLog({
+              ...traceBase,
+              model: agentResult.model,
+              userPayload: withTraceMetaPayload(userPayload, {
+                retryUsed,
+                retryCount,
+                totalTokens: lastUsageTotalTokens,
+                analysisMode: runtimeProfile.analysisMode,
+                neutralEnforced: lastNeutralEnforced,
+                explanationLength: lastExplanationMetrics.explanationLength,
+                explanationSentenceCount: lastExplanationMetrics.explanationSentenceCount
+              }),
+              rawResponse: raw ?? null,
+              parsedResponse: finalized.output,
+              success: true,
+              fallbackUsed: false,
+              cacheHit: false,
+              rateLimited: false,
+              latencyMs: Date.now() - startedAt
+            });
+            return finalized.output;
+          } catch (rescueError) {
+            error = rescueError;
+            logger.warn("ai_ollama_legacy_rescue_failed", {
+              ai_model: aiModel,
+              reason: String(rescueError)
+            });
+          }
+        }
+
+        const reason = String(error);
+        const isInvalidJson = error instanceof SyntaxError || /\binvalid_json\b/i.test(reason);
         const retryCount = Math.max(0, totalCalls - 1);
         const retryUsed = retryCount > 0;
         logger.warn("ai_validation_failed", {
           ai_validation_failed: true,
           ai_model: aiModel,
-          reason: isInvalidJson ? `invalid_json:${String(error)}` : String(error)
+          reason: isInvalidJson ? `invalid_json:${reason}` : reason
         });
         await recordAiTraceLog({
           ...traceBase,
-          userPayload: withTraceMetaPayload(
-            userPayload,
+          userPayload: withTraceMetaPayload(userPayload, {
             retryUsed,
             retryCount,
-            lastUsageTotalTokens
-          ),
+            totalTokens: lastUsageTotalTokens,
+            analysisMode: runtimeProfile.analysisMode,
+            neutralEnforced: lastNeutralEnforced,
+            explanationLength: lastExplanationMetrics?.explanationLength ?? null,
+            explanationSentenceCount: lastExplanationMetrics?.explanationSentenceCount ?? null
+          }),
           rawResponse: raw,
           parsedResponse: parsedJson,
           success: false,
-          error: isInvalidJson ? "invalid_json" : String(error),
+          error: isInvalidJson ? "invalid_json" : reason,
           fallbackUsed: true,
           cacheHit: false,
           rateLimited: false,

@@ -746,6 +746,163 @@ test("grounding filters dropped historyContext driver paths after budget trim", 
   assert.equal(value.keyDrivers.length, 0);
 });
 
+test("preview adds ollama 4h runtime hints for long-form explanation", async () => {
+  const previousProvider = process.env.AI_PROVIDER;
+  const previousOllamaMode = process.env.AI_SIGNAL_ENGINE_OLLAMA;
+  process.env.AI_PROVIDER = "ollama";
+  process.env.AI_SIGNAL_ENGINE_OLLAMA = "legacy";
+  invalidateAiModelCache();
+  try {
+    const preview = await buildPredictionExplainerPromptPreview(
+      {
+        ...baseInput,
+        timeframe: "4h"
+      },
+      {
+        promptSettings: {
+          promptText: "4h market analysis",
+          indicatorKeys: ["smc"] as const,
+          ohlcvBars: 100,
+          timeframes: ["4h"],
+          runTimeframe: "4h",
+          timeframe: "4h",
+          directionPreference: "either" as const,
+          confidenceTargetPct: 60,
+          marketAnalysisUpdateEnabled: true,
+          source: "db" as const,
+          activePromptId: "prompt_market_4h",
+          activePromptName: "4h market analysis",
+          selectedFrom: "active_prompt" as const,
+          matchedScopeType: null,
+          matchedOverrideId: null
+        }
+      }
+    );
+
+    assert.equal(preview.runtimeProfile.analysisMode, "market_analysis");
+    assert.equal(preview.runtimeProfile.enforceNeutralPrediction, true);
+    assert.equal(preview.systemMessage.includes("8-12 complete sentences"), true);
+    assert.equal(preview.systemMessage.includes("Do not use bullet points"), true);
+  } finally {
+    if (previousProvider === undefined) delete process.env.AI_PROVIDER;
+    else process.env.AI_PROVIDER = previousProvider;
+    if (previousOllamaMode === undefined) delete process.env.AI_SIGNAL_ENGINE_OLLAMA;
+    else process.env.AI_SIGNAL_ENGINE_OLLAMA = previousOllamaMode;
+    invalidateAiModelCache();
+  }
+});
+
+test("4h market analysis enforces neutral aiPrediction", async () => {
+  resetAiAnalyzerState();
+  const output = await generatePredictionExplanation(
+    {
+      ...baseInput,
+      timeframe: "4h",
+      tsCreated: "2026-02-09T10:20:00.000Z"
+    },
+    {
+      promptSettings: {
+        promptText: "4h market analysis",
+        indicatorKeys: ["smc"] as const,
+        ohlcvBars: 100,
+        timeframes: ["4h"],
+        runTimeframe: "4h",
+        timeframe: "4h",
+        directionPreference: "either" as const,
+        confidenceTargetPct: 60,
+        marketAnalysisUpdateEnabled: true,
+        source: "db" as const,
+        activePromptId: "prompt_market_4h",
+        activePromptName: "4h market analysis",
+        selectedFrom: "active_prompt" as const,
+        matchedScopeType: null,
+        matchedOverrideId: null
+      },
+      callAiFn: async () =>
+        JSON.stringify({
+          explanation: "Trend appears bearish across key moving averages.",
+          tags: ["trend_down"],
+          keyDrivers: [{ name: "indicators.rsi_14", value: 43.5 }],
+          aiPrediction: { signal: "down", expectedMovePct: 2.2, confidence: 0.82 },
+          disclaimer: "grounded_features_only"
+        })
+    }
+  );
+
+  assert.equal(output.aiPrediction.signal, "neutral");
+  assert.equal(output.aiPrediction.confidence, 0);
+  assert.equal(output.aiPrediction.expectedMovePct, 0);
+});
+
+test("ollama 4h quality gate triggers one explanation expansion retry", async () => {
+  const previousProvider = process.env.AI_PROVIDER;
+  const previousOllamaMode = process.env.AI_SIGNAL_ENGINE_OLLAMA;
+  process.env.AI_PROVIDER = "ollama";
+  process.env.AI_SIGNAL_ENGINE_OLLAMA = "legacy";
+  invalidateAiModelCache();
+  resetAiAnalyzerState();
+
+  let calls = 0;
+  try {
+    const output = await generatePredictionExplanation(
+      {
+        ...baseInput,
+        timeframe: "4h",
+        tsCreated: "2026-02-09T10:30:00.000Z"
+      },
+      {
+        requireSuccessfulAi: true,
+        promptSettings: {
+          promptText: "4h market analysis",
+          indicatorKeys: ["smc"] as const,
+          ohlcvBars: 100,
+          timeframes: ["4h"],
+          runTimeframe: "4h",
+          timeframe: "4h",
+          directionPreference: "either" as const,
+          confidenceTargetPct: 60,
+          marketAnalysisUpdateEnabled: false,
+          source: "db" as const,
+          activePromptId: "prompt_market_4h",
+          activePromptName: "4h market analysis",
+          selectedFrom: "active_prompt" as const,
+          matchedScopeType: null,
+          matchedOverrideId: null
+        },
+        callAiFn: async () => {
+          calls += 1;
+          if (calls === 1) {
+            return JSON.stringify({
+              explanation: "Bearish momentum.",
+              tags: ["trend_down"],
+              keyDrivers: [{ name: "indicators.rsi_14", value: 43.5 }],
+              aiPrediction: { signal: "down", expectedMovePct: 2.2, confidence: 0.82 },
+              disclaimer: "grounded_features_only"
+            });
+          }
+          return JSON.stringify({
+            explanation:
+              "The 4h trend remains bearish as price stays below major EMA structure. Momentum is still weak with persistent downside pressure in the latest swings. Structure shows repeated lower highs and lower lows across the visible sequence. Liquidity context suggests bearish imbalance remains active near recent fair value gaps. Volume participation is not accelerating enough to confirm a durable reversal attempt. Volatility stays elevated, which increases short-term whipsaw risk around local support. Some counter-moves appear, but they lack consistent follow-through in the available data. Uncertainty remains around whether buyers can reclaim key structure quickly. Overall, the market context is mixed-to-bearish with no clear bullish confirmation yet.",
+            tags: ["trend_down", "breakout_risk"],
+            keyDrivers: [{ name: "indicators.rsi_14", value: 43.5 }],
+            aiPrediction: { signal: "down", expectedMovePct: 2.2, confidence: 0.82 },
+            disclaimer: "grounded_features_only"
+          });
+        }
+      }
+    );
+
+    assert.equal(calls, 2);
+    assert.equal(output.explanation.length >= 420, true);
+  } finally {
+    if (previousProvider === undefined) delete process.env.AI_PROVIDER;
+    else process.env.AI_PROVIDER = previousProvider;
+    if (previousOllamaMode === undefined) delete process.env.AI_SIGNAL_ENGINE_OLLAMA;
+    else process.env.AI_SIGNAL_ENGINE_OLLAMA = previousOllamaMode;
+    invalidateAiModelCache();
+  }
+});
+
 test.afterEach(() => {
   resetAiAnalyzerState();
 });

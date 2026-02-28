@@ -186,6 +186,92 @@ function dropMtfNonRunFrames(payload: Record<string, unknown>): boolean {
   return true;
 }
 
+function trimPrimaryOhlcvBars(payload: Record<string, unknown>, limit: number): boolean {
+  const featureSnapshot = asObject(payload.featureSnapshot);
+  if (!featureSnapshot) return false;
+  const ohlcv = asObject(featureSnapshot.ohlcvSeries);
+  const bars = Array.isArray(ohlcv?.bars) ? ohlcv.bars : null;
+  if (!ohlcv || !bars || bars.length <= limit) return false;
+  const trimmed = bars.slice(-limit);
+  featureSnapshot.ohlcvSeries = {
+    ...ohlcv,
+    bars: trimmed,
+    count: trimmed.length
+  };
+  return true;
+}
+
+function dropPrimaryOhlcvSeries(payload: Record<string, unknown>): boolean {
+  const featureSnapshot = asObject(payload.featureSnapshot);
+  if (!featureSnapshot) return false;
+  if (!("ohlcvSeries" in featureSnapshot)) return false;
+  delete featureSnapshot.ohlcvSeries;
+  return true;
+}
+
+function dropAdvancedIndicators(payload: Record<string, unknown>): boolean {
+  const featureSnapshot = asObject(payload.featureSnapshot);
+  if (!featureSnapshot) return false;
+  let changed = false;
+  if ("advancedIndicators" in featureSnapshot) {
+    delete featureSnapshot.advancedIndicators;
+    changed = true;
+  }
+
+  const mtfCtx = getMtfFrames(payload);
+  if (!mtfCtx) return changed;
+  let frameChanged = false;
+  const nextFrames: Record<string, unknown> = {};
+  for (const [timeframe, frameRaw] of Object.entries(mtfCtx.frames)) {
+    const frame = asObject(frameRaw);
+    if (!frame) {
+      nextFrames[timeframe] = frameRaw;
+      continue;
+    }
+    if ("advancedIndicators" in frame) {
+      const nextFrame = { ...frame };
+      delete nextFrame.advancedIndicators;
+      nextFrames[timeframe] = nextFrame;
+      frameChanged = true;
+      continue;
+    }
+    nextFrames[timeframe] = frame;
+  }
+  if (frameChanged) {
+    mtfCtx.featureSnapshot.mtf = {
+      ...mtfCtx.mtf,
+      frames: nextFrames
+    };
+    changed = true;
+  }
+  return changed;
+}
+
+function dropMtf(payload: Record<string, unknown>): boolean {
+  const featureSnapshot = asObject(payload.featureSnapshot);
+  if (!featureSnapshot) return false;
+  if (!("mtf" in featureSnapshot)) return false;
+  delete featureSnapshot.mtf;
+  return true;
+}
+
+function dropPromptScaffolding(payload: Record<string, unknown>): boolean {
+  let changed = false;
+  for (const key of [
+    "groundingRules",
+    "outputSchema",
+    "tagsAllowlist",
+    "selectedIndicatorKeys",
+    "promptTimeframes"
+  ]) {
+    if (key in payload) {
+      delete payload[key];
+      changed = true;
+    }
+  }
+  return changed;
+}
+
 function ensurePayloadMeta(payload: Record<string, unknown>): Record<string, unknown> {
   const existing = asObject(payload.meta);
   if (existing) return existing;
@@ -301,6 +387,48 @@ function trimPayloadForBudget(payload: Record<string, unknown>, maxPayloadBytes:
   }
 
   run("history_context_dropped", () => null);
+  if (payloadBytes() <= maxPayloadBytes) {
+    return { payload: current, flags, overBudget: false };
+  }
+
+  if (trimPrimaryOhlcvBars(current, 30)) {
+    flags.push("ohlcv_trimmed_30");
+  }
+  if (payloadBytes() <= maxPayloadBytes) {
+    return { payload: current, flags, overBudget: false };
+  }
+
+  if (trimPrimaryOhlcvBars(current, 10)) {
+    flags.push("ohlcv_trimmed_10");
+  }
+  if (payloadBytes() <= maxPayloadBytes) {
+    return { payload: current, flags, overBudget: false };
+  }
+
+  if (dropAdvancedIndicators(current)) {
+    flags.push("advanced_indicators_dropped");
+  }
+  if (payloadBytes() <= maxPayloadBytes) {
+    return { payload: current, flags, overBudget: false };
+  }
+
+  if (dropMtf(current)) {
+    flags.push("mtf_dropped");
+  }
+  if (payloadBytes() <= maxPayloadBytes) {
+    return { payload: current, flags, overBudget: false };
+  }
+
+  if (dropPrimaryOhlcvSeries(current)) {
+    flags.push("ohlcv_dropped");
+  }
+  if (payloadBytes() <= maxPayloadBytes) {
+    return { payload: current, flags, overBudget: false };
+  }
+
+  if (dropPromptScaffolding(current)) {
+    flags.push("prompt_scaffolding_dropped");
+  }
   return {
     payload: current,
     flags,

@@ -46,6 +46,7 @@ import {
   markOrderFailed,
   recordWebhookEvent,
   resolveEffectivePlanForUser,
+  setUserToFreePlan,
   syncPrimaryWorkspaceEntitlementsForUser,
   updateBillingFeatureFlags,
   upsertBillingPackage,
@@ -62,11 +63,13 @@ import {
 import { ExchangeSyncError, syncExchangeAccount } from "./exchange-sync.js";
 import { recoverRunningBotJobs } from "./bot-run-recovery.js";
 import {
+  AI_PROVIDER_OPTIONS,
   OPENAI_ADMIN_MODEL_OPTIONS,
   getAiModel,
   getAiModelAsync,
   invalidateAiApiKeyCache,
   invalidateAiModelCache,
+  normalizeAiProvider,
   resolveAiModelFromConfig,
   type OpenAiAdminModel
 } from "./ai/provider.js";
@@ -649,8 +652,16 @@ const adminSmtpTestSchema = z.object({
 });
 
 const openAiModelSchema = z.enum(OPENAI_ADMIN_MODEL_OPTIONS);
+const aiProviderSchema = z.enum(["openai", "ollama", "disabled"]);
 
 const adminApiKeysSchema = z.object({
+  aiProvider: aiProviderSchema.optional(),
+  aiBaseUrl: z.string().trim().min(8).max(500).optional(),
+  clearAiBaseUrl: z.boolean().default(false),
+  aiApiKey: z.string().trim().min(1).max(500).optional(),
+  clearAiApiKey: z.boolean().default(false),
+  aiModel: z.string().trim().min(1).max(120).optional(),
+  clearAiModel: z.boolean().default(false),
   openaiApiKey: z.string().trim().min(10).max(500).optional(),
   clearOpenaiApiKey: z.boolean().default(false),
   fmpApiKey: z.string().trim().min(10).max(500).optional(),
@@ -664,9 +675,16 @@ const adminApiKeysSchema = z.object({
     value.clearFmpApiKey ||
     Boolean(value.fmpApiKey) ||
     value.clearOpenaiModel ||
-    Boolean(value.openaiModel),
+    Boolean(value.openaiModel) ||
+    value.clearAiApiKey ||
+    Boolean(value.aiApiKey) ||
+    value.clearAiModel ||
+    Boolean(value.aiModel) ||
+    value.clearAiBaseUrl ||
+    Boolean(value.aiBaseUrl) ||
+    Boolean(value.aiProvider),
   {
-    message: "Provide openaiApiKey/fmpApiKey/openaiModel or set a clear flag."
+    message: "Provide AI/FMP fields or set a clear flag."
   }
 );
 
@@ -2513,10 +2531,26 @@ type StoredSecurityUserOverrides = {
   reauthOtpEnabledByUserId: Record<string, boolean>;
 };
 
+type StoredAiProviderProfile = {
+  aiApiKeyEnc: string | null;
+  aiBaseUrl: string | null;
+  aiModel: string | null;
+};
+
+type StoredAiProviderProfiles = {
+  openai: StoredAiProviderProfile;
+  ollama: StoredAiProviderProfile;
+};
+
 type StoredApiKeysSettings = {
+  aiApiKeyEnc: string | null;
   openaiApiKeyEnc: string | null;
   fmpApiKeyEnc: string | null;
+  aiProvider: "openai" | "ollama" | "disabled" | null;
+  aiBaseUrl: string | null;
+  aiModel: string | null;
   openaiModel: OpenAiAdminModel | null;
+  aiProfiles: StoredAiProviderProfiles;
 };
 
 type StoredPredictionRefreshSettings = {
@@ -2546,7 +2580,9 @@ type PredictionDefaultsSettingsPublic = {
 };
 
 type ApiKeySource = "env" | "db" | "none";
-type EffectiveOpenAiModelSource = "db" | "env" | "default";
+type EffectiveAiModelSource = "db" | "env" | "default";
+type EffectiveAiProviderSource = "db" | "env" | "default";
+type EffectiveAiBaseUrlSource = "db" | "env" | "default";
 const OPENAI_ADMIN_MODEL_OPTION_SET = new Set<string>(OPENAI_ADMIN_MODEL_OPTIONS);
 
 function normalizeOpenAiAdminModel(value: unknown): OpenAiAdminModel | null {
@@ -2554,6 +2590,50 @@ function normalizeOpenAiAdminModel(value: unknown): OpenAiAdminModel | null {
   const trimmed = value.trim();
   if (!OPENAI_ADMIN_MODEL_OPTION_SET.has(trimmed)) return null;
   return trimmed as OpenAiAdminModel;
+}
+
+function emptyAiProviderProfile(): StoredAiProviderProfile {
+  return {
+    aiApiKeyEnc: null,
+    aiBaseUrl: null,
+    aiModel: null
+  };
+}
+
+function normalizeProviderForProfile(
+  provider: "openai" | "ollama" | "disabled" | null | undefined
+): "openai" | "ollama" {
+  return provider === "ollama" ? "ollama" : "openai";
+}
+
+function parseStoredAiProviderProfile(value: unknown): StoredAiProviderProfile {
+  const record = parseJsonObject(value);
+  const aiApiKeyEnc =
+    typeof record.aiApiKeyEnc === "string" && record.aiApiKeyEnc.trim()
+      ? record.aiApiKeyEnc.trim()
+      : typeof record.openaiApiKeyEnc === "string" && record.openaiApiKeyEnc.trim()
+        ? record.openaiApiKeyEnc.trim()
+        : null;
+  const aiBaseUrl =
+    typeof record.aiBaseUrl === "string" && record.aiBaseUrl.trim()
+      ? record.aiBaseUrl.trim()
+      : null;
+  const aiModel =
+    typeof record.aiModel === "string" && record.aiModel.trim()
+      ? record.aiModel.trim()
+      : null;
+  return {
+    aiApiKeyEnc,
+    aiBaseUrl,
+    aiModel
+  };
+}
+
+function getStoredAiProfile(
+  settings: StoredApiKeysSettings,
+  provider: "openai" | "ollama" | "disabled" | null | undefined
+): StoredAiProviderProfile {
+  return settings.aiProfiles[normalizeProviderForProfile(provider)];
 }
 
 function parseStoredSmtpSettings(value: unknown): StoredSmtpSettings {
@@ -2594,6 +2674,10 @@ function toPublicSmtpSettings(value: StoredSmtpSettings) {
 
 function parseStoredApiKeysSettings(value: unknown): StoredApiKeysSettings {
   const record = parseJsonObject(value);
+  const aiApiKeyEnc =
+    typeof record.aiApiKeyEnc === "string" && record.aiApiKeyEnc.trim()
+      ? record.aiApiKeyEnc.trim()
+      : null;
   const openaiApiKeyEnc =
     typeof record.openaiApiKeyEnc === "string" && record.openaiApiKeyEnc.trim()
       ? record.openaiApiKeyEnc.trim()
@@ -2602,11 +2686,74 @@ function parseStoredApiKeysSettings(value: unknown): StoredApiKeysSettings {
     typeof record.fmpApiKeyEnc === "string" && record.fmpApiKeyEnc.trim()
       ? record.fmpApiKeyEnc.trim()
       : null;
+  const aiProviderRaw = typeof record.aiProvider === "string" ? record.aiProvider.trim().toLowerCase() : "";
+  const aiProvider =
+    aiProviderRaw === "disabled" || aiProviderRaw === "off" || aiProviderRaw === "none"
+      ? "disabled"
+      : normalizeAiProvider(aiProviderRaw);
+  const aiBaseUrl =
+    typeof record.aiBaseUrl === "string" && record.aiBaseUrl.trim()
+      ? record.aiBaseUrl.trim()
+      : null;
+  const aiModel =
+    typeof record.aiModel === "string" && record.aiModel.trim()
+      ? record.aiModel.trim()
+      : typeof record.openaiModel === "string" && record.openaiModel.trim()
+        ? record.openaiModel.trim()
+        : null;
   const openaiModel = normalizeOpenAiAdminModel(record.openaiModel);
+  const aiProfilesRecord = parseJsonObject(record.aiProfiles);
+  const parsedOpenAiProfile = parseStoredAiProviderProfile(aiProfilesRecord.openai);
+  const parsedOllamaProfile = parseStoredAiProviderProfile(aiProfilesRecord.ollama);
+  const activeLegacyProvider = normalizeProviderForProfile(aiProvider);
+  const openaiModelFromLegacy =
+    typeof record.openaiModel === "string" && record.openaiModel.trim()
+      ? record.openaiModel.trim()
+      : null;
+
+  const openaiProfile: StoredAiProviderProfile = {
+    aiApiKeyEnc:
+      parsedOpenAiProfile.aiApiKeyEnc
+      ?? openaiApiKeyEnc
+      ?? (activeLegacyProvider === "openai" ? aiApiKeyEnc : null),
+    aiBaseUrl:
+      parsedOpenAiProfile.aiBaseUrl
+      ?? (activeLegacyProvider === "openai" ? aiBaseUrl : null),
+    aiModel:
+      parsedOpenAiProfile.aiModel
+      ?? openaiModelFromLegacy
+      ?? (activeLegacyProvider === "openai" ? aiModel : null)
+  };
+  const ollamaProfile: StoredAiProviderProfile = {
+    aiApiKeyEnc:
+      parsedOllamaProfile.aiApiKeyEnc
+      ?? (activeLegacyProvider === "ollama" ? aiApiKeyEnc : null),
+    aiBaseUrl:
+      parsedOllamaProfile.aiBaseUrl
+      ?? (activeLegacyProvider === "ollama" ? aiBaseUrl : null),
+    aiModel:
+      parsedOllamaProfile.aiModel
+      ?? (activeLegacyProvider === "ollama" ? aiModel : null)
+  };
+  const effectiveProviderForTopLevel = normalizeProviderForProfile(aiProvider);
+  const selectedProfile = effectiveProviderForTopLevel === "ollama" ? ollamaProfile : openaiProfile;
+  const resolvedAiApiKeyEnc = selectedProfile.aiApiKeyEnc ?? aiApiKeyEnc ?? openaiApiKeyEnc;
+  const resolvedAiBaseUrl = selectedProfile.aiBaseUrl ?? aiBaseUrl;
+  const resolvedAiModel = selectedProfile.aiModel ?? aiModel ?? openaiModelFromLegacy;
+  const resolvedOpenAiModel = normalizeOpenAiAdminModel(openaiProfile.aiModel) ?? openaiModel;
+
   return {
-    openaiApiKeyEnc,
+    aiApiKeyEnc: resolvedAiApiKeyEnc,
+    openaiApiKeyEnc: openaiProfile.aiApiKeyEnc ?? openaiApiKeyEnc ?? aiApiKeyEnc,
     fmpApiKeyEnc,
-    openaiModel
+    aiProvider: aiProvider ?? null,
+    aiBaseUrl: resolvedAiBaseUrl,
+    aiModel: resolvedAiModel,
+    openaiModel: resolvedOpenAiModel,
+    aiProfiles: {
+      openai: openaiProfile,
+      ollama: ollamaProfile
+    }
   };
 }
 
@@ -2679,39 +2826,101 @@ async function getPredictionDefaultsSettings(): Promise<PredictionDefaultsSettin
 }
 
 function toPublicApiKeysSettings(value: StoredApiKeysSettings) {
-  let openaiApiKeyMasked: string | null = null;
-  let fmpApiKeyMasked: string | null = null;
-  if (value.openaiApiKeyEnc) {
+  const maskEncrypted = (encrypted: string | null): string | null => {
+    if (!encrypted) return null;
     try {
-      const decrypted = decryptSecret(value.openaiApiKeyEnc);
-      openaiApiKeyMasked = maskSecret(decrypted);
+      const decrypted = decryptSecret(encrypted);
+      return maskSecret(decrypted);
     } catch {
-      openaiApiKeyMasked = "****";
+      return "****";
     }
-  }
-  if (value.fmpApiKeyEnc) {
-    try {
-      const decrypted = decryptSecret(value.fmpApiKeyEnc);
-      fmpApiKeyMasked = maskSecret(decrypted);
-    } catch {
-      fmpApiKeyMasked = "****";
-    }
-  }
+  };
+
+  const selectedProvider = normalizeProviderForProfile(value.aiProvider);
+  const selectedProfile = getStoredAiProfile(value, selectedProvider);
+  const openaiProfile = value.aiProfiles.openai ?? emptyAiProviderProfile();
+  const ollamaProfile = value.aiProfiles.ollama ?? emptyAiProviderProfile();
+  const aiKeyEnc = selectedProfile.aiApiKeyEnc ?? value.aiApiKeyEnc ?? value.openaiApiKeyEnc;
+  const aiApiKeyMasked = maskEncrypted(aiKeyEnc);
+  const openAiApiKeyMasked = maskEncrypted(openaiProfile.aiApiKeyEnc ?? value.openaiApiKeyEnc);
+  const fmpApiKeyMasked = maskEncrypted(value.fmpApiKeyEnc);
+
   return {
-    openaiApiKeyMasked,
-    hasOpenAiApiKey: Boolean(value.openaiApiKeyEnc),
+    aiApiKeyMasked,
+    hasAiApiKey: Boolean(aiKeyEnc),
+    openaiApiKeyMasked: openAiApiKeyMasked,
+    hasOpenAiApiKey: Boolean(openaiProfile.aiApiKeyEnc ?? value.openaiApiKeyEnc),
     fmpApiKeyMasked,
     hasFmpApiKey: Boolean(value.fmpApiKeyEnc),
-    openaiModel: value.openaiModel
+    aiProvider: value.aiProvider,
+    aiBaseUrl: selectedProfile.aiBaseUrl ?? value.aiBaseUrl,
+    aiModel: selectedProfile.aiModel ?? value.aiModel,
+    openaiModel: normalizeOpenAiAdminModel(openaiProfile.aiModel) ?? value.openaiModel,
+    aiProfiles: {
+      openai: {
+        aiBaseUrl: openaiProfile.aiBaseUrl,
+        aiModel: openaiProfile.aiModel,
+        aiApiKeyMasked: openAiApiKeyMasked,
+        hasAiApiKey: Boolean(openaiProfile.aiApiKeyEnc ?? value.openaiApiKeyEnc)
+      },
+      ollama: {
+        aiBaseUrl: ollamaProfile.aiBaseUrl,
+        aiModel: ollamaProfile.aiModel,
+        aiApiKeyMasked: maskEncrypted(ollamaProfile.aiApiKeyEnc),
+        hasAiApiKey: Boolean(ollamaProfile.aiApiKeyEnc)
+      }
+    }
   };
 }
 
-function resolveEffectiveOpenAiModel(settings: StoredApiKeysSettings): {
-  model: string;
-  source: EffectiveOpenAiModelSource;
+function resolveEffectiveAiProvider(settings: StoredApiKeysSettings): {
+  provider: "openai" | "ollama" | "disabled";
+  source: EffectiveAiProviderSource;
 } {
+  if (settings.aiProvider) {
+    return { provider: settings.aiProvider, source: "db" };
+  }
+  const envProviderRaw = typeof process.env.AI_PROVIDER === "string"
+    ? process.env.AI_PROVIDER.trim()
+    : "";
+  if (envProviderRaw) {
+    const normalized = envProviderRaw.toLowerCase();
+    if (normalized === "off" || normalized === "disabled" || normalized === "none") {
+      return { provider: "disabled", source: "env" };
+    }
+    return { provider: normalizeAiProvider(normalized) ?? "openai", source: "env" };
+  }
+  return { provider: "openai", source: "default" };
+}
+
+function resolveEffectiveAiBaseUrl(settings: StoredApiKeysSettings): {
+  baseUrl: string;
+  source: EffectiveAiBaseUrlSource;
+} {
+  const provider = resolveEffectiveAiProvider(settings).provider;
+  const profile = getStoredAiProfile(settings, provider);
+  if (profile.aiBaseUrl) {
+    return { baseUrl: profile.aiBaseUrl, source: "db" };
+  }
+  const envBaseUrl = typeof process.env.AI_BASE_URL === "string" ? process.env.AI_BASE_URL.trim() : "";
+  if (envBaseUrl) {
+    return { baseUrl: envBaseUrl, source: "env" };
+  }
+  if (provider === "ollama") {
+    return { baseUrl: "http://localhost:11434/v1", source: "default" };
+  }
+  return { baseUrl: "https://api.openai.com/v1", source: "default" };
+}
+
+function resolveEffectiveAiModel(settings: StoredApiKeysSettings): {
+  model: string;
+  source: EffectiveAiModelSource;
+} {
+  const provider = resolveEffectiveAiProvider(settings).provider;
+  const profile = getStoredAiProfile(settings, provider);
   const resolved = resolveAiModelFromConfig({
-    dbModel: settings.openaiModel,
+    provider: provider === "ollama" ? "ollama" : "openai",
+    dbModel: profile.aiModel ?? settings.aiModel ?? settings.openaiModel,
     envModel: process.env.AI_MODEL
   });
   return {
@@ -2720,20 +2929,25 @@ function resolveEffectiveOpenAiModel(settings: StoredApiKeysSettings): {
   };
 }
 
-function resolveEffectiveOpenAiApiKey(
+function resolveEffectiveAiApiKey(
   settings: StoredApiKeysSettings
 ): { apiKey: string | null; source: ApiKeySource; decryptError: boolean } {
-  const envApiKey = process.env.AI_API_KEY?.trim() ?? "";
-  if (envApiKey) {
-    return { apiKey: envApiKey, source: "env", decryptError: false };
-  }
-
-  if (!settings.openaiApiKeyEnc) {
+  const provider = resolveEffectiveAiProvider(settings).provider;
+  const profile = getStoredAiProfile(settings, provider);
+  const keyEnc = profile.aiApiKeyEnc ?? settings.aiApiKeyEnc ?? settings.openaiApiKeyEnc;
+  if (!keyEnc) {
+    const envApiKey = process.env.AI_API_KEY?.trim() ?? "";
+    if (envApiKey) {
+      return { apiKey: envApiKey, source: "env", decryptError: false };
+    }
+    if (provider === "ollama") {
+      return { apiKey: "ollama", source: "none", decryptError: false };
+    }
     return { apiKey: null, source: "none", decryptError: false };
   }
 
   try {
-    const decrypted = decryptSecret(settings.openaiApiKeyEnc).trim();
+    const decrypted = decryptSecret(keyEnc).trim();
     if (!decrypted) {
       return { apiKey: null, source: "none", decryptError: false };
     }
@@ -8978,6 +9192,58 @@ function sendManualTradingError(res: express.Response, error: unknown) {
   });
 }
 
+function isDatabaseConnectivityError(error: unknown): boolean {
+  const unknown = error as { code?: unknown; message?: unknown };
+  const code =
+    typeof unknown?.code === "string" && unknown.code.trim()
+      ? unknown.code.trim().toUpperCase()
+      : "";
+  if (code === "P1001" || code === "P1002" || code === "P2024") {
+    return true;
+  }
+
+  const message =
+    error instanceof Error
+      ? error.message
+      : typeof unknown?.message === "string"
+        ? unknown.message
+        : "";
+  const normalized = message.toLowerCase();
+
+  return normalized.includes("can't reach database server")
+    || normalized.includes("database")
+      && (
+        normalized.includes("connection")
+        || normalized.includes("timeout")
+        || normalized.includes("timed out")
+      )
+    || normalized.includes("econnrefused")
+    || normalized.includes("econnreset");
+}
+
+function sendPredictionScheduleError(
+  res: express.Response,
+  error: unknown,
+  action: "pause" | "stop" | "delete-schedule"
+) {
+  const message = error instanceof Error ? error.message : String(error);
+  if (isDatabaseConnectivityError(error)) {
+    // eslint-disable-next-line no-console
+    console.error(`[predictions:schedule:${action}] database unavailable`, message);
+    return res.status(503).json({
+      error: "temporary_db_unavailable",
+      message: "Database temporarily unavailable. Please retry."
+    });
+  }
+
+  // eslint-disable-next-line no-console
+  console.error(`[predictions:schedule:${action}] unexpected failure`, message);
+  return res.status(500).json({
+    error: "prediction_schedule_update_failed",
+    message: "Prediction schedule update failed."
+  });
+}
+
 app.get("/health", (_req, res) => {
   res.json({ ok: true, service: "api" });
 });
@@ -9096,10 +9362,9 @@ app.post("/auth/register", async (req, res) => {
 
   await ensureWorkspaceMembership(user.id, user.email);
   try {
-    const resolvedPlan = await resolveEffectivePlanForUser(user.id);
-    await syncPrimaryWorkspaceEntitlementsForUser({
+    await setUserToFreePlan({
       userId: user.id,
-      effectivePlan: resolvedPlan.plan
+      syncWorkspaceEntitlements: true
     });
   } catch {
     // ignore billing sync issues during registration
@@ -9957,16 +10222,25 @@ app.get("/admin/settings/api-keys", requireAuth, async (_req, res) => {
   const settings = parseStoredApiKeysSettings(row?.value);
   const envConfigured = Boolean(process.env.AI_API_KEY?.trim());
   const fmpEnvConfigured = Boolean(process.env.FMP_API_KEY?.trim());
-  const effectiveModel = resolveEffectiveOpenAiModel(settings);
+  const effectiveProvider = resolveEffectiveAiProvider(settings);
+  const effectiveBaseUrl = resolveEffectiveAiBaseUrl(settings);
+  const effectiveModel = resolveEffectiveAiModel(settings);
 
   return res.json({
     ...toPublicApiKeysSettings(settings),
     updatedAt: row?.updatedAt ?? null,
     envOverride: envConfigured,
     envOverrideFmp: fmpEnvConfigured,
+    effectiveAiProvider: effectiveProvider.provider,
+    effectiveAiProviderSource: effectiveProvider.source,
+    effectiveAiBaseUrl: effectiveBaseUrl.baseUrl,
+    effectiveAiBaseUrlSource: effectiveBaseUrl.source,
+    effectiveAiModel: effectiveModel.model,
+    effectiveAiModelSource: effectiveModel.source,
     effectiveOpenaiModel: effectiveModel.model,
     effectiveOpenaiModelSource: effectiveModel.source,
-    modelOptions: [...OPENAI_ADMIN_MODEL_OPTIONS]
+    modelOptions: [...OPENAI_ADMIN_MODEL_OPTIONS],
+    providerOptions: [...AI_PROVIDER_OPTIONS, "disabled"]
   });
 });
 
@@ -9978,9 +10252,24 @@ app.get("/admin/settings/api-keys/status", requireAuth, async (_req, res) => {
     select: { value: true }
   });
   const settings = parseStoredApiKeysSettings(row?.value);
-  const resolved = resolveEffectiveOpenAiApiKey(settings);
-  const effectiveModel = resolveEffectiveOpenAiModel(settings);
+  const effectiveProvider = resolveEffectiveAiProvider(settings);
+  const effectiveBaseUrl = resolveEffectiveAiBaseUrl(settings);
+  const resolved = resolveEffectiveAiApiKey(settings);
+  const effectiveModel = resolveEffectiveAiModel(settings);
   const checkedAt = new Date().toISOString();
+
+  if (effectiveProvider.provider === "disabled") {
+    return res.json({
+      ok: false,
+      status: "error",
+      source: resolved.source,
+      checkedAt,
+      message: "AI provider is disabled.",
+      model: effectiveModel.model,
+      provider: effectiveProvider.provider,
+      baseUrl: effectiveBaseUrl.baseUrl
+    });
+  }
 
   if (resolved.decryptError) {
     return res.json({
@@ -9988,8 +10277,10 @@ app.get("/admin/settings/api-keys/status", requireAuth, async (_req, res) => {
       status: "error",
       source: resolved.source,
       checkedAt,
-      message: "Stored OpenAI key could not be decrypted.",
-      model: effectiveModel.model
+      message: "Stored AI key could not be decrypted.",
+      model: effectiveModel.model,
+      provider: effectiveProvider.provider,
+      baseUrl: effectiveBaseUrl.baseUrl
     });
   }
 
@@ -9999,8 +10290,10 @@ app.get("/admin/settings/api-keys/status", requireAuth, async (_req, res) => {
       status: "missing_key",
       source: resolved.source,
       checkedAt,
-      message: "No OpenAI API key configured.",
-      model: effectiveModel.model
+      message: "No AI API key configured.",
+      model: effectiveModel.model,
+      provider: effectiveProvider.provider,
+      baseUrl: effectiveBaseUrl.baseUrl
     });
   }
 
@@ -10009,13 +10302,46 @@ app.get("/admin/settings/api-keys/status", requireAuth, async (_req, res) => {
   const startedAt = Date.now();
 
   try {
-    const response = await fetch("https://api.openai.com/v1/models", {
-      method: "GET",
-      headers: {
-        Authorization: `Bearer ${resolved.apiKey}`
-      },
-      signal: controller.signal
-    });
+    const endpoint = `${effectiveBaseUrl.baseUrl.replace(/\/$/, "")}/chat/completions`;
+    const isOpenAiGpt5Model =
+      effectiveProvider.provider === "openai" && effectiveModel.model.startsWith("gpt-5");
+    const healthPayload: Record<string, unknown> = {
+      model: effectiveModel.model,
+      messages: [{ role: "user", content: "ping" }],
+      ...(isOpenAiGpt5Model
+        ? { max_completion_tokens: 8 }
+        : { temperature: 0, max_tokens: 8 })
+    };
+    const headers = {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${resolved.apiKey}`
+    };
+    const body = JSON.stringify(healthPayload);
+    const doFetch = (url: string) =>
+      fetch(url, {
+        method: "POST",
+        headers,
+        body,
+        signal: controller.signal
+      });
+
+    let response: Response;
+    try {
+      response = await doFetch(endpoint);
+    } catch (error) {
+      const tryDockerFallback =
+        effectiveProvider.provider === "ollama"
+        && /^https?:\/\/(localhost|127\.0\.0\.1|\[::1\])(?::\d+)?(\/|$)/i.test(effectiveBaseUrl.baseUrl)
+        && !controller.signal.aborted;
+      if (!tryDockerFallback) {
+        throw error;
+      }
+      const fallbackEndpoint = endpoint
+        .replace("://localhost", "://host.docker.internal")
+        .replace("://127.0.0.1", "://host.docker.internal")
+        .replace("://[::1]", "://host.docker.internal");
+      response = await doFetch(fallbackEndpoint);
+    }
 
     let payload: any = null;
     try {
@@ -10031,15 +10357,17 @@ app.get("/admin/settings/api-keys/status", requireAuth, async (_req, res) => {
         source: resolved.source,
         checkedAt,
         latencyMs: Date.now() - startedAt,
-        message: "OpenAI connection is healthy.",
-        model: effectiveModel.model
+        message: `${effectiveProvider.provider} connection is healthy.`,
+        model: effectiveModel.model,
+        provider: effectiveProvider.provider,
+        baseUrl: effectiveBaseUrl.baseUrl
       });
     }
 
     const providerMessage =
       typeof payload?.error?.message === "string" && payload.error.message.trim()
         ? payload.error.message.trim()
-        : `openai_http_${response.status}`;
+        : `ai_http_${response.status}`;
 
     return res.json({
       ok: false,
@@ -10049,7 +10377,9 @@ app.get("/admin/settings/api-keys/status", requireAuth, async (_req, res) => {
       latencyMs: Date.now() - startedAt,
       httpStatus: response.status,
       message: providerMessage,
-      model: effectiveModel.model
+      model: effectiveModel.model,
+      provider: effectiveProvider.provider,
+      baseUrl: effectiveBaseUrl.baseUrl
     });
   } catch (error) {
     const isAbort = error instanceof Error && error.name === "AbortError";
@@ -10060,7 +10390,9 @@ app.get("/admin/settings/api-keys/status", requireAuth, async (_req, res) => {
       checkedAt,
       latencyMs: Date.now() - startedAt,
       message: isAbort ? "Connection timed out." : String(error),
-      model: effectiveModel.model
+      model: effectiveModel.model,
+      provider: effectiveProvider.provider,
+      baseUrl: effectiveBaseUrl.baseUrl
     });
   } finally {
     clearTimeout(timeout);
@@ -10163,25 +10495,73 @@ app.put("/admin/settings/api-keys", requireAuth, async (req, res) => {
   }
 
   const existing = parseStoredApiKeysSettings(await getGlobalSettingValue(GLOBAL_SETTING_API_KEYS_KEY));
-  const nextValue = {
-    openaiApiKeyEnc: parsed.data.clearOpenaiApiKey
+  const currentProviderForProfile = normalizeProviderForProfile(
+    parsed.data.aiProvider ?? existing.aiProvider
+  );
+  const nextProfiles: StoredAiProviderProfiles = {
+    openai: { ...existing.aiProfiles.openai },
+    ollama: { ...existing.aiProfiles.ollama }
+  };
+
+  const genericApiKeySpecified = parsed.data.clearAiApiKey || Boolean(parsed.data.aiApiKey);
+  if (genericApiKeySpecified) {
+    nextProfiles[currentProviderForProfile].aiApiKeyEnc = parsed.data.clearAiApiKey
       ? null
-      : parsed.data.openaiApiKey
-        ? encryptSecret(parsed.data.openaiApiKey)
-        : existing.openaiApiKeyEnc,
+      : (parsed.data.aiApiKey ? encryptSecret(parsed.data.aiApiKey) : null);
+  }
+  const openAiApiKeySpecified = parsed.data.clearOpenaiApiKey || Boolean(parsed.data.openaiApiKey);
+  if (openAiApiKeySpecified) {
+    nextProfiles.openai.aiApiKeyEnc = parsed.data.clearOpenaiApiKey
+      ? null
+      : (parsed.data.openaiApiKey ? encryptSecret(parsed.data.openaiApiKey) : null);
+  }
+
+  const genericBaseUrlSpecified = parsed.data.clearAiBaseUrl || parsed.data.aiBaseUrl !== undefined;
+  if (genericBaseUrlSpecified) {
+    nextProfiles[currentProviderForProfile].aiBaseUrl = parsed.data.clearAiBaseUrl
+      ? null
+      : (parsed.data.aiBaseUrl?.trim() || null);
+  }
+
+  const genericModelSpecified = parsed.data.clearAiModel || parsed.data.aiModel !== undefined;
+  if (genericModelSpecified) {
+    nextProfiles[currentProviderForProfile].aiModel = parsed.data.clearAiModel
+      ? null
+      : (parsed.data.aiModel?.trim() || null);
+  }
+  const openAiModelSpecified = parsed.data.clearOpenaiModel || parsed.data.openaiModel !== undefined;
+  if (openAiModelSpecified) {
+    nextProfiles.openai.aiModel = parsed.data.clearOpenaiModel
+      ? null
+      : (parsed.data.openaiModel?.trim() || null);
+  }
+
+  const nextProvider = parsed.data.aiProvider ?? existing.aiProvider;
+  const activeProviderForTopLevel = normalizeProviderForProfile(nextProvider);
+  const activeProfile = nextProfiles[activeProviderForTopLevel];
+  const nextValue = {
+    aiApiKeyEnc: activeProfile.aiApiKeyEnc,
+    openaiApiKeyEnc: nextProfiles.openai.aiApiKeyEnc,
     fmpApiKeyEnc: parsed.data.clearFmpApiKey
       ? null
       : parsed.data.fmpApiKey
         ? encryptSecret(parsed.data.fmpApiKey)
         : existing.fmpApiKeyEnc,
-    openaiModel: parsed.data.clearOpenaiModel
-      ? null
-      : parsed.data.openaiModel ?? existing.openaiModel
+    aiProvider: nextProvider,
+    aiBaseUrl: activeProfile.aiBaseUrl,
+    aiModel: activeProfile.aiModel,
+    openaiModel: normalizeOpenAiAdminModel(nextProfiles.openai.aiModel),
+    aiProfiles: {
+      openai: nextProfiles.openai,
+      ollama: nextProfiles.ollama
+    }
   };
 
   const updated = await setGlobalSettingValue(GLOBAL_SETTING_API_KEYS_KEY, nextValue);
   const settings = parseStoredApiKeysSettings(updated.value);
-  const effectiveModel = resolveEffectiveOpenAiModel(settings);
+  const effectiveProvider = resolveEffectiveAiProvider(settings);
+  const effectiveBaseUrl = resolveEffectiveAiBaseUrl(settings);
+  const effectiveModel = resolveEffectiveAiModel(settings);
   invalidateAiApiKeyCache();
   invalidateAiModelCache();
 
@@ -10190,9 +10570,16 @@ app.put("/admin/settings/api-keys", requireAuth, async (req, res) => {
     updatedAt: updated.updatedAt,
     envOverride: Boolean(process.env.AI_API_KEY?.trim()),
     envOverrideFmp: Boolean(process.env.FMP_API_KEY?.trim()),
+    effectiveAiProvider: effectiveProvider.provider,
+    effectiveAiProviderSource: effectiveProvider.source,
+    effectiveAiBaseUrl: effectiveBaseUrl.baseUrl,
+    effectiveAiBaseUrlSource: effectiveBaseUrl.source,
+    effectiveAiModel: effectiveModel.model,
+    effectiveAiModelSource: effectiveModel.source,
     effectiveOpenaiModel: effectiveModel.model,
     effectiveOpenaiModelSource: effectiveModel.source,
-    modelOptions: [...OPENAI_ADMIN_MODEL_OPTIONS]
+    modelOptions: [...OPENAI_ADMIN_MODEL_OPTIONS],
+    providerOptions: [...AI_PROVIDER_OPTIONS, "disabled"]
   });
 });
 
@@ -12604,13 +12991,33 @@ app.get("/admin/ai-trace/logs", requireAuth, async (req, res) => {
     retryUsed: boolean;
     retryCount: number;
     totalTokens: number | null;
+    analysisMode: "market_analysis" | "trading_explainer";
+    neutralEnforced: boolean;
+    explanationLength: number | null;
+    explanationSentenceCount: number | null;
   } => {
     if (!payload || typeof payload !== "object" || Array.isArray(payload)) {
-      return { retryUsed: false, retryCount: 0, totalTokens: null };
+      return {
+        retryUsed: false,
+        retryCount: 0,
+        totalTokens: null,
+        analysisMode: "trading_explainer",
+        neutralEnforced: false,
+        explanationLength: null,
+        explanationSentenceCount: null
+      };
     }
     const meta = (payload as Record<string, unknown>).__trace;
     if (!meta || typeof meta !== "object" || Array.isArray(meta)) {
-      return { retryUsed: false, retryCount: 0, totalTokens: null };
+      return {
+        retryUsed: false,
+        retryCount: 0,
+        totalTokens: null,
+        analysisMode: "trading_explainer",
+        neutralEnforced: false,
+        explanationLength: null,
+        explanationSentenceCount: null
+      };
     }
     const record = meta as Record<string, unknown>;
     const retryUsed = record.retryUsed === true;
@@ -12621,10 +13028,29 @@ app.get("/admin/ai-trace/logs", requireAuth, async (req, res) => {
       Number.isFinite(totalTokensRaw) && totalTokensRaw >= 0
         ? Math.max(0, Math.trunc(totalTokensRaw))
         : null;
+    const explanationLengthRaw = Number(record.explanationLength);
+    const explanationLength =
+      Number.isFinite(explanationLengthRaw) && explanationLengthRaw >= 0
+        ? Math.max(0, Math.trunc(explanationLengthRaw))
+        : null;
+    const explanationSentenceCountRaw = Number(record.explanationSentenceCount);
+    const explanationSentenceCount =
+      Number.isFinite(explanationSentenceCountRaw) && explanationSentenceCountRaw >= 0
+        ? Math.max(0, Math.trunc(explanationSentenceCountRaw))
+        : null;
+    const analysisMode =
+      record.analysisMode === "market_analysis"
+        ? "market_analysis"
+        : "trading_explainer";
+    const neutralEnforced = record.neutralEnforced === true;
     return {
       retryUsed,
       retryCount,
-      totalTokens
+      totalTokens,
+      analysisMode,
+      neutralEnforced,
+      explanationLength,
+      explanationSentenceCount
     };
   };
 
@@ -14159,74 +14585,74 @@ app.get("/api/predictions/running", requireAuth, async (req, res) => {
 });
 
 app.post("/api/predictions/:id/pause", requireAuth, async (req, res) => {
-  const user = getUserFromLocals(res);
-  const params = predictionIdParamSchema.safeParse(req.params);
-  if (!params.success) {
-    return res.status(400).json({ error: "invalid_prediction_id" });
-  }
-  const body = predictionPauseSchema.safeParse(req.body ?? {});
-  if (!body.success) {
-    return res.status(400).json({ error: "invalid_payload", details: body.error.flatten() });
-  }
-
-  const stateRow = await db.predictionState.findFirst({
-    where: {
-      id: params.data.id,
-      userId: user.id
-    },
-    select: {
-      id: true,
-      signalMode: true,
-      featuresSnapshot: true,
-      symbol: true,
-      marketType: true,
-      timeframe: true,
-      accountId: true
+  try {
+    const user = getUserFromLocals(res);
+    const params = predictionIdParamSchema.safeParse(req.params);
+    if (!params.success) {
+      return res.status(400).json({ error: "invalid_prediction_id" });
     }
-  });
+    const body = predictionPauseSchema.safeParse(req.body ?? {});
+    if (!body.success) {
+      return res.status(400).json({ error: "invalid_payload", details: body.error.flatten() });
+    }
 
-  if (stateRow) {
-    const snapshot = asRecord(stateRow.featuresSnapshot);
-    const signalMode = readStateSignalMode(stateRow.signalMode, snapshot);
-    await db.predictionState.update({
-      where: { id: stateRow.id },
-      data: {
-        autoScheduleEnabled: true,
-        autoSchedulePaused: body.data.paused,
-        featuresSnapshot: {
-          ...snapshot,
-          autoScheduleEnabled: true,
-          autoSchedulePaused: body.data.paused
-        }
+    const stateRow = await db.predictionState.findFirst({
+      where: {
+        id: params.data.id,
+        userId: user.id
+      },
+      select: {
+        id: true,
+        signalMode: true,
+        featuresSnapshot: true,
+        symbol: true,
+        marketType: true,
+        timeframe: true,
+        accountId: true
       }
     });
 
-    const normalizedSymbol = normalizeSymbolInput(stateRow.symbol);
-    const templateRowIds = await findPredictionTemplateRowIds(user.id, {
-      symbol: normalizedSymbol || stateRow.symbol,
-      marketType: normalizePredictionMarketType(stateRow.marketType),
-      timeframe: normalizePredictionTimeframe(stateRow.timeframe),
-      exchangeAccountId: typeof stateRow.accountId === "string" ? stateRow.accountId : null,
-      signalMode,
-      strategyRef: readPredictionStrategyRef(snapshot)
-    });
-
-    if (templateRowIds.length > 0) {
-      const rows = await db.prediction.findMany({
-        where: {
-          id: { in: templateRowIds },
-          userId: user.id
-        },
-        select: {
-          id: true,
-          featuresSnapshot: true
+    if (stateRow) {
+      const snapshot = asRecord(stateRow.featuresSnapshot);
+      const signalMode = readStateSignalMode(stateRow.signalMode, snapshot);
+      await db.predictionState.update({
+        where: { id: stateRow.id },
+        data: {
+          autoScheduleEnabled: true,
+          autoSchedulePaused: body.data.paused,
+          featuresSnapshot: {
+            ...snapshot,
+            autoScheduleEnabled: true,
+            autoSchedulePaused: body.data.paused
+          }
         }
       });
 
-      await Promise.all(
-        rows.map((row: any) => {
+      const normalizedSymbol = normalizeSymbolInput(stateRow.symbol);
+      const templateRowIds = await findPredictionTemplateRowIds(user.id, {
+        symbol: normalizedSymbol || stateRow.symbol,
+        marketType: normalizePredictionMarketType(stateRow.marketType),
+        timeframe: normalizePredictionTimeframe(stateRow.timeframe),
+        exchangeAccountId: typeof stateRow.accountId === "string" ? stateRow.accountId : null,
+        signalMode,
+        strategyRef: readPredictionStrategyRef(snapshot)
+      });
+
+      if (templateRowIds.length > 0) {
+        const rows = await db.prediction.findMany({
+          where: {
+            id: { in: templateRowIds },
+            userId: user.id
+          },
+          select: {
+            id: true,
+            featuresSnapshot: true
+          }
+        });
+
+        for (const row of rows as any[]) {
           const snapshot = asRecord(row.featuresSnapshot);
-          return db.prediction.update({
+          await db.prediction.update({
             where: { id: row.id },
             data: {
               featuresSnapshot: {
@@ -14236,47 +14662,45 @@ app.post("/api/predictions/:id/pause", requireAuth, async (req, res) => {
               }
             }
           });
-        })
-      );
+        }
+      }
+
+      return res.json({
+        ok: true,
+        paused: body.data.paused,
+        updatedCount: 1
+      });
     }
 
-    return res.json({
-      ok: true,
-      paused: body.data.paused,
-      updatedCount: 1
+    const scope = await resolvePredictionTemplateScope(user.id, params.data.id);
+    if (!scope) {
+      return res.status(404).json({ error: "prediction_not_found" });
+    }
+
+    const templateRowIds = await findPredictionTemplateRowIds(user.id, {
+      symbol: scope.symbol,
+      marketType: scope.marketType,
+      timeframe: scope.timeframe,
+      exchangeAccountId: scope.exchangeAccountId,
+      signalMode: scope.signalMode,
+      strategyRef: scope.strategyRef
     });
-  }
+    const ids = templateRowIds.length > 0 ? templateRowIds : [scope.rowId];
 
-  const scope = await resolvePredictionTemplateScope(user.id, params.data.id);
-  if (!scope) {
-    return res.status(404).json({ error: "prediction_not_found" });
-  }
+    const rows = await db.prediction.findMany({
+      where: {
+        id: { in: ids },
+        userId: user.id
+      },
+      select: {
+        id: true,
+        featuresSnapshot: true
+      }
+    });
 
-  const templateRowIds = await findPredictionTemplateRowIds(user.id, {
-    symbol: scope.symbol,
-    marketType: scope.marketType,
-    timeframe: scope.timeframe,
-    exchangeAccountId: scope.exchangeAccountId,
-    signalMode: scope.signalMode,
-    strategyRef: scope.strategyRef
-  });
-  const ids = templateRowIds.length > 0 ? templateRowIds : [scope.rowId];
-
-  const rows = await db.prediction.findMany({
-    where: {
-      id: { in: ids },
-      userId: user.id
-    },
-    select: {
-      id: true,
-      featuresSnapshot: true
-    }
-  });
-
-  await Promise.all(
-    rows.map((row: any) => {
+    for (const row of rows as any[]) {
       const snapshot = asRecord(row.featuresSnapshot);
-      return db.prediction.update({
+      await db.prediction.update({
         where: { id: row.id },
         data: {
           featuresSnapshot: {
@@ -14286,221 +14710,227 @@ app.post("/api/predictions/:id/pause", requireAuth, async (req, res) => {
           }
         }
       });
-    })
-  );
+    }
 
-  return res.json({
-    ok: true,
-    paused: body.data.paused,
-    updatedCount: rows.length
-  });
+    return res.json({
+      ok: true,
+      paused: body.data.paused,
+      updatedCount: rows.length
+    });
+  } catch (error) {
+    return sendPredictionScheduleError(res, error, "pause");
+  }
 });
 
 app.post("/api/predictions/:id/stop", requireAuth, async (req, res) => {
-  const user = getUserFromLocals(res);
-  const params = predictionIdParamSchema.safeParse(req.params);
-  if (!params.success) {
-    return res.status(400).json({ error: "invalid_prediction_id" });
-  }
-
-  const stateRow = await db.predictionState.findFirst({
-    where: {
-      id: params.data.id,
-      userId: user.id
-    },
-    select: {
-      id: true,
-      signalMode: true,
-      featuresSnapshot: true,
-      symbol: true,
-      marketType: true,
-      timeframe: true,
-      accountId: true
+  try {
+    const user = getUserFromLocals(res);
+    const params = predictionIdParamSchema.safeParse(req.params);
+    if (!params.success) {
+      return res.status(400).json({ error: "invalid_prediction_id" });
     }
-  });
 
-  if (stateRow) {
-    const snapshot = asRecord(stateRow.featuresSnapshot);
-    const signalMode = readStateSignalMode(stateRow.signalMode, snapshot);
-    await db.predictionState.update({
-      where: { id: stateRow.id },
-      data: {
-        autoScheduleEnabled: false,
-        autoSchedulePaused: false,
-        featuresSnapshot: {
-          ...snapshot,
-          autoScheduleEnabled: false,
-          autoSchedulePaused: false
-        }
+    const stateRow = await db.predictionState.findFirst({
+      where: {
+        id: params.data.id,
+        userId: user.id
+      },
+      select: {
+        id: true,
+        signalMode: true,
+        featuresSnapshot: true,
+        symbol: true,
+        marketType: true,
+        timeframe: true,
+        accountId: true
       }
     });
 
-    const normalizedSymbol = normalizeSymbolInput(stateRow.symbol);
-    const templateRowIds = await findPredictionTemplateRowIds(user.id, {
-      symbol: normalizedSymbol || stateRow.symbol,
-      marketType: normalizePredictionMarketType(stateRow.marketType),
-      timeframe: normalizePredictionTimeframe(stateRow.timeframe),
-      exchangeAccountId: typeof stateRow.accountId === "string" ? stateRow.accountId : null,
-      signalMode,
-      strategyRef: readPredictionStrategyRef(snapshot)
-    });
-
-    if (templateRowIds.length > 0) {
-      const rows = await db.prediction.findMany({
-        where: {
-          id: { in: templateRowIds },
-          userId: user.id
-        },
-        select: {
-          id: true,
-          featuresSnapshot: true
+    if (stateRow) {
+      const snapshot = asRecord(stateRow.featuresSnapshot);
+      const signalMode = readStateSignalMode(stateRow.signalMode, snapshot);
+      await db.predictionState.update({
+        where: { id: stateRow.id },
+        data: {
+          autoScheduleEnabled: false,
+          autoSchedulePaused: false,
+          featuresSnapshot: {
+            ...snapshot,
+            autoScheduleEnabled: false,
+            autoSchedulePaused: false
+          }
         }
       });
 
-      await Promise.all(
-        rows.map((row: any) =>
-          db.prediction.update({
+      const normalizedSymbol = normalizeSymbolInput(stateRow.symbol);
+      const templateRowIds = await findPredictionTemplateRowIds(user.id, {
+        symbol: normalizedSymbol || stateRow.symbol,
+        marketType: normalizePredictionMarketType(stateRow.marketType),
+        timeframe: normalizePredictionTimeframe(stateRow.timeframe),
+        exchangeAccountId: typeof stateRow.accountId === "string" ? stateRow.accountId : null,
+        signalMode,
+        strategyRef: readPredictionStrategyRef(snapshot)
+      });
+
+      if (templateRowIds.length > 0) {
+        const rows = await db.prediction.findMany({
+          where: {
+            id: { in: templateRowIds },
+            userId: user.id
+          },
+          select: {
+            id: true,
+            featuresSnapshot: true
+          }
+        });
+
+        for (const row of rows as any[]) {
+          await db.prediction.update({
             where: { id: row.id },
             data: {
               featuresSnapshot: withAutoScheduleFlag(row.featuresSnapshot, false)
             }
-          })
-        )
-      );
+          });
+        }
+      }
+
+      return res.json({
+        ok: true,
+        stoppedCount: 1
+      });
     }
 
-    return res.json({
-      ok: true,
-      stoppedCount: 1
+    const scope = await resolvePredictionTemplateScope(user.id, params.data.id);
+    if (!scope) {
+      return res.status(404).json({ error: "prediction_not_found" });
+    }
+
+    const templateRowIds = await findPredictionTemplateRowIds(user.id, {
+      symbol: scope.symbol,
+      marketType: scope.marketType,
+      timeframe: scope.timeframe,
+      exchangeAccountId: scope.exchangeAccountId,
+      signalMode: scope.signalMode,
+      strategyRef: scope.strategyRef
     });
-  }
+    const ids = templateRowIds.length > 0 ? templateRowIds : [scope.rowId];
 
-  const scope = await resolvePredictionTemplateScope(user.id, params.data.id);
-  if (!scope) {
-    return res.status(404).json({ error: "prediction_not_found" });
-  }
+    const rows = await db.prediction.findMany({
+      where: {
+        id: { in: ids },
+        userId: user.id
+      },
+      select: {
+        id: true,
+        featuresSnapshot: true
+      }
+    });
 
-  const templateRowIds = await findPredictionTemplateRowIds(user.id, {
-    symbol: scope.symbol,
-    marketType: scope.marketType,
-    timeframe: scope.timeframe,
-    exchangeAccountId: scope.exchangeAccountId,
-    signalMode: scope.signalMode,
-    strategyRef: scope.strategyRef
-  });
-  const ids = templateRowIds.length > 0 ? templateRowIds : [scope.rowId];
-
-  const rows = await db.prediction.findMany({
-    where: {
-      id: { in: ids },
-      userId: user.id
-    },
-    select: {
-      id: true,
-      featuresSnapshot: true
-    }
-  });
-
-  await Promise.all(
-    rows.map((row: any) =>
-      db.prediction.update({
+    for (const row of rows as any[]) {
+      await db.prediction.update({
         where: { id: row.id },
         data: {
           featuresSnapshot: withAutoScheduleFlag(row.featuresSnapshot, false)
         }
-      })
-    )
-  );
-
-  return res.json({
-    ok: true,
-    stoppedCount: rows.length
-  });
-});
-
-app.post("/api/predictions/:id/delete-schedule", requireAuth, async (req, res) => {
-  const user = getUserFromLocals(res);
-  const params = predictionIdParamSchema.safeParse(req.params);
-  if (!params.success) {
-    return res.status(400).json({ error: "invalid_prediction_id" });
-  }
-
-  const stateRow = await db.predictionState.findFirst({
-    where: {
-      id: params.data.id,
-      userId: user.id
-    },
-    select: {
-      id: true,
-      signalMode: true,
-      featuresSnapshot: true,
-      symbol: true,
-      marketType: true,
-      timeframe: true,
-      accountId: true
+      });
     }
-  });
-
-  if (stateRow) {
-    await db.predictionState.delete({
-      where: { id: stateRow.id }
-    });
-    predictionTriggerDebounceState.delete(stateRow.id);
-    const normalizedSymbol = normalizeSymbolInput(stateRow.symbol);
-    const stateSnapshot = asRecord(stateRow.featuresSnapshot);
-    const stateSignalMode = readStateSignalMode(stateRow.signalMode, stateSnapshot);
-
-    const templateRowIds = await findPredictionTemplateRowIds(user.id, {
-      symbol: normalizedSymbol || stateRow.symbol,
-      marketType: normalizePredictionMarketType(stateRow.marketType),
-      timeframe: normalizePredictionTimeframe(stateRow.timeframe),
-      exchangeAccountId: typeof stateRow.accountId === "string" ? stateRow.accountId : null,
-      signalMode: stateSignalMode,
-      strategyRef: readPredictionStrategyRef(stateSnapshot)
-    });
-
-    const deletedTemplates =
-      templateRowIds.length > 0
-        ? await db.prediction.deleteMany({
-            where: {
-              userId: user.id,
-              id: { in: templateRowIds }
-            }
-          })
-        : { count: 0 };
 
     return res.json({
       ok: true,
-      deletedCount: 1 + deletedTemplates.count
+      stoppedCount: rows.length
     });
+  } catch (error) {
+    return sendPredictionScheduleError(res, error, "stop");
   }
+});
 
-  const scope = await resolvePredictionTemplateScope(user.id, params.data.id);
-  if (!scope) {
-    return res.status(404).json({ error: "prediction_not_found" });
-  }
-
-  const templateRowIds = await findPredictionTemplateRowIds(user.id, {
-    symbol: scope.symbol,
-    marketType: scope.marketType,
-    timeframe: scope.timeframe,
-    exchangeAccountId: scope.exchangeAccountId,
-    signalMode: scope.signalMode,
-    strategyRef: scope.strategyRef
-  });
-  const ids = templateRowIds.length > 0 ? templateRowIds : [scope.rowId];
-
-  const deleted = await db.prediction.deleteMany({
-    where: {
-      userId: user.id,
-      id: { in: ids }
+app.post("/api/predictions/:id/delete-schedule", requireAuth, async (req, res) => {
+  try {
+    const user = getUserFromLocals(res);
+    const params = predictionIdParamSchema.safeParse(req.params);
+    if (!params.success) {
+      return res.status(400).json({ error: "invalid_prediction_id" });
     }
-  });
 
-  return res.json({
-    ok: true,
-    deletedCount: deleted.count
-  });
+    const stateRow = await db.predictionState.findFirst({
+      where: {
+        id: params.data.id,
+        userId: user.id
+      },
+      select: {
+        id: true,
+        signalMode: true,
+        featuresSnapshot: true,
+        symbol: true,
+        marketType: true,
+        timeframe: true,
+        accountId: true
+      }
+    });
+
+    if (stateRow) {
+      await db.predictionState.delete({
+        where: { id: stateRow.id }
+      });
+      predictionTriggerDebounceState.delete(stateRow.id);
+      const normalizedSymbol = normalizeSymbolInput(stateRow.symbol);
+      const stateSnapshot = asRecord(stateRow.featuresSnapshot);
+      const stateSignalMode = readStateSignalMode(stateRow.signalMode, stateSnapshot);
+
+      const templateRowIds = await findPredictionTemplateRowIds(user.id, {
+        symbol: normalizedSymbol || stateRow.symbol,
+        marketType: normalizePredictionMarketType(stateRow.marketType),
+        timeframe: normalizePredictionTimeframe(stateRow.timeframe),
+        exchangeAccountId: typeof stateRow.accountId === "string" ? stateRow.accountId : null,
+        signalMode: stateSignalMode,
+        strategyRef: readPredictionStrategyRef(stateSnapshot)
+      });
+
+      const deletedTemplates =
+        templateRowIds.length > 0
+          ? await db.prediction.deleteMany({
+              where: {
+                userId: user.id,
+                id: { in: templateRowIds }
+              }
+            })
+          : { count: 0 };
+
+      return res.json({
+        ok: true,
+        deletedCount: 1 + deletedTemplates.count
+      });
+    }
+
+    const scope = await resolvePredictionTemplateScope(user.id, params.data.id);
+    if (!scope) {
+      return res.status(404).json({ error: "prediction_not_found" });
+    }
+
+    const templateRowIds = await findPredictionTemplateRowIds(user.id, {
+      symbol: scope.symbol,
+      marketType: scope.marketType,
+      timeframe: scope.timeframe,
+      exchangeAccountId: scope.exchangeAccountId,
+      signalMode: scope.signalMode,
+      strategyRef: scope.strategyRef
+    });
+    const ids = templateRowIds.length > 0 ? templateRowIds : [scope.rowId];
+
+    const deleted = await db.prediction.deleteMany({
+      where: {
+        userId: user.id,
+        id: { in: ids }
+      }
+    });
+
+    return res.json({
+      ok: true,
+      deletedCount: deleted.count
+    });
+  } catch (error) {
+    return sendPredictionScheduleError(res, error, "delete-schedule");
+  }
 });
 
 app.get("/api/predictions/state", requireAuth, async (req, res) => {
