@@ -64,6 +64,10 @@ type AiTraceLogItem = {
   neutralEnforced: boolean;
   explanationLength: number | null;
   explanationSentenceCount: number | null;
+  requestedModel: string | null;
+  resolvedModel: string | null;
+  attemptedModels: string[];
+  fallbackReason: string | null;
   scope: string;
   provider: string | null;
   model: string | null;
@@ -530,6 +534,9 @@ export default function AdminAiTracePage() {
                       {row.explanationSentenceCount !== null ? ` · sentences: ${row.explanationSentenceCount}` : ""}
                       {row.latencyMs !== null ? ` · ${row.latencyMs}ms` : ""}
                       {row.totalTokens !== null ? ` · tokens: ${row.totalTokens}` : ""}
+                      {row.requestedModel && row.resolvedModel && row.requestedModel !== row.resolvedModel
+                        ? ` · ${row.requestedModel} -> ${row.resolvedModel}`
+                        : ""}
                     </summary>
                     <div style={{ marginTop: 8, display: "grid", gap: 8 }}>
                       <div className="settingsMutedText">
@@ -540,10 +547,18 @@ export default function AdminAiTracePage() {
                         {t("prompt")}: <strong>{row.promptTemplateName ?? t("systemDefault")}</strong>
                         {row.promptTemplateId ? ` (${row.promptTemplateId})` : ""}
                         {row.model ? ` · model: ${row.model}` : ""}
+                        {row.requestedModel ? ` · requested: ${row.requestedModel}` : ""}
+                        {row.resolvedModel ? ` · resolved: ${row.resolvedModel}` : ""}
+                        {row.attemptedModels.length > 0 ? ` · attempted: ${row.attemptedModels.join(", ")}` : ""}
                       </div>
 
                       {row.error ? (
                         <pre style={{ margin: 0, fontSize: 12, whiteSpace: "pre-wrap" }}>{row.error}</pre>
+                      ) : null}
+                      {row.fallbackReason ? (
+                        <pre style={{ margin: 0, fontSize: 12, whiteSpace: "pre-wrap" }}>
+                          fallbackReason: {row.fallbackReason}
+                        </pre>
                       ) : null}
 
                       <details>

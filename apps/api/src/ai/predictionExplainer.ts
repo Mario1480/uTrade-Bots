@@ -265,6 +265,10 @@ function withTraceMetaPayload(
     neutralEnforced?: boolean;
     explanationLength?: number | null;
     explanationSentenceCount?: number | null;
+    requestedModel?: string | null;
+    resolvedModel?: string | null;
+    attemptedModels?: string[];
+    fallbackReason?: string | null;
   }
 ): Record<string, unknown> {
   const normalizedTokens =
@@ -279,6 +283,24 @@ function withTraceMetaPayload(
     Number.isFinite(Number(input.explanationSentenceCount)) && input.explanationSentenceCount !== null
       ? Math.max(0, Math.trunc(Number(input.explanationSentenceCount)))
       : null;
+  const requestedModel =
+    typeof input.requestedModel === "string" && input.requestedModel.trim()
+      ? input.requestedModel.trim()
+      : null;
+  const resolvedModel =
+    typeof input.resolvedModel === "string" && input.resolvedModel.trim()
+      ? input.resolvedModel.trim()
+      : null;
+  const attemptedModels = Array.isArray(input.attemptedModels)
+    ? input.attemptedModels
+      .map((value) => (typeof value === "string" ? value.trim() : ""))
+      .filter((value) => value.length > 0)
+      .slice(0, 10)
+    : [];
+  const fallbackReason =
+    typeof input.fallbackReason === "string" && input.fallbackReason.trim()
+      ? input.fallbackReason.trim().slice(0, 1000)
+      : null;
   return {
     ...userPayload,
     __trace: {
@@ -288,7 +310,11 @@ function withTraceMetaPayload(
       analysisMode: input.analysisMode ?? "trading_explainer",
       neutralEnforced: input.neutralEnforced === true,
       explanationLength: normalizedExplanationLength,
-      explanationSentenceCount: normalizedExplanationSentenceCount
+      explanationSentenceCount: normalizedExplanationSentenceCount,
+      requestedModel,
+      resolvedModel,
+      attemptedModels,
+      fallbackReason
     }
   };
 }
@@ -1624,17 +1650,21 @@ export async function generatePredictionExplanation(
       meetsLength: true,
       meetsSentenceCount: true
     };
-    await recordAiTraceLog({
-      ...traceBase,
-      userPayload: withTraceMetaPayload(userPayload, {
-        retryUsed: false,
-        retryCount: 0,
-        totalTokens: null,
-        analysisMode: runtimeProfile.analysisMode,
-        neutralEnforced: false,
-        explanationLength: payloadBudgetMeta.explanationLength,
-        explanationSentenceCount: payloadBudgetMeta.explanationSentenceCount
-      }),
+      await recordAiTraceLog({
+        ...traceBase,
+        userPayload: withTraceMetaPayload(userPayload, {
+          retryUsed: false,
+          retryCount: 0,
+          totalTokens: null,
+          analysisMode: runtimeProfile.analysisMode,
+          neutralEnforced: false,
+          explanationLength: payloadBudgetMeta.explanationLength,
+          explanationSentenceCount: payloadBudgetMeta.explanationSentenceCount,
+          requestedModel: aiModel,
+          resolvedModel: aiModel,
+          attemptedModels: [aiModel],
+          fallbackReason: "payload_budget_exceeded"
+        }),
       rawResponse: null,
       parsedResponse: null,
       success: false,
@@ -1670,6 +1700,27 @@ export async function generatePredictionExplanation(
       let lastExplanationMetrics: ExplanationQualityMetrics | null = null;
       let lastNeutralEnforced = false;
       let totalCalls = 0;
+      let resolvedModelForTrace: string | null = null;
+      let fallbackReasonForTrace: string | null = null;
+      let fallbackObservedForTrace = false;
+      const attemptedModelsForTrace: string[] = [];
+
+      const rememberAttemptedModel = (value: string | null | undefined) => {
+        if (typeof value !== "string") return;
+        const trimmed = value.trim();
+        if (!trimmed) return;
+        if (!attemptedModelsForTrace.includes(trimmed)) {
+          attemptedModelsForTrace.push(trimmed);
+        }
+      };
+
+      const rememberFallbackReason = (value: unknown) => {
+        const raw = String(value ?? "").trim();
+        if (!raw) return;
+        if (!fallbackReasonForTrace) {
+          fallbackReasonForTrace = raw.slice(0, 1000);
+        }
+      };
 
       const finalizeValidatedOutput = async (inputArgs: {
         parsedCandidate: unknown;
@@ -1759,6 +1810,7 @@ export async function generatePredictionExplanation(
         if (agentEnabled) {
           totalCalls += 1;
           aiAttemptsUsed = totalCalls;
+          rememberAttemptedModel(aiModel);
           const agentResult = await runSignalAgent({
             systemMessage,
             userPayload,
@@ -1771,6 +1823,12 @@ export async function generatePredictionExplanation(
           });
           raw = agentResult.content;
           lastUsageTotalTokens = agentResult.usageTotalTokens;
+          resolvedModelForTrace = agentResult.model;
+          rememberAttemptedModel(agentResult.model);
+          if (agentResult.model !== aiModel) {
+            fallbackObservedForTrace = true;
+            rememberFallbackReason(`resolved_model_differs:${aiModel}->${agentResult.model}`);
+          }
           parsedJson = normalizeAgentSignalToExplainerRaw(
             agentResult.signal,
             promptInput.prediction
@@ -1797,12 +1855,16 @@ export async function generatePredictionExplanation(
               analysisMode: runtimeProfile.analysisMode,
               neutralEnforced: lastNeutralEnforced,
               explanationLength: lastExplanationMetrics.explanationLength,
-              explanationSentenceCount: lastExplanationMetrics.explanationSentenceCount
+              explanationSentenceCount: lastExplanationMetrics.explanationSentenceCount,
+              requestedModel: aiModel,
+              resolvedModel: resolvedModelForTrace ?? agentResult.model,
+              attemptedModels: attemptedModelsForTrace,
+              fallbackReason: fallbackReasonForTrace
             }),
             rawResponse: raw ?? null,
             parsedResponse: finalized.output,
             success: true,
-            fallbackUsed: false,
+            fallbackUsed: fallbackObservedForTrace,
             cacheHit: false,
             rateLimited: false,
             latencyMs: Date.now() - startedAt
@@ -1813,6 +1875,7 @@ export async function generatePredictionExplanation(
         const modelCandidates = aiFallbackModel ? [aiModel, aiFallbackModel] : [aiModel];
         for (let modelIndex = 0; modelIndex < modelCandidates.length; modelIndex += 1) {
           const currentModel = modelCandidates[modelIndex];
+          rememberAttemptedModel(currentModel);
           let validated: ExplainerOutput | null = null;
           let validatedQualityMetrics: ExplanationQualityMetrics | null = null;
           let validatedNeutralEnforced = false;
@@ -1820,6 +1883,9 @@ export async function generatePredictionExplanation(
           for (let attempt = 1; attempt <= maxAttemptsPerModel; attempt += 1) {
             totalCalls += 1;
             aiAttemptsUsed = totalCalls;
+            let callResolvedModel: string | null = null;
+            let callFallbackUsed = false;
+            let callFallbackReason: string | null = null;
             const callPayload =
               attempt === 1
                 ? JSON.stringify(userPayload)
@@ -1846,8 +1912,27 @@ export async function generatePredictionExplanation(
                   if (Number.isFinite(derived)) {
                     lastUsageTotalTokens = Math.max(0, Math.trunc(derived));
                   }
+                },
+                onResolved: (meta) => {
+                  callResolvedModel = meta.modelUsed;
+                  callFallbackUsed = meta.fallbackUsed;
+                  callFallbackReason = meta.fallbackReason;
                 }
               });
+              if (callResolvedModel) {
+                resolvedModelForTrace = callResolvedModel;
+                rememberAttemptedModel(callResolvedModel);
+              } else {
+                resolvedModelForTrace = currentModel;
+              }
+              if (callFallbackUsed) {
+                fallbackObservedForTrace = true;
+                rememberFallbackReason(callFallbackReason ?? "provider_model_fallback");
+              }
+              if (callResolvedModel && callResolvedModel !== currentModel) {
+                fallbackObservedForTrace = true;
+                rememberFallbackReason(`resolved_model_differs:${currentModel}->${callResolvedModel}`);
+              }
               parsedJson = parseAiResponseJson(raw);
               const finalized = await finalizeValidatedOutput({
                 parsedCandidate: parsedJson,
@@ -1877,29 +1962,35 @@ export async function generatePredictionExplanation(
             }
             lastNeutralEnforced = validatedNeutralEnforced;
             await recordAiTraceLog({
-              ...traceBase,
-              model: currentModel,
-              userPayload: withTraceMetaPayload(userPayload, {
-                retryUsed,
-                retryCount,
-                totalTokens: lastUsageTotalTokens,
-                analysisMode: runtimeProfile.analysisMode,
-                neutralEnforced: lastNeutralEnforced,
-                explanationLength: lastExplanationMetrics?.explanationLength ?? null,
-                explanationSentenceCount: lastExplanationMetrics?.explanationSentenceCount ?? null
-              }),
-              rawResponse: raw ?? null,
-              parsedResponse: validated,
-              success: true,
-              fallbackUsed: false,
-              cacheHit: false,
-              rateLimited: false,
-              latencyMs: Date.now() - startedAt
+            ...traceBase,
+            model: resolvedModelForTrace ?? currentModel,
+            userPayload: withTraceMetaPayload(userPayload, {
+              retryUsed,
+              retryCount,
+              totalTokens: lastUsageTotalTokens,
+              analysisMode: runtimeProfile.analysisMode,
+              neutralEnforced: lastNeutralEnforced,
+              explanationLength: lastExplanationMetrics?.explanationLength ?? null,
+              explanationSentenceCount: lastExplanationMetrics?.explanationSentenceCount ?? null,
+              requestedModel: aiModel,
+              resolvedModel: resolvedModelForTrace ?? currentModel,
+              attemptedModels: attemptedModelsForTrace,
+              fallbackReason: fallbackReasonForTrace
+            }),
+            rawResponse: raw ?? null,
+            parsedResponse: validated,
+            success: true,
+            fallbackUsed: fallbackObservedForTrace || modelIndex > 0,
+            cacheHit: false,
+            rateLimited: false,
+            latencyMs: Date.now() - startedAt
             });
             return validated;
           }
 
           if (modelIndex < modelCandidates.length - 1) {
+            fallbackObservedForTrace = true;
+            rememberFallbackReason(modelError ?? "unknown");
             logger.warn("ai_model_fallback_retry", {
               primary_model: currentModel,
               fallback_model: modelCandidates[modelIndex + 1],
@@ -1925,8 +2016,11 @@ export async function generatePredictionExplanation(
             ai_model: aiModel,
             reason: initialReason
           });
+          fallbackObservedForTrace = true;
+          rememberFallbackReason(initialReason);
           totalCalls += 1;
           aiAttemptsUsed = totalCalls;
+          rememberAttemptedModel(aiModel);
           try {
             const agentResult = await runSignalAgent({
               systemMessage,
@@ -1940,6 +2034,8 @@ export async function generatePredictionExplanation(
             });
             raw = agentResult.content;
             lastUsageTotalTokens = agentResult.usageTotalTokens;
+            resolvedModelForTrace = agentResult.model;
+            rememberAttemptedModel(agentResult.model);
             parsedJson = normalizeAgentSignalToExplainerRaw(
               agentResult.signal,
               promptInput.prediction
@@ -1966,12 +2062,16 @@ export async function generatePredictionExplanation(
                 analysisMode: runtimeProfile.analysisMode,
                 neutralEnforced: lastNeutralEnforced,
                 explanationLength: lastExplanationMetrics.explanationLength,
-                explanationSentenceCount: lastExplanationMetrics.explanationSentenceCount
+                explanationSentenceCount: lastExplanationMetrics.explanationSentenceCount,
+                requestedModel: aiModel,
+                resolvedModel: resolvedModelForTrace ?? agentResult.model,
+                attemptedModels: attemptedModelsForTrace,
+                fallbackReason: fallbackReasonForTrace
               }),
               rawResponse: raw ?? null,
               parsedResponse: finalized.output,
               success: true,
-              fallbackUsed: false,
+              fallbackUsed: true,
               cacheHit: false,
               rateLimited: false,
               latencyMs: Date.now() - startedAt
@@ -1990,6 +2090,7 @@ export async function generatePredictionExplanation(
         const isInvalidJson = error instanceof SyntaxError || /\binvalid_json\b/i.test(reason);
         const retryCount = Math.max(0, totalCalls - 1);
         const retryUsed = retryCount > 0;
+        rememberFallbackReason(reason);
         logger.warn("ai_validation_failed", {
           ai_validation_failed: true,
           ai_model: aiModel,
@@ -2004,7 +2105,11 @@ export async function generatePredictionExplanation(
             analysisMode: runtimeProfile.analysisMode,
             neutralEnforced: lastNeutralEnforced,
             explanationLength: lastExplanationMetrics?.explanationLength ?? null,
-            explanationSentenceCount: lastExplanationMetrics?.explanationSentenceCount ?? null
+            explanationSentenceCount: lastExplanationMetrics?.explanationSentenceCount ?? null,
+            requestedModel: aiModel,
+            resolvedModel: resolvedModelForTrace ?? aiModel,
+            attemptedModels: attemptedModelsForTrace.length > 0 ? attemptedModelsForTrace : [aiModel],
+            fallbackReason: fallbackReasonForTrace
           }),
           rawResponse: raw,
           parsedResponse: parsedJson,

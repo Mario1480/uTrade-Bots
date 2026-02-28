@@ -13034,6 +13034,10 @@ app.get("/admin/ai-trace/logs", requireAuth, async (req, res) => {
     neutralEnforced: boolean;
     explanationLength: number | null;
     explanationSentenceCount: number | null;
+    requestedModel: string | null;
+    resolvedModel: string | null;
+    attemptedModels: string[];
+    fallbackReason: string | null;
   } => {
     if (!payload || typeof payload !== "object" || Array.isArray(payload)) {
       return {
@@ -13043,7 +13047,11 @@ app.get("/admin/ai-trace/logs", requireAuth, async (req, res) => {
         analysisMode: "trading_explainer",
         neutralEnforced: false,
         explanationLength: null,
-        explanationSentenceCount: null
+        explanationSentenceCount: null,
+        requestedModel: null,
+        resolvedModel: null,
+        attemptedModels: [],
+        fallbackReason: null
       };
     }
     const meta = (payload as Record<string, unknown>).__trace;
@@ -13055,7 +13063,11 @@ app.get("/admin/ai-trace/logs", requireAuth, async (req, res) => {
         analysisMode: "trading_explainer",
         neutralEnforced: false,
         explanationLength: null,
-        explanationSentenceCount: null
+        explanationSentenceCount: null,
+        requestedModel: null,
+        resolvedModel: null,
+        attemptedModels: [],
+        fallbackReason: null
       };
     }
     const record = meta as Record<string, unknown>;
@@ -13082,6 +13094,24 @@ app.get("/admin/ai-trace/logs", requireAuth, async (req, res) => {
         ? "market_analysis"
         : "trading_explainer";
     const neutralEnforced = record.neutralEnforced === true;
+    const requestedModel =
+      typeof record.requestedModel === "string" && record.requestedModel.trim()
+        ? record.requestedModel.trim().slice(0, 128)
+        : null;
+    const resolvedModel =
+      typeof record.resolvedModel === "string" && record.resolvedModel.trim()
+        ? record.resolvedModel.trim().slice(0, 128)
+        : null;
+    const attemptedModels = Array.isArray(record.attemptedModels)
+      ? record.attemptedModels
+        .map((value) => (typeof value === "string" ? value.trim() : ""))
+        .filter((value) => value.length > 0)
+        .slice(0, 10)
+      : [];
+    const fallbackReason =
+      typeof record.fallbackReason === "string" && record.fallbackReason.trim()
+        ? record.fallbackReason.trim().slice(0, 1000)
+        : null;
     return {
       retryUsed,
       retryCount,
@@ -13089,7 +13119,11 @@ app.get("/admin/ai-trace/logs", requireAuth, async (req, res) => {
       analysisMode,
       neutralEnforced,
       explanationLength,
-      explanationSentenceCount
+      explanationSentenceCount,
+      requestedModel,
+      resolvedModel,
+      attemptedModels,
+      fallbackReason
     };
   };
 

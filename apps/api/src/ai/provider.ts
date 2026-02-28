@@ -52,6 +52,14 @@ export type AiUsageTokens = {
   totalTokens: number | null;
 };
 
+export type AiCallResolvedMeta = {
+  provider: EnabledAiProvider;
+  requestedModel: string;
+  modelUsed: string;
+  fallbackUsed: boolean;
+  fallbackReason: string | null;
+};
+
 export type AiProvider = "openai" | "ollama" | "disabled";
 export type EnabledAiProvider = Exclude<AiProvider, "disabled">;
 export type AiProviderSource = "db" | "env" | "default";
@@ -111,6 +119,7 @@ export type CallAiOptions = {
   billingUserId?: string | null;
   billingScope?: string;
   onUsage?: (usage: AiUsageTokens) => void;
+  onResolved?: (meta: AiCallResolvedMeta) => void;
 };
 
 export type ChatMessage = {
@@ -147,6 +156,7 @@ export type CallAiChatOptions = {
   billingUserId?: string | null;
   billingScope?: string;
   onUsage?: (usage: AiUsageTokens) => void;
+  onResolved?: (meta: AiCallResolvedMeta) => void;
   tools?: ChatToolDefinition[];
   toolChoice?: "auto" | "none" | { type: "function"; function: { name: string } };
   responseFormat?: {
@@ -692,6 +702,8 @@ export async function callAiChat(
 
   const baseUrlResolved = await resolveAiBaseUrlWithSource();
   const model = options.model ?? (await getAiModelAsync());
+  let fallbackUsed = false;
+  let fallbackReason: string | null = null;
 
   const timeoutMs = Number(options.timeoutMs ?? process.env.AI_TIMEOUT_MS ?? "15000");
   const controller = new AbortController();
@@ -735,6 +747,8 @@ export async function callAiChat(
       if (!fallbackModel) {
         throw primaryError;
       }
+      fallbackUsed = true;
+      fallbackReason = String(primaryError);
       logger.warn("ai_provider_model_fallback_triggered", {
         provider,
         primary_model: model,
@@ -780,6 +794,15 @@ export async function callAiChat(
     if (options.onUsage) {
       options.onUsage(result.usage);
     }
+    if (options.onResolved) {
+      options.onResolved({
+        provider,
+        requestedModel: model,
+        modelUsed: result.modelUsed,
+        fallbackUsed,
+        fallbackReason
+      });
+    }
 
     return {
       content: readMessageContent(result.message),
@@ -820,7 +843,8 @@ export async function callAi(prompt: string, options: CallAiOptions = {}): Promi
     maxTokens: options.maxTokens,
     billingUserId: options.billingUserId,
     billingScope: options.billingScope,
-    onUsage: options.onUsage
+    onUsage: options.onUsage,
+    onResolved: options.onResolved
   });
 
   const text = result.content.trim();
