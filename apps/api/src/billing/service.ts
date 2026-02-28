@@ -331,6 +331,71 @@ async function getOrCreateSubscription(userId: string, tx: any = db): Promise<an
   });
 }
 
+async function getFreePlanDefaults(tx: any = db): Promise<{
+  maxRunningBots: number;
+  maxBotsTotal: number;
+  allowedExchanges: string[];
+}> {
+  const pkg = await tx.billingPackage.findUnique({
+    where: { code: "free" },
+    select: {
+      maxRunningBots: true,
+      maxBotsTotal: true,
+      allowedExchanges: true
+    }
+  });
+
+  return {
+    maxRunningBots: normalizeInt(pkg?.maxRunningBots, FREE_MAX_RUNNING_BOTS, 0),
+    maxBotsTotal: normalizeInt(pkg?.maxBotsTotal, FREE_MAX_BOTS_TOTAL, 0),
+    allowedExchanges: normalizeStringArray(pkg?.allowedExchanges, [...FREE_ALLOWED_EXCHANGES])
+  };
+}
+
+export async function setUserToFreePlan(params: {
+  userId: string;
+  syncWorkspaceEntitlements?: boolean;
+}): Promise<{
+  userId: string;
+  plan: EffectivePlan;
+  status: "active" | "inactive";
+  proValidUntil: string | null;
+  maxRunningBots: number;
+  maxBotsTotal: number;
+  allowedExchanges: string[];
+  aiTokenBalance: bigint;
+  aiTokenUsedLifetime: bigint;
+  monthlyAiTokensIncluded: bigint;
+}> {
+  await ensureBillingDefaults();
+
+  await db.$transaction(async (tx: any) => {
+    const defaults = await getFreePlanDefaults(tx);
+    const sub = await getOrCreateSubscription(params.userId, tx);
+    await tx.userSubscription.update({
+      where: { id: sub.id },
+      data: {
+        effectivePlan: "FREE",
+        status: "INACTIVE",
+        proValidUntil: null,
+        maxRunningBots: defaults.maxRunningBots,
+        maxBotsTotal: defaults.maxBotsTotal,
+        allowedExchanges: defaults.allowedExchanges,
+        monthlyAiTokensIncluded: 0n
+      }
+    });
+  });
+
+  if (params.syncWorkspaceEntitlements !== false) {
+    await syncPrimaryWorkspaceEntitlementsForUser({
+      userId: params.userId,
+      effectivePlan: "free"
+    });
+  }
+
+  return resolveEffectivePlanForUser(params.userId);
+}
+
 export async function syncPrimaryWorkspaceEntitlementsForUser(params: {
   userId: string;
   effectivePlan: EffectivePlan;
@@ -401,30 +466,7 @@ export async function resolveEffectivePlanForUser(userId: string): Promise<{
   }
 
   if (row.effectivePlan === "PRO") {
-    const downgraded = await db.userSubscription.update({
-      where: { userId },
-      data: {
-        effectivePlan: "FREE",
-        status: "INACTIVE",
-        maxRunningBots: FREE_MAX_RUNNING_BOTS,
-        maxBotsTotal: FREE_MAX_BOTS_TOTAL,
-        allowedExchanges: [...FREE_ALLOWED_EXCHANGES],
-        monthlyAiTokensIncluded: 0n
-      }
-    });
-    await syncPrimaryWorkspaceEntitlementsForUser({ userId, effectivePlan: "free" });
-    return {
-      userId,
-      plan: "free",
-      status: "inactive",
-      proValidUntil: downgraded.proValidUntil ? downgraded.proValidUntil.toISOString() : null,
-      maxRunningBots: FREE_MAX_RUNNING_BOTS,
-      maxBotsTotal: FREE_MAX_BOTS_TOTAL,
-      allowedExchanges: [...FREE_ALLOWED_EXCHANGES],
-      aiTokenBalance: toBigInt(downgraded.aiTokenBalance),
-      aiTokenUsedLifetime: toBigInt(downgraded.aiTokenUsedLifetime),
-      monthlyAiTokensIncluded: 0n
-    };
+    return setUserToFreePlan({ userId, syncWorkspaceEntitlements: true });
   }
 
   return {
