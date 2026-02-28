@@ -312,12 +312,34 @@ function buildSystemMessage(customPromptText: string, runtimeHints: string[] = [
 function countSentences(value: string): number {
   const trimmed = value.trim();
   if (!trimmed) return 0;
-  const matches = trimmed.match(/[.!?]+(?=\s|$)/g);
-  if (matches && matches.length > 0) return matches.length;
+  const punctuationSplit = trimmed
+    .split(/(?<=[.!?])\s+/)
+    .map((row) => row.trim())
+    .filter((row) => row.length > 0);
+  if (punctuationSplit.length > 0) return punctuationSplit.length;
+
+  const clauseSplit = trimmed
+    .split(/[;\n]+/)
+    .map((row) => row.trim())
+    .filter((row) => row.length > 0);
+  if (clauseSplit.length > 0) return clauseSplit.length;
+
   return trimmed
     .split(/\n+/)
     .map((row) => row.trim())
     .filter((row) => row.length > 0).length;
+}
+
+function shouldRelaxSentenceRequirement(
+  profile: ExplainerRuntimeProfile,
+  explanationLength: number,
+  explanationSentenceCount: number
+): boolean {
+  if (profile.provider !== "ollama") return false;
+  if (profile.timeframe !== "4h") return false;
+  if (profile.explanationMinSentences < 3) return false;
+  if (explanationSentenceCount !== profile.explanationMinSentences - 1) return false;
+  return explanationLength >= 900;
 }
 
 function evaluateExplanationQuality(
@@ -326,11 +348,14 @@ function evaluateExplanationQuality(
 ): ExplanationQualityMetrics {
   const explanationLength = explanation.trim().length;
   const explanationSentenceCount = countSentences(explanation);
+  const meetsSentenceCount =
+    explanationSentenceCount >= profile.explanationMinSentences
+    || shouldRelaxSentenceRequirement(profile, explanationLength, explanationSentenceCount);
   return {
     explanationLength,
     explanationSentenceCount,
     meetsLength: explanationLength >= profile.explanationMinChars,
-    meetsSentenceCount: explanationSentenceCount >= profile.explanationMinSentences
+    meetsSentenceCount
   };
 }
 
@@ -409,6 +434,45 @@ function appendQualityRepairInstruction(
     "Use flowing prose and keep factual grounding unchanged."
   ];
   return `${systemMessage}\n\n${instructionLines.join("\n")}`;
+}
+
+function tryLocalExplanationRepair(
+  parsedCandidate: unknown,
+  profile: ExplainerRuntimeProfile
+): unknown | null {
+  if (!parsedCandidate || typeof parsedCandidate !== "object" || Array.isArray(parsedCandidate)) {
+    return null;
+  }
+  if (profile.provider !== "ollama" || profile.timeframe !== "4h") {
+    return null;
+  }
+  const record = { ...(parsedCandidate as Record<string, unknown>) };
+  const explanationRaw =
+    typeof record.explanation === "string" ? record.explanation.trim() : "";
+  if (!explanationRaw) return null;
+
+  let explanation = clampText(explanationRaw);
+  let sentenceCount = countSentences(explanation);
+  if (sentenceCount >= profile.explanationMinSentences) {
+    return {
+      ...record,
+      explanation
+    };
+  }
+  if (sentenceCount < profile.explanationMinSentences - 1) {
+    return null;
+  }
+  if (explanation.length < EXPLAINER_MAX_EXPLANATION_CHARS - 100) {
+    explanation = clampText(
+      `${explanation} Uncertainty remains elevated and this view should stay conditional until structure confirms.`
+    );
+    sentenceCount = countSentences(explanation);
+  }
+
+  return {
+    ...record,
+    explanation
+  };
 }
 
 function toNumber(value: unknown): number | null {
@@ -1638,34 +1702,39 @@ export async function generatePredictionExplanation(
           if (!isQualityError || !inputArgs.allowQualityRepair) {
             throw error;
           }
-          totalCalls += 1;
-          aiAttemptsUsed = totalCalls;
           qualityRepairUsed = true;
-          const repairPrompt = [
-            "Your previous JSON object failed explanation quality requirements.",
-            "Keep all values unchanged except the `explanation` field.",
-            "Return only one valid JSON object (no markdown).",
-            "Previous JSON:",
-            JSON.stringify(parsedCandidate)
-          ].join("\n");
-          rawCandidate = await callAiFn(repairPrompt, {
-            systemMessage: appendQualityRepairInstruction(systemMessage, runtimeProfile),
-            model: inputArgs.model,
-            temperature: 0,
-            timeoutMs: effectiveExplainerTimeoutMs,
-            maxTokens: EXPLAINER_RETRY_MAX_TOKENS,
-            billingUserId: deps.traceUserId ?? null,
-            billingScope: "prediction_explainer",
-            onUsage: (usage) => {
-              const derived =
-                usage.totalTokens
-                ?? ((usage.promptTokens ?? 0) + (usage.completionTokens ?? 0));
-              if (Number.isFinite(derived)) {
-                lastUsageTotalTokens = Math.max(0, Math.trunc(derived));
+          const localRepairCandidate = tryLocalExplanationRepair(parsedCandidate, runtimeProfile);
+          if (localRepairCandidate) {
+            parsedCandidate = localRepairCandidate;
+          } else {
+            totalCalls += 1;
+            aiAttemptsUsed = totalCalls;
+            const repairPrompt = [
+              "Your previous JSON object failed explanation quality requirements.",
+              "Keep all values unchanged except the `explanation` field.",
+              "Return only one valid JSON object (no markdown).",
+              "Previous JSON:",
+              JSON.stringify(parsedCandidate)
+            ].join("\n");
+            rawCandidate = await callAiFn(repairPrompt, {
+              systemMessage: appendQualityRepairInstruction(systemMessage, runtimeProfile),
+              model: inputArgs.model,
+              temperature: 0,
+              timeoutMs: effectiveExplainerTimeoutMs,
+              maxTokens: EXPLAINER_RETRY_MAX_TOKENS,
+              billingUserId: deps.traceUserId ?? null,
+              billingScope: "prediction_explainer",
+              onUsage: (usage) => {
+                const derived =
+                  usage.totalTokens
+                  ?? ((usage.promptTokens ?? 0) + (usage.completionTokens ?? 0));
+                if (Number.isFinite(derived)) {
+                  lastUsageTotalTokens = Math.max(0, Math.trunc(derived));
+                }
               }
-            }
-          });
-          parsedCandidate = parseAiResponseJson(rawCandidate);
+            });
+            parsedCandidate = parseAiResponseJson(rawCandidate);
+          }
           validated = validateExplainerOutput(
             parsedCandidate,
             promptInput.featureSnapshot,

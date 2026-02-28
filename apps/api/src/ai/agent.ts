@@ -50,6 +50,7 @@ const DEFAULT_AGENT_SIGNAL_PROFILE: Required<AgentSignalProfile> = {
   explanationMinLength: 1,
   analysisMode: "trading_explainer"
 };
+const MAX_FINAL_FORMAT_RETRIES = 1;
 
 function normalizeSignalProfile(profile: AgentSignalProfile | undefined): Required<AgentSignalProfile> {
   const explanationMinLengthRaw = Number(profile?.explanationMinLength);
@@ -159,7 +160,7 @@ function validateAgentSignal(
   raw: unknown,
   profile: Required<AgentSignalProfile>
 ): AgentSignal {
-  const parsed = agentSignalSchema.parse(raw);
+  const parsed = agentSignalSchema.parse(sanitizeAgentSignalRaw(raw));
   const explanation = typeof parsed.explanation === "string" ? parsed.explanation.trim() : "";
   if (profile.explanationRequired && !explanation) {
     throw new Error("ai_agent_schema_explanation_missing");
@@ -196,19 +197,163 @@ export type RunSignalAgentResult = {
   usageTotalTokens: number | null;
 };
 
-function parseFirstJsonObject(raw: string): unknown {
+function stripCodeFenceJson(raw: string): string {
   const trimmed = raw.trim();
-  if (!trimmed) throw new Error("ai_agent_empty_final_response");
+  if (!trimmed.startsWith("```")) return raw;
+  return trimmed
+    .replace(/^```(?:json)?\s*/i, "")
+    .replace(/\s*```$/, "")
+    .trim();
+}
 
-  try {
-    return JSON.parse(trimmed);
-  } catch {
-    const match = trimmed.match(/\{[\s\S]*\}/);
-    if (match) {
-      return JSON.parse(match[0]);
+function extractFirstJsonObject(raw: string): string | null {
+  const start = raw.indexOf("{");
+  if (start < 0) return null;
+  let depth = 0;
+  let inString = false;
+  let escaped = false;
+
+  for (let i = start; i < raw.length; i += 1) {
+    const ch = raw[i];
+    if (escaped) {
+      escaped = false;
+      continue;
     }
-    throw new Error("ai_agent_invalid_json");
+    if (ch === "\\") {
+      escaped = true;
+      continue;
+    }
+    if (ch === "\"") {
+      inString = !inString;
+      continue;
+    }
+    if (inString) continue;
+    if (ch === "{") depth += 1;
+    if (ch === "}") {
+      depth -= 1;
+      if (depth === 0) {
+        return raw.slice(start, i + 1);
+      }
+    }
   }
+  return null;
+}
+
+function normalizeJsonCandidate(raw: string): string {
+  return raw
+    .replace(/^[^\[{]*(\{[\s\S]*\})[^\]}]*$/m, "$1")
+    .replace(/,\s*([}\]])/g, "$1")
+    .trim();
+}
+
+function countUnclosedBrackets(raw: string): { curlies: number; squares: number } {
+  let curlies = 0;
+  let squares = 0;
+  let inString = false;
+  let escaped = false;
+
+  for (let i = 0; i < raw.length; i += 1) {
+    const ch = raw[i];
+    if (escaped) {
+      escaped = false;
+      continue;
+    }
+    if (ch === "\\") {
+      escaped = true;
+      continue;
+    }
+    if (ch === "\"") {
+      inString = !inString;
+      continue;
+    }
+    if (inString) continue;
+    if (ch === "{") curlies += 1;
+    else if (ch === "}" && curlies > 0) curlies -= 1;
+    else if (ch === "[") squares += 1;
+    else if (ch === "]" && squares > 0) squares -= 1;
+  }
+
+  return { curlies, squares };
+}
+
+function appendMissingClosers(raw: string): string {
+  const unclosed = countUnclosedBrackets(raw);
+  if (unclosed.curlies <= 0 && unclosed.squares <= 0) return raw;
+  return `${raw}${"]".repeat(Math.max(0, unclosed.squares))}${"}".repeat(Math.max(0, unclosed.curlies))}`;
+}
+
+function parseFirstJsonObject(raw: string): unknown {
+  const stripped = stripCodeFenceJson(raw).trim();
+  if (!stripped) throw new Error("ai_agent_empty_final_response");
+  const extracted = extractFirstJsonObject(stripped);
+  const candidates = [
+    stripped,
+    extracted,
+    normalizeJsonCandidate(stripped),
+    extracted ? normalizeJsonCandidate(extracted) : null
+  ].filter((value): value is string => typeof value === "string" && value.trim().length > 0);
+  const uniqueCandidates = [...new Set(candidates)];
+  let lastError: unknown = null;
+
+  for (const candidate of uniqueCandidates) {
+    const variants = [candidate, appendMissingClosers(candidate)];
+    for (const variant of variants) {
+      try {
+        return JSON.parse(variant);
+      } catch (error) {
+        lastError = error;
+      }
+    }
+  }
+
+  throw new Error(`ai_agent_invalid_json:${String(lastError ?? "unknown")}`);
+}
+
+function normalizeOptionalNumberField(record: Record<string, unknown>, key: string) {
+  if (!(key in record)) return;
+  const raw = record[key];
+  if (raw === null) {
+    record[key] = null;
+    return;
+  }
+  const parsed = Number(raw);
+  if (!Number.isFinite(parsed)) {
+    delete record[key];
+    return;
+  }
+  record[key] = parsed;
+}
+
+function sanitizeAgentSignalRaw(raw: unknown): unknown {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return raw;
+  const record = { ...(raw as Record<string, unknown>) };
+
+  const decisionRaw = typeof record.decision === "string" ? record.decision.trim().toLowerCase() : "";
+  if (decisionRaw === "neutral" || decisionRaw === "flat" || decisionRaw === "hold" || decisionRaw === "no-trade") {
+    record.decision = "no_trade";
+  } else if (decisionRaw === "long" || decisionRaw === "short" || decisionRaw === "no_trade") {
+    record.decision = decisionRaw;
+  }
+
+  const confidenceRaw = Number(record.confidence);
+  if (Number.isFinite(confidenceRaw)) {
+    const normalized = confidenceRaw > 1 && confidenceRaw <= 100 ? confidenceRaw / 100 : confidenceRaw;
+    record.confidence = Number(Math.max(0, Math.min(1, normalized)).toFixed(4));
+  }
+
+  const reasonRaw = typeof record.reason === "string" ? record.reason.trim() : "";
+  const explanationRaw = typeof record.explanation === "string" ? record.explanation.trim() : "";
+  if (!reasonRaw && explanationRaw) {
+    record.reason = explanationRaw.slice(0, 1000);
+  }
+  if (!explanationRaw && reasonRaw) {
+    record.explanation = reasonRaw.slice(0, 1000);
+  }
+
+  normalizeOptionalNumberField(record, "entry");
+  normalizeOptionalNumberField(record, "stop_loss");
+  normalizeOptionalNumberField(record, "take_profit");
+  return record;
 }
 
 function normalizeTotalTokens(value: number | null, next: number | null): number | null {
@@ -245,6 +390,7 @@ export async function runSignalAgent(input: RunSignalAgentInput): Promise<RunSig
 
   const maxIterations = Math.max(1, input.maxToolIterations ?? MAX_TOOL_ITERATIONS);
   let iteration = 0;
+  let finalFormatRetries = 0;
   let usageTotalTokens: number | null = null;
 
   while (true) {
@@ -270,16 +416,43 @@ export async function runSignalAgent(input: RunSignalAgentInput): Promise<RunSig
     usageTotalTokens = normalizeTotalTokens(usageTotalTokens, result.usage.totalTokens);
 
     if (result.toolCalls.length === 0) {
-      const parsed = parseFirstJsonObject(result.content);
-      const signal = validateAgentSignal(parsed, signalProfile);
-      return {
-        signal,
-        model: result.model,
-        provider: result.provider,
-        toolIterations: iteration,
-        content: result.content,
-        usageTotalTokens
-      };
+      try {
+        const parsed = parseFirstJsonObject(result.content);
+        const signal = validateAgentSignal(parsed, signalProfile);
+        return {
+          signal,
+          model: result.model,
+          provider: result.provider,
+          toolIterations: iteration,
+          content: result.content,
+          usageTotalTokens
+        };
+      } catch (error) {
+        if (finalFormatRetries >= MAX_FINAL_FORMAT_RETRIES) {
+          throw error;
+        }
+        finalFormatRetries += 1;
+        logger.warn("ai_agent_final_response_invalid", {
+          model: result.model,
+          provider: result.provider,
+          retry: finalFormatRetries,
+          reason: String(error),
+          content_chars: result.content.length
+        });
+        messages.push({
+          role: "assistant",
+          content: result.content || ""
+        });
+        messages.push({
+          role: "user",
+          content:
+            "Return only one valid JSON object. Keep analysis unchanged, but strictly match schema: " +
+            "decision(long|short|no_trade), confidence(0..1), reason(string), explanation(string), optional " +
+            "entry/stop_loss/take_profit/tags/keyDrivers/timeframe/symbol/invalidations. " +
+            "No markdown, no prose, no code fences."
+        });
+        continue;
+      }
     }
 
     if (iteration >= maxIterations) {

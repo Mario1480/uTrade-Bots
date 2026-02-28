@@ -10890,7 +10890,7 @@ app.get("/settings/subscription", requireAuth, async (_req, res) => {
     return res.json({
       billingEnabled: false,
       plan: "free",
-      status: "inactive",
+      status: "active",
       proValidUntil: null,
       limits: {
         maxRunningBots: 1,

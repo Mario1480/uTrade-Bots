@@ -320,7 +320,7 @@ async function getOrCreateSubscription(userId: string, tx: any = db): Promise<an
     data: {
       userId,
       effectivePlan: "FREE",
-      status: "INACTIVE",
+      status: "ACTIVE",
       maxRunningBots: FREE_MAX_RUNNING_BOTS,
       maxBotsTotal: FREE_MAX_BOTS_TOTAL,
       allowedExchanges: [...FREE_ALLOWED_EXCHANGES],
@@ -376,7 +376,7 @@ export async function setUserToFreePlan(params: {
       where: { id: sub.id },
       data: {
         effectivePlan: "FREE",
-        status: "INACTIVE",
+        status: "ACTIVE",
         proValidUntil: null,
         maxRunningBots: defaults.maxRunningBots,
         maxBotsTotal: defaults.maxBotsTotal,
@@ -472,7 +472,7 @@ export async function resolveEffectivePlanForUser(userId: string): Promise<{
   return {
     userId,
     plan: "free",
-    status: "inactive",
+    status: "active",
     proValidUntil: row.proValidUntil ? row.proValidUntil.toISOString() : null,
     maxRunningBots: FREE_MAX_RUNNING_BOTS,
     maxBotsTotal: FREE_MAX_BOTS_TOTAL,

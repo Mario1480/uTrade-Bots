@@ -903,6 +903,75 @@ test("ollama 4h quality gate triggers one explanation expansion retry", async ()
   }
 });
 
+test("ollama 4h accepts near-cap explanations with 7 long sentences", async () => {
+  const previousProvider = process.env.AI_PROVIDER;
+  const previousOllamaMode = process.env.AI_SIGNAL_ENGINE_OLLAMA;
+  process.env.AI_PROVIDER = "ollama";
+  process.env.AI_SIGNAL_ENGINE_OLLAMA = "legacy";
+  invalidateAiModelCache();
+  resetAiAnalyzerState();
+
+  let calls = 0;
+  const longSevenSentenceExplanation = [
+    "The 4h trend still leans bearish because rallies continue to stall below key structure and the moving average slope has not yet turned in favor of buyers.",
+    "Momentum remains soft, with lower impulse highs appearing repeatedly and rebounds losing force before they can establish stable continuation.",
+    "Structure is still vulnerable as prior support levels are not being reclaimed with conviction and breakdown legs continue to dominate net direction.",
+    "Liquidity and fair value gap context remains cautionary because overhead imbalance zones attract reactions while downside pools remain open targets.",
+    "Volume behavior is mixed, showing stronger participation on downside pushes and weaker follow-through during upward retracements.",
+    "Volatility stays elevated, which raises whipsaw risk and reduces confidence in single-candle confirmation around nearby levels.",
+    "Overall the profile supports a neutral market-analysis stance until structure is reclaimed with sustained participation and clearer confirmation."
+  ].join(" ");
+
+  try {
+    const output = await generatePredictionExplanation(
+      {
+        ...baseInput,
+        timeframe: "4h",
+        tsCreated: "2026-02-09T11:00:00.000Z"
+      },
+      {
+        requireSuccessfulAi: true,
+        promptSettings: {
+          promptText: "4h market analysis",
+          indicatorKeys: ["smc"] as const,
+          ohlcvBars: 100,
+          timeframes: ["4h"],
+          runTimeframe: "4h",
+          timeframe: "4h",
+          directionPreference: "either" as const,
+          confidenceTargetPct: 60,
+          marketAnalysisUpdateEnabled: false,
+          source: "db" as const,
+          activePromptId: "prompt_market_4h",
+          activePromptName: "4h market analysis",
+          selectedFrom: "active_prompt" as const,
+          matchedScopeType: null,
+          matchedOverrideId: null
+        },
+        callAiFn: async () => {
+          calls += 1;
+          return JSON.stringify({
+            explanation: longSevenSentenceExplanation,
+            tags: ["trend_down", "breakout_risk"],
+            keyDrivers: [{ name: "indicators.rsi_14", value: 43.5 }],
+            aiPrediction: { signal: "down", expectedMovePct: 2.2, confidence: 0.82 },
+            disclaimer: "grounded_features_only"
+          });
+        }
+      }
+    );
+
+    assert.equal(calls, 1);
+    assert.equal(output.explanation.length >= 850, true);
+  } finally {
+    if (previousProvider === undefined) delete process.env.AI_PROVIDER;
+    else process.env.AI_PROVIDER = previousProvider;
+    if (previousOllamaMode === undefined) delete process.env.AI_SIGNAL_ENGINE_OLLAMA;
+    else process.env.AI_SIGNAL_ENGINE_OLLAMA = previousOllamaMode;
+    invalidateAiModelCache();
+  }
+});
+
 test.afterEach(() => {
   resetAiAnalyzerState();
 });

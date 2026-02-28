@@ -156,7 +156,7 @@ async function main() {
         create: {
           userId: user.id,
           effectivePlan: "FREE",
-          status: "INACTIVE",
+          status: "ACTIVE",
           proValidUntil: null,
           maxRunningBots: freeRunning,
           maxBotsTotal: freeTotal,
@@ -167,7 +167,7 @@ async function main() {
         },
         update: {
           effectivePlan: "FREE",
-          status: "INACTIVE",
+          status: "ACTIVE",
           proValidUntil: null,
           maxRunningBots: freeRunning,
           maxBotsTotal: freeTotal,
