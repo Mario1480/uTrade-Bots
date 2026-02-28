@@ -368,6 +368,11 @@ async function syncPlanPackageToSubscriptions(pkg: {
 
   if (pkg.plan === "FREE") {
     const freeMonthlyTokens = toBigInt(pkg.monthlyAiTokens);
+    const freeRows = await db.userSubscription.findMany({
+      where: { effectivePlan: "FREE" },
+      select: { userId: true }
+    });
+
     await db.userSubscription.updateMany({
       where: { effectivePlan: "FREE" },
       data: {
@@ -436,8 +441,22 @@ async function syncPlanPackageToSubscriptions(pkg: {
         });
       }
     }
+
+    for (const row of freeRows) {
+      const userId = typeof row.userId === "string" ? row.userId.trim() : "";
+      if (!userId) continue;
+      await syncPrimaryWorkspaceEntitlementsForUser({
+        userId,
+        effectivePlan: "free"
+      });
+    }
     return;
   }
+
+  const proRows = await db.userSubscription.findMany({
+    where: { effectivePlan: "PRO" },
+    select: { userId: true }
+  });
 
   await db.userSubscription.updateMany({
     where: { effectivePlan: "PRO" },
@@ -449,6 +468,15 @@ async function syncPlanPackageToSubscriptions(pkg: {
       monthlyAiTokensIncluded: toBigInt(pkg.monthlyAiTokens)
     }
   });
+
+  for (const row of proRows) {
+    const userId = typeof row.userId === "string" ? row.userId.trim() : "";
+    if (!userId) continue;
+    await syncPrimaryWorkspaceEntitlementsForUser({
+      userId,
+      effectivePlan: "pro"
+    });
+  }
 }
 
 export async function setUserToFreePlan(params: {
@@ -532,25 +560,38 @@ export async function syncPrimaryWorkspaceEntitlementsForUser(params: {
   if (!workspaceId) return;
 
   const plan = toStrategyPlan(params.effectivePlan);
-  const isFree = plan === "free";
+  const isPro = plan === "pro";
+  const sub = await db.userSubscription.findUnique({
+    where: { userId: params.userId },
+    select: { monthlyAiTokensIncluded: true }
+  });
+  const freeAiIncluded = !isPro && toBigInt(sub?.monthlyAiTokensIncluded) > 0n;
+  const allowAi = isPro || freeAiIncluded;
+  const allowedStrategyKinds: Array<"local" | "ai" | "composite"> = isPro
+    ? ["local", "ai", "composite"]
+    : allowAi
+      ? ["local", "ai"]
+      : ["local"];
+  const maxCompositeNodes = isPro ? 12 : 0;
+  const aiAllowedModels = allowAi ? ["*"] : [];
 
   await db.licenseEntitlement.upsert({
     where: { workspaceId },
     update: {
       plan,
-      allowedStrategyKinds: isFree ? ["local"] : ["local", "ai", "composite"],
+      allowedStrategyKinds,
       allowedStrategyIds: [],
-      maxCompositeNodes: isFree ? 0 : 12,
-      aiAllowedModels: isFree ? [] : [],
+      maxCompositeNodes,
+      aiAllowedModels,
       aiMonthlyBudgetUsd: null
     },
     create: {
       workspaceId,
       plan,
-      allowedStrategyKinds: isFree ? ["local"] : ["local", "ai", "composite"],
+      allowedStrategyKinds,
       allowedStrategyIds: [],
-      maxCompositeNodes: isFree ? 0 : 12,
-      aiAllowedModels: isFree ? [] : [],
+      maxCompositeNodes,
+      aiAllowedModels,
       aiMonthlyBudgetUsd: null
     }
   });
