@@ -316,14 +316,15 @@ export async function ensureBillingDefaults(): Promise<void> {
 async function getOrCreateSubscription(userId: string, tx: any = db): Promise<any> {
   const existing = await tx.userSubscription.findUnique({ where: { userId } });
   if (existing) return existing;
+  const freeDefaults = await getFreePlanDefaults(tx);
   return tx.userSubscription.create({
     data: {
       userId,
       effectivePlan: "FREE",
       status: "ACTIVE",
-      maxRunningBots: FREE_MAX_RUNNING_BOTS,
-      maxBotsTotal: FREE_MAX_BOTS_TOTAL,
-      allowedExchanges: [...FREE_ALLOWED_EXCHANGES],
+      maxRunningBots: freeDefaults.maxRunningBots,
+      maxBotsTotal: freeDefaults.maxBotsTotal,
+      allowedExchanges: freeDefaults.allowedExchanges,
       aiTokenBalance: 0n,
       aiTokenUsedLifetime: 0n,
       monthlyAiTokensIncluded: 0n
@@ -350,6 +351,42 @@ async function getFreePlanDefaults(tx: any = db): Promise<{
     maxBotsTotal: normalizeInt(pkg?.maxBotsTotal, FREE_MAX_BOTS_TOTAL, 0),
     allowedExchanges: normalizeStringArray(pkg?.allowedExchanges, [...FREE_ALLOWED_EXCHANGES])
   };
+}
+
+async function syncPlanPackageToSubscriptions(pkg: {
+  kind: "PLAN" | "AI_TOPUP";
+  plan: "FREE" | "PRO" | null;
+  maxRunningBots: number | null;
+  maxBotsTotal: number | null;
+  allowedExchanges: string[];
+  monthlyAiTokens: bigint;
+}): Promise<void> {
+  if (pkg.kind !== "PLAN" || !pkg.plan) return;
+
+  if (pkg.plan === "FREE") {
+    await db.userSubscription.updateMany({
+      where: { effectivePlan: "FREE" },
+      data: {
+        status: "ACTIVE",
+        maxRunningBots: normalizeInt(pkg.maxRunningBots, FREE_MAX_RUNNING_BOTS, 0),
+        maxBotsTotal: normalizeInt(pkg.maxBotsTotal, FREE_MAX_BOTS_TOTAL, 0),
+        allowedExchanges: normalizeStringArray(pkg.allowedExchanges, [...FREE_ALLOWED_EXCHANGES]),
+        monthlyAiTokensIncluded: 0n
+      }
+    });
+    return;
+  }
+
+  await db.userSubscription.updateMany({
+    where: { effectivePlan: "PRO" },
+    data: {
+      status: "ACTIVE",
+      maxRunningBots: normalizeInt(pkg.maxRunningBots, 3, 0),
+      maxBotsTotal: normalizeInt(pkg.maxBotsTotal, 10, 0),
+      allowedExchanges: normalizeStringArray(pkg.allowedExchanges, ["*"]),
+      monthlyAiTokensIncluded: toBigInt(pkg.monthlyAiTokens)
+    }
+  });
 }
 
 export async function setUserToFreePlan(params: {
@@ -474,9 +511,9 @@ export async function resolveEffectivePlanForUser(userId: string): Promise<{
     plan: "free",
     status: "active",
     proValidUntil: row.proValidUntil ? row.proValidUntil.toISOString() : null,
-    maxRunningBots: FREE_MAX_RUNNING_BOTS,
-    maxBotsTotal: FREE_MAX_BOTS_TOTAL,
-    allowedExchanges: [...FREE_ALLOWED_EXCHANGES],
+    maxRunningBots: normalizeInt(row.maxRunningBots, FREE_MAX_RUNNING_BOTS, 0),
+    maxBotsTotal: normalizeInt(row.maxBotsTotal, FREE_MAX_BOTS_TOTAL, 0),
+    allowedExchanges: normalizeStringArray(row.allowedExchanges, [...FREE_ALLOWED_EXCHANGES]),
     aiTokenBalance: toBigInt(row.aiTokenBalance),
     aiTokenUsedLifetime: toBigInt(row.aiTokenUsedLifetime),
     monthlyAiTokensIncluded: 0n
@@ -1044,13 +1081,17 @@ export async function upsertBillingPackage(params: {
   };
 
   if (params.id) {
-    return db.billingPackage.update({
+    const updated = await db.billingPackage.update({
       where: { id: params.id },
       data
     });
+    await syncPlanPackageToSubscriptions(updated);
+    return updated;
   }
 
-  return db.billingPackage.create({ data });
+  const created = await db.billingPackage.create({ data });
+  await syncPlanPackageToSubscriptions(created);
+  return created;
 }
 
 export async function deleteBillingPackage(id: string): Promise<void> {
