@@ -139,19 +139,22 @@ async function main() {
     const freeRunning = toPositiveInt(freePkg?.maxRunningBots, FREE_DEFAULTS.maxRunningBots);
     const freeTotal = toPositiveInt(freePkg?.maxBotsTotal, FREE_DEFAULTS.maxBotsTotal);
     const freeExchanges = normalizeStringArray(freePkg?.allowedExchanges, FREE_DEFAULTS.allowedExchanges);
+    const freeMonthlyIncluded = toBigInt(freePkg?.monthlyAiTokens);
 
     await prisma.$transaction(async (tx) => {
       const existing = await tx.userSubscription.findUnique({
         where: { userId: user.id },
         select: {
+          id: true,
           aiTokenBalance: true,
           aiTokenUsedLifetime: true
         }
       });
       const balance = toBigInt(existing?.aiTokenBalance);
+      const nextBalance = balance < freeMonthlyIncluded ? freeMonthlyIncluded : balance;
       const usedLifetime = toBigInt(existing?.aiTokenUsedLifetime);
 
-      await tx.userSubscription.upsert({
+      const updated = await tx.userSubscription.upsert({
         where: { userId: user.id },
         create: {
           userId: user.id,
@@ -161,9 +164,9 @@ async function main() {
           maxRunningBots: freeRunning,
           maxBotsTotal: freeTotal,
           allowedExchanges: freeExchanges,
-          aiTokenBalance: balance,
+          aiTokenBalance: nextBalance,
           aiTokenUsedLifetime: usedLifetime,
-          monthlyAiTokensIncluded: 0n
+          monthlyAiTokensIncluded: freeMonthlyIncluded
         },
         update: {
           effectivePlan: "FREE",
@@ -172,9 +175,28 @@ async function main() {
           maxRunningBots: freeRunning,
           maxBotsTotal: freeTotal,
           allowedExchanges: freeExchanges,
-          monthlyAiTokensIncluded: 0n
+          aiTokenBalance: nextBalance,
+          monthlyAiTokensIncluded: freeMonthlyIncluded
         }
       });
+
+      const grant = nextBalance - balance;
+      if (grant > 0n) {
+        await tx.aiTokenLedger.create({
+          data: {
+            userId: user.id,
+            subscriptionId: updated.id,
+            reason: "MONTHLY_GRANT",
+            deltaTokens: grant,
+            balanceAfter: nextBalance,
+            meta: {
+              source: "set-user-plan-script",
+              packageCode: "free",
+              email: user.email
+            }
+          }
+        });
+      }
     });
   } else {
     const proRunning = toPositiveInt(proPkg?.maxRunningBots, PRO_DEFAULTS.maxRunningBots);
