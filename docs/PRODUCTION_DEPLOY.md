@@ -18,6 +18,17 @@ docker compose -f docker-compose.prod.yml logs -f --tail=200 api
 docker compose -f docker-compose.prod.yml logs -f --tail=200 runner
 ```
 
+AI proxy (Salad/Ollama via OpenAI-compatible endpoint):
+```sh
+docker compose -f docker-compose.prod.yml ps salad-proxy
+docker compose -f docker-compose.prod.yml exec -T api wget -qO- http://salad-proxy:8088/health
+```
+Admin settings for Salad/Ollama:
+- Provider: `ollama`
+- Base URL: `http://salad-proxy:8088/v1`
+- Model: `qwen3:8b`
+- API key: `salad_cloud_user_...`
+
 Health checks:
 ```sh
 curl -i http://localhost:8080/health

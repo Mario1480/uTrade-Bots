@@ -135,6 +135,22 @@ AI_SIGNAL_ENGINE=agent_v1
 # AI_SIGNAL_ENGINE_OLLAMA=legacy
 ```
 
+Salad Cloud Ollama via OpenAI-Compat Proxy:
+```bash
+docker compose -f docker-compose.dev.yml up -d salad-proxy
+curl http://localhost:8088/health
+```
+Production stack includes `salad-proxy` in `docker-compose.prod.yml` (internal network only):
+```bash
+docker compose -f docker-compose.prod.yml up -d --build
+docker compose -f docker-compose.prod.yml exec -T api wget -qO- http://salad-proxy:8088/health
+```
+Admin-Werte (wichtig: aus Sicht des API-Containers, nicht `localhost`):
+- `Provider`: `ollama`
+- `Base URL`: `http://salad-proxy:8088/v1`
+- `Model`: `qwen3:8b`
+- `AI API key`: `salad_cloud_user_...`
+
 Ollama Prompt-Fit Runtime:
 - Es werden keine separaten Prompt-Kopien gepflegt; provider/timeframe-spezifische Runtime-Hints werden an den System-Prompt angehängt.
 - Für `ollama + 4h` wird eine lange Analyse erzwungen (8-12 Sätze, Fließtext).

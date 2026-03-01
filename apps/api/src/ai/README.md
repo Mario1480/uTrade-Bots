@@ -81,6 +81,31 @@ AI_SIGNAL_ENGINE=agent_v1
 # AI_SIGNAL_ENGINE_OLLAMA=legacy
 ```
 
+## Salad Cloud Ollama via Nginx Proxy (Dev + Prod)
+Run a local OpenAI-compatible proxy that rewrites auth + path to Salad:
+
+```bash
+docker compose -f docker-compose.dev.yml up -d salad-proxy
+curl http://localhost:8088/health
+```
+
+Production uses the same proxy config inside `docker-compose.prod.yml`:
+
+```bash
+docker compose -f docker-compose.prod.yml up -d --build
+docker compose -f docker-compose.prod.yml exec -T api wget -qO- http://salad-proxy:8088/health
+```
+
+Admin values for uTrade:
+- `aiProvider`: `ollama`
+- `aiBaseUrl`: `http://salad-proxy:8088/v1`
+- `aiModel`: `qwen3:8b`
+- `aiApiKey`: `salad_cloud_user_...`
+
+Important:
+- Do not use `http://localhost:8088/v1` in Admin when API runs in Docker.
+- Use container DNS `salad-proxy` for API-container-to-proxy traffic.
+
 ## Safety Guarantees
 - Output validation uses zod with strict constraints:
   - explanation max 1000 chars
