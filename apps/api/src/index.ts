@@ -9480,6 +9480,8 @@ app.get("/license/state", async (_req, res) => {
 });
 
 app.post("/webhooks/ccpayment", async (req, res) => {
+  const ack = () => res.status(200).json({ msg: "Success" });
+
   if (!(await isBillingWebhookEnabled())) {
     return res.status(404).json({ error: "billing_webhook_disabled" });
   }
@@ -9504,7 +9506,7 @@ app.post("/webhooks/ccpayment", async (req, res) => {
   };
 
   if (payload.type === "ActivateWebhookURL") {
-    return res.status(200).send("Success");
+    return ack();
   }
 
   const recordId = String(payload.msg?.recordId ?? payload.record_id ?? "").trim();
@@ -9512,7 +9514,7 @@ app.post("/webhooks/ccpayment", async (req, res) => {
   const statusRaw = String(payload.pay_status ?? payload.msg?.status ?? "").trim();
 
   if (!recordId) {
-    return res.status(200).send("Success");
+    return ack();
   }
 
   const created = await recordWebhookEvent({
@@ -9521,24 +9523,24 @@ app.post("/webhooks/ccpayment", async (req, res) => {
     payload
   });
   if (created === "duplicate") {
-    return res.status(200).send("Success");
+    return ack();
   }
 
   if (!merchantOrderId) {
-    return res.status(200).send("Success");
+    return ack();
   }
 
   const normalized = statusRaw.toLowerCase();
   if (normalized === "processing") {
-    return res.status(200).send("Success");
+    return ack();
   }
   if (normalized === "success") {
     await applyPaidOrder(merchantOrderId, statusRaw || "Success");
-    return res.status(200).send("Success");
+    return ack();
   }
 
   await markOrderFailed(merchantOrderId, normalized || "failed");
-  return res.status(200).send("Success");
+  return ack();
 });
 
 app.get("/admin/queue/metrics", requireAuth, async (_req, res) => {
