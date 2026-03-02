@@ -26,6 +26,20 @@
       "tip": "Tip: For Telegram groups, the Chat ID usually starts with <strong>-100</strong>.",
       "chatId": "Chat ID"
     },
+    "dailyCalendar": {
+      "title": "Daily Economic Calendar",
+      "description": "Send the most important daily events to your Telegram chat using your selected filters.",
+      "enabledLabel": "Send daily calendar to Telegram",
+      "sendTimeLocal": "Send time (local)",
+      "timezone": "Timezone",
+      "currencies": "Currencies",
+      "impacts": "Impacts",
+      "impact": {
+        "high": "High",
+        "medium": "Medium",
+        "low": "Low"
+      }
+    },
     "messages": {
       "saved": "Saved.",
       "testSent": "Test alert sent to Telegram.",

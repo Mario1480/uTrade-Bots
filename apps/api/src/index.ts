@@ -230,6 +230,7 @@ import {
   type PredictionEvaluatorSample
 } from "./jobs/predictionEvaluatorJob.js";
 import { createEconomicCalendarRefreshJob } from "./jobs/economicCalendarRefreshJob.js";
+import { createEconomicCalendarDailyTelegramJob } from "./jobs/economicCalendarDailyTelegramJob.js";
 import { registerPredictionDetailRoute } from "./routes/predictions.js";
 import { registerEconomicCalendarRoutes } from "./routes/economic-calendar.js";
 import { registerNewsRoutes } from "./routes/news.js";
@@ -282,9 +283,17 @@ import {
   resolveTelegramConfig,
   sendTelegramMessage
 } from "./telegram/notifications.js";
+import {
+  type DailyEconomicCalendarSettings,
+  dailyEconomicCalendarSettingsKey,
+  defaultDailyEconomicCalendarSettings,
+  mergeDailyEconomicCalendarSettings,
+  parseStoredDailyEconomicCalendarSettings
+} from "./telegram/dailyEconomicCalendarSettings.js";
 
 const db = prisma as any;
 const economicCalendarRefreshJob = createEconomicCalendarRefreshJob(db);
+const economicCalendarDailyTelegramJob = createEconomicCalendarDailyTelegramJob(db);
 
 const app = express();
 app.set("trust proxy", 1);
@@ -594,7 +603,21 @@ const tradingSettingsSchema = z.object({
 
 const alertsSettingsSchema = z.object({
   telegramBotToken: z.string().trim().nullable().optional(),
-  telegramChatId: z.string().trim().nullable().optional()
+  telegramChatId: z.string().trim().nullable().optional(),
+  dailyEconomicCalendar: z.object({
+    enabled: z.boolean().optional(),
+    currencies: z.array(z.string().trim().min(2).max(10)).max(16).optional(),
+    impacts: z.array(z.enum(["low", "medium", "high"])).min(1).max(3).optional(),
+    sendTimeLocal: z.string().trim().regex(/^([01]\d|2[0-3]):([0-5]\d)$/).optional(),
+    timezone: z.string().trim().min(1).max(128).refine((value) => {
+      try {
+        new Intl.DateTimeFormat("en-US", { timeZone: value }).format(new Date());
+        return true;
+      } catch {
+        return false;
+      }
+    }, "invalid_timezone").optional()
+  }).optional()
 });
 
 const securitySettingsSchema = z.object({
@@ -6356,6 +6379,53 @@ function buildTelegramChatIdConflictResponse(res: express.Response): express.Res
   return res.status(409).json(TELEGRAM_CHAT_ID_IN_USE_ERROR);
 }
 
+function toDailyEconomicCalendarSettingsResponse(settings: DailyEconomicCalendarSettings): {
+  enabled: boolean;
+  currencies: string[];
+  impacts: ("low" | "medium" | "high")[];
+  sendTimeLocal: string;
+  timezone: string;
+} {
+  return {
+    enabled: settings.enabled,
+    currencies: settings.currencies,
+    impacts: settings.impacts,
+    sendTimeLocal: settings.sendTimeLocal,
+    timezone: settings.timezone
+  };
+}
+
+async function getDailyEconomicCalendarSettingsForUser(userId: string): Promise<DailyEconomicCalendarSettings> {
+  const key = dailyEconomicCalendarSettingsKey(userId);
+  const row = await db.globalSetting.findUnique({
+    where: { key },
+    select: { value: true }
+  });
+  if (!row) return defaultDailyEconomicCalendarSettings();
+  return parseStoredDailyEconomicCalendarSettings(row.value);
+}
+
+async function updateDailyEconomicCalendarSettingsForUser(params: {
+  userId: string;
+  patch: Record<string, unknown>;
+}): Promise<DailyEconomicCalendarSettings> {
+  const key = dailyEconomicCalendarSettingsKey(params.userId);
+  const row = await db.globalSetting.findUnique({
+    where: { key },
+    select: { value: true }
+  });
+  const current = row
+    ? parseStoredDailyEconomicCalendarSettings(row.value)
+    : defaultDailyEconomicCalendarSettings();
+  const next = mergeDailyEconomicCalendarSettings(current, params.patch);
+  await db.globalSetting.upsert({
+    where: { key },
+    create: { key, value: next },
+    update: { value: next }
+  });
+  return next;
+}
+
 function readRequestedLeverage(snapshot: Record<string, unknown>): number | undefined {
   const parsed = pickNumber(snapshot, ["requestedLeverage", "leverage"]);
   if (parsed === null) return undefined;
@@ -9957,7 +10027,7 @@ app.get("/settings/server-info", requireAuth, async (_req, res) => {
 app.get("/settings/alerts", requireAuth, async (_req, res) => {
   const user = getUserFromLocals(res);
   const isSuperadmin = isSuperadminEmail(user.email);
-  const [config, userSettings] = await Promise.all([
+  const [config, userSettings, dailyEconomicCalendar] = await Promise.all([
     db.alertConfig.findUnique({
       where: { key: "default" },
       select: {
@@ -9969,7 +10039,8 @@ app.get("/settings/alerts", requireAuth, async (_req, res) => {
       select: {
         telegramChatId: true
       }
-    })
+    }),
+    getDailyEconomicCalendarSettingsForUser(user.id)
   ]);
   const envToken = parseTelegramConfigValue(process.env.TELEGRAM_BOT_TOKEN);
   const dbToken = parseTelegramConfigValue(config?.telegramBotToken);
@@ -9977,7 +10048,8 @@ app.get("/settings/alerts", requireAuth, async (_req, res) => {
   return res.json({
     telegramBotToken: isSuperadmin ? dbToken : null,
     telegramBotConfigured: Boolean(envToken ?? dbToken),
-    telegramChatId: userSettings?.telegramChatId ?? null
+    telegramChatId: userSettings?.telegramChatId ?? null,
+    dailyEconomicCalendar: toDailyEconomicCalendarSettingsResponse(dailyEconomicCalendar)
   });
 });
 
@@ -10044,12 +10116,20 @@ app.put("/settings/alerts", requireAuth, async (req, res) => {
     token = parseTelegramConfigValue(updatedConfig.telegramBotToken);
   }
 
+  const dailyEconomicCalendar = parsed.data.dailyEconomicCalendar !== undefined
+    ? await updateDailyEconomicCalendarSettingsForUser({
+        userId: user.id,
+        patch: parsed.data.dailyEconomicCalendar as Record<string, unknown>
+      })
+    : await getDailyEconomicCalendarSettingsForUser(user.id);
+
   const envToken = parseTelegramConfigValue(process.env.TELEGRAM_BOT_TOKEN);
 
   return res.json({
     telegramBotToken: isSuperadmin ? token : null,
     telegramBotConfigured: Boolean(envToken ?? token),
-    telegramChatId: updatedUser.telegramChatId ?? null
+    telegramChatId: updatedUser.telegramChatId ?? null,
+    dailyEconomicCalendar: toDailyEconomicCalendarSettingsResponse(dailyEconomicCalendar)
   });
 });
 
@@ -19723,6 +19803,7 @@ async function startApiServer() {
     startBotQueueRecoveryScheduler();
     startBillingDowngradeScheduler();
     economicCalendarRefreshJob.start();
+    economicCalendarDailyTelegramJob.start();
     }
   );
 }
@@ -19738,6 +19819,7 @@ process.on("SIGTERM", () => {
   stopBotQueueRecoveryScheduler();
   stopBillingDowngradeScheduler();
   economicCalendarRefreshJob.stop();
+  economicCalendarDailyTelegramJob.stop();
   marketWss.close();
   userWss.close();
   server.close();
@@ -19753,6 +19835,7 @@ process.on("SIGINT", () => {
   stopBotQueueRecoveryScheduler();
   stopBillingDowngradeScheduler();
   economicCalendarRefreshJob.stop();
+  economicCalendarDailyTelegramJob.stop();
   marketWss.close();
   userWss.close();
   server.close();

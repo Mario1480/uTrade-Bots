@@ -1,6 +1,10 @@
 import { prisma } from "@mm/db";
 import type { PredictionSignalSource } from "../ai/predictionPipeline.js";
+import { listEconomicEvents } from "../services/economicCalendar/index.js";
+import type { EconomicEventView } from "../services/economicCalendar/types.js";
 import { normalizeTelegramChatId as normalizeTelegramChatIdValue } from "./chatIdUniqueness.js";
+import type { DailyEconomicCalendarSettings } from "./dailyEconomicCalendarSettings.js";
+import { getLocalDateTimeByTimezone } from "./dailyEconomicCalendarSettings.js";
 
 const db = prisma as any;
 const TELEGRAM_TEXT_MAX_CHARS = 3900;
@@ -71,6 +75,104 @@ function buildTelegramText(lines: Array<string | null | undefined>): string {
   if (text.length <= TELEGRAM_TEXT_MAX_CHARS) return text;
   const truncated = text.slice(0, TELEGRAM_TEXT_MAX_CHARS - 14).trimEnd();
   return `${truncated}\n…[truncated]`;
+}
+
+function shiftDateKey(dateKey: string, days: number): string {
+  const base = new Date(`${dateKey}T00:00:00.000Z`);
+  const shifted = new Date(base.getTime() + days * 24 * 60 * 60 * 1000);
+  return shifted.toISOString().slice(0, 10);
+}
+
+function formatTimeInTimezone(tsIso: string, timezone: string): string {
+  const date = new Date(tsIso);
+  if (Number.isNaN(date.getTime())) return "--:--";
+  const formatter = new Intl.DateTimeFormat("en-GB", {
+    timeZone: timezone,
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: false
+  });
+  return formatter.format(date);
+}
+
+export function filterEconomicEventsByLocalDate(params: {
+  events: EconomicEventView[];
+  timezone: string;
+  localDate: string;
+}): EconomicEventView[] {
+  return params.events
+    .filter((event) => {
+      const local = getLocalDateTimeByTimezone(new Date(event.ts), params.timezone);
+      return local.localDate === params.localDate;
+    })
+    .sort((left, right) => {
+      const leftTs = new Date(left.ts).getTime();
+      const rightTs = new Date(right.ts).getTime();
+      return leftTs - rightTs;
+    });
+}
+
+export async function sendDailyEconomicCalendarDigestForUser(params: {
+  userId: string;
+  settings: Pick<DailyEconomicCalendarSettings, "currencies" | "impacts" | "timezone">;
+  now?: Date;
+  dbClient?: any;
+}): Promise<{ sent: boolean; eventCount: number; localDate: string; reason?: string }> {
+  const config = await resolveTelegramConfig(params.userId);
+  const now = params.now ?? new Date();
+  const localNow = getLocalDateTimeByTimezone(now, params.settings.timezone);
+
+  if (!config) {
+    return {
+      sent: false,
+      eventCount: 0,
+      localDate: localNow.localDate,
+      reason: "telegram_not_configured"
+    };
+  }
+
+  const from = shiftDateKey(localNow.localDate, -1);
+  const to = shiftDateKey(localNow.localDate, 1);
+  const events = await listEconomicEvents({
+    db: params.dbClient ?? db,
+    from,
+    to,
+    currencies: params.settings.currencies,
+    impactMin: "low",
+    impacts: params.settings.impacts
+  });
+  const eventsForLocalDay = filterEconomicEventsByLocalDate({
+    events,
+    timezone: params.settings.timezone,
+    localDate: localNow.localDate
+  });
+
+  const text = buildTelegramText([
+    "🗓 DAILY ECONOMIC CALENDAR",
+    `Date: ${localNow.localDate} (${params.settings.timezone})`,
+    `Currencies: ${params.settings.currencies.join(", ")}`,
+    `Impact: ${params.settings.impacts.join(", ")}`,
+    ...(
+      eventsForLocalDay.length === 0
+        ? ["No matching economic calendar events for today."]
+        : eventsForLocalDay.map((event) => {
+            const time = formatTimeInTimezone(event.ts, params.settings.timezone);
+            const impact = String(event.impact).trim().toUpperCase();
+            return `• ${time} ${event.currency} [${impact}] ${event.title} (${event.country})`;
+          })
+    )
+  ]);
+
+  await sendTelegramMessage({
+    ...config,
+    text
+  });
+
+  return {
+    sent: true,
+    eventCount: eventsForLocalDay.length,
+    localDate: localNow.localDate
+  };
 }
 
 export async function resolveTelegramConfig(userId?: string | null): Promise<TelegramConfig | null> {
