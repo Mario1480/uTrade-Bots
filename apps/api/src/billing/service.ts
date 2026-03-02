@@ -724,6 +724,10 @@ export async function createBillingCheckout(params: {
     .catch(() => ({}))) as CcpayCreateInvoiceResponse;
   const invoiceUrl = body.data?.invoiceUrl;
   if (!response.ok || body.code !== 10000 || !invoiceUrl) {
+    const providerCode =
+      Number.isFinite(Number(body.code))
+        ? String(Math.trunc(Number(body.code)))
+        : "unknown";
     await db.billingOrder.update({
       where: { id: created.id },
       data: {
@@ -732,7 +736,7 @@ export async function createBillingCheckout(params: {
         paymentStatusRaw: `http_${response.status}`
       }
     });
-    throw new Error("ccpayment_error");
+    throw new Error(`ccpayment_error:http_${response.status}:provider_code_${providerCode}`);
   }
 
   const updated = await db.billingOrder.update({

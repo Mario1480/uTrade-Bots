@@ -91,7 +91,11 @@ export default function SubscriptionPage() {
   function errMsg(error: unknown): string {
     if (error instanceof ApiError) {
       const detail = typeof error.payload?.error === "string" ? error.payload.error : null;
-      return detail ? `${error.message} (${detail})` : `${error.message}`;
+      const reason = typeof error.payload?.reason === "string" ? error.payload.reason : null;
+      if (detail && reason) return `${error.message} (${detail}: ${reason})`;
+      if (detail) return `${error.message} (${detail})`;
+      if (reason) return `${error.message} (${reason})`;
+      return `${error.message}`;
     }
     if (error && typeof error === "object" && "message" in error) {
       return String((error as { message?: unknown }).message ?? error);

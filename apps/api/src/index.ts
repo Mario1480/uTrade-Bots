@@ -11668,6 +11668,9 @@ app.post("/settings/subscription/checkout", requireAuth, async (req, res) => {
     if (reason === "ccpay_not_configured") {
       return res.status(503).json({ error: "ccpay_not_configured" });
     }
+    if (reason.startsWith("ccpayment_error")) {
+      return res.status(502).json({ error: "ccpayment_error", reason });
+    }
     return res.status(502).json({ error: "checkout_failed", reason });
   }
 });
