@@ -727,6 +727,23 @@
       "save": "FMP-Key speichern",
       "envOverrideHint": "ENV `FMP_API_KEY` ist als Fallback gesetzt und wird nur genutzt, wenn kein DB-Key vorhanden ist."
     },
+    "ccpay": {
+      "sectionTitle": "CCPayments (Billing)",
+      "statusLabel": "CCPayments-Status",
+      "storedAppId": "Gespeicherte App-ID",
+      "storedAppSecret": "Gespeichertes App-Secret",
+      "missingConfig": "Konfiguration unvollständig",
+      "missingFields": "Fehlende Felder",
+      "envOverrideHint": "ENV `CCPAY_*`/`WEB_BASE_URL`/`PANEL_BASE_URL` ist als Fallback gesetzt und wird nur genutzt, wenn DB-Werte fehlen.",
+      "appIdLabel": "App-ID",
+      "appSecretLabel": "App-Secret",
+      "baseUrlLabel": "Base URL",
+      "priceFiatIdLabel": "Price Fiat ID",
+      "webBaseUrlLabel": "Web Base URL",
+      "save": "CCPay-Einstellungen speichern",
+      "clearAppId": "App-ID entfernen",
+      "clearAppSecret": "App-Secret entfernen"
+    },
     "messages": {
       "accessRequired": "Admin-Backend-Zugriff erforderlich.",
       "aiKeyRequired": "Bitte einen AI-API-Key eingeben.",
@@ -744,7 +761,12 @@
       "fmpKeyRequired": "Bitte einen FMP-API-Key eingeben.",
       "fmpKeySaved": "FMP-API-Key gespeichert.",
       "fmpKeyRemoved": "FMP-API-Key entfernt.",
-      "confirmClearFmp": "Gespeicherten FMP-API-Key entfernen?"
+      "confirmClearFmp": "Gespeicherten FMP-API-Key entfernen?",
+      "ccpaySaved": "CCPayments-Einstellungen gespeichert.",
+      "ccpayAppIdRemoved": "CCPayments App-ID entfernt.",
+      "ccpayAppSecretRemoved": "CCPayments App-Secret entfernt.",
+      "confirmClearCcpayAppId": "Gespeicherte CCPayments App-ID entfernen?",
+      "confirmClearCcpayAppSecret": "Gespeichertes CCPayments App-Secret entfernen?"
     }
   },
   "links": {
@@ -774,7 +796,7 @@
     },
     "apiKeys": {
       "title": "API Keys",
-      "description": "Globale AI/FMP API-Keys verschlüsselt speichern."
+      "description": "Globale AI/FMP/CCPayments-Keys verschlüsselt speichern."
     },
     "indicatorSettings": {
       "title": "Indikator-Einstellungen",

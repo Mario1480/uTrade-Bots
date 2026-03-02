@@ -727,6 +727,23 @@
       "save": "Save FMP key",
       "envOverrideHint": "ENV `FMP_API_KEY` is configured as fallback and is only used when no DB key exists."
     },
+    "ccpay": {
+      "sectionTitle": "CCPayments (Billing)",
+      "statusLabel": "CCPayments status",
+      "storedAppId": "Stored app id",
+      "storedAppSecret": "Stored app secret",
+      "missingConfig": "missing config",
+      "missingFields": "Missing fields",
+      "envOverrideHint": "ENV `CCPAY_*`/`WEB_BASE_URL`/`PANEL_BASE_URL` is configured as fallback and is only used when DB values are missing.",
+      "appIdLabel": "App ID",
+      "appSecretLabel": "App Secret",
+      "baseUrlLabel": "Base URL",
+      "priceFiatIdLabel": "Price Fiat ID",
+      "webBaseUrlLabel": "Web Base URL",
+      "save": "Save CCPay settings",
+      "clearAppId": "Remove App ID",
+      "clearAppSecret": "Remove App Secret"
+    },
     "messages": {
       "accessRequired": "Admin backend access required.",
       "aiKeyRequired": "Please enter an AI API key.",
@@ -744,7 +761,12 @@
       "fmpKeyRequired": "Please enter an FMP API key.",
       "fmpKeySaved": "FMP API key saved.",
       "fmpKeyRemoved": "FMP API key removed.",
-      "confirmClearFmp": "Remove the stored FMP API key?"
+      "confirmClearFmp": "Remove the stored FMP API key?",
+      "ccpaySaved": "CCPayments settings saved.",
+      "ccpayAppIdRemoved": "CCPayments App ID removed.",
+      "ccpayAppSecretRemoved": "CCPayments App Secret removed.",
+      "confirmClearCcpayAppId": "Remove the stored CCPayments App ID?",
+      "confirmClearCcpayAppSecret": "Remove the stored CCPayments App Secret?"
     }
   },
   "links": {
@@ -774,7 +796,7 @@
     },
     "apiKeys": {
       "title": "API Keys",
-      "description": "Store global AI/FMP API keys encrypted in DB."
+      "description": "Store global AI/FMP/CCPayments keys encrypted in DB."
     },
     "indicatorSettings": {
       "title": "Indicator Settings",

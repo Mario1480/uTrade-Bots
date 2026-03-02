@@ -3,6 +3,8 @@ import { prisma } from "@mm/db";
 import {
   formatUsdCents,
   getCcpayBaseUrl,
+  getCcpayPriceFiatId,
+  getCcpayWebBaseUrl,
   isCcpayConfigured,
   makeCcpayHeaders
 } from "./ccpayment.js";
@@ -85,11 +87,6 @@ function addMonths(base: Date, months: number): Date {
   const next = new Date(base);
   next.setMonth(next.getMonth() + Math.max(1, months));
   return next;
-}
-
-function getWebBaseUrl(): string {
-  const base = (process.env.WEB_BASE_URL ?? process.env.PANEL_BASE_URL ?? "http://localhost:3000").trim();
-  return base.replace(/\/$/, "");
 }
 
 function asRecord(value: unknown): Record<string, unknown> {
@@ -665,7 +662,7 @@ export async function createBillingCheckout(params: {
   packageId: string;
 }): Promise<{ order: any; payUrl: string }> {
   if (!(await isBillingEnabled())) throw new Error("billing_disabled");
-  if (!isCcpayConfigured()) throw new Error("ccpay_not_configured");
+  if (!(await isCcpayConfigured())) throw new Error("ccpay_not_configured");
 
   await ensureBillingDefaults();
 
@@ -679,14 +676,16 @@ export async function createBillingCheckout(params: {
     throw new Error("pro_required_for_topup");
   }
 
+  const webBaseUrl = await getCcpayWebBaseUrl();
+  const priceFiatId = await getCcpayPriceFiatId();
   const orderId = `UTRADE_${crypto.randomUUID()}`;
   const product = kind === "plan" ? `${pkg.name} (${pkg.billingMonths} month)` : pkg.name;
   const amountCents = normalizeInt(pkg.priceCents, 0, 0);
-  const returnUrl = new URL("/settings/subscription", getWebBaseUrl());
+  const returnUrl = new URL("/settings/subscription", webBaseUrl);
   returnUrl.searchParams.set("checkout", "success");
   returnUrl.searchParams.set("order", orderId);
 
-  const closeUrl = new URL("/settings/subscription", getWebBaseUrl());
+  const closeUrl = new URL("/settings/subscription", webBaseUrl);
   closeUrl.searchParams.set("checkout", "cancel");
   closeUrl.searchParams.set("order", orderId);
 
@@ -694,7 +693,7 @@ export async function createBillingCheckout(params: {
     orderId,
     product,
     price: formatUsdCents(amountCents),
-    priceFiatId: (process.env.CCPAY_PRICE_FIAT_ID ?? "1033").trim() || "1033",
+    priceFiatId,
     returnUrl: returnUrl.toString(),
     closeUrl: closeUrl.toString()
   };
@@ -713,8 +712,8 @@ export async function createBillingCheckout(params: {
   });
 
   const rawBody = JSON.stringify(payload);
-  const headers = makeCcpayHeaders(rawBody);
-  const response = await fetch(`${getCcpayBaseUrl()}/ccpayment/v2/createInvoiceUrl`, {
+  const headers = await makeCcpayHeaders(rawBody);
+  const response = await fetch(`${await getCcpayBaseUrl()}/ccpayment/v2/createInvoiceUrl`, {
     method: "POST",
     headers,
     body: rawBody

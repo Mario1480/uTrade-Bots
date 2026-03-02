@@ -53,7 +53,7 @@ import {
   upsertBillingPackage,
   getSubscriptionSummary
 } from "./billing/service.js";
-import { verifyCcpayWebhook } from "./billing/ccpayment.js";
+import { invalidateCcpayConfigCache, resolveCcpayConfig, verifyCcpayWebhook } from "./billing/ccpayment.js";
 import {
   closeOrchestration,
   cancelBotRun,
@@ -682,7 +682,17 @@ const adminApiKeysSchema = z.object({
   saladProject: z.string().trim().min(1).max(191).optional(),
   clearSaladProject: z.boolean().default(false),
   saladContainer: z.string().trim().min(1).max(191).optional(),
-  clearSaladContainer: z.boolean().default(false)
+  clearSaladContainer: z.boolean().default(false),
+  ccpayAppId: z.string().trim().min(1).max(191).optional(),
+  clearCcpayAppId: z.boolean().default(false),
+  ccpayAppSecret: z.string().trim().min(1).max(500).optional(),
+  clearCcpayAppSecret: z.boolean().default(false),
+  ccpayBaseUrl: z.string().trim().min(8).max(500).optional(),
+  clearCcpayBaseUrl: z.boolean().default(false),
+  ccpayPriceFiatId: z.string().trim().regex(/^\d+$/).max(64).optional(),
+  clearCcpayPriceFiatId: z.boolean().default(false),
+  ccpayWebBaseUrl: z.string().trim().min(8).max(500).optional(),
+  clearCcpayWebBaseUrl: z.boolean().default(false)
 }).refine(
   (value) =>
     value.clearOpenaiApiKey ||
@@ -705,9 +715,19 @@ const adminApiKeysSchema = z.object({
     Boolean(value.saladProject) ||
     value.clearSaladContainer ||
     Boolean(value.saladContainer) ||
+    value.clearCcpayAppId ||
+    Boolean(value.ccpayAppId) ||
+    value.clearCcpayAppSecret ||
+    Boolean(value.ccpayAppSecret) ||
+    value.clearCcpayBaseUrl ||
+    Boolean(value.ccpayBaseUrl) ||
+    value.clearCcpayPriceFiatId ||
+    Boolean(value.ccpayPriceFiatId) ||
+    value.clearCcpayWebBaseUrl ||
+    Boolean(value.ccpayWebBaseUrl) ||
     Boolean(value.aiProvider),
   {
-    message: "Provide AI/FMP fields or set a clear flag."
+    message: "Provide AI/FMP/CCPay fields or set a clear flag."
   }
 );
 
@@ -2573,6 +2593,14 @@ type StoredAiProviderProfiles = {
   ollama: StoredAiProviderProfile;
 };
 
+type StoredCcpaySettings = {
+  appIdEnc: string | null;
+  appSecretEnc: string | null;
+  baseUrl: string | null;
+  priceFiatId: string | null;
+  webBaseUrl: string | null;
+};
+
 type StoredApiKeysSettings = {
   aiApiKeyEnc: string | null;
   openaiApiKeyEnc: string | null;
@@ -2582,6 +2610,7 @@ type StoredApiKeysSettings = {
   aiModel: string | null;
   openaiModel: OpenAiAdminModel | null;
   aiProfiles: StoredAiProviderProfiles;
+  ccpay: StoredCcpaySettings;
 };
 
 type StoredPredictionRefreshSettings = {
@@ -2641,6 +2670,16 @@ function emptyAiProviderProfile(): StoredAiProviderProfile {
   };
 }
 
+function emptyCcpaySettings(): StoredCcpaySettings {
+  return {
+    appIdEnc: null,
+    appSecretEnc: null,
+    baseUrl: null,
+    priceFiatId: null,
+    webBaseUrl: null
+  };
+}
+
 function normalizeProviderForProfile(
   provider: "openai" | "ollama" | "disabled" | null | undefined
 ): "openai" | "ollama" {
@@ -2695,6 +2734,60 @@ function parseStoredAiProviderProfile(value: unknown): StoredAiProviderProfile {
     aiBaseUrl,
     aiModel,
     saladRuntime
+  };
+}
+
+function parseStoredCcpaySettings(value: unknown): StoredCcpaySettings {
+  const record = parseJsonObject(value);
+  const nested = parseJsonObject(record.ccpay);
+  const appIdEnc =
+    typeof nested.appIdEnc === "string" && nested.appIdEnc.trim()
+      ? nested.appIdEnc.trim()
+      : typeof record.appIdEnc === "string" && record.appIdEnc.trim()
+        ? record.appIdEnc.trim()
+      : typeof record.ccpayAppIdEnc === "string" && record.ccpayAppIdEnc.trim()
+        ? record.ccpayAppIdEnc.trim()
+        : null;
+  const appSecretEnc =
+    typeof nested.appSecretEnc === "string" && nested.appSecretEnc.trim()
+      ? nested.appSecretEnc.trim()
+      : typeof record.appSecretEnc === "string" && record.appSecretEnc.trim()
+        ? record.appSecretEnc.trim()
+      : typeof record.ccpayAppSecretEnc === "string" && record.ccpayAppSecretEnc.trim()
+        ? record.ccpayAppSecretEnc.trim()
+        : null;
+  const baseUrl =
+    typeof nested.baseUrl === "string" && nested.baseUrl.trim()
+      ? nested.baseUrl.trim().replace(/\/$/, "")
+      : typeof record.baseUrl === "string" && record.baseUrl.trim()
+        ? record.baseUrl.trim().replace(/\/$/, "")
+      : typeof record.ccpayBaseUrl === "string" && record.ccpayBaseUrl.trim()
+        ? record.ccpayBaseUrl.trim().replace(/\/$/, "")
+        : null;
+  const priceFiatIdRaw =
+    typeof nested.priceFiatId === "string" && nested.priceFiatId.trim()
+      ? nested.priceFiatId.trim()
+      : typeof record.priceFiatId === "string" && record.priceFiatId.trim()
+        ? record.priceFiatId.trim()
+      : typeof record.ccpayPriceFiatId === "string" && record.ccpayPriceFiatId.trim()
+        ? record.ccpayPriceFiatId.trim()
+        : null;
+  const priceFiatId = priceFiatIdRaw && /^\d+$/.test(priceFiatIdRaw) ? priceFiatIdRaw : null;
+  const webBaseUrl =
+    typeof nested.webBaseUrl === "string" && nested.webBaseUrl.trim()
+      ? nested.webBaseUrl.trim().replace(/\/$/, "")
+      : typeof record.webBaseUrl === "string" && record.webBaseUrl.trim()
+        ? record.webBaseUrl.trim().replace(/\/$/, "")
+      : typeof record.ccpayWebBaseUrl === "string" && record.ccpayWebBaseUrl.trim()
+        ? record.ccpayWebBaseUrl.trim().replace(/\/$/, "")
+        : null;
+
+  return {
+    appIdEnc,
+    appSecretEnc,
+    baseUrl,
+    priceFiatId,
+    webBaseUrl
   };
 }
 
@@ -2774,6 +2867,7 @@ function parseStoredApiKeysSettings(value: unknown): StoredApiKeysSettings {
   const aiProfilesRecord = parseJsonObject(record.aiProfiles);
   const parsedOpenAiProfile = parseStoredAiProviderProfile(aiProfilesRecord.openai);
   const parsedOllamaProfile = parseStoredAiProviderProfile(aiProfilesRecord.ollama);
+  const parsedCcpay = parseStoredCcpaySettings(record);
   const activeLegacyProvider = normalizeProviderForProfile(aiProvider);
   const openaiModelFromLegacy =
     typeof record.openaiModel === "string" && record.openaiModel.trim()
@@ -2824,6 +2918,10 @@ function parseStoredApiKeysSettings(value: unknown): StoredApiKeysSettings {
     aiProfiles: {
       openai: openaiProfile,
       ollama: ollamaProfile
+    },
+    ccpay: {
+      ...emptyCcpaySettings(),
+      ...parsedCcpay
     }
   };
 }
@@ -2915,6 +3013,8 @@ function toPublicApiKeysSettings(value: StoredApiKeysSettings) {
   const aiApiKeyMasked = maskEncrypted(aiKeyEnc);
   const openAiApiKeyMasked = maskEncrypted(openaiProfile.aiApiKeyEnc ?? value.openaiApiKeyEnc);
   const fmpApiKeyMasked = maskEncrypted(value.fmpApiKeyEnc);
+  const ccpayAppIdMasked = maskEncrypted(value.ccpay.appIdEnc);
+  const ccpayAppSecretMasked = maskEncrypted(value.ccpay.appSecretEnc);
 
   return {
     aiApiKeyMasked,
@@ -2923,6 +3023,15 @@ function toPublicApiKeysSettings(value: StoredApiKeysSettings) {
     hasOpenAiApiKey: Boolean(openaiProfile.aiApiKeyEnc ?? value.openaiApiKeyEnc),
     fmpApiKeyMasked,
     hasFmpApiKey: Boolean(value.fmpApiKeyEnc),
+    ccpay: {
+      appIdMasked: ccpayAppIdMasked,
+      hasAppId: Boolean(value.ccpay.appIdEnc),
+      appSecretMasked: ccpayAppSecretMasked,
+      hasAppSecret: Boolean(value.ccpay.appSecretEnc),
+      baseUrl: value.ccpay.baseUrl,
+      priceFiatId: value.ccpay.priceFiatId,
+      webBaseUrl: value.ccpay.webBaseUrl
+    },
     aiProvider: value.aiProvider,
     aiBaseUrl: selectedProfile.aiBaseUrl ?? value.aiBaseUrl,
     aiModel: selectedProfile.aiModel ?? value.aiModel,
@@ -9378,7 +9487,7 @@ app.post("/webhooks/ccpayment", async (req, res) => {
   const rawBody = typeof (req as any).rawBody === "string"
     ? (req as any).rawBody
     : JSON.stringify(req.body ?? {});
-  if (!verifyCcpayWebhook(rawBody, req.headers as Record<string, string | string[] | undefined>)) {
+  if (!(await verifyCcpayWebhook(rawBody, req.headers as Record<string, string | string[] | undefined>))) {
     return res.status(401).json({ error: "invalid_signature" });
   }
 
@@ -10328,6 +10437,13 @@ app.get("/admin/settings/api-keys", requireAuth, async (_req, res) => {
   const settings = parseStoredApiKeysSettings(row?.value);
   const envConfigured = Boolean(process.env.AI_API_KEY?.trim());
   const fmpEnvConfigured = Boolean(process.env.FMP_API_KEY?.trim());
+  const ccpayEnvConfigured = Boolean(
+    process.env.CCPAY_APP_ID?.trim()
+    || process.env.CCPAY_APP_SECRET?.trim()
+    || process.env.CCPAY_BASE_URL?.trim()
+    || process.env.CCPAY_PRICE_FIAT_ID?.trim()
+    || process.env.WEB_BASE_URL?.trim()
+  );
   const effectiveProvider = resolveEffectiveAiProvider(settings);
   const effectiveBaseUrl = resolveEffectiveAiBaseUrl(settings);
   const effectiveModel = resolveEffectiveAiModel(settings);
@@ -10337,6 +10453,7 @@ app.get("/admin/settings/api-keys", requireAuth, async (_req, res) => {
     updatedAt: row?.updatedAt ?? null,
     envOverride: envConfigured,
     envOverrideFmp: fmpEnvConfigured,
+    envOverrideCcpay: ccpayEnvConfigured,
     effectiveAiProvider: effectiveProvider.provider,
     effectiveAiProviderSource: effectiveProvider.source,
     effectiveAiBaseUrl: effectiveBaseUrl.baseUrl,
@@ -10503,6 +10620,83 @@ app.get("/admin/settings/api-keys/status", requireAuth, async (_req, res) => {
   } finally {
     clearTimeout(timeout);
   }
+});
+
+app.get("/admin/settings/api-keys/ccpay-status", requireAuth, async (_req, res) => {
+  if (!(await requireSuperadmin(res))) return;
+
+  const checkedAt = new Date().toISOString();
+  const resolved = await resolveCcpayConfig();
+  const missingFields: string[] = [];
+  if (!resolved.appId) missingFields.push("app_id");
+  if (!resolved.appSecret) missingFields.push("app_secret");
+
+  if (resolved.decryptError) {
+    return res.json({
+      ok: false,
+      status: "error",
+      source: resolved.source,
+      checkedAt,
+      message: "Stored CCPay credentials could not be decrypted.",
+      hasAppId: Boolean(resolved.appId),
+      hasAppSecret: Boolean(resolved.appSecret),
+      baseUrl: resolved.baseUrl,
+      priceFiatId: resolved.priceFiatId,
+      webBaseUrl: resolved.webBaseUrl,
+      sources: {
+        appId: resolved.appIdSource,
+        appSecret: resolved.appSecretSource,
+        baseUrl: resolved.baseUrlSource,
+        priceFiatId: resolved.priceFiatIdSource,
+        webBaseUrl: resolved.webBaseUrlSource
+      },
+      missingFields
+    });
+  }
+
+  if (!resolved.isConfigured) {
+    return res.json({
+      ok: false,
+      status: "missing_config",
+      source: resolved.source,
+      checkedAt,
+      message: "CCPayments configuration is incomplete.",
+      hasAppId: Boolean(resolved.appId),
+      hasAppSecret: Boolean(resolved.appSecret),
+      baseUrl: resolved.baseUrl,
+      priceFiatId: resolved.priceFiatId,
+      webBaseUrl: resolved.webBaseUrl,
+      sources: {
+        appId: resolved.appIdSource,
+        appSecret: resolved.appSecretSource,
+        baseUrl: resolved.baseUrlSource,
+        priceFiatId: resolved.priceFiatIdSource,
+        webBaseUrl: resolved.webBaseUrlSource
+      },
+      missingFields
+    });
+  }
+
+  return res.json({
+    ok: true,
+    status: "ok",
+    source: resolved.source,
+    checkedAt,
+    message: "CCPayments configuration is ready.",
+    hasAppId: true,
+    hasAppSecret: true,
+    baseUrl: resolved.baseUrl,
+    priceFiatId: resolved.priceFiatId,
+    webBaseUrl: resolved.webBaseUrl,
+    sources: {
+      appId: resolved.appIdSource,
+      appSecret: resolved.appSecretSource,
+      baseUrl: resolved.baseUrlSource,
+      priceFiatId: resolved.priceFiatIdSource,
+      webBaseUrl: resolved.webBaseUrlSource
+    },
+    missingFields
+  });
 });
 
 function resolveSaladRuntimeHttpStatus(result: {
@@ -10914,6 +11108,43 @@ app.put("/admin/settings/api-keys", requireAuth, async (req, res) => {
     nextProfiles.ollama.saladRuntime = nextSaladRuntime;
   }
 
+  const nextCcpay: StoredCcpaySettings = {
+    ...(existing.ccpay ?? emptyCcpaySettings())
+  };
+  const ccpayAppIdSpecified = parsed.data.clearCcpayAppId || parsed.data.ccpayAppId !== undefined;
+  if (ccpayAppIdSpecified) {
+    nextCcpay.appIdEnc = parsed.data.clearCcpayAppId
+      ? null
+      : (parsed.data.ccpayAppId ? encryptSecret(parsed.data.ccpayAppId.trim()) : null);
+  }
+  const ccpayAppSecretSpecified =
+    parsed.data.clearCcpayAppSecret || parsed.data.ccpayAppSecret !== undefined;
+  if (ccpayAppSecretSpecified) {
+    nextCcpay.appSecretEnc = parsed.data.clearCcpayAppSecret
+      ? null
+      : (parsed.data.ccpayAppSecret ? encryptSecret(parsed.data.ccpayAppSecret.trim()) : null);
+  }
+  const ccpayBaseUrlSpecified = parsed.data.clearCcpayBaseUrl || parsed.data.ccpayBaseUrl !== undefined;
+  if (ccpayBaseUrlSpecified) {
+    nextCcpay.baseUrl = parsed.data.clearCcpayBaseUrl
+      ? null
+      : (parsed.data.ccpayBaseUrl?.trim().replace(/\/$/, "") || null);
+  }
+  const ccpayPriceFiatIdSpecified =
+    parsed.data.clearCcpayPriceFiatId || parsed.data.ccpayPriceFiatId !== undefined;
+  if (ccpayPriceFiatIdSpecified) {
+    nextCcpay.priceFiatId = parsed.data.clearCcpayPriceFiatId
+      ? null
+      : (parsed.data.ccpayPriceFiatId?.trim() || null);
+  }
+  const ccpayWebBaseUrlSpecified =
+    parsed.data.clearCcpayWebBaseUrl || parsed.data.ccpayWebBaseUrl !== undefined;
+  if (ccpayWebBaseUrlSpecified) {
+    nextCcpay.webBaseUrl = parsed.data.clearCcpayWebBaseUrl
+      ? null
+      : (parsed.data.ccpayWebBaseUrl?.trim().replace(/\/$/, "") || null);
+  }
+
   const nextProvider = parsed.data.aiProvider ?? existing.aiProvider;
   const activeProviderForTopLevel = normalizeProviderForProfile(nextProvider);
   const activeProfile = nextProfiles[activeProviderForTopLevel];
@@ -10932,7 +11163,8 @@ app.put("/admin/settings/api-keys", requireAuth, async (req, res) => {
     aiProfiles: {
       openai: nextProfiles.openai,
       ollama: nextProfiles.ollama
-    }
+    },
+    ccpay: nextCcpay
   };
 
   const updated = await setGlobalSettingValue(GLOBAL_SETTING_API_KEYS_KEY, nextValue);
@@ -10942,12 +11174,20 @@ app.put("/admin/settings/api-keys", requireAuth, async (req, res) => {
   const effectiveModel = resolveEffectiveAiModel(settings);
   invalidateAiApiKeyCache();
   invalidateAiModelCache();
+  invalidateCcpayConfigCache();
 
   return res.json({
     ...toPublicApiKeysSettings(settings),
     updatedAt: updated.updatedAt,
     envOverride: Boolean(process.env.AI_API_KEY?.trim()),
     envOverrideFmp: Boolean(process.env.FMP_API_KEY?.trim()),
+    envOverrideCcpay: Boolean(
+      process.env.CCPAY_APP_ID?.trim()
+      || process.env.CCPAY_APP_SECRET?.trim()
+      || process.env.CCPAY_BASE_URL?.trim()
+      || process.env.CCPAY_PRICE_FIAT_ID?.trim()
+      || process.env.WEB_BASE_URL?.trim()
+    ),
     effectiveAiProvider: effectiveProvider.provider,
     effectiveAiProviderSource: effectiveProvider.source,
     effectiveAiBaseUrl: effectiveBaseUrl.baseUrl,
