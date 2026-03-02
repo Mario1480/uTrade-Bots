@@ -118,6 +118,50 @@ type SettingsAccordionKey =
   | "strategy";
 
 const STRATEGY_TIMEFRAME_OPTIONS = ["5m", "15m", "1h", "4h", "1d"] as const;
+type NotificationCalendarImpact = "low" | "medium" | "high";
+const NOTIFICATION_IMPACT_ORDER: NotificationCalendarImpact[] = ["high", "medium", "low"];
+const NOTIFICATION_CALENDAR_CURRENCIES = [
+  { code: "USD", flag: "🇺🇸" },
+  { code: "EUR", flag: "🇪🇺" },
+  { code: "GBP", flag: "🇬🇧" },
+  { code: "JPY", flag: "🇯🇵" },
+  { code: "CHF", flag: "🇨🇭" },
+  { code: "CAD", flag: "🇨🇦" },
+  { code: "AUD", flag: "🇦🇺" },
+  { code: "NZD", flag: "🇳🇿" },
+  { code: "CNY", flag: "🇨🇳" }
+] as const;
+
+function resolveBrowserTimezone(): string {
+  try {
+    const tz = Intl.DateTimeFormat().resolvedOptions().timeZone;
+    if (typeof tz === "string" && tz.trim().length > 0) return tz.trim();
+  } catch {
+    // ignore
+  }
+  return "UTC";
+}
+
+function normalizeNotificationImpacts(raw: unknown): NotificationCalendarImpact[] {
+  if (!Array.isArray(raw)) return ["high"];
+  const parsed = raw
+    .map((entry) => String(entry).trim().toLowerCase())
+    .filter((entry): entry is NotificationCalendarImpact => (
+      entry === "low" || entry === "medium" || entry === "high"
+    ));
+  if (parsed.length === 0) return ["high"];
+  return NOTIFICATION_IMPACT_ORDER.filter((entry) => parsed.includes(entry));
+}
+
+function normalizeNotificationCurrencies(raw: unknown): string[] {
+  if (!Array.isArray(raw)) return ["USD"];
+  const allowed = new Set<string>(NOTIFICATION_CALENDAR_CURRENCIES.map((entry) => entry.code));
+  const parsed = raw
+    .map((entry) => String(entry).trim().toUpperCase())
+    .filter((entry) => allowed.has(entry))
+    .filter((entry, index, list) => list.indexOf(entry) === index);
+  return parsed.length > 0 ? parsed : ["USD"];
+}
 
 function errMsg(e: unknown): string {
   if (e instanceof ApiError) return `${e.message} (HTTP ${e.status})`;
@@ -174,6 +218,11 @@ export default function SettingsPage() {
   const [notificationChatId, setNotificationChatId] = useState("");
   const [notificationTokenConfigured, setNotificationTokenConfigured] = useState(false);
   const [notificationSaving, setNotificationSaving] = useState(false);
+  const [notificationDailyEnabled, setNotificationDailyEnabled] = useState(false);
+  const [notificationDailyCurrencies, setNotificationDailyCurrencies] = useState<string[]>(["USD"]);
+  const [notificationDailyImpacts, setNotificationDailyImpacts] = useState<NotificationCalendarImpact[]>(["high"]);
+  const [notificationDailySendTimeLocal, setNotificationDailySendTimeLocal] = useState("08:00");
+  const [notificationDailyTimezone, setNotificationDailyTimezone] = useState(resolveBrowserTimezone());
   const [currentPassword, setCurrentPassword] = useState("");
   const [newPassword, setNewPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
@@ -535,9 +584,28 @@ export default function SettingsPage() {
       const data = await apiGet<{
         telegramChatId?: string | null;
         telegramBotConfigured?: boolean;
+        dailyEconomicCalendar?: {
+          enabled?: boolean;
+          currencies?: string[];
+          impacts?: NotificationCalendarImpact[];
+          sendTimeLocal?: string;
+          timezone?: string;
+        };
       }>("/settings/alerts");
       setNotificationChatId(data.telegramChatId ?? "");
       setNotificationTokenConfigured(Boolean(data.telegramBotConfigured));
+      setNotificationDailyEnabled(Boolean(data.dailyEconomicCalendar?.enabled));
+      setNotificationDailyCurrencies(normalizeNotificationCurrencies(data.dailyEconomicCalendar?.currencies));
+      setNotificationDailyImpacts(normalizeNotificationImpacts(data.dailyEconomicCalendar?.impacts));
+      setNotificationDailySendTimeLocal(
+        typeof data.dailyEconomicCalendar?.sendTimeLocal === "string"
+          ? data.dailyEconomicCalendar.sendTimeLocal
+          : "08:00"
+      );
+      const loadedTimezone = typeof data.dailyEconomicCalendar?.timezone === "string"
+        ? data.dailyEconomicCalendar.timezone.trim()
+        : "";
+      setNotificationDailyTimezone(loadedTimezone || resolveBrowserTimezone());
     } catch {
       // ignore on initial render
     }
@@ -547,9 +615,22 @@ export default function SettingsPage() {
     setNotificationSaving(true);
     setNotificationMsg(null);
     try {
+      const timezone = notificationDailyTimezone.trim() || resolveBrowserTimezone();
+      const sendTimeLocal = /^([01]\d|2[0-3]):([0-5]\d)$/.test(notificationDailySendTimeLocal)
+        ? notificationDailySendTimeLocal
+        : "08:00";
       await apiPut("/settings/alerts", {
-        telegramChatId: notificationChatId.trim() || null
+        telegramChatId: notificationChatId.trim() || null,
+        dailyEconomicCalendar: {
+          enabled: notificationDailyEnabled,
+          currencies: normalizeNotificationCurrencies(notificationDailyCurrencies),
+          impacts: normalizeNotificationImpacts(notificationDailyImpacts),
+          sendTimeLocal,
+          timezone
+        }
       });
+      setNotificationDailySendTimeLocal(sendTimeLocal);
+      setNotificationDailyTimezone(timezone);
       setNotificationMsg("Saved.");
     } catch (e) {
       setNotificationMsg(errMsgWithDetails(e));
@@ -569,6 +650,26 @@ export default function SettingsPage() {
     } finally {
       setNotificationSending(false);
     }
+  }
+
+  function toggleNotificationCurrency(code: string) {
+    setNotificationDailyCurrencies((current) => {
+      if (current.includes(code)) {
+        if (current.length <= 1) return current;
+        return current.filter((entry) => entry !== code);
+      }
+      return normalizeNotificationCurrencies([...current, code]);
+    });
+  }
+
+  function toggleNotificationImpact(value: NotificationCalendarImpact) {
+    setNotificationDailyImpacts((current) => {
+      if (current.includes(value)) {
+        if (current.length <= 1) return current;
+        return current.filter((entry) => entry !== value);
+      }
+      return normalizeNotificationImpacts([...current, value]);
+    });
   }
 
   async function loadSecuritySettings() {
@@ -999,6 +1100,70 @@ export default function SettingsPage() {
                       onChange={(e) => setNotificationChatId(e.target.value)}
                     />
                   </label>
+                  <div style={{ borderTop: "1px solid var(--border)", paddingTop: 10, marginBottom: 10, display: "grid", gap: 10 }}>
+                    <div style={{ fontWeight: 700 }}>{tMain("notifications.dailyCalendar.title")}</div>
+                    <div className="settingsMutedText">
+                      {tMain("notifications.dailyCalendar.description")}
+                    </div>
+                    <label style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 13 }}>
+                      <input
+                        type="checkbox"
+                        checked={notificationDailyEnabled}
+                        onChange={(e) => setNotificationDailyEnabled(e.target.checked)}
+                      />
+                      <span>{tMain("notifications.dailyCalendar.enabledLabel")}</span>
+                    </label>
+                    <label className="settingsField">
+                      <span className="settingsFieldLabel">{tMain("notifications.dailyCalendar.sendTimeLocal")}</span>
+                      <input
+                        type="time"
+                        className="input"
+                        value={notificationDailySendTimeLocal}
+                        onChange={(e) => setNotificationDailySendTimeLocal(e.target.value)}
+                      />
+                    </label>
+                    <div className="settingsMutedText">
+                      {tMain("notifications.dailyCalendar.timezone")}: <b>{notificationDailyTimezone}</b>
+                    </div>
+                    <div style={{ display: "grid", gap: 6 }}>
+                      <span className="settingsFieldLabel">{tMain("notifications.dailyCalendar.currencies")}</span>
+                      <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
+                        {NOTIFICATION_CALENDAR_CURRENCIES.map((entry) => {
+                          const active = notificationDailyCurrencies.includes(entry.code);
+                          return (
+                            <button
+                              key={entry.code}
+                              type="button"
+                              className="badge"
+                              style={{ opacity: active ? 1 : 0.6, cursor: "pointer" }}
+                              onClick={() => toggleNotificationCurrency(entry.code)}
+                            >
+                              {entry.flag} {entry.code}
+                            </button>
+                          );
+                        })}
+                      </div>
+                    </div>
+                    <div style={{ display: "grid", gap: 6 }}>
+                      <span className="settingsFieldLabel">{tMain("notifications.dailyCalendar.impacts")}</span>
+                      <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
+                        {NOTIFICATION_IMPACT_ORDER.map((impact) => {
+                          const active = notificationDailyImpacts.includes(impact);
+                          return (
+                            <button
+                              key={impact}
+                              type="button"
+                              className="badge"
+                              style={{ opacity: active ? 1 : 0.6, cursor: "pointer" }}
+                              onClick={() => toggleNotificationImpact(impact)}
+                            >
+                              {tMain(`notifications.dailyCalendar.impact.${impact}`)}
+                            </button>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  </div>
                   <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
                     <button className="btn btnPrimary" type="button" onClick={saveNotificationConfig} disabled={notificationSaving}>
                       {notificationSaving ? tCommon("saving") : tCommon("saveSettings")}
