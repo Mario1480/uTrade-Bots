@@ -1674,6 +1674,7 @@ export async function generatePredictionExplanation(
   const aiFallbackModel = resolveExplainerFallbackModel(aiModel);
   const callAiFn = deps.callAiFn ?? callAi;
   const agentEnabled = useAgentSignalEngine(aiProvider);
+  const shouldRecordPayloadBudgetTelemetry = aiProvider !== "ollama";
   const effectiveExplainerTimeoutMs =
     aiProvider === "ollama"
       ? Math.max(EXPLAINER_TIMEOUT_MS, OLLAMA_EXPLAINER_TIMEOUT_MS)
@@ -1696,7 +1697,9 @@ export async function generatePredictionExplanation(
       ...payloadBudgetMetrics,
       toolCallsUsed: 0
     };
-    recordAiPayloadBudgetTelemetry(metrics);
+    if (shouldRecordPayloadBudgetTelemetry) {
+      recordAiPayloadBudgetTelemetry(metrics);
+    }
     const payloadBudgetMeta: ExplanationQualityMetrics = {
       explanationLength: 0,
       explanationSentenceCount: 0,
@@ -2183,10 +2186,12 @@ export async function generatePredictionExplanation(
     fallback
   });
   const toolCallsUsed = result.cacheHit || aiAttemptsUsed === 0 ? 0 : aiAttemptsUsed;
-  recordAiPayloadBudgetTelemetry({
-    ...payloadBudgetMetrics,
-    toolCallsUsed
-  });
+  if (shouldRecordPayloadBudgetTelemetry) {
+    recordAiPayloadBudgetTelemetry({
+      ...payloadBudgetMetrics,
+      toolCallsUsed
+    });
+  }
   recordAiExplainerCacheTelemetry(result.cacheHit);
 
   if (result.fallbackUsed) {
