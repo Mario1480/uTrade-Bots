@@ -538,6 +538,20 @@
       "tipBefore": "Tipp: Bei Telegram-Gruppen beginnt die Chat-ID meist mit",
       "tipAfter": ".",
       "chatId": "Chat-ID",
+      "dailyCalendar": {
+        "title": "Täglicher Wirtschaftskalender",
+        "description": "Sende dir täglich die wichtigsten Events nach deinen Filtern in deinen Telegram-Chat.",
+        "enabledLabel": "Täglichen Kalender an Telegram senden",
+        "sendTimeLocal": "Versand-Uhrzeit (lokal)",
+        "timezone": "Zeitzone",
+        "currencies": "Währungen",
+        "impacts": "Auswirkungen",
+        "impact": {
+          "high": "Hoch",
+          "medium": "Mittel",
+          "low": "Niedrig"
+        }
+      },
       "sending": "Wird gesendet...",
       "sendTest": "Testnachricht senden"
     },
