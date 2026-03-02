@@ -151,6 +151,16 @@ Admin-Werte (wichtig: aus Sicht des API-Containers, nicht `localhost`):
 - `Model`: `qwen3:8b`
 - `AI API key`: `salad_cloud_user_...`
 
+Salad Runtime Control (manuell, im Admin-Backend):
+- In `/admin/api-keys` unter `Salad Runtime Control` Ziel setzen:
+  - `Salad API Base URL` (default `https://api.salad.com/api/public`)
+  - `Organization`, `Project`, `Container`
+- Danach über Buttons:
+  - `Runtime-Status aktualisieren`
+  - `Container starten`
+  - `Container stoppen`
+- So kannst du den Container in Testphasen gezielt stoppen, um Kosten zu sparen.
+
 Ollama Prompt-Fit Runtime:
 - Es werden keine separaten Prompt-Kopien gepflegt; provider/timeframe-spezifische Runtime-Hints werden an den System-Prompt angehängt.
 - Für `ollama + 4h` wird eine lange Analyse erzwungen (8-12 Sätze, Fließtext).

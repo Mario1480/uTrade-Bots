@@ -697,7 +697,28 @@
       "modelOptionsHint": "For Ollama you can enter any local model name (e.g. qwen3:8b).",
       "newKey": "New AI API key",
       "save": "Save AI key",
-      "envOverrideHint": "ENV `AI_API_KEY` is configured as fallback and is only used when no DB key exists for the active provider."
+      "envOverrideHint": "ENV `AI_API_KEY` is configured as fallback and is only used when no DB key exists for the active provider.",
+      "saladRuntime": {
+        "sectionTitle": "Salad Runtime Control",
+        "hint": "Manually start/stop the container to reduce costs during testing.",
+        "statusLabel": "Container status",
+        "apiBaseUrlLabel": "Salad API base URL",
+        "organizationLabel": "Organization",
+        "projectLabel": "Project",
+        "containerLabel": "Container",
+        "saveConfig": "Save runtime config",
+        "refreshStatus": "Refresh runtime status",
+        "start": "Start container",
+        "stop": "Stop container",
+        "states": {
+          "running": "running",
+          "stopped": "stopped",
+          "starting": "starting",
+          "stopping": "stopping",
+          "error": "error",
+          "unknown": "unknown"
+        }
+      }
     },
     "fmp": {
       "sectionTitle": "FMP Key (Economic Calendar)",
@@ -715,6 +736,10 @@
       "aiModelSaved": "AI model saved.",
       "aiModelReset": "AI model reset to ENV/default fallback.",
       "aiProviderSaved": "AI provider/base URL saved.",
+      "saladRuntimeSaved": "Salad runtime configuration saved.",
+      "saladRuntimeStarted": "Salad container start requested.",
+      "saladRuntimeStopped": "Salad container stop requested.",
+      "confirmStopSaladRuntime": "Do you want to stop the Salad container?",
       "confirmClearAi": "Remove the stored AI API key?",
       "fmpKeyRequired": "Please enter an FMP API key.",
       "fmpKeySaved": "FMP API key saved.",

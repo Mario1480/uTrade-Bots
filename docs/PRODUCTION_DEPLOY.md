@@ -29,6 +29,11 @@ Admin settings for Salad/Ollama:
 - Model: `qwen3:8b`
 - API key: `salad_cloud_user_...`
 
+Optional cost-saving control (manual):
+- In `/admin/api-keys` configure `Salad Runtime Control` target:
+  - `Organization`, `Project`, `Container`
+- Then use `Start container` / `Stop container` directly in Admin during test windows.
+
 Health checks:
 ```sh
 curl -i http://localhost:8080/health

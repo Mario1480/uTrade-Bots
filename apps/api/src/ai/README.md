@@ -102,6 +102,18 @@ Admin values for uTrade:
 - `aiModel`: `qwen3:8b`
 - `aiApiKey`: `salad_cloud_user_...`
 
+Manual Salad runtime control (Admin):
+- Endpoints:
+  - `GET /admin/settings/api-keys/salad-runtime/status`
+  - `POST /admin/settings/api-keys/salad-runtime/start`
+  - `POST /admin/settings/api-keys/salad-runtime/stop`
+- Runtime target is stored in `admin.apiKeys` under the Ollama profile:
+  - `saladApiBaseUrl` (default `https://api.salad.com/api/public`)
+  - `saladOrganization`
+  - `saladProject`
+  - `saladContainer`
+- Uses the stored Ollama AI key (`Salad-Api-Key`) for control calls.
+
 Important:
 - Do not use `http://localhost:8088/v1` in Admin when API runs in Docker.
 - Use container DNS `salad-proxy` for API-container-to-proxy traffic.

@@ -697,7 +697,28 @@
       "modelOptionsHint": "Für Ollama kannst du jeden lokalen Modellnamen frei eingeben (z. B. qwen3:8b).",
       "newKey": "Neuer AI-API-Key",
       "save": "AI-Key speichern",
-      "envOverrideHint": "ENV `AI_API_KEY` ist als Fallback gesetzt und wird nur genutzt, wenn für den aktiven Provider kein DB-Key vorhanden ist."
+      "envOverrideHint": "ENV `AI_API_KEY` ist als Fallback gesetzt und wird nur genutzt, wenn für den aktiven Provider kein DB-Key vorhanden ist.",
+      "saladRuntime": {
+        "sectionTitle": "Salad Runtime Control",
+        "hint": "Container manuell starten/stoppen, um in der Testphase Kosten zu sparen.",
+        "statusLabel": "Container-Status",
+        "apiBaseUrlLabel": "Salad API Base URL",
+        "organizationLabel": "Organization",
+        "projectLabel": "Project",
+        "containerLabel": "Container",
+        "saveConfig": "Runtime-Config speichern",
+        "refreshStatus": "Runtime-Status aktualisieren",
+        "start": "Container starten",
+        "stop": "Container stoppen",
+        "states": {
+          "running": "läuft",
+          "stopped": "gestoppt",
+          "starting": "startet",
+          "stopping": "stoppt",
+          "error": "fehler",
+          "unknown": "unbekannt"
+        }
+      }
     },
     "fmp": {
       "sectionTitle": "FMP-Key (Wirtschaftskalender)",
@@ -715,6 +736,10 @@
       "aiModelSaved": "AI-Modell gespeichert.",
       "aiModelReset": "AI-Modell auf ENV/Standard-Fallback zurückgesetzt.",
       "aiProviderSaved": "AI-Provider/Base-URL gespeichert.",
+      "saladRuntimeSaved": "Salad-Runtime-Konfiguration gespeichert.",
+      "saladRuntimeStarted": "Salad-Container Start ausgelöst.",
+      "saladRuntimeStopped": "Salad-Container Stop ausgelöst.",
+      "confirmStopSaladRuntime": "Salad-Container wirklich stoppen?",
       "confirmClearAi": "Gespeicherten AI-API-Key entfernen?",
       "fmpKeyRequired": "Bitte einen FMP-API-Key eingeben.",
       "fmpKeySaved": "FMP-API-Key gespeichert.",

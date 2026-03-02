@@ -8,6 +8,7 @@ import WebSocket, { WebSocketServer } from "ws";
 import { z } from "zod";
 import { prisma } from "@mm/db";
 import { BitgetFuturesAdapter } from "@mm/futures-exchange";
+import { logger } from "./logger.js";
 import {
   createSession,
   destroySession,
@@ -73,6 +74,12 @@ import {
   resolveAiModelFromConfig,
   type OpenAiAdminModel
 } from "./ai/provider.js";
+import {
+  getSaladRuntimeStatus,
+  resolveSaladRuntimeConfig,
+  startSaladContainer,
+  stopSaladContainer
+} from "./ai/saladRuntime.js";
 import {
   buildPredictionExplainerPromptPreview,
   fallbackExplain,
@@ -667,7 +674,15 @@ const adminApiKeysSchema = z.object({
   fmpApiKey: z.string().trim().min(10).max(500).optional(),
   clearFmpApiKey: z.boolean().default(false),
   openaiModel: openAiModelSchema.optional(),
-  clearOpenaiModel: z.boolean().default(false)
+  clearOpenaiModel: z.boolean().default(false),
+  saladApiBaseUrl: z.string().trim().min(8).max(500).optional(),
+  clearSaladApiBaseUrl: z.boolean().default(false),
+  saladOrganization: z.string().trim().min(1).max(191).optional(),
+  clearSaladOrganization: z.boolean().default(false),
+  saladProject: z.string().trim().min(1).max(191).optional(),
+  clearSaladProject: z.boolean().default(false),
+  saladContainer: z.string().trim().min(1).max(191).optional(),
+  clearSaladContainer: z.boolean().default(false)
 }).refine(
   (value) =>
     value.clearOpenaiApiKey ||
@@ -682,6 +697,14 @@ const adminApiKeysSchema = z.object({
     Boolean(value.aiModel) ||
     value.clearAiBaseUrl ||
     Boolean(value.aiBaseUrl) ||
+    value.clearSaladApiBaseUrl ||
+    Boolean(value.saladApiBaseUrl) ||
+    value.clearSaladOrganization ||
+    Boolean(value.saladOrganization) ||
+    value.clearSaladProject ||
+    Boolean(value.saladProject) ||
+    value.clearSaladContainer ||
+    Boolean(value.saladContainer) ||
     Boolean(value.aiProvider),
   {
     message: "Provide AI/FMP fields or set a clear flag."
@@ -2531,10 +2554,18 @@ type StoredSecurityUserOverrides = {
   reauthOtpEnabledByUserId: Record<string, boolean>;
 };
 
+type StoredSaladRuntimeSettings = {
+  apiBaseUrl: string | null;
+  organization: string | null;
+  project: string | null;
+  container: string | null;
+};
+
 type StoredAiProviderProfile = {
   aiApiKeyEnc: string | null;
   aiBaseUrl: string | null;
   aiModel: string | null;
+  saladRuntime: StoredSaladRuntimeSettings;
 };
 
 type StoredAiProviderProfiles = {
@@ -2592,11 +2623,21 @@ function normalizeOpenAiAdminModel(value: unknown): OpenAiAdminModel | null {
   return trimmed as OpenAiAdminModel;
 }
 
+function emptySaladRuntimeSettings(): StoredSaladRuntimeSettings {
+  return {
+    apiBaseUrl: null,
+    organization: null,
+    project: null,
+    container: null
+  };
+}
+
 function emptyAiProviderProfile(): StoredAiProviderProfile {
   return {
     aiApiKeyEnc: null,
     aiBaseUrl: null,
-    aiModel: null
+    aiModel: null,
+    saladRuntime: emptySaladRuntimeSettings()
   };
 }
 
@@ -2604,6 +2645,32 @@ function normalizeProviderForProfile(
   provider: "openai" | "ollama" | "disabled" | null | undefined
 ): "openai" | "ollama" {
   return provider === "ollama" ? "ollama" : "openai";
+}
+
+function parseStoredSaladRuntimeSettings(value: unknown): StoredSaladRuntimeSettings {
+  const record = parseJsonObject(value);
+  const apiBaseUrl =
+    typeof record.apiBaseUrl === "string" && record.apiBaseUrl.trim()
+      ? record.apiBaseUrl.trim().slice(0, 500)
+      : null;
+  const organization =
+    typeof record.organization === "string" && record.organization.trim()
+      ? record.organization.trim().slice(0, 191)
+      : null;
+  const project =
+    typeof record.project === "string" && record.project.trim()
+      ? record.project.trim().slice(0, 191)
+      : null;
+  const container =
+    typeof record.container === "string" && record.container.trim()
+      ? record.container.trim().slice(0, 191)
+      : null;
+  return {
+    apiBaseUrl,
+    organization,
+    project,
+    container
+  };
 }
 
 function parseStoredAiProviderProfile(value: unknown): StoredAiProviderProfile {
@@ -2622,10 +2689,12 @@ function parseStoredAiProviderProfile(value: unknown): StoredAiProviderProfile {
     typeof record.aiModel === "string" && record.aiModel.trim()
       ? record.aiModel.trim()
       : null;
+  const saladRuntime = parseStoredSaladRuntimeSettings(record.saladRuntime);
   return {
     aiApiKeyEnc,
     aiBaseUrl,
-    aiModel
+    aiModel,
+    saladRuntime
   };
 }
 
@@ -2722,7 +2791,8 @@ function parseStoredApiKeysSettings(value: unknown): StoredApiKeysSettings {
     aiModel:
       parsedOpenAiProfile.aiModel
       ?? openaiModelFromLegacy
-      ?? (activeLegacyProvider === "openai" ? aiModel : null)
+      ?? (activeLegacyProvider === "openai" ? aiModel : null),
+    saladRuntime: parsedOpenAiProfile.saladRuntime
   };
   const ollamaProfile: StoredAiProviderProfile = {
     aiApiKeyEnc:
@@ -2733,7 +2803,8 @@ function parseStoredApiKeysSettings(value: unknown): StoredApiKeysSettings {
       ?? (activeLegacyProvider === "ollama" ? aiBaseUrl : null),
     aiModel:
       parsedOllamaProfile.aiModel
-      ?? (activeLegacyProvider === "ollama" ? aiModel : null)
+      ?? (activeLegacyProvider === "ollama" ? aiModel : null),
+    saladRuntime: parsedOllamaProfile.saladRuntime
   };
   const effectiveProviderForTopLevel = normalizeProviderForProfile(aiProvider);
   const selectedProfile = effectiveProviderForTopLevel === "ollama" ? ollamaProfile : openaiProfile;
@@ -2861,13 +2932,25 @@ function toPublicApiKeysSettings(value: StoredApiKeysSettings) {
         aiBaseUrl: openaiProfile.aiBaseUrl,
         aiModel: openaiProfile.aiModel,
         aiApiKeyMasked: openAiApiKeyMasked,
-        hasAiApiKey: Boolean(openaiProfile.aiApiKeyEnc ?? value.openaiApiKeyEnc)
+        hasAiApiKey: Boolean(openaiProfile.aiApiKeyEnc ?? value.openaiApiKeyEnc),
+        saladRuntime: {
+          apiBaseUrl: openaiProfile.saladRuntime.apiBaseUrl,
+          organization: openaiProfile.saladRuntime.organization,
+          project: openaiProfile.saladRuntime.project,
+          container: openaiProfile.saladRuntime.container
+        }
       },
       ollama: {
         aiBaseUrl: ollamaProfile.aiBaseUrl,
         aiModel: ollamaProfile.aiModel,
         aiApiKeyMasked: maskEncrypted(ollamaProfile.aiApiKeyEnc),
-        hasAiApiKey: Boolean(ollamaProfile.aiApiKeyEnc)
+        hasAiApiKey: Boolean(ollamaProfile.aiApiKeyEnc),
+        saladRuntime: {
+          apiBaseUrl: ollamaProfile.saladRuntime.apiBaseUrl,
+          organization: ollamaProfile.saladRuntime.organization,
+          project: ollamaProfile.saladRuntime.project,
+          container: ollamaProfile.saladRuntime.container
+        }
       }
     }
   };
@@ -2942,6 +3025,29 @@ function resolveEffectiveAiApiKey(
     }
     if (provider === "ollama") {
       return { apiKey: "ollama", source: "none", decryptError: false };
+    }
+    return { apiKey: null, source: "none", decryptError: false };
+  }
+
+  try {
+    const decrypted = decryptSecret(keyEnc).trim();
+    if (!decrypted) {
+      return { apiKey: null, source: "none", decryptError: false };
+    }
+    return { apiKey: decrypted, source: "db", decryptError: false };
+  } catch {
+    return { apiKey: null, source: "db", decryptError: true };
+  }
+}
+
+function resolveOllamaProfileAiApiKey(
+  settings: StoredApiKeysSettings
+): { apiKey: string | null; source: ApiKeySource; decryptError: boolean } {
+  const keyEnc = settings.aiProfiles.ollama.aiApiKeyEnc;
+  if (!keyEnc) {
+    const envApiKey = process.env.AI_API_KEY?.trim() ?? "";
+    if (envApiKey && envApiKey.toLowerCase() !== "ollama") {
+      return { apiKey: envApiKey, source: "env", decryptError: false };
     }
     return { apiKey: null, source: "none", decryptError: false };
   }
@@ -10399,6 +10505,233 @@ app.get("/admin/settings/api-keys/status", requireAuth, async (_req, res) => {
   }
 });
 
+function resolveSaladRuntimeHttpStatus(result: {
+  ok: boolean;
+  httpStatus?: number;
+  errorCode?: string;
+}): number {
+  if (result.ok) return 200;
+  if (result.errorCode === "auth_failed") return 401;
+  if (result.errorCode === "not_found") return 404;
+  if (result.errorCode === "rate_limited") return 429;
+  if (result.errorCode === "upstream_error") return 502;
+  if (Number.isFinite(Number(result.httpStatus))) {
+    const status = Number(result.httpStatus);
+    if (status >= 400 && status <= 599) return status;
+  }
+  return 502;
+}
+
+app.get("/admin/settings/api-keys/salad-runtime/status", requireAuth, async (_req, res) => {
+  if (!(await requireSuperadmin(res))) return;
+  const row = await db.globalSetting.findUnique({
+    where: { key: GLOBAL_SETTING_API_KEYS_KEY },
+    select: { value: true }
+  });
+  const settings = parseStoredApiKeysSettings(row?.value);
+  const resolvedConfig = resolveSaladRuntimeConfig(settings);
+  if (!resolvedConfig.isConfigured) {
+    return res.status(400).json({
+      ok: false,
+      error: "salad_runtime_not_configured",
+      missingFields: resolvedConfig.missingFields,
+      target: resolvedConfig.config,
+      checkedAt: new Date().toISOString(),
+      message: "Salad runtime target is not fully configured."
+    });
+  }
+  const resolvedKey = resolveOllamaProfileAiApiKey(settings);
+  if (resolvedKey.decryptError) {
+    return res.status(400).json({
+      ok: false,
+      error: "auth_failed",
+      source: resolvedKey.source,
+      target: resolvedConfig.config,
+      checkedAt: new Date().toISOString(),
+      message: "Stored Ollama AI key could not be decrypted."
+    });
+  }
+  if (!resolvedKey.apiKey) {
+    return res.status(400).json({
+      ok: false,
+      error: "missing_key",
+      source: resolvedKey.source,
+      target: resolvedConfig.config,
+      checkedAt: new Date().toISOString(),
+      message: "No Ollama AI key configured for Salad runtime control."
+    });
+  }
+
+  const result = await getSaladRuntimeStatus(resolvedConfig.config, resolvedKey.apiKey);
+  const statusCode = resolveSaladRuntimeHttpStatus(result);
+  if (result.ok) {
+    logger.info("salad_runtime_status_ok", {
+      target: resolvedConfig.config,
+      latency_ms: result.latencyMs,
+      state: result.state
+    });
+  } else {
+    logger.warn("salad_runtime_status_failed", {
+      target: resolvedConfig.config,
+      latency_ms: result.latencyMs,
+      state: result.state,
+      error_code: result.errorCode,
+      http_status: result.httpStatus,
+      message: result.message
+    });
+  }
+
+  return res.status(statusCode).json({
+    ...result,
+    source: resolvedKey.source,
+    target: resolvedConfig.config
+  });
+});
+
+app.post("/admin/settings/api-keys/salad-runtime/start", requireAuth, async (_req, res) => {
+  if (!(await requireSuperadmin(res))) return;
+  const row = await db.globalSetting.findUnique({
+    where: { key: GLOBAL_SETTING_API_KEYS_KEY },
+    select: { value: true }
+  });
+  const settings = parseStoredApiKeysSettings(row?.value);
+  const resolvedConfig = resolveSaladRuntimeConfig(settings);
+  if (!resolvedConfig.isConfigured) {
+    return res.status(400).json({
+      ok: false,
+      error: "salad_runtime_not_configured",
+      missingFields: resolvedConfig.missingFields,
+      target: resolvedConfig.config,
+      checkedAt: new Date().toISOString(),
+      message: "Salad runtime target is not fully configured."
+    });
+  }
+  const resolvedKey = resolveOllamaProfileAiApiKey(settings);
+  if (resolvedKey.decryptError) {
+    return res.status(400).json({
+      ok: false,
+      error: "auth_failed",
+      source: resolvedKey.source,
+      target: resolvedConfig.config,
+      checkedAt: new Date().toISOString(),
+      message: "Stored Ollama AI key could not be decrypted."
+    });
+  }
+  if (!resolvedKey.apiKey) {
+    return res.status(400).json({
+      ok: false,
+      error: "missing_key",
+      source: resolvedKey.source,
+      target: resolvedConfig.config,
+      checkedAt: new Date().toISOString(),
+      message: "No Ollama AI key configured for Salad runtime control."
+    });
+  }
+
+  const actionResult = await startSaladContainer(resolvedConfig.config, resolvedKey.apiKey);
+  const statusAfter = actionResult.ok
+    ? await getSaladRuntimeStatus(resolvedConfig.config, resolvedKey.apiKey)
+    : null;
+  const result = actionResult.ok && statusAfter?.ok ? statusAfter : actionResult;
+  const statusCode = resolveSaladRuntimeHttpStatus(result);
+
+  if (result.ok) {
+    logger.info("salad_runtime_start_ok", {
+      target: resolvedConfig.config,
+      latency_ms: result.latencyMs,
+      state: result.state
+    });
+  } else {
+    logger.warn("salad_runtime_start_failed", {
+      target: resolvedConfig.config,
+      latency_ms: result.latencyMs,
+      state: result.state,
+      error_code: result.errorCode,
+      http_status: result.httpStatus,
+      message: result.message
+    });
+  }
+
+  return res.status(statusCode).json({
+    ...result,
+    source: resolvedKey.source,
+    target: resolvedConfig.config,
+    actionAccepted: actionResult.ok
+  });
+});
+
+app.post("/admin/settings/api-keys/salad-runtime/stop", requireAuth, async (_req, res) => {
+  if (!(await requireSuperadmin(res))) return;
+  const row = await db.globalSetting.findUnique({
+    where: { key: GLOBAL_SETTING_API_KEYS_KEY },
+    select: { value: true }
+  });
+  const settings = parseStoredApiKeysSettings(row?.value);
+  const resolvedConfig = resolveSaladRuntimeConfig(settings);
+  if (!resolvedConfig.isConfigured) {
+    return res.status(400).json({
+      ok: false,
+      error: "salad_runtime_not_configured",
+      missingFields: resolvedConfig.missingFields,
+      target: resolvedConfig.config,
+      checkedAt: new Date().toISOString(),
+      message: "Salad runtime target is not fully configured."
+    });
+  }
+  const resolvedKey = resolveOllamaProfileAiApiKey(settings);
+  if (resolvedKey.decryptError) {
+    return res.status(400).json({
+      ok: false,
+      error: "auth_failed",
+      source: resolvedKey.source,
+      target: resolvedConfig.config,
+      checkedAt: new Date().toISOString(),
+      message: "Stored Ollama AI key could not be decrypted."
+    });
+  }
+  if (!resolvedKey.apiKey) {
+    return res.status(400).json({
+      ok: false,
+      error: "missing_key",
+      source: resolvedKey.source,
+      target: resolvedConfig.config,
+      checkedAt: new Date().toISOString(),
+      message: "No Ollama AI key configured for Salad runtime control."
+    });
+  }
+
+  const actionResult = await stopSaladContainer(resolvedConfig.config, resolvedKey.apiKey);
+  const statusAfter = actionResult.ok
+    ? await getSaladRuntimeStatus(resolvedConfig.config, resolvedKey.apiKey)
+    : null;
+  const result = actionResult.ok && statusAfter?.ok ? statusAfter : actionResult;
+  const statusCode = resolveSaladRuntimeHttpStatus(result);
+
+  if (result.ok) {
+    logger.info("salad_runtime_stop_ok", {
+      target: resolvedConfig.config,
+      latency_ms: result.latencyMs,
+      state: result.state
+    });
+  } else {
+    logger.warn("salad_runtime_stop_failed", {
+      target: resolvedConfig.config,
+      latency_ms: result.latencyMs,
+      state: result.state,
+      error_code: result.errorCode,
+      http_status: result.httpStatus,
+      message: result.message
+    });
+  }
+
+  return res.status(statusCode).json({
+    ...result,
+    source: resolvedKey.source,
+    target: resolvedConfig.config,
+    actionAccepted: actionResult.ok
+  });
+});
+
 app.get("/admin/settings/api-keys/fmp-status", requireAuth, async (_req, res) => {
   if (!(await requireSuperadmin(res))) return;
 
@@ -10534,6 +10867,51 @@ app.put("/admin/settings/api-keys", requireAuth, async (req, res) => {
     nextProfiles.openai.aiModel = parsed.data.clearOpenaiModel
       ? null
       : (parsed.data.openaiModel?.trim() || null);
+  }
+
+  const saladRuntimeSpecified =
+    parsed.data.clearSaladApiBaseUrl
+    || parsed.data.saladApiBaseUrl !== undefined
+    || parsed.data.clearSaladOrganization
+    || parsed.data.saladOrganization !== undefined
+    || parsed.data.clearSaladProject
+    || parsed.data.saladProject !== undefined
+    || parsed.data.clearSaladContainer
+    || parsed.data.saladContainer !== undefined;
+  if (saladRuntimeSpecified) {
+    const currentSaladRuntime = nextProfiles.ollama.saladRuntime ?? emptySaladRuntimeSettings();
+    const nextSaladRuntime: StoredSaladRuntimeSettings = {
+      ...currentSaladRuntime
+    };
+    const saladBaseUrlSpecified =
+      parsed.data.clearSaladApiBaseUrl || parsed.data.saladApiBaseUrl !== undefined;
+    if (saladBaseUrlSpecified) {
+      nextSaladRuntime.apiBaseUrl = parsed.data.clearSaladApiBaseUrl
+        ? null
+        : (parsed.data.saladApiBaseUrl?.trim() || null);
+    }
+    const saladOrganizationSpecified =
+      parsed.data.clearSaladOrganization || parsed.data.saladOrganization !== undefined;
+    if (saladOrganizationSpecified) {
+      nextSaladRuntime.organization = parsed.data.clearSaladOrganization
+        ? null
+        : (parsed.data.saladOrganization?.trim() || null);
+    }
+    const saladProjectSpecified =
+      parsed.data.clearSaladProject || parsed.data.saladProject !== undefined;
+    if (saladProjectSpecified) {
+      nextSaladRuntime.project = parsed.data.clearSaladProject
+        ? null
+        : (parsed.data.saladProject?.trim() || null);
+    }
+    const saladContainerSpecified =
+      parsed.data.clearSaladContainer || parsed.data.saladContainer !== undefined;
+    if (saladContainerSpecified) {
+      nextSaladRuntime.container = parsed.data.clearSaladContainer
+        ? null
+        : (parsed.data.saladContainer?.trim() || null);
+    }
+    nextProfiles.ollama.saladRuntime = nextSaladRuntime;
   }
 
   const nextProvider = parsed.data.aiProvider ?? existing.aiProvider;

@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { useEffect, useState } from "react";
 import { useLocale, useTranslations } from "next-intl";
-import { ApiError, apiGet, apiPut } from "../../../lib/api";
+import { ApiError, apiGet, apiPost, apiPut } from "../../../lib/api";
 import { withLocalePath, type AppLocale } from "../../../i18n/config";
 
 function errMsg(e: unknown): string {
@@ -19,12 +19,24 @@ type ApiKeysSettingsResponse = {
       aiModel?: string | null;
       aiApiKeyMasked?: string | null;
       hasAiApiKey?: boolean;
+      saladRuntime?: {
+        apiBaseUrl?: string | null;
+        organization?: string | null;
+        project?: string | null;
+        container?: string | null;
+      };
     };
     ollama?: {
       aiBaseUrl?: string | null;
       aiModel?: string | null;
       aiApiKeyMasked?: string | null;
       hasAiApiKey?: boolean;
+      saladRuntime?: {
+        apiBaseUrl?: string | null;
+        organization?: string | null;
+        project?: string | null;
+        container?: string | null;
+      };
     };
   };
   aiApiKeyMasked?: string | null;
@@ -52,6 +64,25 @@ type ApiKeysSettingsResponse = {
   envOverrideFmp: boolean;
 };
 
+type SaladRuntimeState = "running" | "stopped" | "starting" | "stopping" | "error" | "unknown";
+
+type SaladRuntimeResponse = {
+  ok: boolean;
+  state: SaladRuntimeState;
+  checkedAt: string;
+  latencyMs?: number;
+  httpStatus?: number;
+  message: string;
+  source?: "env" | "db" | "none";
+  target?: {
+    apiBaseUrl?: string;
+    organization?: string;
+    project?: string;
+    container?: string;
+  };
+  error?: string;
+};
+
 type ApiKeyHealthResponse = {
   ok: boolean;
   status: "ok" | "missing_key" | "error";
@@ -64,6 +95,8 @@ type ApiKeyHealthResponse = {
   provider?: string;
   baseUrl?: string;
 };
+
+const DEFAULT_SALAD_API_BASE_URL = "https://api.salad.com/api/public";
 
 export default function AdminApiKeysPage() {
   const t = useTranslations("admin.apiKeys");
@@ -79,11 +112,45 @@ export default function AdminApiKeysPage() {
   const [hasAiApiKey, setHasAiApiKey] = useState(false);
   const [aiProvider, setAiProvider] = useState<"openai" | "ollama" | "disabled">("openai");
   const [aiProfiles, setAiProfiles] = useState<{
-    openai: { aiBaseUrl: string; aiModel: string; aiApiKeyMasked: string | null; hasAiApiKey: boolean };
-    ollama: { aiBaseUrl: string; aiModel: string; aiApiKeyMasked: string | null; hasAiApiKey: boolean };
+    openai: {
+      aiBaseUrl: string;
+      aiModel: string;
+      aiApiKeyMasked: string | null;
+      hasAiApiKey: boolean;
+      saladRuntime: { apiBaseUrl: string; organization: string; project: string; container: string };
+    };
+    ollama: {
+      aiBaseUrl: string;
+      aiModel: string;
+      aiApiKeyMasked: string | null;
+      hasAiApiKey: boolean;
+      saladRuntime: { apiBaseUrl: string; organization: string; project: string; container: string };
+    };
   }>({
-    openai: { aiBaseUrl: "", aiModel: "", aiApiKeyMasked: null, hasAiApiKey: false },
-    ollama: { aiBaseUrl: "", aiModel: "", aiApiKeyMasked: null, hasAiApiKey: false }
+    openai: {
+      aiBaseUrl: "",
+      aiModel: "",
+      aiApiKeyMasked: null,
+      hasAiApiKey: false,
+      saladRuntime: {
+        apiBaseUrl: DEFAULT_SALAD_API_BASE_URL,
+        organization: "",
+        project: "",
+        container: ""
+      }
+    },
+    ollama: {
+      aiBaseUrl: "",
+      aiModel: "",
+      aiApiKeyMasked: null,
+      hasAiApiKey: false,
+      saladRuntime: {
+        apiBaseUrl: DEFAULT_SALAD_API_BASE_URL,
+        organization: "",
+        project: "",
+        container: ""
+      }
+    }
   });
   const [aiBaseUrl, setAiBaseUrl] = useState("");
   const [aiModel, setAiModel] = useState<string>("");
@@ -111,6 +178,21 @@ export default function AdminApiKeysPage() {
   const [health, setHealth] = useState<ApiKeyHealthResponse | null>(null);
   const [fmpHealthLoading, setFmpHealthLoading] = useState(false);
   const [fmpHealth, setFmpHealth] = useState<ApiKeyHealthResponse | null>(null);
+  const [saladRuntimeConfig, setSaladRuntimeConfig] = useState<{
+    apiBaseUrl: string;
+    organization: string;
+    project: string;
+    container: string;
+  }>({
+    apiBaseUrl: DEFAULT_SALAD_API_BASE_URL,
+    organization: "",
+    project: "",
+    container: ""
+  });
+  const [saladRuntimeStatus, setSaladRuntimeStatus] = useState<SaladRuntimeResponse | null>(null);
+  const [saladActionLoading, setSaladActionLoading] = useState<
+    "none" | "save" | "status" | "start" | "stop"
+  >("none");
 
   function applyApiKeysSettings(res: ApiKeysSettingsResponse) {
     const profiles = {
@@ -121,16 +203,34 @@ export default function AdminApiKeysPage() {
         hasAiApiKey:
           typeof res.aiProfiles?.openai?.hasAiApiKey === "boolean"
             ? Boolean(res.aiProfiles?.openai?.hasAiApiKey)
-            : Boolean(res.hasOpenAiApiKey)
+            : Boolean(res.hasOpenAiApiKey),
+        saladRuntime: {
+          apiBaseUrl: res.aiProfiles?.openai?.saladRuntime?.apiBaseUrl ?? DEFAULT_SALAD_API_BASE_URL,
+          organization: res.aiProfiles?.openai?.saladRuntime?.organization ?? "",
+          project: res.aiProfiles?.openai?.saladRuntime?.project ?? "",
+          container: res.aiProfiles?.openai?.saladRuntime?.container ?? ""
+        }
       },
       ollama: {
         aiBaseUrl: res.aiProfiles?.ollama?.aiBaseUrl ?? "",
         aiModel: res.aiProfiles?.ollama?.aiModel ?? "",
         aiApiKeyMasked: res.aiProfiles?.ollama?.aiApiKeyMasked ?? null,
-        hasAiApiKey: Boolean(res.aiProfiles?.ollama?.hasAiApiKey)
+        hasAiApiKey: Boolean(res.aiProfiles?.ollama?.hasAiApiKey),
+        saladRuntime: {
+          apiBaseUrl: res.aiProfiles?.ollama?.saladRuntime?.apiBaseUrl ?? DEFAULT_SALAD_API_BASE_URL,
+          organization: res.aiProfiles?.ollama?.saladRuntime?.organization ?? "",
+          project: res.aiProfiles?.ollama?.saladRuntime?.project ?? "",
+          container: res.aiProfiles?.ollama?.saladRuntime?.container ?? ""
+        }
       }
     };
     setAiProfiles(profiles);
+    setSaladRuntimeConfig({
+      apiBaseUrl: profiles.ollama.saladRuntime.apiBaseUrl || DEFAULT_SALAD_API_BASE_URL,
+      organization: profiles.ollama.saladRuntime.organization,
+      project: profiles.ollama.saladRuntime.project,
+      container: profiles.ollama.saladRuntime.container
+    });
 
     const selectedProvider = (res.aiProvider ?? "openai") as "openai" | "ollama" | "disabled";
     const selectedProfile = selectedProvider === "ollama" ? profiles.ollama : profiles.openai;
@@ -205,6 +305,23 @@ export default function AdminApiKeysPage() {
     }
   }
 
+  async function loadSaladRuntimeStatus() {
+    setSaladActionLoading("status");
+    try {
+      const res = await apiGet<SaladRuntimeResponse>("/admin/settings/api-keys/salad-runtime/status");
+      setSaladRuntimeStatus(res);
+    } catch (e) {
+      setSaladRuntimeStatus({
+        ok: false,
+        state: "error",
+        checkedAt: new Date().toISOString(),
+        message: errMsg(e)
+      });
+    } finally {
+      setSaladActionLoading("none");
+    }
+  }
+
   async function loadAll() {
     setLoading(true);
     setError(null);
@@ -221,6 +338,7 @@ export default function AdminApiKeysPage() {
       applyApiKeysSettings(res);
       setAiApiKey("");
       setFmpApiKey("");
+      setSaladRuntimeStatus(null);
       await loadHealthStatus();
       await loadFmpHealthStatus();
     } catch (e) {
@@ -372,6 +490,83 @@ export default function AdminApiKeysPage() {
     }
   }
 
+  async function saveSaladRuntimeConfig() {
+    setError(null);
+    setNotice(null);
+    setSaladActionLoading("save");
+    try {
+      const apiBaseUrl = saladRuntimeConfig.apiBaseUrl.trim();
+      const organization = saladRuntimeConfig.organization.trim();
+      const project = saladRuntimeConfig.project.trim();
+      const container = saladRuntimeConfig.container.trim();
+      const res = await apiPut<ApiKeysSettingsResponse>("/admin/settings/api-keys", {
+        saladApiBaseUrl: apiBaseUrl || undefined,
+        clearSaladApiBaseUrl: !apiBaseUrl,
+        saladOrganization: organization || undefined,
+        clearSaladOrganization: !organization,
+        saladProject: project || undefined,
+        clearSaladProject: !project,
+        saladContainer: container || undefined,
+        clearSaladContainer: !container
+      });
+      applyApiKeysSettings(res);
+      setNotice(t("messages.saladRuntimeSaved"));
+    } catch (e) {
+      setError(errMsg(e));
+    } finally {
+      setSaladActionLoading("none");
+    }
+  }
+
+  async function startSaladRuntime() {
+    setError(null);
+    setNotice(null);
+    setSaladActionLoading("start");
+    try {
+      const res = await apiPost<SaladRuntimeResponse>("/admin/settings/api-keys/salad-runtime/start");
+      setSaladRuntimeStatus(res);
+      setNotice(t("messages.saladRuntimeStarted"));
+    } catch (e) {
+      setError(errMsg(e));
+    } finally {
+      setSaladActionLoading("none");
+    }
+  }
+
+  async function stopSaladRuntime() {
+    const confirmed = window.confirm(t("messages.confirmStopSaladRuntime"));
+    if (!confirmed) return;
+    setError(null);
+    setNotice(null);
+    setSaladActionLoading("stop");
+    try {
+      const res = await apiPost<SaladRuntimeResponse>("/admin/settings/api-keys/salad-runtime/stop");
+      setSaladRuntimeStatus(res);
+      setNotice(t("messages.saladRuntimeStopped"));
+    } catch (e) {
+      setError(errMsg(e));
+    } finally {
+      setSaladActionLoading("none");
+    }
+  }
+
+  const hasSaladRuntimeConfig = Boolean(
+    saladRuntimeConfig.organization.trim()
+    || saladRuntimeConfig.project.trim()
+    || saladRuntimeConfig.container.trim()
+    || saladRuntimeConfig.apiBaseUrl.trim()
+  );
+  const showSaladRuntimeSection = aiProvider === "ollama" || hasSaladRuntimeConfig;
+  const saladStatusBadgeClass =
+    saladRuntimeStatus?.state === "running"
+      ? "badgeOk"
+      : saladRuntimeStatus?.state === "starting" || saladRuntimeStatus?.state === "stopping"
+        ? "badgeWarn"
+        : saladRuntimeStatus?.state === "stopped"
+          ? "badge"
+          : "badgeDanger";
+  const saladActionBusy = saladActionLoading !== "none";
+
   return (
     <div className="settingsWrap">
       <div className="adminTopActions">
@@ -476,6 +671,14 @@ export default function AdminApiKeysPage() {
                   setAiModel(profile.aiModel ?? "");
                   setAiApiKeyMasked(profile.aiApiKeyMasked ?? null);
                   setHasAiApiKey(Boolean(profile.hasAiApiKey));
+                  if (nextProvider === "ollama") {
+                    setSaladRuntimeConfig({
+                      apiBaseUrl: aiProfiles.ollama.saladRuntime.apiBaseUrl || DEFAULT_SALAD_API_BASE_URL,
+                      organization: aiProfiles.ollama.saladRuntime.organization,
+                      project: aiProfiles.ollama.saladRuntime.project,
+                      container: aiProfiles.ollama.saladRuntime.container
+                    });
+                  }
                 }}
               >
                 {providerOptions.map((provider) => (
@@ -548,6 +751,147 @@ export default function AdminApiKeysPage() {
                 {t("removeStoredKey")}
               </button>
             </div>
+
+            {showSaladRuntimeSection ? (
+              <section
+                style={{
+                  marginTop: 16,
+                  paddingTop: 14,
+                  borderTop: "1px solid rgba(255, 193, 7, 0.2)"
+                }}
+              >
+                <div className="settingsSectionHeader" style={{ marginBottom: 8 }}>
+                  <h4 style={{ margin: 0 }}>{t("ai.saladRuntime.sectionTitle")}</h4>
+                </div>
+                <div style={{ fontSize: 12, color: "var(--muted)", marginBottom: 10 }}>
+                  {t("ai.saladRuntime.hint")}
+                </div>
+                <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap", marginBottom: 10 }}>
+                  <span className={`badge ${saladStatusBadgeClass}`}>
+                    {t("ai.saladRuntime.statusLabel")}:{" "}
+                    {saladActionLoading === "status"
+                      ? t("checking")
+                      : t(`ai.saladRuntime.states.${saladRuntimeStatus?.state ?? "unknown"}`)}
+                  </span>
+                  <span style={{ fontSize: 12, color: "var(--muted)" }}>
+                    {saladRuntimeStatus?.checkedAt
+                      ? `${t("checked")} ${new Date(saladRuntimeStatus.checkedAt).toLocaleString()}`
+                      : t("statusNotChecked")}
+                    {typeof saladRuntimeStatus?.latencyMs === "number"
+                      ? ` · ${saladRuntimeStatus.latencyMs}ms`
+                      : ""}
+                  </span>
+                </div>
+                {saladRuntimeStatus?.message ? (
+                  <div style={{ fontSize: 12, color: "var(--muted)", marginBottom: 10 }}>
+                    {saladRuntimeStatus.message}
+                  </div>
+                ) : null}
+
+                <label style={{ display: "grid", gap: 6, marginBottom: 10 }}>
+                  <span style={{ fontSize: 12, color: "var(--muted)" }}>{t("ai.saladRuntime.apiBaseUrlLabel")}</span>
+                  <input
+                    className="input"
+                    type="text"
+                    value={saladRuntimeConfig.apiBaseUrl}
+                    placeholder={DEFAULT_SALAD_API_BASE_URL}
+                    onChange={(e) =>
+                      setSaladRuntimeConfig((prev) => ({
+                        ...prev,
+                        apiBaseUrl: e.target.value
+                      }))
+                    }
+                  />
+                </label>
+                <label style={{ display: "grid", gap: 6, marginBottom: 10 }}>
+                  <span style={{ fontSize: 12, color: "var(--muted)" }}>{t("ai.saladRuntime.organizationLabel")}</span>
+                  <input
+                    className="input"
+                    type="text"
+                    value={saladRuntimeConfig.organization}
+                    placeholder="your-organization"
+                    onChange={(e) =>
+                      setSaladRuntimeConfig((prev) => ({
+                        ...prev,
+                        organization: e.target.value
+                      }))
+                    }
+                  />
+                </label>
+                <label style={{ display: "grid", gap: 6, marginBottom: 10 }}>
+                  <span style={{ fontSize: 12, color: "var(--muted)" }}>{t("ai.saladRuntime.projectLabel")}</span>
+                  <input
+                    className="input"
+                    type="text"
+                    value={saladRuntimeConfig.project}
+                    placeholder="your-project"
+                    onChange={(e) =>
+                      setSaladRuntimeConfig((prev) => ({
+                        ...prev,
+                        project: e.target.value
+                      }))
+                    }
+                  />
+                </label>
+                <label style={{ display: "grid", gap: 6, marginBottom: 10 }}>
+                  <span style={{ fontSize: 12, color: "var(--muted)" }}>{t("ai.saladRuntime.containerLabel")}</span>
+                  <input
+                    className="input"
+                    type="text"
+                    value={saladRuntimeConfig.container}
+                    placeholder="your-container"
+                    onChange={(e) =>
+                      setSaladRuntimeConfig((prev) => ({
+                        ...prev,
+                        container: e.target.value
+                      }))
+                    }
+                  />
+                </label>
+
+                <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                  <button
+                    className="btn btnPrimary"
+                    onClick={() => void saveSaladRuntimeConfig()}
+                    disabled={saladActionBusy}
+                  >
+                    {saladActionLoading === "save"
+                      ? t("checkingButton")
+                      : t("ai.saladRuntime.saveConfig")}
+                  </button>
+                  <button
+                    className="btn"
+                    type="button"
+                    onClick={() => void loadSaladRuntimeStatus()}
+                    disabled={saladActionBusy}
+                  >
+                    {saladActionLoading === "status"
+                      ? t("checkingButton")
+                      : t("ai.saladRuntime.refreshStatus")}
+                  </button>
+                  <button
+                    className="btn"
+                    type="button"
+                    onClick={() => void startSaladRuntime()}
+                    disabled={saladActionBusy}
+                  >
+                    {saladActionLoading === "start"
+                      ? t("checkingButton")
+                      : t("ai.saladRuntime.start")}
+                  </button>
+                  <button
+                    className="btn btnStop"
+                    type="button"
+                    onClick={() => void stopSaladRuntime()}
+                    disabled={saladActionBusy}
+                  >
+                    {saladActionLoading === "stop"
+                      ? t("checkingButton")
+                      : t("ai.saladRuntime.stop")}
+                  </button>
+                </div>
+              </section>
+            ) : null}
           </section>
 
           <section className="card settingsSection">
