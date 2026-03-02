@@ -48,7 +48,8 @@
   "subscription": {
     "title": "Subscription & Billing",
     "messages": {
-      "noData": "No subscription data available."
+      "noData": "No subscription data available.",
+      "activatedInstantly": "Package activated instantly."
     },
     "status": {
       "plan": "Plan",

@@ -120,11 +120,20 @@ export default function SubscriptionPage() {
     setCheckoutLoadingPackageId(packageId);
     setMsg(null);
     try {
-      const res = await apiPost<{ payUrl: string }>("/settings/subscription/checkout", { packageId });
-      if (!res.payUrl) {
-        throw new Error("checkout_url_missing");
+      const res = await apiPost<{ payUrl?: string | null; mode?: "redirect" | "instant" }>(
+        "/settings/subscription/checkout",
+        { packageId }
+      );
+      if (res.payUrl) {
+        window.location.assign(res.payUrl);
+        return;
       }
-      window.location.assign(res.payUrl);
+      if (res.mode === "instant") {
+        setMsg(t("messages.activatedInstantly"));
+        await load();
+        return;
+      }
+      throw new Error("checkout_url_missing");
     } catch (error) {
       setMsg(errMsg(error));
     } finally {

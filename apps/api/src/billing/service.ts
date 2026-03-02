@@ -666,9 +666,8 @@ export async function listBillingPackages(): Promise<any[]> {
 export async function createBillingCheckout(params: {
   userId: string;
   packageId: string;
-}): Promise<{ order: any; payUrl: string }> {
+}): Promise<{ order: any; payUrl: string | null; mode: "redirect" | "instant" }> {
   if (!(await isBillingEnabled())) throw new Error("billing_disabled");
-  if (!(await isCcpayConfigured())) throw new Error("ccpay_not_configured");
 
   await ensureBillingDefaults();
 
@@ -682,11 +681,44 @@ export async function createBillingCheckout(params: {
     throw new Error("pro_required_for_topup");
   }
 
-  const webBaseUrl = await getCcpayWebBaseUrl();
-  const priceFiatId = await getCcpayPriceFiatId();
   const orderId = `UTRADE_${crypto.randomUUID()}`;
   const product = kind === "plan" ? `${pkg.name} (${pkg.billingMonths} month)` : pkg.name;
   const amountCents = normalizeInt(pkg.priceCents, 0, 0);
+
+  if (amountCents <= 0) {
+    const created = await db.billingOrder.create({
+      data: {
+        provider: "CCPAYMENT",
+        userId: params.userId,
+        packageId: pkg.id,
+        status: "PENDING",
+        amountCents,
+        currency: "USD",
+        merchantOrderId: orderId,
+        createPayload: {
+          orderId,
+          product,
+          price: formatUsdCents(amountCents),
+          checkoutMode: "internal_zero_amount"
+        }
+      }
+    });
+
+    await applyPaidOrder(orderId, "internal_zero_amount");
+    const updated = await db.billingOrder.findUnique({
+      where: { id: created.id }
+    });
+    return {
+      order: updated ?? created,
+      payUrl: null,
+      mode: "instant"
+    };
+  }
+
+  if (!(await isCcpayConfigured())) throw new Error("ccpay_not_configured");
+
+  const webBaseUrl = await getCcpayWebBaseUrl();
+  const priceFiatId = await getCcpayPriceFiatId();
   const returnUrl = new URL("/settings/subscription", webBaseUrl);
   returnUrl.searchParams.set("checkout", "success");
   returnUrl.searchParams.set("order", orderId);
@@ -767,7 +799,8 @@ export async function createBillingCheckout(params: {
 
   return {
     order: updated,
-    payUrl: String(invoiceUrl)
+    payUrl: String(invoiceUrl),
+    mode: "redirect"
   };
 }
 
@@ -846,30 +879,45 @@ export async function applyPaidOrder(merchantOrderId: string, statusRaw: string)
     let nextMaxTotal = normalizeInt(existingSub.maxBotsTotal, FREE_MAX_BOTS_TOTAL, 0);
     let nextAllowedExchanges = normalizeStringArray(existingSub.allowedExchanges, ["*"]);
     let nextMonthlyTokens = toBigInt(existingSub.monthlyAiTokensIncluded);
+    const currentBalance = toBigInt(existingSub.aiTokenBalance);
+    let nextBalance = currentBalance;
 
     let delta = 0n;
     let reason: "MONTHLY_GRANT" | "TOPUP" = "TOPUP";
 
     if (pkg.kind === "PLAN") {
-      const startAt =
-        existingSub.proValidUntil instanceof Date && existingSub.proValidUntil.getTime() > now.getTime()
-          ? existingSub.proValidUntil
-          : now;
-      nextPlan = "pro";
+      const packagePlan: EffectivePlan = pkg.plan === "FREE" ? "free" : "pro";
+      nextPlan = packagePlan;
       nextStatus = "ACTIVE";
-      nextValidUntil = addMonths(startAt, normalizeInt(pkg.billingMonths, 1, 1));
-      nextMaxRunning = normalizeInt(pkg.maxRunningBots, 3, 0);
-      nextMaxTotal = normalizeInt(pkg.maxBotsTotal, 10, 0);
+      nextMaxRunning =
+        packagePlan === "pro"
+          ? normalizeInt(pkg.maxRunningBots, 3, 0)
+          : normalizeInt(pkg.maxRunningBots, FREE_MAX_RUNNING_BOTS, 0);
+      nextMaxTotal =
+        packagePlan === "pro"
+          ? normalizeInt(pkg.maxBotsTotal, 10, 0)
+          : normalizeInt(pkg.maxBotsTotal, FREE_MAX_BOTS_TOTAL, 0);
       nextAllowedExchanges = normalizeStringArray(pkg.allowedExchanges, ["*"]);
       nextMonthlyTokens = toBigInt(pkg.monthlyAiTokens);
-      delta = toBigInt(pkg.monthlyAiTokens);
       reason = "MONTHLY_GRANT";
+      if (packagePlan === "pro") {
+        const startAt =
+          existingSub.proValidUntil instanceof Date && existingSub.proValidUntil.getTime() > now.getTime()
+            ? existingSub.proValidUntil
+            : now;
+        nextValidUntil = addMonths(startAt, normalizeInt(pkg.billingMonths, 1, 1));
+        delta = toBigInt(pkg.monthlyAiTokens);
+        nextBalance = currentBalance + delta;
+      } else {
+        nextValidUntil = null;
+        nextBalance = currentBalance < nextMonthlyTokens ? nextMonthlyTokens : currentBalance;
+        delta = nextBalance - currentBalance;
+      }
     } else {
       delta = toBigInt(pkg.topupAiTokens);
+      nextBalance = currentBalance + delta;
       reason = "TOPUP";
     }
-
-    const nextBalance = toBigInt(existingSub.aiTokenBalance) + delta;
 
     const updatedSub = await tx.userSubscription.update({
       where: { id: existingSub.id },

@@ -48,7 +48,8 @@
   "subscription": {
     "title": "Abo & Abrechnung",
     "messages": {
-      "noData": "Keine Abo-Daten verfügbar."
+      "noData": "Keine Abo-Daten verfügbar.",
+      "activatedInstantly": "Paket wurde sofort aktiviert."
     },
     "status": {
       "plan": "Plan",

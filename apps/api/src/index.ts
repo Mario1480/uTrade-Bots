@@ -11654,6 +11654,7 @@ app.post("/settings/subscription/checkout", requireAuth, async (req, res) => {
     });
     return res.json({
       payUrl: checkout.payUrl,
+      mode: checkout.mode,
       orderId: checkout.order.id,
       merchantOrderId: checkout.order.merchantOrderId
     });
