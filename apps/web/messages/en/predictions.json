@@ -66,8 +66,15 @@
     "limitBucketLocal": "Local predictions",
     "limitBucketAi": "AI predictions",
     "limitBucketComposite": "Composite predictions",
-    "limitStatus": "Create limit ({bucket}): {usage}/{limit} used, remaining {remaining}.",
-    "limitBlocked": "Create limit reached ({usage}/{limit}) for selected strategy bucket.",
+    "limitStatus": "Create limit ({bucket}) total: {usage}/{limit} used, remaining {remaining}. Running: {runningUsage}/{runningLimit}, remaining {runningRemaining}.",
+    "limitBlockedTotal": "Create total limit reached ({usage}/{limit}) for selected strategy bucket.",
+    "limitBlockedRunning": "Create running limit reached ({usage}/{limit}) for selected strategy bucket.",
+    "errors": {
+      "runningAi": "AI prediction running limit reached. Pause or stop another AI schedule first.",
+      "totalAi": "AI prediction total limit reached. Delete an existing AI schedule or buy a capacity topup.",
+      "runningComposite": "Composite prediction running limit reached. Pause or stop another composite schedule first.",
+      "totalComposite": "Composite prediction total limit reached. Delete an existing composite schedule or buy a capacity topup."
+    },
     "unlimited": "unlimited",
     "allowedPromptIds": "Allowed prompt IDs",
     "creating": "Creating...",

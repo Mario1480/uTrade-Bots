@@ -6,7 +6,6 @@ import { useEffect, useMemo, useState } from "react";
 import { useLocale, useTranslations } from "next-intl";
 import { ApiError, apiGet, apiPost } from "../../../lib/api";
 import { withLocalePath, type AppLocale } from "../../../i18n/config";
-import { type AccessSectionSettingsResponse } from "../../../src/access/accessSection";
 
 type ExchangeAccount = {
   id: string;
@@ -33,6 +32,21 @@ type StrategyKey = "dummy" | "prediction_copier";
 type CopierOrderType = "market" | "limit";
 type CopierSizingType = "fixed_usd" | "equity_pct" | "risk_pct";
 type CopierSignal = "up" | "down" | "neutral";
+
+type SubscriptionQuotaSnapshot = {
+  limits: {
+    bots: {
+      maxRunning: number;
+      maxTotal: number;
+    };
+  };
+  usage: {
+    bots: {
+      running: number;
+      total: number;
+    };
+  };
+};
 
 function errMsg(e: unknown): string {
   if (e instanceof ApiError) return `${e.message} (HTTP ${e.status})`;
@@ -106,7 +120,7 @@ export default function NewBotPage() {
 
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [accessSettings, setAccessSettings] = useState<AccessSectionSettingsResponse | null>(null);
+  const [subscriptionQuota, setSubscriptionQuota] = useState<SubscriptionQuotaSnapshot | null>(null);
 
   useEffect(() => {
     let mounted = true;
@@ -114,12 +128,12 @@ export default function NewBotPage() {
       try {
         const [accountsResponse, accessResponse] = await Promise.all([
           apiGet<{ items: ExchangeAccount[] }>("/exchange-accounts"),
-          apiGet<AccessSectionSettingsResponse>("/settings/access-section")
+          apiGet<SubscriptionQuotaSnapshot>("/settings/subscription")
         ]);
         if (!mounted) return;
         const items = accountsResponse.items ?? [];
         setAccounts(items);
-        setAccessSettings(accessResponse);
+        setSubscriptionQuota(accessResponse);
         if (!exchangeAccountId && items.length > 0) {
           setExchangeAccountId(items[0].id);
         }
@@ -191,29 +205,22 @@ export default function NewBotPage() {
 
   const canCreate = useMemo(() => {
     const blockedByLimit = Boolean(
-      accessSettings
-      && !accessSettings.bypass
-      && typeof accessSettings.remaining.bots === "number"
-      && accessSettings.remaining.bots <= 0
+      subscriptionQuota
+      && subscriptionQuota.usage.bots.total >= subscriptionQuota.limits.bots.maxTotal
     );
     const hasRequiredSource = strategyKey !== "prediction_copier" || Boolean(sourceStateId);
     return Boolean(name.trim() && symbol.trim() && exchangeAccountId && !saving && !blockedByLimit && hasRequiredSource);
-  }, [name, symbol, exchangeAccountId, saving, accessSettings, strategyKey, sourceStateId]);
+  }, [name, symbol, exchangeAccountId, saving, subscriptionQuota, strategyKey, sourceStateId]);
 
   async function onSubmit(e: React.FormEvent) {
     e.preventDefault();
     if (!canCreate) return;
 
-    if (
-      accessSettings
-      && !accessSettings.bypass
-      && typeof accessSettings.remaining.bots === "number"
-      && accessSettings.remaining.bots <= 0
-    ) {
+    if (subscriptionQuota && subscriptionQuota.usage.bots.total >= subscriptionQuota.limits.bots.maxTotal) {
       setError(
         t("limit.blocked", {
-          usage: accessSettings.usage.bots,
-          limit: accessSettings.limits.bots ?? 0
+          usage: subscriptionQuota.usage.bots.total,
+          limit: subscriptionQuota.limits.bots.maxTotal
         })
       );
       return;
@@ -332,18 +339,12 @@ export default function NewBotPage() {
           </div>
         ) : (
           <form onSubmit={onSubmit} style={{ display: "grid", gap: 12 }}>
-            {accessSettings && !accessSettings.bypass ? (
+            {subscriptionQuota ? (
               <div className="card" style={{ padding: 10, fontSize: 12, color: "var(--muted)" }}>
                 {t("limit.status", {
-                  usage: accessSettings.usage.bots,
-                  limit:
-                    accessSettings.limits.bots === null
-                      ? t("limit.unlimited")
-                      : String(accessSettings.limits.bots),
-                  remaining:
-                    accessSettings.remaining.bots === null
-                      ? t("limit.unlimited")
-                      : String(accessSettings.remaining.bots)
+                  usage: subscriptionQuota.usage.bots.total,
+                  limit: String(subscriptionQuota.limits.bots.maxTotal),
+                  remaining: String(Math.max(0, subscriptionQuota.limits.bots.maxTotal - subscriptionQuota.usage.bots.total))
                 })}
               </div>
             ) : null}

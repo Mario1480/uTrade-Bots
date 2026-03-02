@@ -19,7 +19,6 @@ import {
 } from "../../src/predictions/refreshUi";
 import {
   strategyBucketFromKind,
-  type AccessSectionSettingsResponse,
   type StrategyLimitBucket
 } from "../../src/access/accessSection";
 
@@ -98,6 +97,42 @@ type StrategyEntitlements = {
 
 type PredictionDefaultsResponse = {
   signalMode: CreateSignalMode;
+};
+
+type SubscriptionQuotaResponse = {
+  billingEnabled: boolean;
+  limits: {
+    predictions: {
+      local: {
+        maxRunning: number | null;
+        maxTotal: number | null;
+      };
+      ai: {
+        maxRunning: number | null;
+        maxTotal: number | null;
+      };
+      composite: {
+        maxRunning: number | null;
+        maxTotal: number | null;
+      };
+    };
+  };
+  usage: {
+    predictions: {
+      local: {
+        running: number;
+        total: number;
+      };
+      ai: {
+        running: number;
+        total: number;
+      };
+      composite: {
+        running: number;
+        total: number;
+      };
+    };
+  };
 };
 
 type PredictionListItem = {
@@ -348,6 +383,27 @@ function errMsg(e: unknown): string {
   if (e instanceof ApiError) return `${e.message} (HTTP ${e.status})`;
   if (e && typeof e === "object" && "message" in e) return String((e as any).message);
   return String(e);
+}
+
+function quotaErrorMessage(e: unknown, tPred: ReturnType<typeof useTranslations<"predictions">>): string | null {
+  if (!(e instanceof ApiError)) return null;
+  const code =
+    (typeof e.payload?.error === "string" && e.payload.error)
+    || (typeof e.payload?.code === "string" && e.payload.code)
+    || (typeof e.message === "string" ? e.message : "");
+  if (code === "prediction_running_limit_exceeded_ai") {
+    return tPred("create.errors.runningAi");
+  }
+  if (code === "prediction_total_limit_exceeded_ai") {
+    return tPred("create.errors.totalAi");
+  }
+  if (code === "prediction_running_limit_exceeded_composite") {
+    return tPred("create.errors.runningComposite");
+  }
+  if (code === "prediction_total_limit_exceeded_composite") {
+    return tPred("create.errors.totalComposite");
+  }
+  return null;
 }
 
 function fmtConfidence(value: number): string {
@@ -804,7 +860,7 @@ export default function PredictionsPage() {
   const [compositeStrategies, setCompositeStrategies] = useState<PublicCompositeStrategyItem[]>([]);
   const [compositeStrategiesLoading, setCompositeStrategiesLoading] = useState(false);
   const [predictionDefaults, setPredictionDefaults] = useState<PredictionDefaultsResponse | null>(null);
-  const [accessSection, setAccessSection] = useState<AccessSectionSettingsResponse | null>(null);
+  const [subscriptionQuota, setSubscriptionQuota] = useState<SubscriptionQuotaResponse | null>(null);
   const [newStrategySelectValue, setNewStrategySelectValue] = useState("ai:default");
   const [newLeverage, setNewLeverage] = useState("10");
   const [nowMs, setNowMs] = useState(() => Date.now());
@@ -968,12 +1024,12 @@ export default function PredictionsPage() {
     }
   }
 
-  async function loadAccessSectionSettings() {
+  async function loadSubscriptionQuota() {
     try {
-      const payload = await apiGet<AccessSectionSettingsResponse>("/settings/access-section");
-      setAccessSection(payload);
+      const payload = await apiGet<SubscriptionQuotaResponse>("/settings/subscription");
+      setSubscriptionQuota(payload);
     } catch {
-      setAccessSection(null);
+      setSubscriptionQuota(null);
     }
   }
 
@@ -1079,7 +1135,7 @@ export default function PredictionsPage() {
     void loadLocalStrategies();
     void loadCompositeStrategies();
     void loadPredictionDefaults();
-    void loadAccessSectionSettings();
+    void loadSubscriptionQuota();
   }, []);
 
   useEffect(() => {
@@ -1210,14 +1266,57 @@ export default function PredictionsPage() {
     () => strategyBucketFromKind(selectedStrategyKind),
     [selectedStrategyKind]
   );
-  const selectedCreateLimit = accessSection?.limits[selectedCreateLimitBucket] ?? null;
-  const selectedCreateUsage = accessSection?.usage[selectedCreateLimitBucket] ?? 0;
-  const selectedCreateRemaining = accessSection?.remaining[selectedCreateLimitBucket] ?? null;
+  const selectedCreateLimit = useMemo<number | null>(() => {
+    if (!subscriptionQuota) return null;
+    if (selectedCreateLimitBucket === "predictionsAi") {
+      return subscriptionQuota.limits.predictions.ai.maxTotal;
+    }
+    if (selectedCreateLimitBucket === "predictionsComposite") {
+      return subscriptionQuota.limits.predictions.composite.maxTotal;
+    }
+    return null;
+  }, [selectedCreateLimitBucket, subscriptionQuota]);
+  const selectedCreateUsage = useMemo<number>(() => {
+    if (!subscriptionQuota) return 0;
+    if (selectedCreateLimitBucket === "predictionsAi") {
+      return subscriptionQuota.usage.predictions.ai.total;
+    }
+    if (selectedCreateLimitBucket === "predictionsComposite") {
+      return subscriptionQuota.usage.predictions.composite.total;
+    }
+    return subscriptionQuota.usage.predictions.local.total;
+  }, [selectedCreateLimitBucket, subscriptionQuota]);
+  const selectedCreateRunningLimit = useMemo<number | null>(() => {
+    if (!subscriptionQuota) return null;
+    if (selectedCreateLimitBucket === "predictionsAi") {
+      return subscriptionQuota.limits.predictions.ai.maxRunning;
+    }
+    if (selectedCreateLimitBucket === "predictionsComposite") {
+      return subscriptionQuota.limits.predictions.composite.maxRunning;
+    }
+    return null;
+  }, [selectedCreateLimitBucket, subscriptionQuota]);
+  const selectedCreateRunningUsage = useMemo<number>(() => {
+    if (!subscriptionQuota) return 0;
+    if (selectedCreateLimitBucket === "predictionsAi") {
+      return subscriptionQuota.usage.predictions.ai.running;
+    }
+    if (selectedCreateLimitBucket === "predictionsComposite") {
+      return subscriptionQuota.usage.predictions.composite.running;
+    }
+    return subscriptionQuota.usage.predictions.local.running;
+  }, [selectedCreateLimitBucket, subscriptionQuota]);
+  const selectedCreateRemaining = useMemo<number | null>(() => {
+    if (selectedCreateLimit === null) return null;
+    return Math.max(0, selectedCreateLimit - selectedCreateUsage);
+  }, [selectedCreateLimit, selectedCreateUsage]);
+  const selectedCreateRunningRemaining = useMemo<number | null>(() => {
+    if (selectedCreateRunningLimit === null) return null;
+    return Math.max(0, selectedCreateRunningLimit - selectedCreateRunningUsage);
+  }, [selectedCreateRunningLimit, selectedCreateRunningUsage]);
   const createBlockedByLimit = Boolean(
-    accessSection
-    && !accessSection.bypass
-    && typeof selectedCreateRemaining === "number"
-    && selectedCreateRemaining <= 0
+    (typeof selectedCreateRemaining === "number" && selectedCreateRemaining <= 0)
+    || (typeof selectedCreateRunningRemaining === "number" && selectedCreateRunningRemaining <= 0)
   );
 
   useEffect(() => {
@@ -1488,11 +1587,18 @@ export default function PredictionsPage() {
       return;
     }
     if (createBlockedByLimit) {
+      const blockedByRunning =
+        typeof selectedCreateRunningRemaining === "number" && selectedCreateRunningRemaining <= 0;
       setActionError(
-        tPred("create.limitBlocked", {
-          usage: selectedCreateUsage,
-          limit: selectedCreateLimit ?? 0
-        })
+        blockedByRunning
+          ? tPred("create.limitBlockedRunning", {
+            usage: selectedCreateRunningUsage,
+            limit: selectedCreateRunningLimit ?? 0
+          })
+          : tPred("create.limitBlockedTotal", {
+            usage: selectedCreateUsage,
+            limit: selectedCreateLimit ?? 0
+          })
       );
       return;
     }
@@ -1572,10 +1678,10 @@ export default function PredictionsPage() {
         loadRunningPredictions(),
         loadPredictionQuality(),
         loadPredictionMetrics(),
-        loadAccessSectionSettings()
+        loadSubscriptionQuota()
       ]);
     } catch (e) {
-      setActionError(errMsg(e));
+      setActionError(quotaErrorMessage(e, tPred) ?? errMsg(e));
     } finally {
       setCreating(false);
     }
@@ -1601,10 +1707,10 @@ export default function PredictionsPage() {
         loadRunningPredictions(),
         loadPredictionQuality(),
         loadPredictionMetrics(),
-        loadAccessSectionSettings()
+        loadSubscriptionQuota()
       ]);
     } catch (e) {
-      setActionError(errMsg(e));
+      setActionError(quotaErrorMessage(e, tPred) ?? errMsg(e));
     } finally {
       setRunningActionId(null);
     }
@@ -1627,7 +1733,7 @@ export default function PredictionsPage() {
         loadRunningPredictions(),
         loadPredictionQuality(),
         loadPredictionMetrics(),
-        loadAccessSectionSettings()
+        loadSubscriptionQuota()
       ]);
     } catch (e) {
       setActionError(errMsg(e));
@@ -2262,7 +2368,7 @@ export default function PredictionsPage() {
             {tPred("create.noCompositeStrategies")}
           </div>
           ) : null}
-          {accessSection && !accessSection.bypass ? (
+          {subscriptionQuota ? (
           <div className={createBlockedByLimit ? "predictionCreateAlert predictionCreateAlertWarn" : "predictionCreateAlert predictionCreateAlertInfo"}>
             {tPred("create.limitStatus", {
               bucket:
@@ -2276,10 +2382,19 @@ export default function PredictionsPage() {
                 selectedCreateLimit === null
                   ? tPred("create.unlimited")
                   : String(selectedCreateLimit),
+              runningUsage: selectedCreateRunningUsage,
+              runningLimit:
+                selectedCreateRunningLimit === null
+                  ? tPred("create.unlimited")
+                  : String(selectedCreateRunningLimit),
               remaining:
                 selectedCreateRemaining === null
                   ? tPred("create.unlimited")
-                  : String(selectedCreateRemaining)
+                  : String(selectedCreateRemaining),
+              runningRemaining:
+                selectedCreateRunningRemaining === null
+                  ? tPred("create.unlimited")
+                  : String(selectedCreateRunningRemaining)
             })}
           </div>
           ) : null}

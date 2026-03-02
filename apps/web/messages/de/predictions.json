@@ -66,8 +66,15 @@
     "limitBucketLocal": "Lokale Predictions",
     "limitBucketAi": "AI-Predictions",
     "limitBucketComposite": "Composite-Predictions",
-    "limitStatus": "Create-Limit ({bucket}): {usage}/{limit} genutzt, verbleibend {remaining}.",
-    "limitBlocked": "Create-Limit ({usage}/{limit}) fuer den gewaehlten Strategie-Bucket erreicht.",
+    "limitStatus": "Create-Limit ({bucket}) total: {usage}/{limit} genutzt, verbleibend {remaining}. Laufend: {runningUsage}/{runningLimit}, verbleibend {runningRemaining}.",
+    "limitBlockedTotal": "Create-Total-Limit ({usage}/{limit}) fuer den gewaehlten Strategie-Bucket erreicht.",
+    "limitBlockedRunning": "Create-Running-Limit ({usage}/{limit}) fuer den gewaehlten Strategie-Bucket erreicht.",
+    "errors": {
+      "runningAi": "AI-Prediction Running-Limit erreicht. Pausiere oder stoppe zuerst eine andere AI-Schedule.",
+      "totalAi": "AI-Prediction Total-Limit erreicht. Loesche eine bestehende AI-Schedule oder buche ein Kapazitaets-Topup.",
+      "runningComposite": "Composite-Prediction Running-Limit erreicht. Pausiere oder stoppe zuerst eine andere Composite-Schedule.",
+      "totalComposite": "Composite-Prediction Total-Limit erreicht. Loesche eine bestehende Composite-Schedule oder buche ein Kapazitaets-Topup."
+    },
     "unlimited": "unbegrenzt",
     "allowedPromptIds": "Erlaubte Prompt-IDs",
     "creating": "Erstelle...",

@@ -56,6 +56,9 @@
       "state": "State",
       "validUntil": "Valid until",
       "botLimits": "Bot limits",
+      "predictionsAiLimits": "AI prediction limits",
+      "predictionsCompositeLimits": "Composite prediction limits",
+      "unlimited": "unlimited",
       "exchanges": "Allowed exchanges",
       "aiBalance": "AI token balance",
       "aiMonthlyIncluded": "Monthly included tokens",
@@ -66,9 +69,11 @@
       "description": "Purchase or renew your plan and buy AI token topups.",
       "kindPlan": "Plan package",
       "kindTopup": "AI topup package",
+      "kindCapacityTopup": "Capacity topup package",
       "price": "Price",
       "planDetails": "{months} month(s), running bots: {running}, total bots: {total}, included AI tokens: {tokens}",
       "topupDetails": "Adds {tokens} AI tokens",
+      "capacityTopupDetails": "Adds bots +{runningBots} running/+{totalBots} total, AI predictions +{runningAi} running/+{totalAi} total, composite predictions +{runningComposite} running/+{totalComposite} total",
       "buy": "Buy now"
     },
     "orders": {

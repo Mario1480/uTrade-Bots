@@ -899,9 +899,10 @@
       },
       "kind": {
         "label": "Pakettyp",
-        "hint": "Plan = Abo-Paket, AI Topup = reiner Tokenkauf.",
+        "hint": "Plan = Abo-Paket, AI Topup = reiner Tokenkauf, Entitlement Topup = zusätzliche Bot-/Prediction-Kapazität.",
         "plan": "Plan",
-        "aiTopup": "AI Topup"
+        "aiTopup": "AI Topup",
+        "entitlementTopup": "Entitlement Topup"
       },
       "plan": {
         "label": "Ziel-Plan",
@@ -934,6 +935,22 @@
         "label": "Max. Bots gesamt",
         "hint": "Maximal erlaubte Gesamtzahl an Bots für diesen Plan."
       },
+      "maxRunningPredictionsAi": {
+        "label": "Max. laufende AI-Predictions",
+        "hint": "Gleichzeitig laufende AI-Prediction-Schedules in diesem Plan."
+      },
+      "maxPredictionsAiTotal": {
+        "label": "Max. AI-Predictions gesamt",
+        "hint": "Gesamtzahl aktivierter AI-Prediction-Schedules in diesem Plan."
+      },
+      "maxRunningPredictionsComposite": {
+        "label": "Max. laufende Composite-Predictions",
+        "hint": "Gleichzeitig laufende Composite-Prediction-Schedules in diesem Plan."
+      },
+      "maxPredictionsCompositeTotal": {
+        "label": "Max. Composite-Predictions gesamt",
+        "hint": "Gesamtzahl aktivierter Composite-Prediction-Schedules in diesem Plan."
+      },
       "allowedExchanges": {
         "label": "Erlaubte Exchanges",
         "hint": "Kommagetrennte Liste. Mit * sind alle Exchanges erlaubt."
@@ -945,6 +962,30 @@
       "topupAiTokens": {
         "label": "Topup AI-Tokens",
         "hint": "Token-Menge, die bei AI-Topup gutgeschrieben wird."
+      },
+      "topupRunningBots": {
+        "label": "Topup laufende Bots",
+        "hint": "Zusätzliche Slots für gleichzeitig laufende Bots bis Planende."
+      },
+      "topupBotsTotal": {
+        "label": "Topup Bots gesamt",
+        "hint": "Zusätzliche Gesamt-Bot-Slots bis Planende."
+      },
+      "topupRunningPredictionsAi": {
+        "label": "Topup laufende AI-Predictions",
+        "hint": "Zusätzliche Slots für gleichzeitig laufende AI-Predictions bis Planende."
+      },
+      "topupPredictionsAiTotal": {
+        "label": "Topup AI-Predictions gesamt",
+        "hint": "Zusätzliche Gesamt-Slots für AI-Predictions bis Planende."
+      },
+      "topupRunningPredictionsComposite": {
+        "label": "Topup laufende Composite-Predictions",
+        "hint": "Zusätzliche Slots für gleichzeitig laufende Composite-Predictions bis Planende."
+      },
+      "topupPredictionsCompositeTotal": {
+        "label": "Topup Composite-Predictions gesamt",
+        "hint": "Zusätzliche Gesamt-Slots für Composite-Predictions bis Planende."
       },
       "isActive": {
         "label": "Verfügbarkeit",

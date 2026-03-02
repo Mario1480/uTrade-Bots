@@ -899,9 +899,10 @@
       },
       "kind": {
         "label": "Package type",
-        "hint": "Plan = subscription package, AI topup = token-only purchase.",
+        "hint": "Plan = subscription package, AI topup = token wallet, entitlement topup = extra bot/prediction capacity.",
         "plan": "Plan",
-        "aiTopup": "AI topup"
+        "aiTopup": "AI topup",
+        "entitlementTopup": "Entitlement topup"
       },
       "plan": {
         "label": "Target plan",
@@ -934,6 +935,22 @@
         "label": "Max bots total",
         "hint": "Maximum total bot count allowed for this plan."
       },
+      "maxRunningPredictionsAi": {
+        "label": "Max running AI predictions",
+        "hint": "Concurrent running AI prediction schedules for this plan."
+      },
+      "maxPredictionsAiTotal": {
+        "label": "Max AI predictions total",
+        "hint": "Total AI prediction schedules (enabled) allowed for this plan."
+      },
+      "maxRunningPredictionsComposite": {
+        "label": "Max running composite predictions",
+        "hint": "Concurrent running composite prediction schedules for this plan."
+      },
+      "maxPredictionsCompositeTotal": {
+        "label": "Max composite predictions total",
+        "hint": "Total composite prediction schedules (enabled) allowed for this plan."
+      },
       "allowedExchanges": {
         "label": "Allowed exchanges",
         "hint": "Comma-separated list. Use * to allow all exchanges."
@@ -945,6 +962,30 @@
       "topupAiTokens": {
         "label": "Topup AI tokens",
         "hint": "Token amount credited for AI topup packages."
+      },
+      "topupRunningBots": {
+        "label": "Topup running bots",
+        "hint": "Additional concurrent running bot slots granted until plan end."
+      },
+      "topupBotsTotal": {
+        "label": "Topup bots total",
+        "hint": "Additional total bot slots granted until plan end."
+      },
+      "topupRunningPredictionsAi": {
+        "label": "Topup running AI predictions",
+        "hint": "Additional concurrent running AI prediction slots granted until plan end."
+      },
+      "topupPredictionsAiTotal": {
+        "label": "Topup AI predictions total",
+        "hint": "Additional total AI prediction slots granted until plan end."
+      },
+      "topupRunningPredictionsComposite": {
+        "label": "Topup running composite predictions",
+        "hint": "Additional concurrent running composite prediction slots granted until plan end."
+      },
+      "topupPredictionsCompositeTotal": {
+        "label": "Topup composite predictions total",
+        "hint": "Additional total composite prediction slots granted until plan end."
       },
       "isActive": {
         "label": "Availability",

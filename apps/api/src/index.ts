@@ -4788,7 +4788,7 @@ async function generateAutoPredictionForUser(
       consumesSlot: true
     });
     if (!predictionCreateAccess.allowed) {
-      const code = predictionLimitExceededCode(predictionLimitBucket);
+      const code = predictionCreateAccess.code ?? "prediction_create_limit_exceeded";
       throw new ManualTradingError(
         code,
         403,
@@ -11748,7 +11748,12 @@ app.get("/settings/subscription", requireAuth, async (_req, res) => {
         id: order.pkg.id,
         code: order.pkg.code,
         name: order.pkg.name,
-        kind: order.pkg.kind === "AI_TOPUP" ? "ai_topup" : "plan"
+        kind:
+          order.pkg.kind === "AI_TOPUP"
+            ? "ai_topup"
+            : order.pkg.kind === "ENTITLEMENT_TOPUP"
+              ? "entitlement_topup"
+              : "plan"
       } : null
     }))
   });
@@ -11772,7 +11777,12 @@ app.get("/settings/subscription/orders", requireAuth, async (_req, res) => {
         id: order.pkg.id,
         code: order.pkg.code,
         name: order.pkg.name,
-        kind: order.pkg.kind === "AI_TOPUP" ? "ai_topup" : "plan"
+        kind:
+          order.pkg.kind === "AI_TOPUP"
+            ? "ai_topup"
+            : order.pkg.kind === "ENTITLEMENT_TOPUP"
+              ? "entitlement_topup"
+              : "plan"
       } : null
     }))
   });
@@ -14368,7 +14378,7 @@ app.post("/api/predictions/generate", requireAuth, async (req, res) => {
     consumesSlot: consumesPredictionSlot
   });
   if (!predictionCreateAccess.allowed) {
-    const code = predictionLimitExceededCode(predictionLimitBucket);
+    const code = predictionCreateAccess.code ?? "prediction_create_limit_exceeded";
     return res.status(403).json({
       error: code,
       code,
@@ -14376,7 +14386,10 @@ app.post("/api/predictions/generate", requireAuth, async (req, res) => {
       details: {
         limit: predictionCreateAccess.limit,
         usage: predictionCreateAccess.usage,
-        remaining: predictionCreateAccess.remaining
+        remaining: predictionCreateAccess.remaining,
+        runningLimit: predictionCreateAccess.runningLimit,
+        runningUsage: predictionCreateAccess.runningUsage,
+        runningRemaining: predictionCreateAccess.runningRemaining
       }
     });
   }
@@ -15428,6 +15441,22 @@ app.get("/api/predictions/running", requireAuth, async (req, res) => {
 app.post("/api/predictions/:id/pause", requireAuth, async (req, res) => {
   try {
     const user = getUserFromLocals(res);
+    const bypass = await evaluateAccessSectionBypassForUser(user);
+    const accessSettings = bypass ? null : await getAccessSectionSettings();
+    const predictionCaps = accessSettings
+      ? {
+          predictions: {
+            ai: {
+              maxRunning: accessSettings.limits.predictionsAi,
+              maxTotal: accessSettings.limits.predictionsAi
+            },
+            composite: {
+              maxRunning: accessSettings.limits.predictionsComposite,
+              maxTotal: accessSettings.limits.predictionsComposite
+            }
+          }
+        }
+      : null;
     const params = predictionIdParamSchema.safeParse(req.params);
     if (!params.success) {
       return res.status(400).json({ error: "invalid_prediction_id" });
@@ -15444,6 +15473,8 @@ app.post("/api/predictions/:id/pause", requireAuth, async (req, res) => {
       },
       select: {
         id: true,
+        autoScheduleEnabled: true,
+        autoSchedulePaused: true,
         signalMode: true,
         featuresSnapshot: true,
         symbol: true,
@@ -15456,6 +15487,30 @@ app.post("/api/predictions/:id/pause", requireAuth, async (req, res) => {
     if (stateRow) {
       const snapshot = asRecord(stateRow.featuresSnapshot);
       const signalMode = readStateSignalMode(stateRow.signalMode, snapshot);
+      if (!body.data.paused && !bypass) {
+        const limitBucket = resolvePredictionLimitBucketFromStrategy({
+          strategyRef: readPredictionStrategyRef(snapshot),
+          signalMode
+        });
+        const scheduleCheck = await canEnablePredictionSchedule({
+          userId: user.id,
+          kind: predictionQuotaKindFromBucket(limitBucket),
+          currentlyEnabled: Boolean(stateRow.autoScheduleEnabled),
+          currentlyPaused: Boolean(stateRow.autoSchedulePaused),
+          caps: predictionCaps
+        });
+        if (!scheduleCheck.allowed) {
+          return res.status(403).json({
+            error: scheduleCheck.reason,
+            code: scheduleCheck.reason,
+            message: scheduleCheck.reason,
+            details: {
+              limits: scheduleCheck.limits.predictions,
+              usage: scheduleCheck.usage.predictions
+            }
+          });
+        }
+      }
       await db.predictionState.update({
         where: { id: stateRow.id },
         data: {
@@ -15538,6 +15593,32 @@ app.post("/api/predictions/:id/pause", requireAuth, async (req, res) => {
         featuresSnapshot: true
       }
     });
+
+    if (!body.data.paused && !bypass) {
+      const scheduleCheck = await canEnablePredictionSchedule({
+        userId: user.id,
+        kind: predictionQuotaKindFromBucket(
+          resolvePredictionLimitBucketFromStrategy({
+            strategyRef: scope.strategyRef,
+            signalMode: scope.signalMode
+          })
+        ),
+        currentlyEnabled: false,
+        currentlyPaused: false,
+        caps: predictionCaps
+      });
+      if (!scheduleCheck.allowed) {
+        return res.status(403).json({
+          error: scheduleCheck.reason,
+          code: scheduleCheck.reason,
+          message: scheduleCheck.reason,
+          details: {
+            limits: scheduleCheck.limits.predictions,
+            usage: scheduleCheck.usage.predictions
+          }
+        });
+      }
+    }
 
     for (const row of rows as any[]) {
       const snapshot = asRecord(row.featuresSnapshot);
@@ -18920,13 +19001,22 @@ app.post("/bots/:id/start", requireAuth, async (req, res) => {
     db.bot.count({ where: { userId: user.id } }),
     db.bot.count({ where: { userId: user.id, status: "running" } })
   ]);
+  const bypass = await evaluateAccessSectionBypassForUser(user);
+  const accessSettings = bypass ? null : await getAccessSectionSettings();
+  const botHardCap = accessSettings?.limits.bots ?? null;
 
   const decision = await enforceBotStartLicense({
     userId: user.id,
     exchange: bot.exchange,
     totalBots,
     runningBots,
-    isAlreadyRunning: bot.status === "running"
+    isAlreadyRunning: bot.status === "running",
+    quotaCaps: {
+      bots: {
+        maxRunning: botHardCap,
+        maxTotal: botHardCap
+      }
+    }
   });
   if (!decision.allowed) {
     return res.status(403).json({

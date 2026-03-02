@@ -11,7 +11,7 @@ type BillingPackage = {
   code: string;
   name: string;
   description: string | null;
-  kind: "plan" | "ai_topup";
+  kind: "plan" | "ai_topup" | "entitlement_topup";
   isActive: boolean;
   priceCents: number;
   currency: string;
@@ -19,8 +19,18 @@ type BillingPackage = {
   plan: "free" | "pro" | null;
   maxRunningBots: number | null;
   maxBotsTotal: number | null;
+  maxRunningPredictionsAi: number | null;
+  maxPredictionsAiTotal: number | null;
+  maxRunningPredictionsComposite: number | null;
+  maxPredictionsCompositeTotal: number | null;
   monthlyAiTokens: string;
   topupAiTokens: string;
+  topupRunningBots: number | null;
+  topupBotsTotal: number | null;
+  topupRunningPredictionsAi: number | null;
+  topupPredictionsAiTotal: number | null;
+  topupRunningPredictionsComposite: number | null;
+  topupPredictionsCompositeTotal: number | null;
 };
 
 type BillingOrder = {
@@ -37,7 +47,7 @@ type BillingOrder = {
     id: string;
     code: string;
     name: string;
-    kind: "plan" | "ai_topup";
+    kind: "plan" | "ai_topup" | "entitlement_topup";
   } | null;
 };
 
@@ -50,10 +60,46 @@ type SubscriptionPayload = {
     maxRunningBots: number;
     maxBotsTotal: number;
     allowedExchanges: string[];
+    bots: {
+      maxRunning: number;
+      maxTotal: number;
+    };
+    predictions: {
+      local: {
+        maxRunning: number | null;
+        maxTotal: number | null;
+      };
+      ai: {
+        maxRunning: number | null;
+        maxTotal: number | null;
+      };
+      composite: {
+        maxRunning: number | null;
+        maxTotal: number | null;
+      };
+    };
   };
   usage: {
     totalBots: number;
     runningBots: number;
+    bots: {
+      running: number;
+      total: number;
+    };
+    predictions: {
+      local: {
+        running: number;
+        total: number;
+      };
+      ai: {
+        running: number;
+        total: number;
+      };
+      composite: {
+        running: number;
+        total: number;
+      };
+    };
   };
   ai: {
     tokenBalance: string;
@@ -84,7 +130,7 @@ export default function SubscriptionPage() {
     [payload]
   );
   const topupPackages = useMemo(
-    () => (payload?.packages ?? []).filter((item) => item.kind === "ai_topup"),
+    () => (payload?.packages ?? []).filter((item) => item.kind === "ai_topup" || item.kind === "entitlement_topup"),
     [payload]
   );
 
@@ -170,6 +216,12 @@ export default function SubscriptionPage() {
               <b>{t("status.botLimits")}:</b> {payload.usage.runningBots}/{payload.limits.maxRunningBots} running, {payload.usage.totalBots}/{payload.limits.maxBotsTotal} total
             </div>
             <div><b>{t("status.exchanges")}:</b> {payload.limits.allowedExchanges.join(", ")}</div>
+            <div>
+              <b>{t("status.predictionsAiLimits")}:</b> {payload.usage.predictions.ai.running}/{payload.limits.predictions.ai.maxRunning ?? t("status.unlimited")} running, {payload.usage.predictions.ai.total}/{payload.limits.predictions.ai.maxTotal ?? t("status.unlimited")} total
+            </div>
+            <div>
+              <b>{t("status.predictionsCompositeLimits")}:</b> {payload.usage.predictions.composite.running}/{payload.limits.predictions.composite.maxRunning ?? t("status.unlimited")} running, {payload.usage.predictions.composite.total}/{payload.limits.predictions.composite.maxTotal ?? t("status.unlimited")} total
+            </div>
             <div><b>{t("status.aiBalance")}:</b> {payload.ai.tokenBalance}</div>
             <div><b>{t("status.aiMonthlyIncluded")}:</b> {payload.ai.monthlyIncluded}</div>
             <div><b>{t("status.aiUsedLifetime")}:</b> {payload.ai.tokenUsedLifetime}</div>
@@ -191,7 +243,11 @@ export default function SubscriptionPage() {
                   <div style={{ fontWeight: 700 }}>{pkg.name}</div>
                   <div style={{ fontSize: 12, color: "var(--muted)" }}>{pkg.description ?? "-"}</div>
                   <div style={{ marginTop: 6, fontSize: 12 }}>
-                    {pkg.kind === "plan" ? t("packages.kindPlan") : t("packages.kindTopup")}
+                    {pkg.kind === "plan"
+                      ? t("packages.kindPlan")
+                      : pkg.kind === "ai_topup"
+                        ? t("packages.kindTopup")
+                        : t("packages.kindCapacityTopup")}
                     {pkg.plan ? ` · ${pkg.plan.toUpperCase()}` : ""}
                   </div>
                   <div style={{ marginTop: 4, fontSize: 12 }}>
@@ -208,7 +264,16 @@ export default function SubscriptionPage() {
                     </div>
                   ) : (
                     <div style={{ marginTop: 4, fontSize: 12 }}>
-                      {t("packages.topupDetails", { tokens: pkg.topupAiTokens })}
+                      {pkg.kind === "ai_topup"
+                        ? t("packages.topupDetails", { tokens: pkg.topupAiTokens })
+                        : t("packages.capacityTopupDetails", {
+                          runningBots: pkg.topupRunningBots ?? 0,
+                          totalBots: pkg.topupBotsTotal ?? 0,
+                          runningAi: pkg.topupRunningPredictionsAi ?? 0,
+                          totalAi: pkg.topupPredictionsAiTotal ?? 0,
+                          runningComposite: pkg.topupRunningPredictionsComposite ?? 0,
+                          totalComposite: pkg.topupPredictionsCompositeTotal ?? 0
+                        })}
                     </div>
                   )}
                 </div>

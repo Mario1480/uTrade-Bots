@@ -1,5 +1,6 @@
 import { prisma } from "@mm/db";
 import { getEntitlementsForBotStart } from "./billing/service.js";
+import type { EffectiveQuotaCaps } from "./billing/service.js";
 
 export type Entitlements = {
   maxRunningBots: number;
@@ -453,6 +454,7 @@ export async function enforceBotStartLicense(params: {
   totalBots: number;
   runningBots: number;
   isAlreadyRunning: boolean;
+  quotaCaps?: EffectiveQuotaCaps | null;
 }): Promise<LicenseDecision> {
   if (!isLicenseEnforcementEnabled()) {
     return { allowed: true, reason: "enforcement_off" };
@@ -460,7 +462,7 @@ export async function enforceBotStartLicense(params: {
 
   let entitlements: Entitlements;
   try {
-    entitlements = await getEntitlementsForBotStart(params.userId);
+    entitlements = await getEntitlementsForBotStart(params.userId, params.quotaCaps);
   } catch {
     return { allowed: false, reason: "billing_unavailable" };
   }
