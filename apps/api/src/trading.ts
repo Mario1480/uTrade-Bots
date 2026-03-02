@@ -1,5 +1,5 @@
 import { prisma } from "@mm/db";
-import { BitgetFuturesAdapter, HyperliquidFuturesAdapter } from "@mm/futures-exchange";
+import { BitgetFuturesAdapter, HyperliquidFuturesAdapter, MexcFuturesAdapter } from "@mm/futures-exchange";
 import { decryptSecret } from "./secret-crypto.js";
 
 type DbClient = typeof prisma;
@@ -601,6 +601,10 @@ function normalizeCanonicalSymbol(symbol: string): string {
   return symbol.replace(/[^A-Za-z0-9]/g, "").toUpperCase();
 }
 
+function isMexcAdapter(adapter: BitgetFuturesAdapter): boolean {
+  return String((adapter as unknown as { exchangeId?: unknown }).exchangeId ?? "").toLowerCase() === "mexc";
+}
+
 function toOrderRows(value: unknown): Array<Record<string, unknown>> {
   if (Array.isArray(value)) {
     return value.filter((row) => typeof row === "object" && row !== null) as Array<Record<string, unknown>>;
@@ -809,7 +813,7 @@ export async function resolveTradingAccount(userId: string, exchangeAccountId?: 
   }
 
   const exchange = String(account.exchange ?? "").toLowerCase();
-  if (exchange !== "bitget" && exchange !== "hyperliquid" && !isPaperExchange(exchange)) {
+  if (exchange !== "bitget" && exchange !== "hyperliquid" && exchange !== "mexc" && !isPaperExchange(exchange)) {
     throw new ManualTradingError(`exchange_not_supported:${exchange}`, 400, "exchange_not_supported");
   }
 
@@ -891,7 +895,7 @@ export async function resolveMarketDataTradingAccount(
   };
 }
 
-export function createBitgetAdapter(account: TradingAccount): BitgetFuturesAdapter {
+export function createFuturesAdapter(account: TradingAccount): BitgetFuturesAdapter | HyperliquidFuturesAdapter | MexcFuturesAdapter {
   if (isPaperExchange(account.exchange)) {
     throw new ManualTradingError(
       "paper_account_requires_market_data_resolution",
@@ -907,7 +911,17 @@ export function createBitgetAdapter(account: TradingAccount): BitgetFuturesAdapt
       restBaseUrl: process.env.HYPERLIQUID_REST_BASE_URL,
       productType: "USDT-FUTURES",
       marginCoin: process.env.HYPERLIQUID_MARGIN_COIN ?? "USDC"
-    }) as unknown as BitgetFuturesAdapter;
+    });
+  }
+  if (account.exchange === "mexc") {
+    return new MexcFuturesAdapter({
+      apiKey: account.apiKey,
+      apiSecret: account.apiSecret,
+      restBaseUrl: process.env.MEXC_REST_BASE_URL,
+      wsUrl: process.env.MEXC_WS_URL,
+      productType: process.env.MEXC_PRODUCT_TYPE ?? "USDT-FUTURES",
+      marginCoin: process.env.MEXC_MARGIN_COIN ?? "USDT"
+    });
   }
   return new BitgetFuturesAdapter({
     apiKey: account.apiKey,
@@ -916,6 +930,10 @@ export function createBitgetAdapter(account: TradingAccount): BitgetFuturesAdapt
     productType: (process.env.BITGET_PRODUCT_TYPE as any) ?? "USDT-FUTURES",
     marginCoin: process.env.BITGET_MARGIN_COIN ?? "USDT"
   });
+}
+
+export function createBitgetAdapter(account: TradingAccount): BitgetFuturesAdapter {
+  return createFuturesAdapter(account) as unknown as BitgetFuturesAdapter;
 }
 
 export async function listSymbols(adapter: BitgetFuturesAdapter) {
@@ -980,13 +998,13 @@ export async function listOpenOrders(
       normalizeCanonicalSymbol(rawSymbol);
 
     return {
-      orderId: String(row.orderId ?? row.ordId ?? row.clientOid ?? ""),
+      orderId: String(row.orderId ?? row.order_id ?? row.ordId ?? row.clientOid ?? ""),
       symbol: canonicalSymbol,
-      side: row.side ? String(row.side) : null,
-      type: row.orderType ? String(row.orderType) : row.orderTypeName ? String(row.orderTypeName) : null,
+      side: row.side ? String(row.side) : row.positionType ? String(row.positionType) : null,
+      type: row.orderType ? String(row.orderType) : row.orderTypeName ? String(row.orderTypeName) : row.type ? String(row.type) : null,
       status: row.status ? String(row.status) : row.state ? String(row.state) : null,
-      price: toNumber(row.price ?? row.px),
-      qty: toNumber(row.size ?? row.qty ?? row.baseVolume),
+      price: toNumber(row.price ?? row.px ?? row.avgPrice),
+      qty: toNumber(row.size ?? row.qty ?? row.baseVolume ?? row.vol),
       triggerPrice: toNumber(row.triggerPrice ?? row.triggerPx),
       takeProfitPrice: toNumber(
         row.presetStopSurplusPrice ??
@@ -1020,13 +1038,13 @@ export async function listOpenOrders(
       (rawSymbol && adapter.toCanonicalSymbol(rawSymbol)) ??
       normalizeCanonicalSymbol(rawSymbol);
     return {
-      orderId: String(row.orderId ?? row.planOrderId ?? row.clientOid ?? ""),
+      orderId: String(row.orderId ?? row.order_id ?? row.planOrderId ?? row.clientOid ?? ""),
       symbol: canonicalSymbol,
       side: row.side ? String(row.side) : null,
       type: row.planType ? String(row.planType) : "plan",
       status: row.planStatus ? String(row.planStatus) : row.status ? String(row.status) : null,
-      price: toNumber(row.price ?? row.executePrice),
-      qty: toNumber(row.size ?? row.qty),
+      price: toNumber(row.price ?? row.executePrice ?? row.avgPrice),
+      qty: toNumber(row.size ?? row.qty ?? row.vol),
       triggerPrice: toNumber(row.triggerPrice ?? row.triggerPx),
       takeProfitPrice: toNumber(row.stopSurplusExecutePrice ?? row.presetStopSurplusPrice),
       stopLossPrice: toNumber(row.stopLossExecutePrice ?? row.presetStopLossPrice),
@@ -1065,10 +1083,11 @@ export async function listPositions(
 
   return rows
     .map((row) => {
+      const rowRecord = row as unknown as Record<string, unknown>;
       const parsedSymbol = normalizeCanonicalSymbol(String(row.symbol ?? ""));
-      const holdSideRaw = String(row.holdSide ?? "").toLowerCase();
-      const total = toNumber(row.total);
-      const available = toNumber((row as unknown as Record<string, unknown>)?.available);
+      const holdSideRaw = String(row.holdSide ?? rowRecord.side ?? rowRecord.positionType ?? "").toLowerCase();
+      const total = toNumber(row.total ?? rowRecord.holdVol ?? rowRecord.positionVol);
+      const available = toNumber(rowRecord.available);
       const signedQty =
         total !== null && Number.isFinite(total) && total !== 0
           ? total
@@ -1088,11 +1107,11 @@ export async function listPositions(
         symbol: parsedSymbol,
         side,
         size,
-        entryPrice: toNumber(row.avgOpenPrice),
-        markPrice: toNumber(row.markPrice),
-        unrealizedPnl: toNumber(row.unrealizedPL),
-        takeProfitPrice: toNumber((row as unknown as Record<string, unknown>)?.presetStopSurplusPrice),
-        stopLossPrice: toNumber((row as unknown as Record<string, unknown>)?.presetStopLossPrice)
+        entryPrice: toNumber(row.avgOpenPrice ?? rowRecord.openAvgPrice ?? rowRecord.holdAvgPrice ?? rowRecord.avgPrice),
+        markPrice: toNumber(row.markPrice ?? rowRecord.fairPrice),
+        unrealizedPnl: toNumber(row.unrealizedPL ?? rowRecord.unrealizedPnl),
+        takeProfitPrice: toNumber(rowRecord.presetStopSurplusPrice),
+        stopLossPrice: toNumber(rowRecord.presetStopLossPrice)
       } satisfies NormalizedPosition;
     })
     .filter((row) => row.symbol.length > 0 && row.size > 0)
@@ -2002,6 +2021,27 @@ export async function editOpenOrder(
     return { orderId: replacement.orderId };
   }
 
+  if (isMexcAdapter(adapter)) {
+    if (currentSide === null || currentOrderType !== "limit" || currentQty === null || currentPrice === null) {
+      throw new ManualTradingError("order_replace_context_missing", 400, "order_replace_context_missing");
+    }
+    const replacementTakeProfit = nextTakeProfit === undefined ? currentTakeProfit : nextTakeProfit;
+    const replacementStopLoss = nextStopLoss === undefined ? currentStopLoss : nextStopLoss;
+    await adapter.cancelOrder(input.orderId);
+    const replacement = await adapter.placeOrder({
+      symbol: normalizedSymbol,
+      side: currentSide,
+      type: currentOrderType,
+      qty: currentQty,
+      price: currentPrice,
+      takeProfitPrice: replacementTakeProfit ?? undefined,
+      stopLossPrice: replacementStopLoss ?? undefined,
+      reduceOnly: currentReduceOnly,
+      marginMode: currentMarginMode
+    });
+    return { orderId: replacement.orderId };
+  }
+
   const buildModifyPayload = (newClientOid?: string) => ({
     symbol: exchangeSymbol,
     productType: adapter.productType,
@@ -2257,10 +2297,10 @@ export function normalizeTickerPayload(payload: unknown): NormalizedTicker {
 
   return {
     symbol: normalizeCanonicalSymbol(symbolRaw ?? ""),
-    last: getNumber(record, ["lastPr", "last", "price", "close"]),
-    mark: getNumber(record, ["markPrice", "mark", "indexPrice", "markPx", "midPx", "oraclePx"]),
-    bid: getNumber(record, ["bidPr", "bidPrice", "bid", "bestBid"]),
-    ask: getNumber(record, ["askPr", "askPrice", "ask", "bestAsk"]),
+    last: getNumber(record, ["lastPr", "last", "price", "close", "lastPrice", "p"]),
+    mark: getNumber(record, ["markPrice", "mark", "indexPrice", "markPx", "midPx", "oraclePx", "fairPrice"]),
+    bid: getNumber(record, ["bidPr", "bidPrice", "bid", "bestBid", "bid1"]),
+    ask: getNumber(record, ["askPr", "askPrice", "ask", "bestAsk", "ask1"]),
     ts: getNumber(record, ["ts", "timestamp", "time", "t"])
   };
 }
@@ -2298,10 +2338,10 @@ function recordToTrade(record: Record<string, unknown>): NormalizedTrade {
   const symbolRaw = getString(record, ["instId", "symbol"]);
   return {
     symbol: normalizeCanonicalSymbol(symbolRaw ?? ""),
-    ts: getNumber(record, ["ts", "timestamp", "cTime", "time", "t"]),
-    price: getNumber(record, ["price", "px", "fillPrice"]),
-    qty: getNumber(record, ["size", "qty", "q", "fillSize", "sz", "amount"]),
-    side: getString(record, ["side", "fillSide", "tradeSide", "dir"])?.toLowerCase() ?? null
+    ts: getNumber(record, ["ts", "timestamp", "cTime", "time", "t", "T"]),
+    price: getNumber(record, ["price", "px", "fillPrice", "p"]),
+    qty: getNumber(record, ["size", "qty", "q", "fillSize", "sz", "amount", "v"]),
+    side: getString(record, ["side", "fillSide", "tradeSide", "dir", "S"])?.toLowerCase() ?? null
   };
 }
 
@@ -2309,8 +2349,12 @@ export function extractWsDataArray(payload: unknown): unknown[] {
   const record = toRecord(payload);
   if (!record) return [];
   const data = record.data;
-  if (!Array.isArray(data)) return [];
-  return data;
+  if (Array.isArray(data)) return data;
+  if (data && typeof data === "object") return [data];
+  if ("price" in record || "lastPr" in record || "asks" in record || "bids" in record) {
+    return [record];
+  }
+  return [];
 }
 
 export function normalizeSymbolInput(value: string | null | undefined): string | null {

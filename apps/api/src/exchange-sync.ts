@@ -1,5 +1,5 @@
 import crypto from "node:crypto";
-import { HyperliquidFuturesAdapter } from "@mm/futures-exchange";
+import { HyperliquidFuturesAdapter, MexcFuturesAdapter } from "@mm/futures-exchange";
 
 type HttpMethod = "GET" | "POST" | "DELETE";
 
@@ -346,6 +346,70 @@ async function syncHyperliquidAccount(input: ExchangeSyncInput): Promise<Exchang
   }
 }
 
+async function syncMexcAccount(input: ExchangeSyncInput): Promise<ExchangeSyncResult> {
+  const adapter = new MexcFuturesAdapter({
+    apiKey: input.apiKey.trim(),
+    apiSecret: input.apiSecret.trim(),
+    restBaseUrl: process.env.MEXC_REST_BASE_URL,
+    wsUrl: process.env.MEXC_WS_URL,
+    marginCoin: process.env.MEXC_MARGIN_COIN ?? "USDT",
+    productType: process.env.MEXC_PRODUCT_TYPE ?? "USDT-FUTURES"
+  });
+
+  try {
+    const [accountState, positions] = await Promise.all([
+      adapter.getAccountState(),
+      adapter.getPositions().catch(() => [])
+    ]);
+
+    const pnlTodayUsd =
+      positions.length > 0
+        ? positions.reduce((sum, row) => sum + (Number(row.unrealizedPnl) || 0), 0)
+        : null;
+
+    return {
+      syncedAt: new Date(),
+      spotBudget: null,
+      futuresBudget: {
+        equity: Number.isFinite(Number(accountState.equity)) ? Number(accountState.equity) : null,
+        availableMargin:
+          accountState.availableMargin !== undefined && Number.isFinite(Number(accountState.availableMargin))
+            ? Number(accountState.availableMargin)
+            : null,
+        marginCoin: adapter.marginCoin ?? null
+      },
+      pnlTodayUsd,
+      details: {
+        exchange: "mexc",
+        endpoint: "/api/v1/private/account/assets",
+        productType: adapter.productType
+      }
+    };
+  } catch (error) {
+    const message = String(error ?? "");
+    const lower = message.toLowerCase();
+    const status = Number((error as { options?: { status?: unknown } })?.options?.status ?? 0);
+    const isAuthError =
+      status === 401 ||
+      /auth|signature|apikey|api key|permission|forbidden|invalid/.test(lower);
+    const isRateLimit = status === 429 || /rate limit|too many requests|429/.test(lower);
+    const isNetwork = /network|timeout|timed out|fetch failed/.test(lower);
+    throw new ExchangeSyncError(
+      `MEXC sync failed: ${message}`,
+      isAuthError ? 401 : isRateLimit ? 429 : isNetwork ? 504 : 502,
+      isAuthError
+        ? "mexc_auth_failed"
+        : isRateLimit
+          ? "mexc_rate_limited"
+          : isNetwork
+            ? "mexc_network_error"
+            : "mexc_sync_failed"
+    );
+  } finally {
+    await adapter.close().catch(() => undefined);
+  }
+}
+
 export async function syncExchangeAccount(input: ExchangeSyncInput): Promise<ExchangeSyncResult> {
   const exchange = input.exchange.trim().toLowerCase();
   if (exchange === "bitget") {
@@ -353,6 +417,9 @@ export async function syncExchangeAccount(input: ExchangeSyncInput): Promise<Exc
   }
   if (exchange === "hyperliquid") {
     return syncHyperliquidAccount(input);
+  }
+  if (exchange === "mexc") {
+    return syncMexcAccount(input);
   }
 
   throw new ExchangeSyncError(

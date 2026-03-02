@@ -412,6 +412,18 @@ export async function ensureBillingDefaults(): Promise<void> {
     process.env.BILLING_ENTITLEMENT_TOPUP_PRICE_CENTS ?? "1500",
     1500
   );
+  const entitlementBotsUnitPriceCents = normalizeInt(
+    process.env.BILLING_ENTITLEMENT_TOPUP_BOTS_PRICE_CENTS ?? "500",
+    500
+  );
+  const entitlementAiPredictionsUnitPriceCents = normalizeInt(
+    process.env.BILLING_ENTITLEMENT_TOPUP_AI_PREDICTIONS_PRICE_CENTS ?? "500",
+    500
+  );
+  const entitlementCompositePredictionsUnitPriceCents = normalizeInt(
+    process.env.BILLING_ENTITLEMENT_TOPUP_COMPOSITE_PREDICTIONS_PRICE_CENTS ?? "500",
+    500
+  );
 
   await db.billingPackage.upsert({
     where: { code: "free" },
@@ -525,13 +537,15 @@ export async function ensureBillingDefaults(): Promise<void> {
 
   await db.billingPackage.upsert({
     where: { code: "capacity_topup_starter" },
-    update: {},
+    update: {
+      isActive: false
+    },
     create: {
       code: "capacity_topup_starter",
       name: "Capacity Topup Starter",
       description: "Extra bot and prediction capacity until plan end",
       kind: "ENTITLEMENT_TOPUP",
-      isActive: true,
+      isActive: false,
       sortOrder: 30,
       currency: "USD",
       priceCents: entitlementTopupPriceCents,
@@ -552,6 +566,102 @@ export async function ensureBillingDefaults(): Promise<void> {
       topupPredictionsAiTotal: 3,
       topupRunningPredictionsComposite: 1,
       topupPredictionsCompositeTotal: 2
+    }
+  });
+
+  await db.billingPackage.upsert({
+    where: { code: "capacity_topup_bots_unit" },
+    update: {},
+    create: {
+      code: "capacity_topup_bots_unit",
+      name: "Capacity Topup Bots Unit",
+      description: "Adds bot capacity until plan end",
+      kind: "ENTITLEMENT_TOPUP",
+      isActive: true,
+      sortOrder: 31,
+      currency: "USD",
+      priceCents: entitlementBotsUnitPriceCents,
+      billingMonths: 1,
+      plan: "PRO",
+      maxRunningBots: null,
+      maxBotsTotal: null,
+      maxRunningPredictionsAi: null,
+      maxPredictionsAiTotal: null,
+      maxRunningPredictionsComposite: null,
+      maxPredictionsCompositeTotal: null,
+      allowedExchanges: ["*"],
+      monthlyAiTokens: 0n,
+      topupAiTokens: 0n,
+      topupRunningBots: 1,
+      topupBotsTotal: 1,
+      topupRunningPredictionsAi: 0,
+      topupPredictionsAiTotal: 0,
+      topupRunningPredictionsComposite: 0,
+      topupPredictionsCompositeTotal: 0
+    }
+  });
+
+  await db.billingPackage.upsert({
+    where: { code: "capacity_topup_ai_predictions_unit" },
+    update: {},
+    create: {
+      code: "capacity_topup_ai_predictions_unit",
+      name: "Capacity Topup AI Predictions Unit",
+      description: "Adds AI prediction capacity until plan end",
+      kind: "ENTITLEMENT_TOPUP",
+      isActive: true,
+      sortOrder: 32,
+      currency: "USD",
+      priceCents: entitlementAiPredictionsUnitPriceCents,
+      billingMonths: 1,
+      plan: "PRO",
+      maxRunningBots: null,
+      maxBotsTotal: null,
+      maxRunningPredictionsAi: null,
+      maxPredictionsAiTotal: null,
+      maxRunningPredictionsComposite: null,
+      maxPredictionsCompositeTotal: null,
+      allowedExchanges: ["*"],
+      monthlyAiTokens: 0n,
+      topupAiTokens: 0n,
+      topupRunningBots: 0,
+      topupBotsTotal: 0,
+      topupRunningPredictionsAi: 1,
+      topupPredictionsAiTotal: 1,
+      topupRunningPredictionsComposite: 0,
+      topupPredictionsCompositeTotal: 0
+    }
+  });
+
+  await db.billingPackage.upsert({
+    where: { code: "capacity_topup_composite_predictions_unit" },
+    update: {},
+    create: {
+      code: "capacity_topup_composite_predictions_unit",
+      name: "Capacity Topup Composite Predictions Unit",
+      description: "Adds composite prediction capacity until plan end",
+      kind: "ENTITLEMENT_TOPUP",
+      isActive: true,
+      sortOrder: 33,
+      currency: "USD",
+      priceCents: entitlementCompositePredictionsUnitPriceCents,
+      billingMonths: 1,
+      plan: "PRO",
+      maxRunningBots: null,
+      maxBotsTotal: null,
+      maxRunningPredictionsAi: null,
+      maxPredictionsAiTotal: null,
+      maxRunningPredictionsComposite: null,
+      maxPredictionsCompositeTotal: null,
+      allowedExchanges: ["*"],
+      monthlyAiTokens: 0n,
+      topupAiTokens: 0n,
+      topupRunningBots: 0,
+      topupBotsTotal: 0,
+      topupRunningPredictionsAi: 0,
+      topupPredictionsAiTotal: 0,
+      topupRunningPredictionsComposite: 1,
+      topupPredictionsCompositeTotal: 1
     }
   });
 }
@@ -1349,59 +1459,250 @@ export async function listBillingPackages(): Promise<any[]> {
   });
 }
 
+type CheckoutCartItemInput = {
+  packageId: string;
+  quantity: number;
+};
+
+type CheckoutResolvedLine = {
+  packageId: string;
+  quantity: number;
+  kind: BillingPackageKind;
+  unitPriceCents: number;
+  lineAmountCents: number;
+  currency: string;
+  pkg: any;
+};
+
+function mapBillingPackageKind(value: unknown): BillingPackageKind {
+  if (value === "AI_TOPUP") return "ai_topup";
+  if (value === "ENTITLEMENT_TOPUP") return "entitlement_topup";
+  return "plan";
+}
+
+function buildPackageSnapshot(pkg: any): Record<string, unknown> {
+  return {
+    id: String(pkg.id ?? ""),
+    code: String(pkg.code ?? ""),
+    name: String(pkg.name ?? ""),
+    description: pkg.description ?? null,
+    kind: pkg.kind ?? "PLAN",
+    plan: pkg.plan ?? null,
+    billingMonths: normalizeInt(pkg.billingMonths, 1, 1),
+    maxRunningBots: pkg.maxRunningBots ?? null,
+    maxBotsTotal: pkg.maxBotsTotal ?? null,
+    maxRunningPredictionsAi: pkg.maxRunningPredictionsAi ?? null,
+    maxPredictionsAiTotal: pkg.maxPredictionsAiTotal ?? null,
+    maxRunningPredictionsComposite: pkg.maxRunningPredictionsComposite ?? null,
+    maxPredictionsCompositeTotal: pkg.maxPredictionsCompositeTotal ?? null,
+    allowedExchanges: normalizeStringArray(pkg.allowedExchanges, ["*"]),
+    monthlyAiTokens: toBigInt(pkg.monthlyAiTokens).toString(),
+    topupAiTokens: toBigInt(pkg.topupAiTokens).toString(),
+    topupRunningBots: pkg.topupRunningBots ?? null,
+    topupBotsTotal: pkg.topupBotsTotal ?? null,
+    topupRunningPredictionsAi: pkg.topupRunningPredictionsAi ?? null,
+    topupPredictionsAiTotal: pkg.topupPredictionsAiTotal ?? null,
+    topupRunningPredictionsComposite: pkg.topupRunningPredictionsComposite ?? null,
+    topupPredictionsCompositeTotal: pkg.topupPredictionsCompositeTotal ?? null,
+    priceCents: normalizeInt(pkg.priceCents, 0, 0),
+    currency: String(pkg.currency ?? "USD").trim().toUpperCase()
+  };
+}
+
+async function fetchBillingOrderWithItems(orderId: string): Promise<any> {
+  return db.billingOrder.findUnique({
+    where: { id: orderId },
+    include: {
+      pkg: true,
+      items: {
+        include: {
+          pkg: {
+            select: {
+              id: true,
+              code: true,
+              name: true,
+              kind: true
+            }
+          }
+        },
+        orderBy: [{ createdAt: "asc" }, { id: "asc" }]
+      }
+    }
+  });
+}
+
+async function resolveCheckoutLines(params: {
+  userId: string;
+  items: CheckoutCartItemInput[];
+}): Promise<CheckoutResolvedLine[]> {
+  if (!Array.isArray(params.items)) throw new Error("invalid_cart_payload");
+  if (params.items.length === 0) throw new Error("cart_empty");
+  if (params.items.length > 20) throw new Error("invalid_cart_payload");
+
+  const seen = new Set<string>();
+  const normalizedRaw = params.items.map((item) => {
+    const packageId = typeof item.packageId === "string" ? item.packageId.trim() : "";
+    const rawQuantity = Number(item.quantity);
+    if (!packageId) throw new Error("invalid_cart_payload");
+    if (!Number.isFinite(rawQuantity) || !Number.isInteger(rawQuantity)) {
+      throw new Error("cart_quantity_invalid");
+    }
+    if (rawQuantity <= 0) throw new Error("cart_quantity_invalid");
+    if (seen.has(packageId)) throw new Error("cart_duplicate_package");
+    seen.add(packageId);
+    return {
+      packageId,
+      quantity: rawQuantity
+    };
+  });
+
+  const packageIds = normalizedRaw.map((item) => item.packageId);
+  const packages = await db.billingPackage.findMany({
+    where: {
+      id: { in: packageIds },
+      isActive: true
+    }
+  });
+  if (packages.length !== packageIds.length) {
+    throw new Error("cart_item_not_found");
+  }
+
+  const byId = new Map<string, any>();
+  for (const pkg of packages) {
+    byId.set(String(pkg.id), pkg);
+  }
+
+  const lines: CheckoutResolvedLine[] = normalizedRaw.map((item) => {
+    const pkg = byId.get(item.packageId);
+    if (!pkg) throw new Error("cart_item_not_found");
+    const kind = mapBillingPackageKind(pkg.kind);
+    if ((kind === "plan" || kind === "ai_topup") && item.quantity !== 1) {
+      throw new Error("cart_quantity_invalid");
+    }
+    if (kind === "entitlement_topup" && (item.quantity < 1 || item.quantity > 20)) {
+      throw new Error("cart_quantity_invalid");
+    }
+    const unitPriceCents = normalizeInt(pkg.priceCents, 0, 0);
+    const currency = String(pkg.currency ?? "USD").trim().toUpperCase();
+    return {
+      packageId: String(pkg.id),
+      quantity: item.quantity,
+      kind,
+      unitPriceCents,
+      lineAmountCents: unitPriceCents * item.quantity,
+      currency,
+      pkg
+    };
+  });
+
+  const planLines = lines.filter((line) => line.kind === "plan");
+  if (planLines.length > 1) throw new Error("cart_plan_count_invalid");
+  const hasProPlanInCart = planLines.some((line) => line.pkg.plan === "PRO");
+  const resolved = await resolveEffectivePlanForUser(params.userId);
+  const canUsePaidTopups = resolved.plan === "pro" || hasProPlanInCart;
+
+  if (lines.some((line) => line.kind === "entitlement_topup") && !canUsePaidTopups) {
+    throw new Error("cart_capacity_requires_pro");
+  }
+  if (lines.some((line) => line.kind === "ai_topup") && !canUsePaidTopups) {
+    throw new Error("pro_required_for_topup");
+  }
+
+  const currency = lines[0]?.currency ?? "USD";
+  const mixedCurrencies = lines.some((line) => line.currency !== currency);
+  if (mixedCurrencies) throw new Error("invalid_cart_payload");
+
+  return lines;
+}
+
 export async function createBillingCheckout(params: {
   userId: string;
-  packageId: string;
+  items: CheckoutCartItemInput[];
 }): Promise<{ order: any; payUrl: string | null; mode: "redirect" | "instant" }> {
   if (!(await isBillingEnabled())) throw new Error("billing_disabled");
 
   await ensureBillingDefaults();
-
-  const pkg = await db.billingPackage.findUnique({ where: { id: params.packageId } });
-  if (!pkg || !pkg.isActive) throw new Error("package_not_found");
-
-  const kind: BillingPackageKind =
-    pkg.kind === "AI_TOPUP"
-      ? "ai_topup"
-      : pkg.kind === "ENTITLEMENT_TOPUP"
-        ? "entitlement_topup"
-        : "plan";
-
-  const resolved = await resolveEffectivePlanForUser(params.userId);
-  if (kind === "ai_topup" && resolved.plan !== "pro") {
-    throw new Error("pro_required_for_topup");
-  }
-  if (kind === "entitlement_topup" && resolved.plan !== "pro") {
-    throw new Error("paid_plan_required_for_capacity_topup");
-  }
+  const lines = await resolveCheckoutLines({
+    userId: params.userId,
+    items: params.items
+  });
+  const planLine = lines.find((line) => line.kind === "plan");
+  const anchorPackageId = planLine?.packageId ?? lines[0]?.packageId;
+  if (!anchorPackageId) throw new Error("cart_empty");
 
   const orderId = `UTRADE_${crypto.randomUUID()}`;
-  const product = kind === "plan" ? `${pkg.name} (${pkg.billingMonths} month)` : pkg.name;
-  const amountCents = normalizeInt(pkg.priceCents, 0, 0);
+  const amountCents = lines.reduce((sum, line) => sum + line.lineAmountCents, 0);
+  const product =
+    lines.length === 1
+      ? `${lines[0]!.pkg.name} x${lines[0]!.quantity}`
+      : `${lines
+        .slice(0, 3)
+        .map((line) => `${line.pkg.name} x${line.quantity}`)
+        .join(", ")}${lines.length > 3 ? ` +${lines.length - 3} more` : ""}`;
+  const currency = lines[0]?.currency ?? "USD";
 
   if (amountCents <= 0) {
     const created = await db.billingOrder.create({
       data: {
         provider: "CCPAYMENT",
         userId: params.userId,
-        packageId: pkg.id,
+        packageId: anchorPackageId,
         status: "PENDING",
         amountCents,
-        currency: "USD",
+        currency,
         merchantOrderId: orderId,
         createPayload: {
           orderId,
           product,
           price: formatUsdCents(amountCents),
-          checkoutMode: "internal_zero_amount"
+          checkoutMode: "internal_zero_amount",
+          items: lines.map((line) => ({
+            packageId: line.packageId,
+            packageCode: String(line.pkg.code ?? ""),
+            packageName: String(line.pkg.name ?? ""),
+            kind: line.kind,
+            quantity: line.quantity,
+            unitPriceCents: line.unitPriceCents,
+            lineAmountCents: line.lineAmountCents
+          }))
+        },
+        items: {
+          create: lines.map((line) => ({
+            packageId: line.packageId,
+            quantity: line.quantity,
+            unitPriceCents: line.unitPriceCents,
+            lineAmountCents: line.lineAmountCents,
+            currency: line.currency,
+            kindSnapshot:
+              line.kind === "ai_topup"
+                ? "AI_TOPUP"
+                : line.kind === "entitlement_topup"
+                  ? "ENTITLEMENT_TOPUP"
+                  : "PLAN",
+            packageSnapshot: buildPackageSnapshot(line.pkg)
+          }))
+        }
+      },
+      include: {
+        pkg: true,
+        items: {
+          include: {
+            pkg: {
+              select: {
+                id: true,
+                code: true,
+                name: true,
+                kind: true
+              }
+            }
+          },
+          orderBy: [{ createdAt: "asc" }, { id: "asc" }]
         }
       }
     });
 
     await applyPaidOrder(orderId, "internal_zero_amount");
-    const updated = await db.billingOrder.findUnique({
-      where: { id: created.id }
-    });
+    const updated = await fetchBillingOrderWithItems(created.id);
     return {
       order: updated ?? created,
       payUrl: null,
@@ -1427,19 +1728,60 @@ export async function createBillingCheckout(params: {
     price: formatUsdCents(amountCents),
     priceFiatId,
     returnUrl: returnUrl.toString(),
-    closeUrl: closeUrl.toString()
+    closeUrl: closeUrl.toString(),
+    items: lines.map((line) => ({
+      packageId: line.packageId,
+      packageCode: String(line.pkg.code ?? ""),
+      packageName: String(line.pkg.name ?? ""),
+      kind: line.kind,
+      quantity: line.quantity,
+      unitPriceCents: line.unitPriceCents,
+      lineAmountCents: line.lineAmountCents
+    }))
   };
 
   const created = await db.billingOrder.create({
     data: {
       provider: "CCPAYMENT",
       userId: params.userId,
-      packageId: pkg.id,
+      packageId: anchorPackageId,
       status: "PENDING",
       amountCents,
-      currency: "USD",
+      currency,
       merchantOrderId: orderId,
-      createPayload: payload
+      createPayload: payload,
+      items: {
+        create: lines.map((line) => ({
+          packageId: line.packageId,
+          quantity: line.quantity,
+          unitPriceCents: line.unitPriceCents,
+          lineAmountCents: line.lineAmountCents,
+          currency: line.currency,
+          kindSnapshot:
+            line.kind === "ai_topup"
+              ? "AI_TOPUP"
+              : line.kind === "entitlement_topup"
+                ? "ENTITLEMENT_TOPUP"
+                : "PLAN",
+          packageSnapshot: buildPackageSnapshot(line.pkg)
+        }))
+      }
+    },
+    include: {
+      pkg: true,
+      items: {
+        include: {
+          pkg: {
+            select: {
+              id: true,
+              code: true,
+              name: true,
+              kind: true
+            }
+          }
+        },
+        orderBy: [{ createdAt: "asc" }, { id: "asc" }]
+      }
     }
   });
 
@@ -1472,7 +1814,7 @@ export async function createBillingCheckout(params: {
     console.warn("[billing] ccpayment createInvoiceUrl failed", {
       orderId,
       userId: params.userId,
-      packageId: pkg.id,
+      packageId: anchorPackageId,
       httpStatus: response.status,
       providerCode,
       providerMessage: providerMessage ?? null
@@ -1488,6 +1830,22 @@ export async function createBillingCheckout(params: {
     data: {
       payUrl: String(invoiceUrl),
       createResponse: body
+    },
+    include: {
+      pkg: true,
+      items: {
+        include: {
+          pkg: {
+            select: {
+              id: true,
+              code: true,
+              name: true,
+              kind: true
+            }
+          }
+        },
+        orderBy: [{ createdAt: "asc" }, { id: "asc" }]
+      }
     }
   });
 
@@ -1551,19 +1909,172 @@ export async function markOrderFailed(merchantOrderId: string, statusRaw: string
   });
 }
 
+type ApplyPackageData = {
+  id: string;
+  code: string;
+  name: string;
+  kind: "PLAN" | "AI_TOPUP" | "ENTITLEMENT_TOPUP";
+  plan: "FREE" | "PRO" | null;
+  billingMonths: number;
+  maxRunningBots: number | null;
+  maxBotsTotal: number | null;
+  maxRunningPredictionsAi: number | null;
+  maxPredictionsAiTotal: number | null;
+  maxRunningPredictionsComposite: number | null;
+  maxPredictionsCompositeTotal: number | null;
+  allowedExchanges: string[];
+  monthlyAiTokens: bigint;
+  topupAiTokens: bigint;
+  topupRunningBots: number | null;
+  topupBotsTotal: number | null;
+  topupRunningPredictionsAi: number | null;
+  topupPredictionsAiTotal: number | null;
+  topupRunningPredictionsComposite: number | null;
+  topupPredictionsCompositeTotal: number | null;
+};
+
+type ApplyOrderLine = {
+  quantity: number;
+  pkg: ApplyPackageData;
+};
+
+function toDbBillingPackageKind(value: unknown): "PLAN" | "AI_TOPUP" | "ENTITLEMENT_TOPUP" {
+  if (value === "AI_TOPUP") return "AI_TOPUP";
+  if (value === "ENTITLEMENT_TOPUP") return "ENTITLEMENT_TOPUP";
+  return "PLAN";
+}
+
+function normalizeApplyPackageData(params: {
+  snapshot: Record<string, unknown>;
+  pkg: any;
+  kindFallback: BillingPackageKind;
+}): ApplyPackageData {
+  const read = (key: string): unknown =>
+    params.snapshot[key] !== undefined ? params.snapshot[key] : params.pkg?.[key];
+  const fallbackKind =
+    params.kindFallback === "ai_topup"
+      ? "AI_TOPUP"
+      : params.kindFallback === "entitlement_topup"
+        ? "ENTITLEMENT_TOPUP"
+        : "PLAN";
+  const rawKind = read("kind");
+  const kind = rawKind === "AI_TOPUP" || rawKind === "ENTITLEMENT_TOPUP" || rawKind === "PLAN"
+    ? rawKind
+    : fallbackKind;
+
+  const rawPlan = read("plan");
+  const plan = rawPlan === "PRO" || rawPlan === "FREE" ? rawPlan : null;
+
+  return {
+    id: String(read("id") ?? params.pkg?.id ?? ""),
+    code: String(read("code") ?? params.pkg?.code ?? ""),
+    name: String(read("name") ?? params.pkg?.name ?? ""),
+    kind: toDbBillingPackageKind(kind),
+    plan,
+    billingMonths: normalizeInt(read("billingMonths"), normalizeInt(params.pkg?.billingMonths, 1, 1), 1),
+    maxRunningBots: normalizeNullableInt(read("maxRunningBots"), params.pkg?.maxRunningBots ?? null, 0),
+    maxBotsTotal: normalizeNullableInt(read("maxBotsTotal"), params.pkg?.maxBotsTotal ?? null, 0),
+    maxRunningPredictionsAi: normalizeNullableInt(
+      read("maxRunningPredictionsAi"),
+      params.pkg?.maxRunningPredictionsAi ?? null,
+      0
+    ),
+    maxPredictionsAiTotal: normalizeNullableInt(
+      read("maxPredictionsAiTotal"),
+      params.pkg?.maxPredictionsAiTotal ?? null,
+      0
+    ),
+    maxRunningPredictionsComposite: normalizeNullableInt(
+      read("maxRunningPredictionsComposite"),
+      params.pkg?.maxRunningPredictionsComposite ?? null,
+      0
+    ),
+    maxPredictionsCompositeTotal: normalizeNullableInt(
+      read("maxPredictionsCompositeTotal"),
+      params.pkg?.maxPredictionsCompositeTotal ?? null,
+      0
+    ),
+    allowedExchanges: normalizeStringArray(read("allowedExchanges"), ["*"]),
+    monthlyAiTokens: toBigInt(read("monthlyAiTokens")),
+    topupAiTokens: toBigInt(read("topupAiTokens")),
+    topupRunningBots: normalizeNullableInt(read("topupRunningBots"), params.pkg?.topupRunningBots ?? null, 0),
+    topupBotsTotal: normalizeNullableInt(read("topupBotsTotal"), params.pkg?.topupBotsTotal ?? null, 0),
+    topupRunningPredictionsAi: normalizeNullableInt(
+      read("topupRunningPredictionsAi"),
+      params.pkg?.topupRunningPredictionsAi ?? null,
+      0
+    ),
+    topupPredictionsAiTotal: normalizeNullableInt(
+      read("topupPredictionsAiTotal"),
+      params.pkg?.topupPredictionsAiTotal ?? null,
+      0
+    ),
+    topupRunningPredictionsComposite: normalizeNullableInt(
+      read("topupRunningPredictionsComposite"),
+      params.pkg?.topupRunningPredictionsComposite ?? null,
+      0
+    ),
+    topupPredictionsCompositeTotal: normalizeNullableInt(
+      read("topupPredictionsCompositeTotal"),
+      params.pkg?.topupPredictionsCompositeTotal ?? null,
+      0
+    )
+  };
+}
+
+function buildApplyOrderLines(order: any): ApplyOrderLine[] {
+  if (Array.isArray(order.items) && order.items.length > 0) {
+    return order.items.map((item: any) => {
+      const quantity = normalizeInt(item.quantity, 1, 1);
+      const kindFallback = mapBillingPackageKind(item.kindSnapshot ?? item.pkg?.kind);
+      const snapshot = asRecord(item.packageSnapshot);
+      return {
+        quantity,
+        pkg: normalizeApplyPackageData({
+          snapshot,
+          pkg: item.pkg ?? null,
+          kindFallback
+        })
+      };
+    });
+  }
+
+  return [
+    {
+      quantity: 1,
+      pkg: normalizeApplyPackageData({
+        snapshot: {},
+        pkg: order.pkg ?? null,
+        kindFallback: mapBillingPackageKind(order.pkg?.kind)
+      })
+    }
+  ];
+}
+
 export async function applyPaidOrder(merchantOrderId: string, statusRaw: string): Promise<void> {
   const order = await db.billingOrder.findUnique({
     where: { merchantOrderId },
     include: {
-      pkg: true
+      pkg: true,
+      items: {
+        include: {
+          pkg: true
+        },
+        orderBy: [{ createdAt: "asc" }, { id: "asc" }]
+      }
     }
   });
   if (!order) return;
   if (order.status === "PAID") return;
 
+  const applyLines = buildApplyOrderLines(order).sort((a, b) => {
+    const aRank = a.pkg.kind === "PLAN" ? 0 : 1;
+    const bRank = b.pkg.kind === "PLAN" ? 0 : 1;
+    return aRank - bRank;
+  });
+
   const now = new Date();
   await db.$transaction(async (tx: any) => {
-    const pkg = order.pkg;
     const existingSub = await getOrCreateSubscription(order.userId, tx);
 
     let nextPlan: EffectivePlan = formatPlan(existingSub.effectivePlan);
@@ -1594,121 +2105,169 @@ export async function applyPaidOrder(merchantOrderId: string, statusRaw: string)
     let nextAllowedExchanges = normalizeStringArray(existingSub.allowedExchanges, ["*"]);
     let nextMonthlyTokens = toBigInt(existingSub.monthlyAiTokensIncluded);
     const currentBalance = toBigInt(existingSub.aiTokenBalance);
-    let nextBalance = currentBalance;
+    let balanceCursor = currentBalance;
+    const ledgerEntries: Array<{
+      reason: "MONTHLY_GRANT" | "TOPUP";
+      delta: bigint;
+      balanceAfter: bigint;
+      packageId: string;
+      packageCode: string;
+      quantity: number;
+    }> = [];
 
-    let delta = 0n;
-    let reason: "MONTHLY_GRANT" | "TOPUP" = "TOPUP";
+    for (const line of applyLines) {
+      const pkg = line.pkg;
+      const quantity = normalizeInt(line.quantity, 1, 1);
 
-    if (pkg.kind === "PLAN") {
-      const packagePlan: EffectivePlan = pkg.plan === "FREE" ? "free" : "pro";
-      nextPlan = packagePlan;
-      nextStatus = "ACTIVE";
-      nextMaxRunning =
-        packagePlan === "pro"
-          ? normalizeInt(pkg.maxRunningBots, 3, 0)
-          : normalizeInt(pkg.maxRunningBots, FREE_MAX_RUNNING_BOTS, 0);
-      nextMaxTotal =
-        packagePlan === "pro"
-          ? normalizeInt(pkg.maxBotsTotal, 10, 0)
-          : normalizeInt(pkg.maxBotsTotal, FREE_MAX_BOTS_TOTAL, 0);
-      nextAllowedExchanges = normalizeStringArray(pkg.allowedExchanges, ["*"]);
-      nextMonthlyTokens = toBigInt(pkg.monthlyAiTokens);
-      nextMaxRunningPredictionsAi =
-        packagePlan === "pro"
-          ? normalizeNullableInt(
-            pkg.maxRunningPredictionsAi,
-            PRO_MAX_RUNNING_PREDICTIONS_AI,
-            0
-          )
-          : normalizeNullableInt(
-            pkg.maxRunningPredictionsAi,
-            FREE_MAX_RUNNING_PREDICTIONS_AI,
-            0
-          );
-      nextMaxPredictionsAiTotal =
-        packagePlan === "pro"
-          ? normalizeNullableInt(
-            pkg.maxPredictionsAiTotal,
-            PRO_MAX_PREDICTIONS_AI_TOTAL,
-            0
-          )
-          : normalizeNullableInt(
-            pkg.maxPredictionsAiTotal,
-            FREE_MAX_PREDICTIONS_AI_TOTAL,
-            0
-          );
-      nextMaxRunningPredictionsComposite =
-        packagePlan === "pro"
-          ? normalizeNullableInt(
-            pkg.maxRunningPredictionsComposite,
-            PRO_MAX_RUNNING_PREDICTIONS_COMPOSITE,
-            0
-          )
-          : normalizeNullableInt(
-            pkg.maxRunningPredictionsComposite,
-            FREE_MAX_RUNNING_PREDICTIONS_COMPOSITE,
-            0
-          );
-      nextMaxPredictionsCompositeTotal =
-        packagePlan === "pro"
-          ? normalizeNullableInt(
-            pkg.maxPredictionsCompositeTotal,
-            PRO_MAX_PREDICTIONS_COMPOSITE_TOTAL,
-            0
-          )
-          : normalizeNullableInt(
-            pkg.maxPredictionsCompositeTotal,
-            FREE_MAX_PREDICTIONS_COMPOSITE_TOTAL,
-            0
-          );
-      reason = "MONTHLY_GRANT";
-      if (packagePlan === "pro") {
-        const startAt =
-          existingSub.proValidUntil instanceof Date && existingSub.proValidUntil.getTime() > now.getTime()
-            ? existingSub.proValidUntil
-            : now;
-        nextValidUntil = addMonths(startAt, normalizeInt(pkg.billingMonths, 1, 1));
-        delta = toBigInt(pkg.monthlyAiTokens);
-        nextBalance = currentBalance + delta;
-      } else {
-        nextValidUntil = null;
-        nextBalance = currentBalance < nextMonthlyTokens ? nextMonthlyTokens : currentBalance;
-        delta = nextBalance - currentBalance;
-      }
-    } else {
-      if (pkg.kind === "AI_TOPUP") {
-        delta = toBigInt(pkg.topupAiTokens);
-        nextBalance = currentBalance + delta;
-        reason = "TOPUP";
-      } else {
-        const validUntil =
-          existingSub.proValidUntil instanceof Date && existingSub.proValidUntil.getTime() > now.getTime()
-            ? existingSub.proValidUntil
-            : null;
-        if (!validUntil) {
-          throw new Error("paid_plan_required_for_capacity_topup");
-        }
-        await tx.subscriptionCapacityGrant.create({
-          data: {
-            userId: order.userId,
-            subscriptionId: existingSub.id,
-            orderId: order.id,
-            planScope: "PRO",
-            deltaRunningBots: normalizeCapacityDelta(pkg.topupRunningBots),
-            deltaBotsTotal: normalizeCapacityDelta(pkg.topupBotsTotal),
-            deltaRunningPredictionsAi: normalizeCapacityDelta(pkg.topupRunningPredictionsAi),
-            deltaPredictionsAiTotal: normalizeCapacityDelta(pkg.topupPredictionsAiTotal),
-            deltaRunningPredictionsComposite: normalizeCapacityDelta(
-              pkg.topupRunningPredictionsComposite
-            ),
-            deltaPredictionsCompositeTotal: normalizeCapacityDelta(
-              pkg.topupPredictionsCompositeTotal
-            ),
-            validUntil
+      if (pkg.kind === "PLAN") {
+        const packagePlan: EffectivePlan = pkg.plan === "FREE" ? "free" : "pro";
+        nextPlan = packagePlan;
+        nextStatus = "ACTIVE";
+        nextMaxRunning =
+          packagePlan === "pro"
+            ? normalizeInt(pkg.maxRunningBots, 3, 0)
+            : normalizeInt(pkg.maxRunningBots, FREE_MAX_RUNNING_BOTS, 0);
+        nextMaxTotal =
+          packagePlan === "pro"
+            ? normalizeInt(pkg.maxBotsTotal, 10, 0)
+            : normalizeInt(pkg.maxBotsTotal, FREE_MAX_BOTS_TOTAL, 0);
+        nextAllowedExchanges = normalizeStringArray(pkg.allowedExchanges, ["*"]);
+        nextMonthlyTokens = toBigInt(pkg.monthlyAiTokens);
+        nextMaxRunningPredictionsAi =
+          packagePlan === "pro"
+            ? normalizeNullableInt(
+              pkg.maxRunningPredictionsAi,
+              PRO_MAX_RUNNING_PREDICTIONS_AI,
+              0
+            )
+            : normalizeNullableInt(
+              pkg.maxRunningPredictionsAi,
+              FREE_MAX_RUNNING_PREDICTIONS_AI,
+              0
+            );
+        nextMaxPredictionsAiTotal =
+          packagePlan === "pro"
+            ? normalizeNullableInt(
+              pkg.maxPredictionsAiTotal,
+              PRO_MAX_PREDICTIONS_AI_TOTAL,
+              0
+            )
+            : normalizeNullableInt(
+              pkg.maxPredictionsAiTotal,
+              FREE_MAX_PREDICTIONS_AI_TOTAL,
+              0
+            );
+        nextMaxRunningPredictionsComposite =
+          packagePlan === "pro"
+            ? normalizeNullableInt(
+              pkg.maxRunningPredictionsComposite,
+              PRO_MAX_RUNNING_PREDICTIONS_COMPOSITE,
+              0
+            )
+            : normalizeNullableInt(
+              pkg.maxRunningPredictionsComposite,
+              FREE_MAX_RUNNING_PREDICTIONS_COMPOSITE,
+              0
+            );
+        nextMaxPredictionsCompositeTotal =
+          packagePlan === "pro"
+            ? normalizeNullableInt(
+              pkg.maxPredictionsCompositeTotal,
+              PRO_MAX_PREDICTIONS_COMPOSITE_TOTAL,
+              0
+            )
+            : normalizeNullableInt(
+              pkg.maxPredictionsCompositeTotal,
+              FREE_MAX_PREDICTIONS_COMPOSITE_TOTAL,
+              0
+            );
+
+        if (packagePlan === "pro") {
+          const startAt =
+            nextValidUntil instanceof Date && nextValidUntil.getTime() > now.getTime()
+              ? nextValidUntil
+              : now;
+          const monthsToAdd = normalizeInt(pkg.billingMonths, 1, 1) * quantity;
+          nextValidUntil = addMonths(startAt, monthsToAdd);
+          const delta = toBigInt(pkg.monthlyAiTokens) * BigInt(quantity);
+          if (delta !== 0n) {
+            balanceCursor += delta;
+            ledgerEntries.push({
+              reason: "MONTHLY_GRANT",
+              delta,
+              balanceAfter: balanceCursor,
+              packageId: pkg.id,
+              packageCode: pkg.code,
+              quantity
+            });
           }
-        });
+        } else {
+          nextValidUntil = null;
+          const before = balanceCursor;
+          balanceCursor = balanceCursor < nextMonthlyTokens ? nextMonthlyTokens : balanceCursor;
+          const delta = balanceCursor - before;
+          if (delta !== 0n) {
+            ledgerEntries.push({
+              reason: "MONTHLY_GRANT",
+              delta,
+              balanceAfter: balanceCursor,
+              packageId: pkg.id,
+              packageCode: pkg.code,
+              quantity
+            });
+          }
+        }
+        continue;
       }
+
+      if (pkg.kind === "AI_TOPUP") {
+        const delta = toBigInt(pkg.topupAiTokens) * BigInt(quantity);
+        if (delta !== 0n) {
+          balanceCursor += delta;
+          ledgerEntries.push({
+            reason: "TOPUP",
+            delta,
+            balanceAfter: balanceCursor,
+            packageId: pkg.id,
+            packageCode: pkg.code,
+            quantity
+          });
+        }
+        continue;
+      }
+
+      const validUntil =
+        nextPlan === "pro"
+        && nextValidUntil instanceof Date
+        && nextValidUntil.getTime() > now.getTime()
+          ? nextValidUntil
+          : null;
+      if (!validUntil) {
+        throw new Error("paid_plan_required_for_capacity_topup");
+      }
+
+      await tx.subscriptionCapacityGrant.create({
+        data: {
+          userId: order.userId,
+          subscriptionId: existingSub.id,
+          orderId: order.id,
+          planScope: "PRO",
+          deltaRunningBots: normalizeCapacityDelta(pkg.topupRunningBots) * quantity,
+          deltaBotsTotal: normalizeCapacityDelta(pkg.topupBotsTotal) * quantity,
+          deltaRunningPredictionsAi: normalizeCapacityDelta(pkg.topupRunningPredictionsAi) * quantity,
+          deltaPredictionsAiTotal: normalizeCapacityDelta(pkg.topupPredictionsAiTotal) * quantity,
+          deltaRunningPredictionsComposite: normalizeCapacityDelta(
+            pkg.topupRunningPredictionsComposite
+          ) * quantity,
+          deltaPredictionsCompositeTotal: normalizeCapacityDelta(
+            pkg.topupPredictionsCompositeTotal
+          ) * quantity,
+          validUntil
+        }
+      });
     }
+
+    const nextBalance = balanceCursor;
 
     const updatedSub = await tx.userSubscription.update({
       where: { id: existingSub.id },
@@ -1738,18 +2297,19 @@ export async function applyPaidOrder(merchantOrderId: string, statusRaw: string)
       }
     });
 
-    if (delta !== 0n) {
+    for (const entry of ledgerEntries) {
       await tx.aiTokenLedger.create({
         data: {
           userId: order.userId,
           subscriptionId: updatedSub.id,
           orderId: order.id,
-          reason,
-          deltaTokens: delta,
-          balanceAfter: nextBalance,
+          reason: entry.reason,
+          deltaTokens: entry.delta,
+          balanceAfter: entry.balanceAfter,
           meta: {
-            packageId: pkg.id,
-            packageCode: pkg.code,
+            packageId: entry.packageId,
+            packageCode: entry.packageCode,
+            quantity: entry.quantity,
             merchantOrderId
           }
         }
@@ -1833,6 +2393,19 @@ export async function getSubscriptionSummary(userId: string): Promise<{
             name: true,
             kind: true
           }
+        },
+        items: {
+          include: {
+            pkg: {
+              select: {
+                id: true,
+                code: true,
+                name: true,
+                kind: true
+              }
+            }
+          },
+          orderBy: [{ createdAt: "asc" }, { id: "asc" }]
         }
       },
       orderBy: { createdAt: "desc" },
@@ -1879,6 +2452,19 @@ export async function listSubscriptionOrders(userId: string): Promise<any[]> {
           name: true,
           kind: true
         }
+      },
+      items: {
+        include: {
+          pkg: {
+            select: {
+              id: true,
+              code: true,
+              name: true,
+              kind: true
+            }
+          }
+        },
+        orderBy: [{ createdAt: "asc" }, { id: "asc" }]
       }
     },
     orderBy: { createdAt: "desc" },

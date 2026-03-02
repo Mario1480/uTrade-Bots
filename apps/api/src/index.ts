@@ -390,6 +390,22 @@ const exchangeCreateSchema = z.object({
       });
     }
   }
+  if (exchange === "mexc") {
+    if (!value.apiKey) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["apiKey"],
+        message: "apiKey is required for mexc"
+      });
+    }
+    if (!value.apiSecret) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["apiSecret"],
+        message: "apiSecret is required for mexc"
+      });
+    }
+  }
   if (exchange !== "paper" && !value.apiKey) {
     ctx.addIssue({
       code: z.ZodIssueCode.custom,
@@ -1196,9 +1212,19 @@ const settingsRiskUpdateSchema = z.object({
   { message: "Provide at least one field to update." }
 );
 
-const subscriptionCheckoutSchema = z.object({
-  packageId: z.string().trim().min(1)
+const subscriptionCheckoutItemSchema = z.object({
+  packageId: z.string().trim().min(1),
+  quantity: z.coerce.number().int().min(1)
 });
+
+const subscriptionCheckoutSchema = z.union([
+  z.object({
+    packageId: z.string().trim().min(1)
+  }),
+  z.object({
+    items: z.array(subscriptionCheckoutItemSchema).min(1).max(20)
+  })
+]);
 
 const billingPackageIdParamSchema = z.object({
   id: z.string().trim().min(1)
@@ -1509,6 +1535,9 @@ const EXCHANGE_AUTO_SYNC_INTERVAL_MS =
 const EXCHANGE_AUTO_SYNC_ENABLED = !["0", "false", "off", "no"].includes(
   String(process.env.EXCHANGE_AUTO_SYNC_ENABLED ?? "1").trim().toLowerCase()
 );
+const MEXC_FUTURES_ENABLED = !["0", "false", "off", "no"].includes(
+  String(process.env.MEXC_FUTURES_ENABLED ?? "1").trim().toLowerCase()
+);
 const BOT_QUEUE_RECOVERY_INTERVAL_MS =
   Math.max(5_000, Number(process.env.BOT_QUEUE_RECOVERY_INTERVAL_MS ?? "30000"));
 const PREDICTION_AUTO_ENABLED = !["0", "false", "off", "no"].includes(
@@ -1669,13 +1698,21 @@ const PASSWORD_RESET_OTP_TTL_MIN = Math.max(
 const EXCHANGE_OPTION_CATALOG = [
   { value: "bitget", label: "Bitget (Futures)" },
   { value: "hyperliquid", label: "Hyperliquid (Perps)" },
-  { value: "mexc", label: "MEXC (Legacy)" },
+  { value: "mexc", label: MEXC_FUTURES_ENABLED ? "MEXC (Futures)" : "MEXC (Disabled)" },
   { value: "paper", label: "Paper (Simulated Trading)" }
 ] as const;
 
 type ExchangeOption = (typeof EXCHANGE_OPTION_CATALOG)[number];
 
 const EXCHANGE_OPTION_VALUES = new Set(EXCHANGE_OPTION_CATALOG.map((row) => row.value));
+
+function getRuntimeEnabledExchangeValues(): Set<ExchangeOption["value"]> {
+  const enabled = new Set<ExchangeOption["value"]>(["bitget", "hyperliquid", "paper"]);
+  if (MEXC_FUTURES_ENABLED) {
+    enabled.add("mexc");
+  }
+  return enabled;
+}
 
 function toIso(value: Date | null | undefined): string | null {
   if (!value) return null;
@@ -2600,19 +2637,24 @@ async function getServerInfoSettings(): Promise<{
 }
 
 async function getAllowedExchangeValues(): Promise<string[]> {
+  const runtimeEnabled = getRuntimeEnabledExchangeValues();
   const configured = asStringArray(await getGlobalSettingValue(GLOBAL_SETTING_EXCHANGES_KEY))
     .map(normalizeExchangeValue)
-    .filter((value) => EXCHANGE_OPTION_VALUES.has(value as ExchangeOption["value"]));
+    .filter((value) => EXCHANGE_OPTION_VALUES.has(value as ExchangeOption["value"]))
+    .filter((value) => runtimeEnabled.has(value as ExchangeOption["value"]));
   if (configured.length > 0) return Array.from(new Set(configured));
-  return EXCHANGE_OPTION_CATALOG.map((row) => row.value);
+  return EXCHANGE_OPTION_CATALOG
+    .map((row) => row.value)
+    .filter((value) => runtimeEnabled.has(value as ExchangeOption["value"]));
 }
 
 function getExchangeOptionsResponse(allowedValues: string[]) {
+  const runtimeEnabled = getRuntimeEnabledExchangeValues();
   const allowed = new Set(allowedValues.map(normalizeExchangeValue));
   return EXCHANGE_OPTION_CATALOG.map((row) => ({
     value: row.value,
     label: row.label,
-    enabled: allowed.has(row.value)
+    enabled: runtimeEnabled.has(row.value) && allowed.has(row.value)
   }));
 }
 
@@ -5900,7 +5942,7 @@ async function runExchangeAutoSyncCycle() {
     const accounts: ExchangeAccountSecrets[] = await db.exchangeAccount.findMany({
       where: {
         exchange: {
-          in: ["bitget", "hyperliquid"]
+          in: ["bitget", "hyperliquid", "mexc"]
         }
       },
       select: {
@@ -6252,7 +6294,7 @@ async function runFeatureThresholdCalibrationCycle(mode: "startup" | "scheduled"
         : (["perp"] as ThresholdMarketType[]);
 
     for (const [exchange, accountRef] of byExchange.entries()) {
-      if (exchange !== "bitget" && exchange !== "hyperliquid") continue;
+      if (exchange !== "bitget" && exchange !== "hyperliquid" && exchange !== "mexc") continue;
       let adapter: BitgetFuturesAdapter | null = null;
       try {
         const account = await resolveTradingAccount(accountRef.userId, accountRef.id);
@@ -10487,6 +10529,7 @@ app.put("/admin/settings/exchanges", requireAuth, async (req, res) => {
       parsed.data.allowed
         .map(normalizeExchangeValue)
         .filter((value) => EXCHANGE_OPTION_VALUES.has(value as ExchangeOption["value"]))
+        .filter((value) => getRuntimeEnabledExchangeValues().has(value as ExchangeOption["value"]))
     )
   );
 
@@ -11713,6 +11756,48 @@ app.get("/settings/access-section", requireAuth, async (_req, res) => {
   });
 });
 
+function mapBillingPackageKindToResponse(kind: unknown): "plan" | "ai_topup" | "entitlement_topup" {
+  if (kind === "AI_TOPUP") return "ai_topup";
+  if (kind === "ENTITLEMENT_TOPUP") return "entitlement_topup";
+  return "plan";
+}
+
+function mapSubscriptionOrderForResponse(order: any) {
+  return {
+    id: order.id,
+    merchantOrderId: order.merchantOrderId,
+    status: String(order.status ?? "PENDING").toLowerCase(),
+    amountCents: Number(order.amountCents ?? 0),
+    currency: order.currency ?? "USD",
+    payUrl: order.payUrl ?? null,
+    paymentStatusRaw: order.paymentStatusRaw ?? null,
+    paidAt: order.paidAt instanceof Date ? order.paidAt.toISOString() : null,
+    createdAt: order.createdAt instanceof Date ? order.createdAt.toISOString() : null,
+    package: order.pkg ? {
+      id: order.pkg.id,
+      code: order.pkg.code,
+      name: order.pkg.name,
+      kind: mapBillingPackageKindToResponse(order.pkg.kind)
+    } : null,
+    items: Array.isArray(order.items)
+      ? order.items.map((item: any) => ({
+        id: item.id,
+        quantity: Number(item.quantity ?? 1),
+        unitPriceCents: Number(item.unitPriceCents ?? 0),
+        lineAmountCents: Number(item.lineAmountCents ?? 0),
+        currency: String(item.currency ?? order.currency ?? "USD"),
+        kind: mapBillingPackageKindToResponse(item.kindSnapshot ?? item.pkg?.kind),
+        package: item.pkg ? {
+          id: item.pkg.id,
+          code: item.pkg.code,
+          name: item.pkg.name,
+          kind: mapBillingPackageKindToResponse(item.pkg.kind)
+        } : null
+      }))
+      : []
+  };
+}
+
 app.get("/settings/subscription", requireAuth, async (_req, res) => {
   try {
     const user = readUserFromLocals(res);
@@ -11787,12 +11872,7 @@ app.get("/settings/subscription", requireAuth, async (_req, res) => {
         code: pkg.code,
         name: pkg.name,
         description: pkg.description ?? null,
-        kind:
-          pkg.kind === "AI_TOPUP"
-            ? "ai_topup"
-            : pkg.kind === "ENTITLEMENT_TOPUP"
-              ? "entitlement_topup"
-              : "plan",
+        kind: mapBillingPackageKindToResponse(pkg.kind),
         isActive: Boolean(pkg.isActive),
         sortOrder: Number(pkg.sortOrder ?? 0),
         currency: String(pkg.currency ?? "USD"),
@@ -11821,28 +11901,7 @@ app.get("/settings/subscription", requireAuth, async (_req, res) => {
         topupRunningPredictionsComposite: pkg.topupRunningPredictionsComposite ?? null,
         topupPredictionsCompositeTotal: pkg.topupPredictionsCompositeTotal ?? null
       })),
-      orders: summary.orders.map((order: any) => ({
-        id: order.id,
-        merchantOrderId: order.merchantOrderId,
-        status: String(order.status ?? "PENDING").toLowerCase(),
-        amountCents: Number(order.amountCents ?? 0),
-        currency: order.currency ?? "USD",
-        payUrl: order.payUrl ?? null,
-        paymentStatusRaw: order.paymentStatusRaw ?? null,
-        paidAt: order.paidAt instanceof Date ? order.paidAt.toISOString() : null,
-        createdAt: order.createdAt instanceof Date ? order.createdAt.toISOString() : null,
-        package: order.pkg ? {
-          id: order.pkg.id,
-          code: order.pkg.code,
-          name: order.pkg.name,
-          kind:
-            order.pkg.kind === "AI_TOPUP"
-              ? "ai_topup"
-              : order.pkg.kind === "ENTITLEMENT_TOPUP"
-                ? "entitlement_topup"
-                : "plan"
-        } : null
-      }))
+      orders: summary.orders.map((order: any) => mapSubscriptionOrderForResponse(order))
     });
   } catch (error) {
     console.error("[billing] settings subscription endpoint failed", {
@@ -11915,28 +11974,7 @@ app.get("/settings/subscription/orders", requireAuth, async (_req, res) => {
   const user = readUserFromLocals(res);
   const items = await listSubscriptionOrders(user.id);
   return res.json({
-    items: items.map((order: any) => ({
-      id: order.id,
-      merchantOrderId: order.merchantOrderId,
-      status: String(order.status ?? "PENDING").toLowerCase(),
-      amountCents: Number(order.amountCents ?? 0),
-      currency: order.currency ?? "USD",
-      payUrl: order.payUrl ?? null,
-      paymentStatusRaw: order.paymentStatusRaw ?? null,
-      paidAt: order.paidAt instanceof Date ? order.paidAt.toISOString() : null,
-      createdAt: order.createdAt instanceof Date ? order.createdAt.toISOString() : null,
-      package: order.pkg ? {
-        id: order.pkg.id,
-        code: order.pkg.code,
-        name: order.pkg.name,
-        kind:
-          order.pkg.kind === "AI_TOPUP"
-            ? "ai_topup"
-            : order.pkg.kind === "ENTITLEMENT_TOPUP"
-              ? "entitlement_topup"
-              : "plan"
-      } : null
-    }))
+    items: items.map((order: any) => mapSubscriptionOrderForResponse(order))
   });
 });
 
@@ -11950,10 +11988,18 @@ app.post("/settings/subscription/checkout", requireAuth, async (req, res) => {
     return res.status(400).json({ error: "invalid_payload", details: parsed.error.flatten() });
   }
 
+  const checkoutItems =
+    "packageId" in parsed.data
+      ? [{ packageId: parsed.data.packageId, quantity: 1 }]
+      : parsed.data.items.map((item) => ({
+        packageId: item.packageId,
+        quantity: item.quantity
+      }));
+
   try {
     const checkout = await createBillingCheckout({
       userId: user.id,
-      packageId: parsed.data.packageId
+      items: checkoutItems
     });
     return res.json({
       payUrl: checkout.payUrl,
@@ -11963,14 +12009,26 @@ app.post("/settings/subscription/checkout", requireAuth, async (req, res) => {
     });
   } catch (error) {
     const reason = error instanceof Error ? error.message : String(error);
+    if (
+      reason === "invalid_cart_payload"
+      || reason === "cart_empty"
+      || reason === "cart_plan_count_invalid"
+      || reason === "cart_duplicate_package"
+      || reason === "cart_quantity_invalid"
+    ) {
+      return res.status(400).json({ error: reason });
+    }
+    if (reason === "cart_item_not_found" || reason === "package_not_found") {
+      return res.status(404).json({ error: reason === "package_not_found" ? "cart_item_not_found" : reason });
+    }
+    if (reason === "cart_capacity_requires_pro") {
+      return res.status(409).json({ error: "cart_capacity_requires_pro" });
+    }
     if (reason === "pro_required_for_topup") {
       return res.status(409).json({ error: "pro_required_for_topup" });
     }
     if (reason === "paid_plan_required_for_capacity_topup") {
       return res.status(409).json({ error: "paid_plan_required_for_capacity_topup" });
-    }
-    if (reason === "package_not_found") {
-      return res.status(404).json({ error: "package_not_found" });
     }
     if (reason === "ccpay_not_configured") {
       return res.status(503).json({ error: "ccpay_not_configured" });
@@ -17746,6 +17804,13 @@ app.post("/exchange-accounts", requireAuth, async (req, res) => {
   }
 
   const requestedExchange = normalizeExchangeValue(parsed.data.exchange);
+  if (requestedExchange === "mexc" && !MEXC_FUTURES_ENABLED) {
+    return res.status(403).json({
+      error: "exchange_disabled",
+      code: "mexc_futures_disabled",
+      message: "MEXC futures integration is disabled by runtime flag."
+    });
+  }
   const allowedExchanges = await getAllowedExchangeValues();
   if (!allowedExchanges.includes(requestedExchange)) {
     return res.status(400).json({

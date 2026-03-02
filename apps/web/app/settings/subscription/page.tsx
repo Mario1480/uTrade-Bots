@@ -3,117 +3,46 @@
 import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 import { useLocale, useTranslations } from "next-intl";
-import { ApiError, apiGet, apiPost } from "../../../lib/api";
+import { ApiError, apiGet } from "../../../lib/api";
 import { withLocalePath, type AppLocale } from "../../../i18n/config";
+import {
+  buildLicensePageModel,
+  centsToCurrency,
+  type BillingOrder,
+  type AuthMePayload,
+  type ServerInfoPayload,
+  type SubscriptionPayload
+} from "../../../src/billing/subscriptionViewModel";
 
-type BillingPackage = {
-  id: string;
-  code: string;
-  name: string;
-  description: string | null;
-  kind: "plan" | "ai_topup" | "entitlement_topup";
-  isActive: boolean;
-  priceCents: number;
-  currency: string;
-  billingMonths: number;
-  plan: "free" | "pro" | null;
-  maxRunningBots: number | null;
-  maxBotsTotal: number | null;
-  maxRunningPredictionsAi: number | null;
-  maxPredictionsAiTotal: number | null;
-  maxRunningPredictionsComposite: number | null;
-  maxPredictionsCompositeTotal: number | null;
-  monthlyAiTokens: string;
-  topupAiTokens: string;
-  topupRunningBots: number | null;
-  topupBotsTotal: number | null;
-  topupRunningPredictionsAi: number | null;
-  topupPredictionsAiTotal: number | null;
-  topupRunningPredictionsComposite: number | null;
-  topupPredictionsCompositeTotal: number | null;
-};
+function formatMaybeDate(value: string | null, locale: string): string {
+  if (!value) return "-";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return value;
+  return date.toLocaleString(locale);
+}
 
-type BillingOrder = {
-  id: string;
-  merchantOrderId: string;
-  status: "pending" | "paid" | "failed" | "expired";
-  amountCents: number;
-  currency: string;
-  payUrl: string | null;
-  paymentStatusRaw: string | null;
-  paidAt: string | null;
-  createdAt: string | null;
-  package: {
-    id: string;
-    code: string;
-    name: string;
-    kind: "plan" | "ai_topup" | "entitlement_topup";
-  } | null;
-};
+function formatOrderPackageLabel(order: BillingOrder): string {
+  if (Array.isArray(order.items) && order.items.length > 0) {
+    return order.items
+      .map((item) => `${item.package?.name ?? "-"} x${item.quantity}`)
+      .join(", ");
+  }
+  return order.package?.name ?? "-";
+}
 
-type SubscriptionPayload = {
-  billingEnabled: boolean;
-  plan: "free" | "pro";
-  status: "active" | "inactive";
-  proValidUntil: string | null;
-  limits: {
-    maxRunningBots: number;
-    maxBotsTotal: number;
-    allowedExchanges: string[];
-    bots: {
-      maxRunning: number;
-      maxTotal: number;
-    };
-    predictions: {
-      local: {
-        maxRunning: number | null;
-        maxTotal: number | null;
-      };
-      ai: {
-        maxRunning: number | null;
-        maxTotal: number | null;
-      };
-      composite: {
-        maxRunning: number | null;
-        maxTotal: number | null;
-      };
-    };
-  };
-  usage: {
-    totalBots: number;
-    runningBots: number;
-    bots: {
-      running: number;
-      total: number;
-    };
-    predictions: {
-      local: {
-        running: number;
-        total: number;
-      };
-      ai: {
-        running: number;
-        total: number;
-      };
-      composite: {
-        running: number;
-        total: number;
-      };
-    };
-  };
-  ai: {
-    tokenBalance: string;
-    tokenUsedLifetime: string;
-    monthlyIncluded: string;
-    billingEnabled: boolean;
-  };
-  packages: BillingPackage[];
-  orders: BillingOrder[];
-};
-
-function centsToCurrency(cents: number, currency: string): string {
-  const value = Number(cents) / 100;
-  return `${value.toFixed(2)} ${currency}`;
+function renderOrderPackageCell(order: BillingOrder) {
+  if (Array.isArray(order.items) && order.items.length > 0) {
+    return (
+      <div className="subscriptionOrderPackageCell">
+        {order.items.map((item) => (
+          <div key={item.id} className="subscriptionOrderPackageLine">
+            {item.package?.name ?? "-"} x{item.quantity}
+          </div>
+        ))}
+      </div>
+    );
+  }
+  return <span>{formatOrderPackageLabel(order)}</span>;
 }
 
 export default function SubscriptionPage() {
@@ -121,69 +50,51 @@ export default function SubscriptionPage() {
   const tCommon = useTranslations("settings.common");
   const locale = useLocale() as AppLocale;
   const [loading, setLoading] = useState(true);
-  const [checkoutLoadingPackageId, setCheckoutLoadingPackageId] = useState<string | null>(null);
-  const [msg, setMsg] = useState<string | null>(null);
+  const [message, setMessage] = useState<string | null>(null);
   const [payload, setPayload] = useState<SubscriptionPayload | null>(null);
+  const [me, setMe] = useState<AuthMePayload | null>(null);
+  const [serverInfo, setServerInfo] = useState<ServerInfoPayload | null>(null);
 
-  const planPackages = useMemo(
-    () => (payload?.packages ?? []).filter((item) => item.kind === "plan"),
-    [payload]
+  const model = useMemo(
+    () => buildLicensePageModel(payload, me, serverInfo),
+    [payload, me, serverInfo]
   );
-  const topupPackages = useMemo(
-    () => (payload?.packages ?? []).filter((item) => item.kind === "ai_topup" || item.kind === "entitlement_topup"),
-    [payload]
-  );
-
-  function errMsg(error: unknown): string {
-    if (error instanceof ApiError) {
-      const detail = typeof error.payload?.error === "string" ? error.payload.error : null;
-      const reason = typeof error.payload?.reason === "string" ? error.payload.reason : null;
-      if (detail && reason) return `${error.message} (${detail}: ${reason})`;
-      if (detail) return `${error.message} (${detail})`;
-      if (reason) return `${error.message} (${reason})`;
-      return `${error.message}`;
-    }
-    if (error && typeof error === "object" && "message" in error) {
-      return String((error as { message?: unknown }).message ?? error);
-    }
-    return String(error);
-  }
 
   async function load() {
     setLoading(true);
-    setMsg(null);
+    setMessage(null);
     try {
-      const data = await apiGet<SubscriptionPayload>("/settings/subscription");
-      setPayload(data);
-    } catch (error) {
-      setMsg(errMsg(error));
+      const [subscriptionResult, meResult, serverInfoResult] = await Promise.allSettled([
+        apiGet<SubscriptionPayload>("/settings/subscription"),
+        apiGet<AuthMePayload>("/auth/me"),
+        apiGet<ServerInfoPayload>("/settings/server-info")
+      ]);
+
+      if (subscriptionResult.status === "fulfilled") {
+        setPayload(subscriptionResult.value);
+      } else {
+        setPayload(null);
+        const reason = subscriptionResult.reason;
+        if (reason instanceof ApiError) {
+          setMessage(reason.message);
+        } else {
+          setMessage(String(reason));
+        }
+      }
+
+      if (meResult.status === "fulfilled") {
+        setMe(meResult.value);
+      } else {
+        setMe(null);
+      }
+
+      if (serverInfoResult.status === "fulfilled") {
+        setServerInfo(serverInfoResult.value);
+      } else {
+        setServerInfo(null);
+      }
     } finally {
       setLoading(false);
-    }
-  }
-
-  async function checkout(packageId: string) {
-    setCheckoutLoadingPackageId(packageId);
-    setMsg(null);
-    try {
-      const res = await apiPost<{ payUrl?: string | null; mode?: "redirect" | "instant" }>(
-        "/settings/subscription/checkout",
-        { packageId }
-      );
-      if (res.payUrl) {
-        window.location.assign(res.payUrl);
-        return;
-      }
-      if (res.mode === "instant") {
-        setMsg(t("messages.activatedInstantly"));
-        await load();
-        return;
-      }
-      throw new Error("checkout_url_missing");
-    } catch (error) {
-      setMsg(errMsg(error));
-    } finally {
-      setCheckoutLoadingPackageId(null);
     }
   }
 
@@ -192,8 +103,8 @@ export default function SubscriptionPage() {
   }, []);
 
   return (
-    <div style={{ maxWidth: 1100 }}>
-      <div style={{ marginBottom: 10, display: "flex", gap: 8, flexWrap: "wrap" }}>
+    <div className="subscriptionPortalWrap">
+      <div className="subscriptionPortalTopActions">
         <Link href={withLocalePath("/settings", locale)} className="btn">
           ← {tCommon("backToSettings")}
         </Link>
@@ -202,140 +113,191 @@ export default function SubscriptionPage() {
         </Link>
       </div>
 
-      <h2 style={{ marginTop: 0 }}>{t("title")}</h2>
-
-      <div className="card" style={{ padding: 12, fontSize: 13, marginBottom: 12 }}>
-        {loading ? (
-          <div style={{ color: "var(--muted)" }}>{tCommon("loading")}</div>
-        ) : payload ? (
-          <div style={{ display: "grid", gap: 8 }}>
-            <div><b>{t("status.plan")}:</b> {payload.plan.toUpperCase()}</div>
-            <div><b>{t("status.state")}:</b> {payload.status.toUpperCase()}</div>
-            <div><b>{t("status.validUntil")}:</b> {payload.proValidUntil ?? "-"}</div>
-            <div>
-              <b>{t("status.botLimits")}:</b> {payload.usage.runningBots}/{payload.limits.maxRunningBots} running, {payload.usage.totalBots}/{payload.limits.maxBotsTotal} total
-            </div>
-            <div><b>{t("status.exchanges")}:</b> {payload.limits.allowedExchanges.join(", ")}</div>
-            <div>
-              <b>{t("status.predictionsAiLimits")}:</b> {payload.usage.predictions.ai.running}/{payload.limits.predictions.ai.maxRunning ?? t("status.unlimited")} running, {payload.usage.predictions.ai.total}/{payload.limits.predictions.ai.maxTotal ?? t("status.unlimited")} total
-            </div>
-            <div>
-              <b>{t("status.predictionsCompositeLimits")}:</b> {payload.usage.predictions.composite.running}/{payload.limits.predictions.composite.maxRunning ?? t("status.unlimited")} running, {payload.usage.predictions.composite.total}/{payload.limits.predictions.composite.maxTotal ?? t("status.unlimited")} total
-            </div>
-            <div><b>{t("status.aiBalance")}:</b> {payload.ai.tokenBalance}</div>
-            <div><b>{t("status.aiMonthlyIncluded")}:</b> {payload.ai.monthlyIncluded}</div>
-            <div><b>{t("status.aiUsedLifetime")}:</b> {payload.ai.tokenUsedLifetime}</div>
-          </div>
-        ) : (
-          <div style={{ color: "var(--muted)" }}>{t("messages.noData")}</div>
-        )}
+      <div className="subscriptionPortalHeader">
+        <p className="subscriptionPortalEyebrow">{t("portalEyebrow")}</p>
+        <h2>{t("license.title")}</h2>
+        <p className="subscriptionPortalMuted">{t("license.subtitle")}</p>
       </div>
 
-      <div className="card" style={{ padding: 12, fontSize: 13, marginBottom: 12 }}>
-        <div style={{ fontWeight: 700, marginBottom: 8 }}>{t("packages.title")}</div>
-        <div style={{ color: "var(--muted)", marginBottom: 10 }}>{t("packages.description")}</div>
+      {loading ? (
+        <div className="card subscriptionPortalLoading">{tCommon("loading")}</div>
+      ) : model ? (
+        <>
+          <div className="subscriptionPortalGrid">
+            <div className="card subscriptionPortalCard">
+              <div className="subscriptionCardHead">
+                <div className="subscriptionCardTitle">{t("license.cards.status")}</div>
+                <span className={`subscriptionStatusBadge ${model.status === "active" ? "subscriptionStatusBadgeActive" : "subscriptionStatusBadgeInactive"}`}>
+                  {model.status === "active" ? t("license.states.active") : t("license.states.inactive")}
+                </span>
+              </div>
+              <div className="subscriptionPortalFieldRow">
+                <span>{t("license.labels.plan")}</span>
+                <b>{model.plan === "pro" ? t("license.plans.pro") : t("license.plans.free")}</b>
+              </div>
+              <div className="subscriptionPortalFieldRow">
+                <span>{t("license.labels.validUntil")}</span>
+                <span>{formatMaybeDate(model.proValidUntil, locale)}</span>
+              </div>
+              {model.fallbackReason ? (
+                <div className="subscriptionPortalWarn">
+                  {t("license.fallbackMode", { reason: model.fallbackReason })}
+                </div>
+              ) : null}
+            </div>
 
-        <div style={{ display: "grid", gap: 10 }}>
-          {[...planPackages, ...topupPackages].map((pkg) => (
-            <div key={pkg.id} className="settingsPanel" style={{ padding: 10 }}>
-              <div style={{ display: "flex", justifyContent: "space-between", gap: 10, flexWrap: "wrap" }}>
-                <div>
-                  <div style={{ fontWeight: 700 }}>{pkg.name}</div>
-                  <div style={{ fontSize: 12, color: "var(--muted)" }}>{pkg.description ?? "-"}</div>
-                  <div style={{ marginTop: 6, fontSize: 12 }}>
-                    {pkg.kind === "plan"
-                      ? t("packages.kindPlan")
-                      : pkg.kind === "ai_topup"
-                        ? t("packages.kindTopup")
-                        : t("packages.kindCapacityTopup")}
-                    {pkg.plan ? ` · ${pkg.plan.toUpperCase()}` : ""}
-                  </div>
-                  <div style={{ marginTop: 4, fontSize: 12 }}>
-                    {t("packages.price")}: {centsToCurrency(pkg.priceCents, pkg.currency)}
-                  </div>
-                  {pkg.kind === "plan" ? (
-                    <div style={{ marginTop: 4, fontSize: 12 }}>
-                      {t("packages.planDetails", {
-                        months: pkg.billingMonths,
-                        running: pkg.maxRunningBots ?? 0,
-                        total: pkg.maxBotsTotal ?? 0,
-                        tokens: pkg.monthlyAiTokens
-                      })}
-                    </div>
-                  ) : (
-                    <div style={{ marginTop: 4, fontSize: 12 }}>
-                      {pkg.kind === "ai_topup"
-                        ? t("packages.topupDetails", { tokens: pkg.topupAiTokens })
-                        : t("packages.capacityTopupDetails", {
-                          runningBots: pkg.topupRunningBots ?? 0,
-                          totalBots: pkg.topupBotsTotal ?? 0,
-                          runningAi: pkg.topupRunningPredictionsAi ?? 0,
-                          totalAi: pkg.topupPredictionsAiTotal ?? 0,
-                          runningComposite: pkg.topupRunningPredictionsComposite ?? 0,
-                          totalComposite: pkg.topupPredictionsCompositeTotal ?? 0
-                        })}
-                    </div>
-                  )}
-                </div>
-                <div>
-                  <button
-                    className="btn btnPrimary"
-                    onClick={() => checkout(pkg.id)}
-                    disabled={checkoutLoadingPackageId === pkg.id || !payload?.billingEnabled}
-                  >
-                    {checkoutLoadingPackageId === pkg.id ? tCommon("saving") : t("packages.buy")}
-                  </button>
-                </div>
+            <div className="card subscriptionPortalCard">
+              <div className="subscriptionCardTitle">{t("license.cards.account")}</div>
+              <div className="subscriptionPortalFieldRow">
+                <span>{t("license.labels.email")}</span>
+                <span>{model.account.email ?? "-"}</span>
+              </div>
+              <div className="subscriptionPortalFieldRow">
+                <span>{t("license.labels.userId")}</span>
+                <span className="subscriptionMono">{model.account.userId ?? "-"}</span>
               </div>
             </div>
-          ))}
-        </div>
-      </div>
 
-      <div className="card" style={{ padding: 12, fontSize: 13 }}>
-        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
-          <div style={{ fontWeight: 700 }}>{t("orders.title")}</div>
-          <button className="btn" onClick={load} disabled={loading}>{t("orders.refresh")}</button>
-        </div>
+            <div className="card subscriptionPortalCard">
+              <div className="subscriptionCardTitle">{t("license.cards.limits")}</div>
+              <div className="subscriptionPortalFieldRow">
+                <span>{t("license.labels.bots")}</span>
+                <span>
+                  {model.limits.bots.running}/{model.limits.bots.maxRunning} {t("license.running")} ·{" "}
+                  {model.limits.bots.total}/{model.limits.bots.maxTotal} {t("license.total")}
+                </span>
+              </div>
+              <div className="subscriptionPortalFieldRow">
+                <span>{t("license.labels.predictionsAi")}</span>
+                <span>
+                  {model.limits.predictionsAi.running}/
+                  {model.limits.predictionsAi.maxRunning ?? t("license.unlimited")} {t("license.running")} ·{" "}
+                  {model.limits.predictionsAi.total}/
+                  {model.limits.predictionsAi.maxTotal ?? t("license.unlimited")} {t("license.total")}
+                </span>
+              </div>
+              <div className="subscriptionPortalFieldRow">
+                <span>{t("license.labels.predictionsComposite")}</span>
+                <span>
+                  {model.limits.predictionsComposite.running}/
+                  {model.limits.predictionsComposite.maxRunning ?? t("license.unlimited")} {t("license.running")} ·{" "}
+                  {model.limits.predictionsComposite.total}/
+                  {model.limits.predictionsComposite.maxTotal ?? t("license.unlimited")} {t("license.total")}
+                </span>
+              </div>
+              <div className="subscriptionPortalFieldRow">
+                <span>{t("license.labels.exchanges")}</span>
+                <span>{model.limits.exchanges.join(", ") || "-"}</span>
+              </div>
+            </div>
 
-        <div style={{ overflowX: "auto" }}>
-          <table className="table" style={{ minWidth: 680 }}>
-            <thead>
-              <tr>
-                <th>{t("orders.createdAt")}</th>
-                <th>{t("orders.package")}</th>
-                <th>{t("orders.amount")}</th>
-                <th>{t("orders.status")}</th>
-                <th>{t("orders.action")}</th>
-              </tr>
-            </thead>
-            <tbody>
-              {(payload?.orders ?? []).map((order) => (
-                <tr key={order.id}>
-                  <td>{order.createdAt ?? "-"}</td>
-                  <td>{order.package?.name ?? "-"}</td>
-                  <td>{centsToCurrency(order.amountCents, order.currency)}</td>
-                  <td>{order.status.toUpperCase()}</td>
-                  <td>
-                    {order.status === "pending" && order.payUrl ? (
-                      <a href={order.payUrl} target="_blank" rel="noreferrer">{t("orders.payNow")}</a>
-                    ) : (
-                      "-"
-                    )}
-                  </td>
-                </tr>
-              ))}
-              {(payload?.orders ?? []).length === 0 ? (
-                <tr>
-                  <td colSpan={5} style={{ color: "var(--muted)" }}>{t("orders.empty")}</td>
-                </tr>
-              ) : null}
-            </tbody>
-          </table>
-        </div>
-      </div>
+            <div className="card subscriptionPortalCard">
+              <div className="subscriptionCardTitle">{t("license.cards.features")}</div>
+              <div className="subscriptionFeatureWrap">
+                <span className={`subscriptionFeatureBadge ${model.features.proPlan ? "subscriptionFeatureBadgeOn" : ""}`}>
+                  {t("license.features.proPlan")}
+                </span>
+                <span className={`subscriptionFeatureBadge ${model.features.aiBillingEnabled ? "subscriptionFeatureBadgeOn" : ""}`}>
+                  {t("license.features.aiBilling")}
+                </span>
+                <span className={`subscriptionFeatureBadge ${model.features.aiTopupAvailable ? "subscriptionFeatureBadgeOn" : ""}`}>
+                  {t("license.features.aiTopup")}
+                </span>
+                <span className={`subscriptionFeatureBadge ${model.features.capacityTopupAvailable ? "subscriptionFeatureBadgeOn" : ""}`}>
+                  {t("license.features.capacityTopup")}
+                </span>
+              </div>
+            </div>
 
-      {msg ? <div style={{ marginTop: 10, color: "var(--warn)" }}>{msg}</div> : null}
+            <div className="card subscriptionPortalCard">
+              <div className="subscriptionCardTitle">{t("license.cards.aiWallet")}</div>
+              <div className="subscriptionPortalFieldRow">
+                <span>{t("license.labels.aiBalance")}</span>
+                <span>{model.ai.balance}</span>
+              </div>
+              <div className="subscriptionPortalFieldRow">
+                <span>{t("license.labels.aiMonthlyIncluded")}</span>
+                <span>{model.ai.monthlyIncluded}</span>
+              </div>
+              <div className="subscriptionPortalFieldRow">
+                <span>{t("license.labels.aiUsedLifetime")}</span>
+                <span>{model.ai.usedLifetime}</span>
+              </div>
+            </div>
+
+            <div className="card subscriptionPortalCard">
+              <div className="subscriptionCardTitle">{t("license.cards.instance")}</div>
+              <div className="subscriptionPortalFieldRow">
+                <span>{t("license.labels.serverIp")}</span>
+                <span>{model.instance.serverIpAddress ?? "-"}</span>
+              </div>
+              <Link href={withLocalePath("/settings/subscription/order", locale)} className="btn btnPrimary subscriptionPortalCardAction">
+                {t("license.openOrderPage")}
+              </Link>
+            </div>
+          </div>
+
+          <div className="card subscriptionPortalOrdersCard">
+            <div className="subscriptionCardHead">
+              <div className="subscriptionCardTitle">{t("orders.title")}</div>
+              <button className="btn" type="button" onClick={() => void load()}>
+                {t("orders.refresh")}
+              </button>
+            </div>
+            <div style={{ overflowX: "auto" }}>
+              <table className="table subscriptionOrdersTable">
+                <thead>
+                  <tr>
+                    <th>{t("orders.createdAt")}</th>
+                    <th>{t("orders.package")}</th>
+                    <th>{t("orders.amount")}</th>
+                    <th>{t("orders.status")}</th>
+                    <th>{t("orders.action")}</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {model.orders.map((order) => (
+                    <tr key={order.id}>
+                      <td>{formatMaybeDate(order.createdAt, locale)}</td>
+                      <td>{renderOrderPackageCell(order)}</td>
+                      <td>{centsToCurrency(order.amountCents, order.currency)}</td>
+                      <td>
+                        <span className={`subscriptionStatusPill subscriptionStatusPill${order.status}`}>
+                          {order.status.toUpperCase()}
+                        </span>
+                      </td>
+                      <td>
+                        {order.status === "pending" && order.payUrl ? (
+                          <a href={order.payUrl} target="_blank" rel="noreferrer">{t("orders.payNow")}</a>
+                        ) : "-"}
+                      </td>
+                    </tr>
+                  ))}
+                  {model.orders.length === 0 ? (
+                    <tr>
+                      <td colSpan={5} className="subscriptionPortalMuted">{t("orders.empty")}</td>
+                    </tr>
+                  ) : null}
+                </tbody>
+              </table>
+            </div>
+          </div>
+
+          <div className="card subscriptionPortalUpgradeCard">
+            <div>
+              <div className="subscriptionCardTitle">{t("license.upgradeTitle")}</div>
+              <div className="subscriptionPortalMuted">{t("license.upgradeDescription")}</div>
+            </div>
+            <Link href={withLocalePath("/settings/subscription/order", locale)} className="btn btnPrimary">
+              {t("license.openOrderPage")}
+            </Link>
+          </div>
+        </>
+      ) : (
+        <div className="card subscriptionPortalLoading">{t("messages.noData")}</div>
+      )}
+
+      {message ? <div className="subscriptionPortalMessage">{message}</div> : null}
     </div>
   );
 }

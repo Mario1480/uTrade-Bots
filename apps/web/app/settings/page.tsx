@@ -265,6 +265,7 @@ export default function SettingsPage() {
   const [strategyLastSavedMeta, setStrategyLastSavedMeta] = useState<StrategyPromptGenerationMeta | null>(null);
   const licenseManagementEnabled = true;
   const passphraseRequired = exchange === "bitget";
+  const mexcMode = exchange === "mexc";
   const paperMode = exchange === "paper";
   const marketDataAccounts = accounts.filter((item) => item.exchange !== "paper");
   const query = searchParams.toString();
@@ -1197,9 +1198,14 @@ export default function SettingsPage() {
                   </div>
                   <div className="settingsMutedText">
                     {licenseManagementEnabled ? (
-                      <Link href={withLocalePath("/settings/subscription", locale)} className="btn btnPrimary">
-                        {tMain("license.open")}
-                      </Link>
+                      <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                        <Link href={withLocalePath("/settings/subscription", locale)} className="btn btnPrimary">
+                          {tMain("license.openLicense")}
+                        </Link>
+                        <Link href={withLocalePath("/settings/subscription/order", locale)} className="btn">
+                          {tMain("license.openOrder")}
+                        </Link>
+                      </div>
                     ) : tMain("license.currentlyDisabled")}
                   </div>
                 </div>
@@ -1574,6 +1580,11 @@ export default function SettingsPage() {
                             required={passphraseRequired}
                           />
                         </label>
+                        {mexcMode ? (
+                          <div className="settingsMutedText">
+                            MEXC Futures nutzt `apiKey` + `apiSecret`. Passphrase wird nicht benötigt.
+                          </div>
+                        ) : null}
                       </>
                     )}
                     <button

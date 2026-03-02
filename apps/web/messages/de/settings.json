@@ -61,34 +61,105 @@
   },
   "subscription": {
     "title": "Abo & Abrechnung",
+    "portalEyebrow": "Kundenportal",
     "messages": {
       "noData": "Keine Abo-Daten verfügbar.",
       "activatedInstantly": "Paket wurde sofort aktiviert."
     },
-    "status": {
-      "plan": "Plan",
-      "state": "Status",
-      "validUntil": "Gültig bis",
-      "botLimits": "Bot-Limits",
-      "predictionsAiLimits": "AI-Prediction-Limits",
-      "predictionsCompositeLimits": "Composite-Prediction-Limits",
+    "license": {
+      "title": "Lizenz",
+      "subtitle": "Sieh deinen aktiven Plan, Limits, Features und den Billing-Status.",
+      "backToLicense": "Zurück zur Lizenz",
+      "cards": {
+        "status": "Status",
+        "account": "Billing-Konto",
+        "limits": "Limits",
+        "features": "Features",
+        "aiWallet": "AI Wallet",
+        "instance": "Instanz"
+      },
+      "labels": {
+        "plan": "Plan",
+        "validUntil": "Gültig bis",
+        "email": "E-Mail",
+        "userId": "User-ID",
+        "bots": "Bots",
+        "predictionsAi": "AI-Predictions",
+        "predictionsComposite": "Composite-Predictions",
+        "exchanges": "Erlaubte Exchanges",
+        "aiBalance": "AI-Token-Guthaben",
+        "aiMonthlyIncluded": "Monatlich inkludierte Tokens",
+        "aiUsedLifetime": "Verbrauchte Tokens (gesamt)",
+        "serverIp": "Server-IP"
+      },
+      "plans": {
+        "free": "FREE",
+        "pro": "PRO"
+      },
+      "states": {
+        "active": "Aktiv",
+        "inactive": "Inaktiv"
+      },
+      "features": {
+        "proPlan": "Pro-Plan",
+        "aiBilling": "AI-Billing aktiv",
+        "aiTopup": "AI-Topups verfügbar",
+        "capacityTopup": "Kapazitäts-Topups verfügbar"
+      },
+      "running": "laufend",
+      "total": "gesamt",
       "unlimited": "unbegrenzt",
-      "exchanges": "Erlaubte Exchanges",
-      "aiBalance": "AI-Token-Guthaben",
-      "aiMonthlyIncluded": "Monatlich inkludierte Tokens",
-      "aiUsedLifetime": "Verbrauchte Tokens (gesamt)"
+      "fallbackMode": "Billing-Fallback-Modus aktiv ({reason}).",
+      "upgradeTitle": "Add-ons upgraden",
+      "upgradeDescription": "Öffne die Order-Seite, um Pläne zu kaufen/verlängern und Add-on-Pakete zu buchen.",
+      "openOrderPage": "Order / Upgrade öffnen"
     },
-    "packages": {
-      "title": "Pakete",
-      "description": "Plan kaufen/verlängern und AI-Token-Topups buchen.",
-      "kindPlan": "Plan-Paket",
-      "kindTopup": "AI-Topup-Paket",
-      "kindCapacityTopup": "Kapazitäts-Topup-Paket",
-      "price": "Preis",
-      "planDetails": "{months} Monat(e), laufende Bots: {running}, Bots gesamt: {total}, inkludierte AI-Tokens: {tokens}",
-      "topupDetails": "Fügt {tokens} AI-Tokens hinzu",
-      "capacityTopupDetails": "Erhöht Bots um +{runningBots} laufend/+{totalBots} gesamt, AI-Predictions um +{runningAi} laufend/+{totalAi} gesamt, Composite-Predictions um +{runningComposite} laufend/+{totalComposite} gesamt",
-      "buy": "Jetzt kaufen"
+    "order": {
+      "title": "Lizenz bestellen",
+      "subtitle": "Wähle optional einen Plan und Kapazitäts-Add-ons mit Mengen, dann bezahle über CCPayment.",
+      "packageLabel": "Paket",
+      "noPlanSelected": "Kein Plan ausgewählt",
+      "includedTitle": "Inklusive",
+      "includedBots": "Bots: {running} laufend / {total} gesamt",
+      "includedPredictionsAi": "AI-Predictions: {running} laufend / {total} gesamt",
+      "includedPredictionsComposite": "Composite-Predictions: {running} laufend / {total} gesamt",
+      "includedAiTokens": "Monatliche AI-Tokens: {tokens}",
+      "aiTopupsTitle": "AI-Token-Topups (Einzel-Checkout)",
+      "capacityAddonsTitle": "Kapazitäts-Add-ons",
+      "addonAiTopupDetails": "Fügt {tokens} AI-Tokens hinzu",
+      "addonCapacityDetails": "Erhöht Bots um +{runningBots} laufend/+{totalBots} gesamt, AI-Predictions um +{runningAi} laufend/+{totalAi} gesamt, Composite-Predictions um +{runningComposite} laufend/+{totalComposite} gesamt",
+      "buyNow": "Jetzt kaufen",
+      "summaryTitle": "Zusammenfassung",
+      "summaryTypeCart": "Plan + Kapazitäts-Warenkorb",
+      "selectedCapacityUnits": "{count} Add-on-Einheit(en) ausgewählt",
+      "clearCapacityAddons": "Add-ons zurücksetzen",
+      "baseMonthly": "Basis monatlich",
+      "addonsMonthly": "Add-ons monatlich",
+      "monthlyTotal": "Monatliche Summe",
+      "totalBilled": "Gesamt berechnet",
+      "monthsSuffix": "Monat(e)",
+      "addonOnly": "Nur Add-ons",
+      "selectPackageFirst": "Bitte zuerst ein Paket auswählen.",
+      "payWithCrypto": "Mit Krypto bezahlen (CCPayment)",
+      "redirecting": "Weiterleitung...",
+      "cartHint": "Ein Checkout kann 0/1 Plan und mehrere Kapazitäts-Add-ons mit Mengen enthalten. AI-Token-Topups bleiben in diesem Schritt separate Einzelkäufe.",
+      "noPlans": "Kein Plan-Paket verfügbar.",
+      "noAiTopups": "Kein AI-Topup-Paket verfügbar.",
+      "noCapacityAddons": "Keine Kapazitäts-Add-ons verfügbar.",
+      "errors": {
+        "checkoutUrlMissing": "Checkout-URL fehlt.",
+        "cartEmpty": "Bitte wähle mindestens ein Paket im Warenkorb aus.",
+        "invalidCartPayload": "Ungültige Warenkorb-Daten.",
+        "cartPlanCountInvalid": "Pro Checkout ist nur ein Plan erlaubt.",
+        "cartDuplicatePackage": "Doppelte Pakete im Warenkorb sind nicht erlaubt.",
+        "cartItemNotFound": "Eines der ausgewählten Pakete ist nicht verfügbar.",
+        "cartQuantityInvalid": "Ungültige Menge. Kapazitäts-Add-ons erlauben Mengen zwischen 1 und 20.",
+        "cartCapacityRequiresPro": "Kapazitäts-Add-ons benötigen aktives Pro oder einen Pro-Plan im selben Checkout.",
+        "proRequiredForTopup": "Für AI-Token-Topups ist ein Pro-Plan erforderlich.",
+        "paidPlanRequiredForCapacityTopup": "Für Kapazitäts-Topups ist ein aktiver Paid-Plan erforderlich.",
+        "ccpayNotConfigured": "CCPayments ist noch nicht konfiguriert.",
+        "ccpaymentError": "CCPayments-Checkout fehlgeschlagen."
+      }
     },
     "orders": {
       "title": "Bestellhistorie",

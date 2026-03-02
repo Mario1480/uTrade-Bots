@@ -12,7 +12,7 @@
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "typecheck": "tsc -p tsconfig.json --noEmit",
-    "test": "npm run build && node --test dist/mexc/mexc.signing.test.js dist/bitget/bitget.signing.test.js dist/bitget/bitget.contract-cache.test.js",
+    "test": "npm run build && node --test dist/mexc/mexc.signing.test.js dist/mexc/mexc.trading.api.test.js dist/bitget/bitget.signing.test.js dist/bitget/bitget.contract-cache.test.js",
     "smoke:mexc": "npm run build && node ./scripts/mexc-smoke.mjs",
     "smoke:bitget": "npm run build && node ./scripts/bitget-smoke.mjs"
   }

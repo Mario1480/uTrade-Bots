@@ -97,6 +97,8 @@ export type MexcCapabilities = {
 export type MexcAdapterConfig = {
   apiKey?: string;
   apiSecret?: string;
+  productType?: string;
+  marginCoin?: string;
   restBaseUrl?: string;
   wsUrl?: string;
   recvWindowSeconds?: number;

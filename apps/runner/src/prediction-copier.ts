@@ -1,7 +1,7 @@
 import crypto from "node:crypto";
 import type { TradeIntent } from "@mm/futures-core";
 import { isGlobalTradingEnabled } from "@mm/futures-engine";
-import { BitgetFuturesAdapter, HyperliquidFuturesAdapter } from "@mm/futures-exchange";
+import { BitgetFuturesAdapter, HyperliquidFuturesAdapter, MexcFuturesAdapter } from "@mm/futures-exchange";
 import type {
   ActiveFuturesBot,
   BotTradeHistoryCloseOutcome,
@@ -31,7 +31,7 @@ export type PredictionCopierSide = "long" | "short";
 
 export type PredictionCopierConfig = {
   botType: "prediction_copier";
-  exchange: "bitget" | "hyperliquid" | "paper";
+  exchange: "bitget" | "hyperliquid" | "mexc" | "paper";
   accountId: string;
   sourceStateId: string | null;
   sourceSnapshot: {
@@ -126,7 +126,7 @@ type NormalizedPosition = {
   markPrice: number | null;
 };
 
-type SupportedFuturesAdapter = BitgetFuturesAdapter | HyperliquidFuturesAdapter;
+type SupportedFuturesAdapter = BitgetFuturesAdapter | HyperliquidFuturesAdapter | MexcFuturesAdapter;
 
 const adapterCache = new Map<string, SupportedFuturesAdapter>();
 const DEFAULT_PAPER_EQUITY_USD = Math.max(
@@ -188,9 +188,10 @@ function normalizeTimeframe(value: unknown): PredictionCopierTimeframe {
   return "15m";
 }
 
-function normalizeExecutionExchange(value: unknown): "bitget" | "hyperliquid" | "paper" {
+function normalizeExecutionExchange(value: unknown): "bitget" | "hyperliquid" | "mexc" | "paper" {
   const normalized = String(value ?? "").trim().toLowerCase();
   if (normalized === "hyperliquid") return "hyperliquid";
+  if (normalized === "mexc") return "mexc";
   return normalized === "paper" ? "paper" : "bitget";
 }
 
@@ -705,6 +706,15 @@ function getOrCreateAdapter(bot: ActiveFuturesBot): SupportedFuturesAdapter {
           restBaseUrl: process.env.HYPERLIQUID_REST_BASE_URL,
           marginCoin: process.env.HYPERLIQUID_MARGIN_COIN ?? "USDC"
         })
+      : marketDataExchange === "mexc"
+        ? new MexcFuturesAdapter({
+            apiKey: bot.marketData.credentials.apiKey,
+            apiSecret: bot.marketData.credentials.apiSecret,
+            restBaseUrl: process.env.MEXC_REST_BASE_URL,
+            wsUrl: process.env.MEXC_WS_URL,
+            productType: process.env.MEXC_PRODUCT_TYPE ?? "USDT-FUTURES",
+            marginCoin: process.env.MEXC_MARGIN_COIN ?? "USDT"
+          })
       : new BitgetFuturesAdapter({
           apiKey: bot.marketData.credentials.apiKey,
           apiSecret: bot.marketData.credentials.apiSecret,
@@ -741,8 +751,12 @@ export async function runPredictionCopierTick(
   const marketDataExchange = String(bot.marketData.exchange ?? "").trim().toLowerCase();
 
   const executionSupported =
-    executionExchange === "bitget" || executionExchange === "hyperliquid" || executionExchange === "paper";
-  const marketDataSupported = marketDataExchange === "bitget" || marketDataExchange === "hyperliquid";
+    executionExchange === "bitget" ||
+    executionExchange === "hyperliquid" ||
+    executionExchange === "mexc" ||
+    executionExchange === "paper";
+  const marketDataSupported =
+    marketDataExchange === "bitget" || marketDataExchange === "hyperliquid" || marketDataExchange === "mexc";
   if (!executionSupported || !marketDataSupported) {
     return {
       outcome: "blocked",
@@ -870,7 +884,7 @@ export async function runPredictionCopierTick(
     let markPrice: number | null = null;
     try {
       const exchangeSymbol = await adapter.toExchangeSymbol(symbol);
-      const ticker = await adapter.marketApi.getTicker(exchangeSymbol, adapter.productType);
+      const ticker = await adapter.marketApi.getTicker(exchangeSymbol);
       markPrice = parseTickerPrice(ticker);
     } catch {
       markPrice = null;
@@ -906,7 +920,7 @@ export async function runPredictionCopierTick(
       adapter.getPositions()
     ]);
     accountState = { equity: Number(liveAccountState.equity ?? 0) };
-    positions = livePositions.map((row) => ({
+    positions = livePositions.map((row: any) => ({
       symbol: row.symbol,
       side: row.side,
       size: Number(row.size ?? 0),
@@ -958,7 +972,7 @@ export async function runPredictionCopierTick(
   let markPrice = openPosition?.markPrice ?? openPosition?.entryPrice ?? null;
   if (markPrice === null || markPrice <= 0) {
     const exchangeSymbol = await adapter.toExchangeSymbol(symbol);
-    const ticker = await adapter.marketApi.getTicker(exchangeSymbol, adapter.productType);
+    const ticker = await adapter.marketApi.getTicker(exchangeSymbol);
     markPrice = parseTickerPrice(ticker);
   }
 

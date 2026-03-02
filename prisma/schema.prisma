@@ -548,6 +548,7 @@ model BillingPackage {
   updatedAt        DateTime           @updatedAt @map("updated_at")
 
   orders BillingOrder[]
+  orderItems BillingOrderItem[]
 
   @@index([kind, isActive, sortOrder], map: "billing_packages_kind_active_sort_idx")
   @@map("billing_packages")
@@ -576,12 +577,32 @@ model BillingOrder {
   createdAt          DateTime          @default(now()) @map("created_at")
   updatedAt          DateTime          @updatedAt @map("updated_at")
 
+  items BillingOrderItem[]
   tokenLedger AiTokenLedger[]
   capacityGrants SubscriptionCapacityGrant[]
 
   @@index([userId, createdAt(sort: Desc)], map: "billing_orders_user_created_idx")
   @@index([status, createdAt(sort: Desc)], map: "billing_orders_status_created_idx")
   @@map("billing_orders")
+}
+
+model BillingOrderItem {
+  id              String            @id @default(cuid())
+  orderId         String            @map("order_id")
+  order           BillingOrder      @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  packageId       String            @map("package_id")
+  pkg             BillingPackage    @relation(fields: [packageId], references: [id], onDelete: Restrict)
+  quantity        Int               @default(1)
+  unitPriceCents  Int               @map("unit_price_cents")
+  lineAmountCents Int               @map("line_amount_cents")
+  currency        String            @default("USD")
+  kindSnapshot    BillingPackageKind @map("kind_snapshot")
+  packageSnapshot Json?             @map("package_snapshot")
+  createdAt       DateTime          @default(now()) @map("created_at")
+
+  @@index([orderId], map: "billing_order_items_order_idx")
+  @@index([packageId], map: "billing_order_items_package_idx")
+  @@map("billing_order_items")
 }
 
 model SubscriptionCapacityGrant {

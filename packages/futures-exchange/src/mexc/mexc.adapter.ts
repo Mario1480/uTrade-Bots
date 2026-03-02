@@ -26,6 +26,7 @@ import {
 import type { FuturesExchange, PlaceOrderRequest } from "../futures-exchange.interface.js";
 import { MexcInvalidParamsError, MexcMaintenanceError } from "./mexc.errors.js";
 import { MexcAccountApi } from "./mexc.account.api.js";
+import { MEXC_DEFAULT_MARGIN_COIN, MEXC_DEFAULT_PRODUCT_TYPE } from "./mexc.constants.js";
 import { MexcMarketApi } from "./mexc.market.api.js";
 import { MexcRestClient } from "./mexc.rest.js";
 import { createDefaultMexcCapabilities, MexcTradingApi } from "./mexc.trading.api.js";
@@ -142,24 +143,59 @@ function toContractInfo(detail: MexcContractDetail): MexcContractInfo {
 }
 
 export class MexcFuturesAdapter implements FuturesExchange {
+  readonly exchangeId = "mexc" as const;
   readonly capabilities: MexcCapabilities;
+
+  readonly productType: string;
+  readonly marginCoin: string;
 
   readonly rest: MexcRestClient;
   readonly marketApi: MexcMarketApi;
   readonly accountApi: MexcAccountApi;
   readonly tradingApi: MexcTradingApi;
+  readonly tradeApi: MexcTradingApi;
+  readonly positionApi: {
+    getAllPositions: (
+      params?: { productType?: string; marginCoin?: string; symbol?: string }
+    ) => Promise<Array<Record<string, unknown>>>;
+  };
 
   private readonly publicWs: MexcPublicWsApi;
   private readonly privateWs: MexcPrivateWsApi | null;
-  private readonly contractCache: ContractCache;
+  readonly contractCache: ContractCache;
 
   constructor(private readonly config: MexcAdapterConfig = {}) {
+    this.productType = config.productType ?? process.env.MEXC_PRODUCT_TYPE ?? MEXC_DEFAULT_PRODUCT_TYPE;
+    this.marginCoin = config.marginCoin ?? process.env.MEXC_MARGIN_COIN ?? MEXC_DEFAULT_MARGIN_COIN;
     this.capabilities = mergeCapabilities(config.capabilities);
 
     this.rest = new MexcRestClient(config);
     this.marketApi = new MexcMarketApi(this.rest);
     this.accountApi = new MexcAccountApi(this.rest);
     this.tradingApi = new MexcTradingApi(this.rest, this.capabilities);
+    this.tradeApi = this.tradingApi;
+    this.positionApi = {
+      getAllPositions: async (params) => {
+        const rows = await this.accountApi.getOpenPositions(params?.symbol);
+        return rows.map((row) => {
+          const rawSide = toPositionSide(row.positionType);
+          const holdVol = toNumber(row.holdVol) ?? toNumber(row.positionVol) ?? 0;
+          const signed = rawSide === "long" ? Math.abs(holdVol) : -Math.abs(holdVol);
+          return {
+            symbol: row.symbol,
+            holdSide: rawSide,
+            total: signed,
+            available: signed,
+            avgOpenPrice: toNumber(row.openAvgPrice) ?? toNumber(row.holdAvgPrice) ?? toNumber(row.avgPrice),
+            markPrice: toNumber(row.fairPrice),
+            unrealizedPL: toNumber(row.unrealizedPnl),
+            presetStopSurplusPrice: undefined,
+            presetStopLossPrice: undefined,
+            raw: row
+          };
+        });
+      }
+    };
 
     this.publicWs = new MexcPublicWsApi(config);
     this.privateWs = config.apiKey && config.apiSecret ? new MexcPrivateWsApi(config) : null;
@@ -285,7 +321,7 @@ export class MexcFuturesAdapter implements FuturesExchange {
       vol: qty,
       side: toMexcOrderSide(req.side, Boolean(req.reduceOnly)),
       type: toMexcOrderType(req.type),
-      openType: 2,
+      openType: toMexcOpenType(req.marginMode ?? "cross"),
       reduceOnly: req.reduceOnly,
       price: normalizedPrice
     };
@@ -321,6 +357,11 @@ export class MexcFuturesAdapter implements FuturesExchange {
     await this.publicWs.subscribeKline(await this.toExchangeSymbol(symbol), interval);
   }
 
+  async subscribeTrades(symbol: string): Promise<void> {
+    await this.publicWs.connect();
+    await this.publicWs.subscribeDeals(await this.toExchangeSymbol(symbol));
+  }
+
   onTicker(callback: (payload: MexcWsPayload) => void): () => void {
     return this.publicWs.onTicker((payload) => callback(this.normalizeWsPayloadSymbol(payload)));
   }
@@ -331,6 +372,10 @@ export class MexcFuturesAdapter implements FuturesExchange {
 
   onKline(callback: (payload: MexcWsPayload) => void): () => void {
     return this.publicWs.onKline((payload) => callback(this.normalizeWsPayloadSymbol(payload)));
+  }
+
+  onTrades(callback: (payload: MexcWsPayload) => void): () => void {
+    return this.publicWs.onDeals((payload) => callback(this.normalizeWsPayloadSymbol(payload)));
   }
 
   onFill(callback: (event: MexcFillEvent) => void): () => void {

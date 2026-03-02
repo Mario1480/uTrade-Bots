@@ -192,7 +192,13 @@ function errMsg(e: unknown): string {
       return `API connection failed (${API_BASE}). Check if apps/api is running on port 4000.`;
     }
   }
-  if (e instanceof ApiError) return `${e.message} (HTTP ${e.status})`;
+  if (e instanceof ApiError) {
+    const text = String(e.message ?? "");
+    if (text.toLowerCase().includes("mexc capability") && text.toLowerCase().includes("disabled")) {
+      return "MEXC ist aktuell im Read-only Stage-Modus (Order-Writes deaktiviert).";
+    }
+    return `${e.message} (HTTP ${e.status})`;
+  }
   if (e && typeof e === "object" && "message" in e) return String((e as any).message);
   return String(e);
 }

@@ -1,5 +1,5 @@
 import { MEXC_MAINTENANCE_ENDPOINTS } from "./mexc.constants.js";
-import { MexcMaintenanceError } from "./mexc.errors.js";
+import { MexcInvalidParamsError, MexcMaintenanceError } from "./mexc.errors.js";
 import { MexcRestClient } from "./mexc.rest.js";
 import type {
   MexcCapabilities,
@@ -7,16 +7,50 @@ import type {
   MexcPlaceOrderRequest
 } from "./mexc.types.js";
 
+function envFlag(name: string, fallback: boolean): boolean {
+  const raw = process.env[name];
+  if (raw === undefined) return fallback;
+  const normalized = String(raw).trim().toLowerCase();
+  return !["0", "false", "off", "no"].includes(normalized);
+}
+
+function assertNonEmpty(value: unknown, message: string): string {
+  const text = String(value ?? "").trim();
+  if (!text) {
+    throw new MexcInvalidParamsError(message, {
+      endpoint: "/api/v1/private/order",
+      method: "POST"
+    });
+  }
+  return text;
+}
+
+function toRows(value: unknown): Array<Record<string, unknown>> {
+  if (Array.isArray(value)) {
+    return value.filter((row) => row && typeof row === "object") as Array<Record<string, unknown>>;
+  }
+  if (!value || typeof value !== "object") return [];
+  const record = value as Record<string, unknown>;
+  const candidates = [record.entrustedList, record.orderList, record.list, record.rows, record.data];
+  for (const candidate of candidates) {
+    if (!Array.isArray(candidate)) continue;
+    return candidate.filter((row) => row && typeof row === "object") as Array<Record<string, unknown>>;
+  }
+  return [];
+}
+
 export function createDefaultMexcCapabilities(): MexcCapabilities {
+  const orderWritesEnabled = envFlag("MEXC_ORDER_WRITE_ENABLED", false);
+  const advancedOrdersEnabled = orderWritesEnabled && envFlag("MEXC_ADVANCED_ORDERS_ENABLED", false);
+
   return {
-    // Under maintenance paths are intentionally off by default.
-    placeOrder: false,
-    batchPlaceOrder: false,
-    cancelOrder: false,
-    cancelWithExternal: false,
-    cancelAll: false,
-    stopOrders: false,
-    planOrders: false,
+    placeOrder: orderWritesEnabled,
+    batchPlaceOrder: orderWritesEnabled,
+    cancelOrder: orderWritesEnabled,
+    cancelWithExternal: orderWritesEnabled,
+    cancelAll: orderWritesEnabled,
+    stopOrders: advancedOrdersEnabled,
+    planOrders: advancedOrdersEnabled,
 
     // Stable account toggles.
     positionModeChange: true,
@@ -35,7 +69,8 @@ function assertCapability(enabled: boolean, endpoint: string, capabilityName: ke
     `MEXC capability '${capabilityName}' is disabled for endpoint ${endpoint}${maintenanceHint}`,
     {
       endpoint,
-      method: "POST"
+      method: "POST",
+      status: 409
     }
   );
 }
@@ -66,15 +101,49 @@ export class MexcTradingApi {
     });
   }
 
-  cancelOrder(orderId: string): Promise<unknown> {
-    const endpoint = "/api/v1/private/order/cancel";
-    assertCapability(this.capabilities.cancelOrder, endpoint, "cancelOrder");
-    return this.rest.requestPrivate({
-      method: "POST",
-      endpoint,
-      body: {
-        order_id: orderId
-      }
+  cancelOrder(orderId: string): Promise<unknown>;
+  cancelOrder(params: {
+    symbol?: string;
+    orderId?: string;
+    clientOid?: string;
+    productType?: string;
+  }): Promise<unknown>;
+  cancelOrder(
+    input:
+      | string
+      | {
+          symbol?: string;
+          orderId?: string;
+          clientOid?: string;
+          productType?: string;
+        }
+  ): Promise<unknown> {
+    if (typeof input === "string") {
+      const endpoint = "/api/v1/private/order/cancel";
+      assertCapability(this.capabilities.cancelOrder, endpoint, "cancelOrder");
+      return this.rest.requestPrivate({
+        method: "POST",
+        endpoint,
+        body: {
+          order_id: input
+        }
+      });
+    }
+
+    const orderId = String(input.orderId ?? "").trim();
+    if (orderId) {
+      return this.cancelOrder(orderId);
+    }
+
+    const clientOid = String(input.clientOid ?? "").trim();
+    if (clientOid) {
+      const symbol = assertNonEmpty(input.symbol, "MEXC cancel-with-external requires symbol");
+      return this.cancelWithExternal(symbol, clientOid);
+    }
+
+    throw new MexcInvalidParamsError("MEXC cancelOrder requires orderId or clientOid", {
+      endpoint: "/api/v1/private/order/cancel",
+      method: "POST"
     });
   }
 
@@ -134,6 +203,17 @@ export class MexcTradingApi {
     });
   }
 
+  getPendingOrders(params: {
+    productType?: string;
+    symbol?: string;
+    pageSize?: number;
+    idLessThan?: string;
+  } = {}): Promise<unknown> {
+    const symbol = String(params.symbol ?? "").trim();
+    if (!symbol) return Promise.resolve([]);
+    return this.listOpenOrders(symbol);
+  }
+
   listHistoryOrders(params?: { symbol?: string; pageNum?: number; pageSize?: number }): Promise<unknown> {
     return this.rest.requestPrivate({
       method: "GET",
@@ -165,6 +245,43 @@ export class MexcTradingApi {
     });
   }
 
+  async getOrderDetail(params: {
+    symbol: string;
+    orderId?: string;
+    clientOid?: string;
+  }): Promise<Record<string, unknown>> {
+    const orderId = String(params.orderId ?? "").trim();
+    const clientOid = String(params.clientOid ?? "").trim();
+
+    if (orderId) {
+      const row = await this.getOrder(orderId);
+      const direct = row && typeof row === "object" ? (row as Record<string, unknown>) : null;
+      const nestedRows = toRows(row);
+      return nestedRows[0] ?? direct ?? {};
+    }
+
+    if (clientOid) {
+      const row = await this.getOrderByExternal(params.symbol, clientOid);
+      const direct = row && typeof row === "object" ? (row as Record<string, unknown>) : null;
+      const nestedRows = toRows(row);
+      return nestedRows[0] ?? direct ?? {};
+    }
+
+    throw new MexcInvalidParamsError("MEXC getOrderDetail requires orderId or clientOid", {
+      endpoint: "/api/v1/private/order/get",
+      method: "GET"
+    });
+  }
+
+  modifyOrder(payload: Record<string, unknown>): Promise<unknown> {
+    void payload;
+    throw new MexcMaintenanceError("MEXC modifyOrder is not available. Use cancel+replace.", {
+      endpoint: "/api/v1/private/order/modify",
+      method: "POST",
+      status: 409
+    });
+  }
+
   openOrderTotalCount(symbol?: string): Promise<unknown> {
     // Listed in newer docs. Keep wrapper available for forward-compat.
     return this.rest.requestPrivate({
@@ -184,7 +301,14 @@ export class MexcTradingApi {
     });
   }
 
-  cancelPlanOrder(orderId: string): Promise<unknown> {
+  cancelPlanOrder(orderId: string): Promise<unknown>;
+  cancelPlanOrder(params: {
+    symbol?: string;
+    orderId: string;
+    productType?: string;
+  }): Promise<unknown>;
+  cancelPlanOrder(input: string | { symbol?: string; orderId: string; productType?: string }): Promise<unknown> {
+    const orderId = typeof input === "string" ? input : String(input.orderId ?? "").trim();
     const endpoint = "/api/v1/private/planorder/cancel";
     assertCapability(this.capabilities.planOrders, endpoint, "planOrders");
     return this.rest.requestPrivate({
@@ -214,6 +338,45 @@ export class MexcTradingApi {
       endpoint: "/api/v1/private/planorder/list/orders",
       query: symbol ? { symbol } : undefined
     });
+  }
+
+  getPendingPlanOrders(params: {
+    productType?: string;
+    symbol?: string;
+    pageSize?: number;
+    idLessThan?: string;
+  } = {}): Promise<unknown> {
+    return this.listPlanOrders(params.symbol);
+  }
+
+  placePositionTpSl(payload: {
+    symbol: string;
+    productType?: string;
+    marginCoin?: string;
+    holdSide?: string;
+    planType: string;
+    triggerPrice: string;
+  }): Promise<unknown> {
+    const holdSide = String(payload.holdSide ?? "").trim().toLowerCase();
+    const side =
+      holdSide === "long"
+        ? 2
+        : holdSide === "short"
+          ? 4
+          : undefined;
+
+    const mapped: Record<string, unknown> = {
+      symbol: payload.symbol,
+      triggerPrice: payload.triggerPrice,
+      trigger_price: payload.triggerPrice,
+      planType: payload.planType,
+      holdSide,
+      side,
+      marginCoin: payload.marginCoin,
+      productType: payload.productType
+    };
+
+    return this.placePlanOrder(mapped);
   }
 
   placeStopOrder(payload: Record<string, unknown>): Promise<unknown> {

@@ -1,5 +1,7 @@
 export const MEXC_DEFAULT_REST_BASE_URL = "https://api.mexc.com";
 export const MEXC_DEFAULT_WS_URL = "wss://contract.mexc.com/edge";
+export const MEXC_DEFAULT_PRODUCT_TYPE = "USDT-FUTURES" as const;
+export const MEXC_DEFAULT_MARGIN_COIN = "USDT";
 
 export const MEXC_DEFAULT_RECV_WINDOW_SECONDS = 30;
 export const MEXC_MAX_RECV_WINDOW_SECONDS = 60;

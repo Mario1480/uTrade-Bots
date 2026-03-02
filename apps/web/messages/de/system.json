@@ -612,6 +612,8 @@
       "prepared": "Verwalte hier deinen aktiven Plan, Verlängerungen und AI-Token-Topups.",
       "onceEnabled": "Billing-Änderungen werden nach erfolgreichem CCPayments-Webhook automatisch übernommen.",
       "open": "Abo & Abrechnung öffnen",
+      "openLicense": "Lizenzübersicht öffnen",
+      "openOrder": "Order / Upgrade öffnen",
       "currentlyDisabled": "Billing aktuell deaktiviert",
       "disabledLabel": "Abo & Abrechnung (deaktiviert)"
     },

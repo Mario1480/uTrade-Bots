@@ -80,6 +80,14 @@ export class MexcPublicWsApi {
     await this.ws.unsubscribe(makeSub("unsub.kline", { symbol, interval }));
   }
 
+  async subscribeDeals(symbol: string): Promise<void> {
+    await this.ws.subscribe(makeSub("sub.deal", { symbol }));
+  }
+
+  async unsubscribeDeals(symbol: string): Promise<void> {
+    await this.ws.unsubscribe(makeSub("unsub.deal", { symbol }));
+  }
+
   async subscribeFairPrice(symbol: string): Promise<void> {
     await this.ws.subscribe(makeSub("sub.fair.price", { symbol }));
   }
@@ -123,6 +131,15 @@ export class MexcPublicWsApi {
 
   onKline(handler: PublicEventHandler): () => void {
     return this.onChannel("push.kline", handler);
+  }
+
+  onDeals(handler: PublicEventHandler): () => void {
+    const unsubscribeA = this.onChannel("push.deal", handler);
+    const unsubscribeB = this.onChannel("push.deals", handler);
+    return () => {
+      unsubscribeA();
+      unsubscribeB();
+    };
   }
 
   onFairPrice(handler: PublicEventHandler): () => void {

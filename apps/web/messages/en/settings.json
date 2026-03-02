@@ -61,34 +61,105 @@
   },
   "subscription": {
     "title": "Subscription & Billing",
+    "portalEyebrow": "Customer Portal",
     "messages": {
       "noData": "No subscription data available.",
       "activatedInstantly": "Package activated instantly."
     },
-    "status": {
-      "plan": "Plan",
-      "state": "State",
-      "validUntil": "Valid until",
-      "botLimits": "Bot limits",
-      "predictionsAiLimits": "AI prediction limits",
-      "predictionsCompositeLimits": "Composite prediction limits",
+    "license": {
+      "title": "License",
+      "subtitle": "View active plan, limits, feature access and account billing status.",
+      "backToLicense": "Back to license",
+      "cards": {
+        "status": "Status",
+        "account": "Billing Account",
+        "limits": "Limits",
+        "features": "Features",
+        "aiWallet": "AI Wallet",
+        "instance": "Instance"
+      },
+      "labels": {
+        "plan": "Plan",
+        "validUntil": "Valid until",
+        "email": "Email",
+        "userId": "User ID",
+        "bots": "Bots",
+        "predictionsAi": "AI predictions",
+        "predictionsComposite": "Composite predictions",
+        "exchanges": "Allowed exchanges",
+        "aiBalance": "AI token balance",
+        "aiMonthlyIncluded": "Monthly included tokens",
+        "aiUsedLifetime": "Used tokens (lifetime)",
+        "serverIp": "Server IP"
+      },
+      "plans": {
+        "free": "FREE",
+        "pro": "PRO"
+      },
+      "states": {
+        "active": "Active",
+        "inactive": "Inactive"
+      },
+      "features": {
+        "proPlan": "Pro plan",
+        "aiBilling": "AI billing enabled",
+        "aiTopup": "AI topups available",
+        "capacityTopup": "Capacity topups available"
+      },
+      "running": "running",
+      "total": "total",
       "unlimited": "unlimited",
-      "exchanges": "Allowed exchanges",
-      "aiBalance": "AI token balance",
-      "aiMonthlyIncluded": "Monthly included tokens",
-      "aiUsedLifetime": "Used tokens (lifetime)"
+      "fallbackMode": "Billing fallback mode active ({reason}).",
+      "upgradeTitle": "Upgrade Add-ons",
+      "upgradeDescription": "Open the order page to buy or renew plans and purchase add-on packages.",
+      "openOrderPage": "Open order / upgrade"
     },
-    "packages": {
-      "title": "Packages",
-      "description": "Purchase or renew your plan and buy AI token topups.",
-      "kindPlan": "Plan package",
-      "kindTopup": "AI topup package",
-      "kindCapacityTopup": "Capacity topup package",
-      "price": "Price",
-      "planDetails": "{months} month(s), running bots: {running}, total bots: {total}, included AI tokens: {tokens}",
-      "topupDetails": "Adds {tokens} AI tokens",
-      "capacityTopupDetails": "Adds bots +{runningBots} running/+{totalBots} total, AI predictions +{runningAi} running/+{totalAi} total, composite predictions +{runningComposite} running/+{totalComposite} total",
-      "buy": "Buy now"
+    "order": {
+      "title": "Order License",
+      "subtitle": "Choose an optional plan and capacity add-on quantities, then pay via CCPayment.",
+      "packageLabel": "Package",
+      "noPlanSelected": "No plan selected",
+      "includedTitle": "Included",
+      "includedBots": "Bots: {running} running / {total} total",
+      "includedPredictionsAi": "AI predictions: {running} running / {total} total",
+      "includedPredictionsComposite": "Composite predictions: {running} running / {total} total",
+      "includedAiTokens": "Monthly AI tokens: {tokens}",
+      "aiTopupsTitle": "AI token topups (single checkout)",
+      "capacityAddonsTitle": "Capacity add-ons",
+      "addonAiTopupDetails": "Adds {tokens} AI tokens",
+      "addonCapacityDetails": "Adds bots +{runningBots} running/+{totalBots} total, AI predictions +{runningAi} running/+{totalAi} total, composite predictions +{runningComposite} running/+{totalComposite} total",
+      "buyNow": "Buy now",
+      "summaryTitle": "Summary",
+      "summaryTypeCart": "Plan + capacity cart",
+      "selectedCapacityUnits": "{count} add-on unit(s) selected",
+      "clearCapacityAddons": "Reset add-ons",
+      "baseMonthly": "Base monthly",
+      "addonsMonthly": "Add-ons monthly",
+      "monthlyTotal": "Monthly total",
+      "totalBilled": "Total billed",
+      "monthsSuffix": "month(s)",
+      "addonOnly": "Add-ons only",
+      "selectPackageFirst": "Select a package first.",
+      "payWithCrypto": "Pay with Crypto (CCPayment)",
+      "redirecting": "Redirecting...",
+      "cartHint": "One checkout can include 0/1 plan and multiple capacity add-ons with quantities. AI token topups stay separate single purchases in this step.",
+      "noPlans": "No plan package available.",
+      "noAiTopups": "No AI topup package available.",
+      "noCapacityAddons": "No capacity add-ons available.",
+      "errors": {
+        "checkoutUrlMissing": "Checkout URL missing.",
+        "cartEmpty": "Please select at least one package in the cart.",
+        "invalidCartPayload": "Invalid cart payload.",
+        "cartPlanCountInvalid": "Only one plan can be selected per checkout.",
+        "cartDuplicatePackage": "Duplicate package in cart is not allowed.",
+        "cartItemNotFound": "One of the selected packages is unavailable.",
+        "cartQuantityInvalid": "Invalid quantity. Capacity add-ons allow quantities between 1 and 20.",
+        "cartCapacityRequiresPro": "Capacity add-ons require active Pro or a Pro plan in the same checkout.",
+        "proRequiredForTopup": "Pro plan required for AI token topups.",
+        "paidPlanRequiredForCapacityTopup": "An active paid plan is required for capacity topups.",
+        "ccpayNotConfigured": "CCPayments is not configured yet.",
+        "ccpaymentError": "CCPayments checkout failed."
+      }
     },
     "orders": {
       "title": "Order history",
