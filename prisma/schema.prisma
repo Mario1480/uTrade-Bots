@@ -35,6 +35,7 @@ enum BillingProvider {
 enum BillingPackageKind {
   PLAN
   AI_TOPUP
+  ENTITLEMENT_TOPUP
 }
 
 enum BillingOrderStatus {
@@ -484,6 +485,7 @@ model User {
   subscription       UserSubscription?
   billingOrders      BillingOrder[]
   aiTokenLedger      AiTokenLedger[]
+  capacityGrants     SubscriptionCapacityGrant[]
 }
 
 model UserSubscription {
@@ -495,6 +497,10 @@ model UserSubscription {
   proValidUntil          DateTime?          @map("pro_valid_until")
   maxRunningBots         Int                @default(1) @map("max_running_bots")
   maxBotsTotal           Int                @default(2) @map("max_bots_total")
+  maxRunningPredictionsAi Int?              @map("max_running_predictions_ai")
+  maxPredictionsAiTotal  Int?               @map("max_predictions_ai_total")
+  maxRunningPredictionsComposite Int?       @map("max_running_predictions_composite")
+  maxPredictionsCompositeTotal Int?         @map("max_predictions_composite_total")
   allowedExchanges       String[]           @default(["*"]) @map("allowed_exchanges")
   aiTokenBalance         BigInt             @default(0) @map("ai_token_balance")
   aiTokenUsedLifetime    BigInt             @default(0) @map("ai_token_used_lifetime")
@@ -504,6 +510,7 @@ model UserSubscription {
 
   orders BillingOrder[]
   tokenLedger AiTokenLedger[]
+  capacityGrants SubscriptionCapacityGrant[]
 
   @@index([effectivePlan, proValidUntil], map: "user_subscriptions_plan_valid_until_idx")
   @@map("user_subscriptions")
@@ -523,9 +530,19 @@ model BillingPackage {
   plan             EffectivePlan?     @default(PRO)
   maxRunningBots   Int?               @map("max_running_bots")
   maxBotsTotal     Int?               @map("max_bots_total")
+  maxRunningPredictionsAi Int?        @map("max_running_predictions_ai")
+  maxPredictionsAiTotal Int?          @map("max_predictions_ai_total")
+  maxRunningPredictionsComposite Int? @map("max_running_predictions_composite")
+  maxPredictionsCompositeTotal Int?   @map("max_predictions_composite_total")
   allowedExchanges String[]           @default(["*"]) @map("allowed_exchanges")
   monthlyAiTokens  BigInt             @default(0) @map("monthly_ai_tokens")
   topupAiTokens    BigInt             @default(0) @map("topup_ai_tokens")
+  topupRunningBots Int?               @map("topup_running_bots")
+  topupBotsTotal   Int?               @map("topup_bots_total")
+  topupRunningPredictionsAi Int?      @map("topup_running_predictions_ai")
+  topupPredictionsAiTotal Int?        @map("topup_predictions_ai_total")
+  topupRunningPredictionsComposite Int? @map("topup_running_predictions_composite")
+  topupPredictionsCompositeTotal Int? @map("topup_predictions_composite_total")
   meta             Json?
   createdAt        DateTime           @default(now()) @map("created_at")
   updatedAt        DateTime           @updatedAt @map("updated_at")
@@ -560,10 +577,35 @@ model BillingOrder {
   updatedAt          DateTime          @updatedAt @map("updated_at")
 
   tokenLedger AiTokenLedger[]
+  capacityGrants SubscriptionCapacityGrant[]
 
   @@index([userId, createdAt(sort: Desc)], map: "billing_orders_user_created_idx")
   @@index([status, createdAt(sort: Desc)], map: "billing_orders_status_created_idx")
   @@map("billing_orders")
+}
+
+model SubscriptionCapacityGrant {
+  id                         String            @id @default(cuid())
+  userId                     String            @map("user_id")
+  user                       User              @relation(fields: [userId], references: [id], onDelete: Cascade)
+  subscriptionId             String?           @map("subscription_id")
+  subscription               UserSubscription? @relation(fields: [subscriptionId], references: [id], onDelete: SetNull)
+  orderId                    String?           @map("order_id")
+  order                      BillingOrder?     @relation(fields: [orderId], references: [id], onDelete: SetNull)
+  planScope                  EffectivePlan?    @map("plan_scope")
+  deltaRunningBots           Int               @default(0) @map("delta_running_bots")
+  deltaBotsTotal             Int               @default(0) @map("delta_bots_total")
+  deltaRunningPredictionsAi  Int               @default(0) @map("delta_running_predictions_ai")
+  deltaPredictionsAiTotal    Int               @default(0) @map("delta_predictions_ai_total")
+  deltaRunningPredictionsComposite Int         @default(0) @map("delta_running_predictions_composite")
+  deltaPredictionsCompositeTotal Int           @default(0) @map("delta_predictions_composite_total")
+  validUntil                 DateTime?         @map("valid_until")
+  createdAt                  DateTime          @default(now()) @map("created_at")
+
+  @@index([userId, validUntil], map: "subscription_capacity_grants_user_valid_idx")
+  @@index([subscriptionId], map: "subscription_capacity_grants_subscription_idx")
+  @@index([orderId], map: "subscription_capacity_grants_order_idx")
+  @@map("subscription_capacity_grants")
 }
 
 model BillingWebhookEvent {

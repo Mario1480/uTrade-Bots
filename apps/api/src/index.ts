@@ -35,6 +35,9 @@ import {
 import {
   adjustAiTokenBalanceByAdmin,
   applyPaidOrder,
+  canCreateBot as canCreateBotWithQuota,
+  canCreatePrediction as canCreatePredictionWithQuota,
+  canEnablePredictionSchedule,
   createBillingCheckout,
   deleteBillingPackage,
   downgradeExpiredSubscriptions,
@@ -47,6 +50,7 @@ import {
   markOrderFailed,
   recordWebhookEvent,
   resolveEffectivePlanForUser,
+  resolveEffectiveQuotaForUser,
   setUserToFreePlan,
   syncPrimaryWorkspaceEntitlementsForUser,
   updateBillingFeatureFlags,
@@ -1181,7 +1185,7 @@ const adminBillingPackageSchema = z.object({
   code: z.string().trim().min(2).max(120),
   name: z.string().trim().min(2).max(120),
   description: z.string().trim().max(1000).nullish(),
-  kind: z.enum(["plan", "ai_topup"]),
+  kind: z.enum(["plan", "ai_topup", "entitlement_topup"]),
   isActive: z.boolean().default(true),
   sortOrder: z.number().int().min(0).default(0),
   currency: z.string().trim().min(3).max(8).default("USD"),
@@ -1190,9 +1194,19 @@ const adminBillingPackageSchema = z.object({
   plan: z.enum(["free", "pro"]).nullable().default(null),
   maxRunningBots: z.number().int().min(0).nullable().default(null),
   maxBotsTotal: z.number().int().min(0).nullable().default(null),
+  maxRunningPredictionsAi: z.number().int().min(0).nullable().default(null),
+  maxPredictionsAiTotal: z.number().int().min(0).nullable().default(null),
+  maxRunningPredictionsComposite: z.number().int().min(0).nullable().default(null),
+  maxPredictionsCompositeTotal: z.number().int().min(0).nullable().default(null),
   allowedExchanges: z.array(z.string().trim().min(1)).default(["*"]),
   monthlyAiTokens: z.number().int().min(0).default(0),
   topupAiTokens: z.number().int().min(0).default(0),
+  topupRunningBots: z.number().int().min(0).nullable().default(null),
+  topupBotsTotal: z.number().int().min(0).nullable().default(null),
+  topupRunningPredictionsAi: z.number().int().min(0).nullable().default(null),
+  topupPredictionsAiTotal: z.number().int().min(0).nullable().default(null),
+  topupRunningPredictionsComposite: z.number().int().min(0).nullable().default(null),
+  topupPredictionsCompositeTotal: z.number().int().min(0).nullable().default(null),
   meta: z.record(z.unknown()).nullable().optional()
 });
 
@@ -2330,10 +2344,12 @@ function resolvePredictionLimitBucketFromStateRow(row: {
   });
 }
 
-function predictionLimitExceededCode(bucket: AccessSectionPredictionLimitKey): string {
-  if (bucket === "predictionsLocal") return "prediction_create_limit_exceeded_local";
-  if (bucket === "predictionsComposite") return "prediction_create_limit_exceeded_composite";
-  return "prediction_create_limit_exceeded_ai";
+function predictionQuotaKindFromBucket(
+  bucket: AccessSectionPredictionLimitKey
+): "local" | "ai" | "composite" {
+  if (bucket === "predictionsLocal") return "local";
+  if (bucket === "predictionsComposite") return "composite";
+  return "ai";
 }
 
 async function getAccessSectionSettings(): Promise<StoredAccessSectionSettings> {
@@ -2392,13 +2408,20 @@ async function canCreateBotForUser(params: {
     return { allowed: true, limit: null, usage: 0, remaining: null };
   }
   const settings = await getAccessSectionSettings();
-  const limit = settings.limits.bots;
-  if (limit === null) {
-    return { allowed: true, limit: null, usage: 0, remaining: null };
-  }
-  const usage = await db.bot.count({ where: { userId: params.userId } });
+  const botLimit = settings.limits.bots;
+  const result = await canCreateBotWithQuota({
+    userId: params.userId,
+    caps: {
+      bots: {
+        maxRunning: botLimit,
+        maxTotal: botLimit
+      }
+    }
+  });
+  const limit = result.limits.bots.maxTotal;
+  const usage = result.usage.bots.total;
   return {
-    allowed: usage < limit,
+    allowed: result.allowed,
     limit,
     usage,
     remaining: computeRemaining(limit, usage)
@@ -2411,21 +2434,73 @@ async function canCreatePredictionForUser(params: {
   bucket: AccessSectionPredictionLimitKey;
   existingStateId: string | null;
   consumesSlot: boolean;
-}): Promise<{ allowed: boolean; limit: number | null; usage: number; remaining: number | null }> {
+}): Promise<{
+  allowed: boolean;
+  code: string | null;
+  limit: number | null;
+  usage: number;
+  remaining: number | null;
+  runningLimit: number | null;
+  runningUsage: number;
+  runningRemaining: number | null;
+}> {
   if (params.bypass || !params.consumesSlot || params.existingStateId) {
-    return { allowed: true, limit: null, usage: 0, remaining: null };
+    return {
+      allowed: true,
+      code: null,
+      limit: null,
+      usage: 0,
+      remaining: null,
+      runningLimit: null,
+      runningUsage: 0,
+      runningRemaining: null
+    };
   }
   const settings = await getAccessSectionSettings();
-  const limit = settings.limits[params.bucket];
-  if (limit === null) {
-    return { allowed: true, limit: null, usage: 0, remaining: null };
-  }
-  const usage = (await getAccessSectionUsageForUser(params.userId))[params.bucket];
+  const result = await canCreatePredictionWithQuota({
+    userId: params.userId,
+    kind: predictionQuotaKindFromBucket(params.bucket),
+    existingStateId: params.existingStateId,
+    consumesSlot: params.consumesSlot,
+    caps: {
+      predictions: {
+        ai: {
+          maxRunning: settings.limits.predictionsAi,
+          maxTotal: settings.limits.predictionsAi
+        },
+        composite: {
+          maxRunning: settings.limits.predictionsComposite,
+          maxTotal: settings.limits.predictionsComposite
+        }
+      }
+    }
+  });
+  const bucketLimits =
+    params.bucket === "predictionsAi"
+      ? result.limits.predictions.ai
+      : params.bucket === "predictionsComposite"
+        ? result.limits.predictions.composite
+        : result.limits.predictions.local;
+  const bucketUsage =
+    params.bucket === "predictionsAi"
+      ? result.usage.predictions.ai
+      : params.bucket === "predictionsComposite"
+        ? result.usage.predictions.composite
+        : result.usage.predictions.local;
+  const code = result.allowed ? null : result.reason;
+  const limit = bucketLimits.maxTotal;
+  const usage = bucketUsage.total;
+  const runningLimit = bucketLimits.maxRunning;
+  const runningUsage = bucketUsage.running;
   return {
-    allowed: usage < limit,
+    allowed: result.allowed,
+    code,
     limit,
     usage,
-    remaining: computeRemaining(limit, usage)
+    remaining: computeRemaining(limit, usage),
+    runningLimit,
+    runningUsage,
+    runningRemaining: computeRemaining(runningLimit, runningUsage)
   };
 }
 
@@ -11372,7 +11447,12 @@ app.get("/admin/billing/packages", requireAuth, async (_req, res) => {
       code: pkg.code,
       name: pkg.name,
       description: pkg.description ?? null,
-      kind: pkg.kind === "AI_TOPUP" ? "ai_topup" : "plan",
+      kind:
+        pkg.kind === "AI_TOPUP"
+          ? "ai_topup"
+          : pkg.kind === "ENTITLEMENT_TOPUP"
+            ? "entitlement_topup"
+            : "plan",
       isActive: Boolean(pkg.isActive),
       sortOrder: Number(pkg.sortOrder ?? 0),
       currency: String(pkg.currency ?? "USD"),
@@ -11381,9 +11461,19 @@ app.get("/admin/billing/packages", requireAuth, async (_req, res) => {
       plan: pkg.plan === "PRO" ? "pro" : pkg.plan === "FREE" ? "free" : null,
       maxRunningBots: pkg.maxRunningBots ?? null,
       maxBotsTotal: pkg.maxBotsTotal ?? null,
+      maxRunningPredictionsAi: pkg.maxRunningPredictionsAi ?? null,
+      maxPredictionsAiTotal: pkg.maxPredictionsAiTotal ?? null,
+      maxRunningPredictionsComposite: pkg.maxRunningPredictionsComposite ?? null,
+      maxPredictionsCompositeTotal: pkg.maxPredictionsCompositeTotal ?? null,
       allowedExchanges: Array.isArray(pkg.allowedExchanges) ? pkg.allowedExchanges : ["*"],
       monthlyAiTokens: typeof pkg.monthlyAiTokens === "bigint" ? pkg.monthlyAiTokens.toString() : String(pkg.monthlyAiTokens ?? "0"),
       topupAiTokens: typeof pkg.topupAiTokens === "bigint" ? pkg.topupAiTokens.toString() : String(pkg.topupAiTokens ?? "0"),
+      topupRunningBots: pkg.topupRunningBots ?? null,
+      topupBotsTotal: pkg.topupBotsTotal ?? null,
+      topupRunningPredictionsAi: pkg.topupRunningPredictionsAi ?? null,
+      topupPredictionsAiTotal: pkg.topupPredictionsAiTotal ?? null,
+      topupRunningPredictionsComposite: pkg.topupRunningPredictionsComposite ?? null,
+      topupPredictionsCompositeTotal: pkg.topupPredictionsCompositeTotal ?? null,
       meta: pkg.meta ?? null,
       createdAt: pkg.createdAt instanceof Date ? pkg.createdAt.toISOString() : null,
       updatedAt: pkg.updatedAt instanceof Date ? pkg.updatedAt.toISOString() : null
@@ -11554,11 +11644,47 @@ app.get("/settings/subscription", requireAuth, async (_req, res) => {
       limits: {
         maxRunningBots: 1,
         maxBotsTotal: 2,
-        allowedExchanges: ["*"]
+        allowedExchanges: ["*"],
+        bots: {
+          maxRunning: 1,
+          maxTotal: 2
+        },
+        predictions: {
+          local: {
+            maxRunning: null,
+            maxTotal: null
+          },
+          ai: {
+            maxRunning: null,
+            maxTotal: null
+          },
+          composite: {
+            maxRunning: null,
+            maxTotal: null
+          }
+        }
       },
       usage: {
         totalBots: 0,
-        runningBots: 0
+        runningBots: 0,
+        bots: {
+          running: 0,
+          total: 0
+        },
+        predictions: {
+          local: {
+            running: 0,
+            total: 0
+          },
+          ai: {
+            running: 0,
+            total: 0
+          },
+          composite: {
+            running: 0,
+            total: 0
+          }
+        }
       },
       ai: {
         tokenBalance: "0",
@@ -11580,7 +11706,12 @@ app.get("/settings/subscription", requireAuth, async (_req, res) => {
       code: pkg.code,
       name: pkg.name,
       description: pkg.description ?? null,
-      kind: pkg.kind === "AI_TOPUP" ? "ai_topup" : "plan",
+      kind:
+        pkg.kind === "AI_TOPUP"
+          ? "ai_topup"
+          : pkg.kind === "ENTITLEMENT_TOPUP"
+            ? "entitlement_topup"
+            : "plan",
       isActive: Boolean(pkg.isActive),
       sortOrder: Number(pkg.sortOrder ?? 0),
       currency: String(pkg.currency ?? "USD"),
@@ -11589,9 +11720,19 @@ app.get("/settings/subscription", requireAuth, async (_req, res) => {
       plan: pkg.plan === "PRO" ? "pro" : pkg.plan === "FREE" ? "free" : null,
       maxRunningBots: pkg.maxRunningBots ?? null,
       maxBotsTotal: pkg.maxBotsTotal ?? null,
+      maxRunningPredictionsAi: pkg.maxRunningPredictionsAi ?? null,
+      maxPredictionsAiTotal: pkg.maxPredictionsAiTotal ?? null,
+      maxRunningPredictionsComposite: pkg.maxRunningPredictionsComposite ?? null,
+      maxPredictionsCompositeTotal: pkg.maxPredictionsCompositeTotal ?? null,
       allowedExchanges: Array.isArray(pkg.allowedExchanges) ? pkg.allowedExchanges : ["*"],
       monthlyAiTokens: typeof pkg.monthlyAiTokens === "bigint" ? pkg.monthlyAiTokens.toString() : String(pkg.monthlyAiTokens ?? "0"),
-      topupAiTokens: typeof pkg.topupAiTokens === "bigint" ? pkg.topupAiTokens.toString() : String(pkg.topupAiTokens ?? "0")
+      topupAiTokens: typeof pkg.topupAiTokens === "bigint" ? pkg.topupAiTokens.toString() : String(pkg.topupAiTokens ?? "0"),
+      topupRunningBots: pkg.topupRunningBots ?? null,
+      topupBotsTotal: pkg.topupBotsTotal ?? null,
+      topupRunningPredictionsAi: pkg.topupRunningPredictionsAi ?? null,
+      topupPredictionsAiTotal: pkg.topupPredictionsAiTotal ?? null,
+      topupRunningPredictionsComposite: pkg.topupRunningPredictionsComposite ?? null,
+      topupPredictionsCompositeTotal: pkg.topupPredictionsCompositeTotal ?? null
     })),
     orders: summary.orders.map((order: any) => ({
       id: order.id,
@@ -11662,6 +11803,9 @@ app.post("/settings/subscription/checkout", requireAuth, async (req, res) => {
     const reason = error instanceof Error ? error.message : String(error);
     if (reason === "pro_required_for_topup") {
       return res.status(409).json({ error: "pro_required_for_topup" });
+    }
+    if (reason === "paid_plan_required_for_capacity_topup") {
+      return res.status(409).json({ error: "paid_plan_required_for_capacity_topup" });
     }
     if (reason === "package_not_found") {
       return res.status(404).json({ error: "package_not_found" });

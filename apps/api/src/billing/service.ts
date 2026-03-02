@@ -12,7 +12,7 @@ import {
 const db = prisma as any;
 
 export type EffectivePlan = "free" | "pro";
-export type BillingPackageKind = "plan" | "ai_topup";
+export type BillingPackageKind = "plan" | "ai_topup" | "entitlement_topup";
 export type BillingOrderStatus = "pending" | "paid" | "failed" | "expired";
 export type AiLedgerReason = "monthly_grant" | "topup" | "usage_debit" | "admin_adjust";
 export type BillingFeatureFlags = {
@@ -45,6 +45,88 @@ const DEFAULT_BILLING_FEATURE_FLAGS: BillingFeatureFlags = {
 const FREE_MAX_RUNNING_BOTS = 1;
 const FREE_MAX_BOTS_TOTAL = 2;
 const FREE_ALLOWED_EXCHANGES = ["*"];
+const FREE_MAX_RUNNING_PREDICTIONS_AI: number | null = null;
+const FREE_MAX_PREDICTIONS_AI_TOTAL: number | null = null;
+const FREE_MAX_RUNNING_PREDICTIONS_COMPOSITE: number | null = null;
+const FREE_MAX_PREDICTIONS_COMPOSITE_TOTAL: number | null = null;
+const PRO_MAX_RUNNING_PREDICTIONS_AI = 3;
+const PRO_MAX_PREDICTIONS_AI_TOTAL = 10;
+const PRO_MAX_RUNNING_PREDICTIONS_COMPOSITE = 2;
+const PRO_MAX_PREDICTIONS_COMPOSITE_TOTAL = 6;
+
+export type PredictionQuotaKind = "local" | "ai" | "composite";
+
+export type EffectiveQuota = {
+  bots: {
+    maxRunning: number;
+    maxTotal: number;
+  };
+  predictions: {
+    local: {
+      maxRunning: number | null;
+      maxTotal: number | null;
+    };
+    ai: {
+      maxRunning: number | null;
+      maxTotal: number | null;
+    };
+    composite: {
+      maxRunning: number | null;
+      maxTotal: number | null;
+    };
+  };
+};
+
+export type QuotaUsage = {
+  bots: {
+    running: number;
+    total: number;
+  };
+  predictions: {
+    local: {
+      running: number;
+      total: number;
+    };
+    ai: {
+      running: number;
+      total: number;
+    };
+    composite: {
+      running: number;
+      total: number;
+    };
+  };
+};
+
+export type EffectiveQuotaCaps = {
+  bots?: {
+    maxRunning?: number | null;
+    maxTotal?: number | null;
+  };
+  predictions?: {
+    ai?: {
+      maxRunning?: number | null;
+      maxTotal?: number | null;
+    };
+    composite?: {
+      maxRunning?: number | null;
+      maxTotal?: number | null;
+    };
+  };
+};
+
+export type QuotaLimitCheckResult = {
+  allowed: boolean;
+  reason:
+    | "ok"
+    | "bot_total_limit_exceeded"
+    | "prediction_running_limit_exceeded_ai"
+    | "prediction_total_limit_exceeded_ai"
+    | "prediction_running_limit_exceeded_composite"
+    | "prediction_total_limit_exceeded_composite";
+  limits: EffectiveQuota;
+  usage: QuotaUsage;
+};
 
 let billingFeatureFlagsCache:
   | {
@@ -72,6 +154,84 @@ function normalizeInt(value: unknown, fallback: number, min = 0): number {
   const parsed = Number(value);
   if (!Number.isFinite(parsed)) return fallback;
   return Math.max(min, Math.trunc(parsed));
+}
+
+function normalizeNullableInt(value: unknown, fallback: number | null, min = 0): number | null {
+  if (value === null || value === undefined) return fallback;
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed)) return fallback;
+  return Math.max(min, Math.trunc(parsed));
+}
+
+function applyHardCap(value: number | null, hardCap: number | null | undefined): number | null {
+  if (hardCap === null || hardCap === undefined) return value;
+  if (value === null) return Math.max(0, hardCap);
+  return Math.max(0, Math.min(value, hardCap));
+}
+
+function createEmptyQuotaUsage(): QuotaUsage {
+  return {
+    bots: {
+      running: 0,
+      total: 0
+    },
+    predictions: {
+      local: {
+        running: 0,
+        total: 0
+      },
+      ai: {
+        running: 0,
+        total: 0
+      },
+      composite: {
+        running: 0,
+        total: 0
+      }
+    }
+  };
+}
+
+function normalizePredictionQuotaKind(value: unknown): PredictionQuotaKind | null {
+  if (value === "local" || value === "ai" || value === "composite") return value;
+  return null;
+}
+
+function resolvePredictionQuotaKindFromStateRow(row: {
+  strategyKind?: unknown;
+  signalMode?: unknown;
+  featuresSnapshot?: unknown;
+}): PredictionQuotaKind {
+  const directKind = normalizePredictionQuotaKind(row.strategyKind);
+  if (directKind) return directKind;
+
+  const snapshot = asRecord(row.featuresSnapshot);
+  const strategyRef = asRecord(snapshot.strategyRef);
+  const strategyRefKind = normalizePredictionQuotaKind(strategyRef.kind);
+  if (strategyRefKind) return strategyRefKind;
+
+  if (typeof snapshot.compositeStrategyId === "string" && snapshot.compositeStrategyId.trim()) {
+    return "composite";
+  }
+  if (typeof snapshot.localStrategyId === "string" && snapshot.localStrategyId.trim()) {
+    return "local";
+  }
+  if (typeof snapshot.aiPromptTemplateId === "string" && snapshot.aiPromptTemplateId.trim()) {
+    return "ai";
+  }
+
+  const signalMode =
+    row.signalMode === "local_only" || row.signalMode === "ai_only" || row.signalMode === "both"
+      ? row.signalMode
+      : (typeof snapshot.signalMode === "string" ? snapshot.signalMode : "both");
+  if (signalMode === "local_only") return "local";
+  return "ai";
+}
+
+function normalizeCapacityDelta(value: unknown): number {
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed)) return 0;
+  return Math.max(0, Math.trunc(parsed));
 }
 
 function normalizeStringArray(value: unknown, fallback: string[]): string[] {
@@ -248,6 +408,10 @@ export async function ensureBillingDefaults(): Promise<void> {
   const topupPriceCents = normalizeInt(process.env.BILLING_AI_TOPUP_PRICE_CENTS ?? "900", 900);
   const topupTokens = toBigInt(process.env.BILLING_AI_TOPUP_TOKENS ?? "250000");
   const proMonthlyTokens = getDefaultMonthlyTokens();
+  const entitlementTopupPriceCents = normalizeInt(
+    process.env.BILLING_ENTITLEMENT_TOPUP_PRICE_CENTS ?? "1500",
+    1500
+  );
 
   await db.billingPackage.upsert({
     where: { code: "free" },
@@ -265,9 +429,19 @@ export async function ensureBillingDefaults(): Promise<void> {
       plan: "FREE",
       maxRunningBots: FREE_MAX_RUNNING_BOTS,
       maxBotsTotal: FREE_MAX_BOTS_TOTAL,
+      maxRunningPredictionsAi: FREE_MAX_RUNNING_PREDICTIONS_AI,
+      maxPredictionsAiTotal: FREE_MAX_PREDICTIONS_AI_TOTAL,
+      maxRunningPredictionsComposite: FREE_MAX_RUNNING_PREDICTIONS_COMPOSITE,
+      maxPredictionsCompositeTotal: FREE_MAX_PREDICTIONS_COMPOSITE_TOTAL,
       allowedExchanges: [...FREE_ALLOWED_EXCHANGES],
       monthlyAiTokens: 0n,
-      topupAiTokens: 0n
+      topupAiTokens: 0n,
+      topupRunningBots: null,
+      topupBotsTotal: null,
+      topupRunningPredictionsAi: null,
+      topupPredictionsAiTotal: null,
+      topupRunningPredictionsComposite: null,
+      topupPredictionsCompositeTotal: null
     }
   });
 
@@ -287,9 +461,33 @@ export async function ensureBillingDefaults(): Promise<void> {
       plan: "PRO",
       maxRunningBots: normalizeInt(process.env.BILLING_PRO_MAX_RUNNING_BOTS ?? "3", 3),
       maxBotsTotal: normalizeInt(process.env.BILLING_PRO_MAX_BOTS_TOTAL ?? "10", 10),
+      maxRunningPredictionsAi: normalizeInt(
+        process.env.BILLING_PRO_MAX_RUNNING_PREDICTIONS_AI ?? String(PRO_MAX_RUNNING_PREDICTIONS_AI),
+        PRO_MAX_RUNNING_PREDICTIONS_AI
+      ),
+      maxPredictionsAiTotal: normalizeInt(
+        process.env.BILLING_PRO_MAX_PREDICTIONS_AI_TOTAL ?? String(PRO_MAX_PREDICTIONS_AI_TOTAL),
+        PRO_MAX_PREDICTIONS_AI_TOTAL
+      ),
+      maxRunningPredictionsComposite: normalizeInt(
+        process.env.BILLING_PRO_MAX_RUNNING_PREDICTIONS_COMPOSITE
+        ?? String(PRO_MAX_RUNNING_PREDICTIONS_COMPOSITE),
+        PRO_MAX_RUNNING_PREDICTIONS_COMPOSITE
+      ),
+      maxPredictionsCompositeTotal: normalizeInt(
+        process.env.BILLING_PRO_MAX_PREDICTIONS_COMPOSITE_TOTAL
+        ?? String(PRO_MAX_PREDICTIONS_COMPOSITE_TOTAL),
+        PRO_MAX_PREDICTIONS_COMPOSITE_TOTAL
+      ),
       allowedExchanges: ["*"],
       monthlyAiTokens: proMonthlyTokens,
-      topupAiTokens: 0n
+      topupAiTokens: 0n,
+      topupRunningBots: null,
+      topupBotsTotal: null,
+      topupRunningPredictionsAi: null,
+      topupPredictionsAiTotal: null,
+      topupRunningPredictionsComposite: null,
+      topupPredictionsCompositeTotal: null
     }
   });
 
@@ -309,9 +507,51 @@ export async function ensureBillingDefaults(): Promise<void> {
       plan: null,
       maxRunningBots: null,
       maxBotsTotal: null,
+      maxRunningPredictionsAi: null,
+      maxPredictionsAiTotal: null,
+      maxRunningPredictionsComposite: null,
+      maxPredictionsCompositeTotal: null,
       allowedExchanges: ["*"],
       monthlyAiTokens: 0n,
-      topupAiTokens: topupTokens
+      topupAiTokens: topupTokens,
+      topupRunningBots: null,
+      topupBotsTotal: null,
+      topupRunningPredictionsAi: null,
+      topupPredictionsAiTotal: null,
+      topupRunningPredictionsComposite: null,
+      topupPredictionsCompositeTotal: null
+    }
+  });
+
+  await db.billingPackage.upsert({
+    where: { code: "capacity_topup_starter" },
+    update: {},
+    create: {
+      code: "capacity_topup_starter",
+      name: "Capacity Topup Starter",
+      description: "Extra bot and prediction capacity until plan end",
+      kind: "ENTITLEMENT_TOPUP",
+      isActive: true,
+      sortOrder: 30,
+      currency: "USD",
+      priceCents: entitlementTopupPriceCents,
+      billingMonths: 1,
+      plan: "PRO",
+      maxRunningBots: null,
+      maxBotsTotal: null,
+      maxRunningPredictionsAi: null,
+      maxPredictionsAiTotal: null,
+      maxRunningPredictionsComposite: null,
+      maxPredictionsCompositeTotal: null,
+      allowedExchanges: ["*"],
+      monthlyAiTokens: 0n,
+      topupAiTokens: 0n,
+      topupRunningBots: 1,
+      topupBotsTotal: 2,
+      topupRunningPredictionsAi: 1,
+      topupPredictionsAiTotal: 3,
+      topupRunningPredictionsComposite: 1,
+      topupPredictionsCompositeTotal: 2
     }
   });
 }
@@ -327,6 +567,10 @@ async function getOrCreateSubscription(userId: string, tx: any = db): Promise<an
       status: "ACTIVE",
       maxRunningBots: freeDefaults.maxRunningBots,
       maxBotsTotal: freeDefaults.maxBotsTotal,
+      maxRunningPredictionsAi: freeDefaults.maxRunningPredictionsAi,
+      maxPredictionsAiTotal: freeDefaults.maxPredictionsAiTotal,
+      maxRunningPredictionsComposite: freeDefaults.maxRunningPredictionsComposite,
+      maxPredictionsCompositeTotal: freeDefaults.maxPredictionsCompositeTotal,
       allowedExchanges: freeDefaults.allowedExchanges,
       aiTokenBalance: freeDefaults.monthlyAiTokens,
       aiTokenUsedLifetime: 0n,
@@ -338,6 +582,10 @@ async function getOrCreateSubscription(userId: string, tx: any = db): Promise<an
 async function getFreePlanDefaults(tx: any = db): Promise<{
   maxRunningBots: number;
   maxBotsTotal: number;
+  maxRunningPredictionsAi: number | null;
+  maxPredictionsAiTotal: number | null;
+  maxRunningPredictionsComposite: number | null;
+  maxPredictionsCompositeTotal: number | null;
   allowedExchanges: string[];
   monthlyAiTokens: bigint;
 }> {
@@ -346,6 +594,10 @@ async function getFreePlanDefaults(tx: any = db): Promise<{
     select: {
       maxRunningBots: true,
       maxBotsTotal: true,
+      maxRunningPredictionsAi: true,
+      maxPredictionsAiTotal: true,
+      maxRunningPredictionsComposite: true,
+      maxPredictionsCompositeTotal: true,
       allowedExchanges: true,
       monthlyAiTokens: true
     }
@@ -354,16 +606,40 @@ async function getFreePlanDefaults(tx: any = db): Promise<{
   return {
     maxRunningBots: normalizeInt(pkg?.maxRunningBots, FREE_MAX_RUNNING_BOTS, 0),
     maxBotsTotal: normalizeInt(pkg?.maxBotsTotal, FREE_MAX_BOTS_TOTAL, 0),
+    maxRunningPredictionsAi: normalizeNullableInt(
+      pkg?.maxRunningPredictionsAi,
+      FREE_MAX_RUNNING_PREDICTIONS_AI,
+      0
+    ),
+    maxPredictionsAiTotal: normalizeNullableInt(
+      pkg?.maxPredictionsAiTotal,
+      FREE_MAX_PREDICTIONS_AI_TOTAL,
+      0
+    ),
+    maxRunningPredictionsComposite: normalizeNullableInt(
+      pkg?.maxRunningPredictionsComposite,
+      FREE_MAX_RUNNING_PREDICTIONS_COMPOSITE,
+      0
+    ),
+    maxPredictionsCompositeTotal: normalizeNullableInt(
+      pkg?.maxPredictionsCompositeTotal,
+      FREE_MAX_PREDICTIONS_COMPOSITE_TOTAL,
+      0
+    ),
     allowedExchanges: normalizeStringArray(pkg?.allowedExchanges, [...FREE_ALLOWED_EXCHANGES]),
     monthlyAiTokens: toBigInt(pkg?.monthlyAiTokens)
   };
 }
 
 async function syncPlanPackageToSubscriptions(pkg: {
-  kind: "PLAN" | "AI_TOPUP";
+  kind: "PLAN" | "AI_TOPUP" | "ENTITLEMENT_TOPUP";
   plan: "FREE" | "PRO" | null;
   maxRunningBots: number | null;
   maxBotsTotal: number | null;
+  maxRunningPredictionsAi: number | null;
+  maxPredictionsAiTotal: number | null;
+  maxRunningPredictionsComposite: number | null;
+  maxPredictionsCompositeTotal: number | null;
   allowedExchanges: string[];
   monthlyAiTokens: bigint;
 }): Promise<void> {
@@ -382,6 +658,26 @@ async function syncPlanPackageToSubscriptions(pkg: {
         status: "ACTIVE",
         maxRunningBots: normalizeInt(pkg.maxRunningBots, FREE_MAX_RUNNING_BOTS, 0),
         maxBotsTotal: normalizeInt(pkg.maxBotsTotal, FREE_MAX_BOTS_TOTAL, 0),
+        maxRunningPredictionsAi: normalizeNullableInt(
+          pkg.maxRunningPredictionsAi,
+          FREE_MAX_RUNNING_PREDICTIONS_AI,
+          0
+        ),
+        maxPredictionsAiTotal: normalizeNullableInt(
+          pkg.maxPredictionsAiTotal,
+          FREE_MAX_PREDICTIONS_AI_TOTAL,
+          0
+        ),
+        maxRunningPredictionsComposite: normalizeNullableInt(
+          pkg.maxRunningPredictionsComposite,
+          FREE_MAX_RUNNING_PREDICTIONS_COMPOSITE,
+          0
+        ),
+        maxPredictionsCompositeTotal: normalizeNullableInt(
+          pkg.maxPredictionsCompositeTotal,
+          FREE_MAX_PREDICTIONS_COMPOSITE_TOTAL,
+          0
+        ),
         allowedExchanges: normalizeStringArray(pkg.allowedExchanges, [...FREE_ALLOWED_EXCHANGES]),
         monthlyAiTokensIncluded: freeMonthlyTokens
       }
@@ -467,6 +763,26 @@ async function syncPlanPackageToSubscriptions(pkg: {
       status: "ACTIVE",
       maxRunningBots: normalizeInt(pkg.maxRunningBots, 3, 0),
       maxBotsTotal: normalizeInt(pkg.maxBotsTotal, 10, 0),
+      maxRunningPredictionsAi: normalizeNullableInt(
+        pkg.maxRunningPredictionsAi,
+        PRO_MAX_RUNNING_PREDICTIONS_AI,
+        0
+      ),
+      maxPredictionsAiTotal: normalizeNullableInt(
+        pkg.maxPredictionsAiTotal,
+        PRO_MAX_PREDICTIONS_AI_TOTAL,
+        0
+      ),
+      maxRunningPredictionsComposite: normalizeNullableInt(
+        pkg.maxRunningPredictionsComposite,
+        PRO_MAX_RUNNING_PREDICTIONS_COMPOSITE,
+        0
+      ),
+      maxPredictionsCompositeTotal: normalizeNullableInt(
+        pkg.maxPredictionsCompositeTotal,
+        PRO_MAX_PREDICTIONS_COMPOSITE_TOTAL,
+        0
+      ),
       allowedExchanges: normalizeStringArray(pkg.allowedExchanges, ["*"]),
       monthlyAiTokensIncluded: toBigInt(pkg.monthlyAiTokens)
     }
@@ -492,6 +808,10 @@ export async function setUserToFreePlan(params: {
   proValidUntil: string | null;
   maxRunningBots: number;
   maxBotsTotal: number;
+  maxRunningPredictionsAi: number | null;
+  maxPredictionsAiTotal: number | null;
+  maxRunningPredictionsComposite: number | null;
+  maxPredictionsCompositeTotal: number | null;
   allowedExchanges: string[];
   aiTokenBalance: bigint;
   aiTokenUsedLifetime: bigint;
@@ -514,6 +834,10 @@ export async function setUserToFreePlan(params: {
         proValidUntil: null,
         maxRunningBots: defaults.maxRunningBots,
         maxBotsTotal: defaults.maxBotsTotal,
+        maxRunningPredictionsAi: defaults.maxRunningPredictionsAi,
+        maxPredictionsAiTotal: defaults.maxPredictionsAiTotal,
+        maxRunningPredictionsComposite: defaults.maxRunningPredictionsComposite,
+        maxPredictionsCompositeTotal: defaults.maxPredictionsCompositeTotal,
         allowedExchanges: defaults.allowedExchanges,
         aiTokenBalance: nextBalance,
         monthlyAiTokensIncluded: defaults.monthlyAiTokens
@@ -607,6 +931,10 @@ export async function resolveEffectivePlanForUser(userId: string): Promise<{
   proValidUntil: string | null;
   maxRunningBots: number;
   maxBotsTotal: number;
+  maxRunningPredictionsAi: number | null;
+  maxPredictionsAiTotal: number | null;
+  maxRunningPredictionsComposite: number | null;
+  maxPredictionsCompositeTotal: number | null;
   allowedExchanges: string[];
   aiTokenBalance: bigint;
   aiTokenUsedLifetime: bigint;
@@ -623,6 +951,26 @@ export async function resolveEffectivePlanForUser(userId: string): Promise<{
       proValidUntil: row.proValidUntil ? row.proValidUntil.toISOString() : null,
       maxRunningBots: normalizeInt(row.maxRunningBots, 3, 0),
       maxBotsTotal: normalizeInt(row.maxBotsTotal, 10, 0),
+      maxRunningPredictionsAi: normalizeNullableInt(
+        row.maxRunningPredictionsAi,
+        PRO_MAX_RUNNING_PREDICTIONS_AI,
+        0
+      ),
+      maxPredictionsAiTotal: normalizeNullableInt(
+        row.maxPredictionsAiTotal,
+        PRO_MAX_PREDICTIONS_AI_TOTAL,
+        0
+      ),
+      maxRunningPredictionsComposite: normalizeNullableInt(
+        row.maxRunningPredictionsComposite,
+        PRO_MAX_RUNNING_PREDICTIONS_COMPOSITE,
+        0
+      ),
+      maxPredictionsCompositeTotal: normalizeNullableInt(
+        row.maxPredictionsCompositeTotal,
+        PRO_MAX_PREDICTIONS_COMPOSITE_TOTAL,
+        0
+      ),
       allowedExchanges: normalizeStringArray(row.allowedExchanges, ["*"]),
       aiTokenBalance: toBigInt(row.aiTokenBalance),
       aiTokenUsedLifetime: toBigInt(row.aiTokenUsedLifetime),
@@ -641,10 +989,348 @@ export async function resolveEffectivePlanForUser(userId: string): Promise<{
     proValidUntil: row.proValidUntil ? row.proValidUntil.toISOString() : null,
     maxRunningBots: normalizeInt(row.maxRunningBots, FREE_MAX_RUNNING_BOTS, 0),
     maxBotsTotal: normalizeInt(row.maxBotsTotal, FREE_MAX_BOTS_TOTAL, 0),
+    maxRunningPredictionsAi: normalizeNullableInt(
+      row.maxRunningPredictionsAi,
+      FREE_MAX_RUNNING_PREDICTIONS_AI,
+      0
+    ),
+    maxPredictionsAiTotal: normalizeNullableInt(
+      row.maxPredictionsAiTotal,
+      FREE_MAX_PREDICTIONS_AI_TOTAL,
+      0
+    ),
+    maxRunningPredictionsComposite: normalizeNullableInt(
+      row.maxRunningPredictionsComposite,
+      FREE_MAX_RUNNING_PREDICTIONS_COMPOSITE,
+      0
+    ),
+    maxPredictionsCompositeTotal: normalizeNullableInt(
+      row.maxPredictionsCompositeTotal,
+      FREE_MAX_PREDICTIONS_COMPOSITE_TOTAL,
+      0
+    ),
     allowedExchanges: normalizeStringArray(row.allowedExchanges, [...FREE_ALLOWED_EXCHANGES]),
     aiTokenBalance: toBigInt(row.aiTokenBalance),
     aiTokenUsedLifetime: toBigInt(row.aiTokenUsedLifetime),
     monthlyAiTokensIncluded: toBigInt(row.monthlyAiTokensIncluded)
+  };
+}
+
+async function resolveActiveCapacityGrantDeltas(params: {
+  userId: string;
+  plan: EffectivePlan;
+  now?: Date;
+}): Promise<{
+  runningBots: number;
+  botsTotal: number;
+  runningPredictionsAi: number;
+  predictionsAiTotal: number;
+  runningPredictionsComposite: number;
+  predictionsCompositeTotal: number;
+}> {
+  if (!db.subscriptionCapacityGrant) {
+    return {
+      runningBots: 0,
+      botsTotal: 0,
+      runningPredictionsAi: 0,
+      predictionsAiTotal: 0,
+      runningPredictionsComposite: 0,
+      predictionsCompositeTotal: 0
+    };
+  }
+
+  const now = params.now ?? new Date();
+  const rows = await db.subscriptionCapacityGrant.findMany({
+    where: {
+      userId: params.userId,
+      OR: [
+        { validUntil: null },
+        { validUntil: { gt: now } }
+      ]
+    },
+    select: {
+      planScope: true,
+      deltaRunningBots: true,
+      deltaBotsTotal: true,
+      deltaRunningPredictionsAi: true,
+      deltaPredictionsAiTotal: true,
+      deltaRunningPredictionsComposite: true,
+      deltaPredictionsCompositeTotal: true
+    }
+  });
+
+  const expectedScope = params.plan === "pro" ? "PRO" : "FREE";
+  let runningBots = 0;
+  let botsTotal = 0;
+  let runningPredictionsAi = 0;
+  let predictionsAiTotal = 0;
+  let runningPredictionsComposite = 0;
+  let predictionsCompositeTotal = 0;
+  for (const row of rows) {
+    if (row.planScope && row.planScope !== expectedScope) continue;
+    runningBots += normalizeCapacityDelta(row.deltaRunningBots);
+    botsTotal += normalizeCapacityDelta(row.deltaBotsTotal);
+    runningPredictionsAi += normalizeCapacityDelta(row.deltaRunningPredictionsAi);
+    predictionsAiTotal += normalizeCapacityDelta(row.deltaPredictionsAiTotal);
+    runningPredictionsComposite += normalizeCapacityDelta(row.deltaRunningPredictionsComposite);
+    predictionsCompositeTotal += normalizeCapacityDelta(row.deltaPredictionsCompositeTotal);
+  }
+
+  return {
+    runningBots,
+    botsTotal,
+    runningPredictionsAi,
+    predictionsAiTotal,
+    runningPredictionsComposite,
+    predictionsCompositeTotal
+  };
+}
+
+export async function resolveEffectiveQuotaForUser(
+  userId: string,
+  caps?: EffectiveQuotaCaps | null
+): Promise<EffectiveQuota> {
+  const resolved = await resolveEffectivePlanForUser(userId);
+  const deltas = await resolveActiveCapacityGrantDeltas({
+    userId,
+    plan: resolved.plan
+  });
+
+  const baseAiRunning = resolved.maxRunningPredictionsAi;
+  const baseAiTotal = resolved.maxPredictionsAiTotal;
+  const baseCompositeRunning = resolved.maxRunningPredictionsComposite;
+  const baseCompositeTotal = resolved.maxPredictionsCompositeTotal;
+
+  const computed: EffectiveQuota = {
+    bots: {
+      maxRunning: Math.max(0, resolved.maxRunningBots + deltas.runningBots),
+      maxTotal: Math.max(0, resolved.maxBotsTotal + deltas.botsTotal)
+    },
+    predictions: {
+      local: {
+        maxRunning: null,
+        maxTotal: null
+      },
+      ai: {
+        maxRunning:
+          baseAiRunning === null
+            ? null
+            : Math.max(0, baseAiRunning + deltas.runningPredictionsAi),
+        maxTotal:
+          baseAiTotal === null
+            ? null
+            : Math.max(0, baseAiTotal + deltas.predictionsAiTotal)
+      },
+      composite: {
+        maxRunning:
+          baseCompositeRunning === null
+            ? null
+            : Math.max(0, baseCompositeRunning + deltas.runningPredictionsComposite),
+        maxTotal:
+          baseCompositeTotal === null
+            ? null
+            : Math.max(0, baseCompositeTotal + deltas.predictionsCompositeTotal)
+      }
+    }
+  };
+
+  return {
+    bots: {
+      maxRunning: Math.max(0, applyHardCap(computed.bots.maxRunning, caps?.bots?.maxRunning) ?? 0),
+      maxTotal: Math.max(0, applyHardCap(computed.bots.maxTotal, caps?.bots?.maxTotal) ?? 0)
+    },
+    predictions: {
+      local: {
+        maxRunning: null,
+        maxTotal: null
+      },
+      ai: {
+        maxRunning: applyHardCap(computed.predictions.ai.maxRunning, caps?.predictions?.ai?.maxRunning),
+        maxTotal: applyHardCap(computed.predictions.ai.maxTotal, caps?.predictions?.ai?.maxTotal)
+      },
+      composite: {
+        maxRunning: applyHardCap(
+          computed.predictions.composite.maxRunning,
+          caps?.predictions?.composite?.maxRunning
+        ),
+        maxTotal: applyHardCap(
+          computed.predictions.composite.maxTotal,
+          caps?.predictions?.composite?.maxTotal
+        )
+      }
+    }
+  };
+}
+
+export async function resolveQuotaUsageForUser(userId: string): Promise<QuotaUsage> {
+  const [botsTotal, botsRunning, predictionStates] = await Promise.all([
+    db.bot.count({ where: { userId } }),
+    db.bot.count({ where: { userId, status: "running" } }),
+    db.predictionState.findMany({
+      where: { userId },
+      select: {
+        strategyKind: true,
+        signalMode: true,
+        featuresSnapshot: true,
+        autoScheduleEnabled: true,
+        autoSchedulePaused: true
+      }
+    })
+  ]);
+
+  const usage = createEmptyQuotaUsage();
+  usage.bots.total = botsTotal;
+  usage.bots.running = botsRunning;
+  for (const row of predictionStates) {
+    if (!row.autoScheduleEnabled) continue;
+    const kind = resolvePredictionQuotaKindFromStateRow(row);
+    usage.predictions[kind].total += 1;
+    if (!row.autoSchedulePaused) {
+      usage.predictions[kind].running += 1;
+    }
+  }
+  return usage;
+}
+
+function exceedsLimit(limit: number | null, nextUsage: number): boolean {
+  if (limit === null) return false;
+  return nextUsage > limit;
+}
+
+export async function canCreateBot(params: {
+  userId: string;
+  caps?: EffectiveQuotaCaps | null;
+}): Promise<QuotaLimitCheckResult> {
+  const [limits, usage] = await Promise.all([
+    resolveEffectiveQuotaForUser(params.userId, params.caps),
+    resolveQuotaUsageForUser(params.userId)
+  ]);
+
+  if (exceedsLimit(limits.bots.maxTotal, usage.bots.total + 1)) {
+    return {
+      allowed: false,
+      reason: "bot_total_limit_exceeded",
+      limits,
+      usage
+    };
+  }
+
+  return {
+    allowed: true,
+    reason: "ok",
+    limits,
+    usage
+  };
+}
+
+export async function canCreatePrediction(params: {
+  userId: string;
+  kind: PredictionQuotaKind;
+  existingStateId: string | null;
+  consumesSlot: boolean;
+  caps?: EffectiveQuotaCaps | null;
+}): Promise<QuotaLimitCheckResult> {
+  const [limits, usage] = await Promise.all([
+    resolveEffectiveQuotaForUser(params.userId, params.caps),
+    resolveQuotaUsageForUser(params.userId)
+  ]);
+  if (params.kind === "local" || params.existingStateId || !params.consumesSlot) {
+    return {
+      allowed: true,
+      reason: "ok",
+      limits,
+      usage
+    };
+  }
+
+  const bucket = params.kind === "ai" ? usage.predictions.ai : usage.predictions.composite;
+  const bucketLimits = params.kind === "ai" ? limits.predictions.ai : limits.predictions.composite;
+  if (exceedsLimit(bucketLimits.maxTotal, bucket.total + 1)) {
+    return {
+      allowed: false,
+      reason:
+        params.kind === "ai"
+          ? "prediction_total_limit_exceeded_ai"
+          : "prediction_total_limit_exceeded_composite",
+      limits,
+      usage
+    };
+  }
+  if (exceedsLimit(bucketLimits.maxRunning, bucket.running + 1)) {
+    return {
+      allowed: false,
+      reason:
+        params.kind === "ai"
+          ? "prediction_running_limit_exceeded_ai"
+          : "prediction_running_limit_exceeded_composite",
+      limits,
+      usage
+    };
+  }
+  return {
+    allowed: true,
+    reason: "ok",
+    limits,
+    usage
+  };
+}
+
+export async function canEnablePredictionSchedule(params: {
+  userId: string;
+  kind: PredictionQuotaKind;
+  currentlyEnabled: boolean;
+  currentlyPaused: boolean;
+  caps?: EffectiveQuotaCaps | null;
+}): Promise<QuotaLimitCheckResult> {
+  const [limits, usage] = await Promise.all([
+    resolveEffectiveQuotaForUser(params.userId, params.caps),
+    resolveQuotaUsageForUser(params.userId)
+  ]);
+  if (params.kind === "local") {
+    return {
+      allowed: true,
+      reason: "ok",
+      limits,
+      usage
+    };
+  }
+
+  const bucket = params.kind === "ai" ? usage.predictions.ai : usage.predictions.composite;
+  const bucketLimits = params.kind === "ai" ? limits.predictions.ai : limits.predictions.composite;
+
+  const nextTotal = params.currentlyEnabled ? bucket.total : bucket.total + 1;
+  const nextRunning =
+    params.currentlyEnabled && !params.currentlyPaused
+      ? bucket.running
+      : bucket.running + 1;
+  if (exceedsLimit(bucketLimits.maxTotal, nextTotal)) {
+    return {
+      allowed: false,
+      reason:
+        params.kind === "ai"
+          ? "prediction_total_limit_exceeded_ai"
+          : "prediction_total_limit_exceeded_composite",
+      limits,
+      usage
+    };
+  }
+  if (exceedsLimit(bucketLimits.maxRunning, nextRunning)) {
+    return {
+      allowed: false,
+      reason:
+        params.kind === "ai"
+          ? "prediction_running_limit_exceeded_ai"
+          : "prediction_running_limit_exceeded_composite",
+      limits,
+      usage
+    };
+  }
+
+  return {
+    allowed: true,
+    reason: "ok",
+    limits,
+    usage
   };
 }
 
@@ -674,11 +1360,19 @@ export async function createBillingCheckout(params: {
   const pkg = await db.billingPackage.findUnique({ where: { id: params.packageId } });
   if (!pkg || !pkg.isActive) throw new Error("package_not_found");
 
-  const kind: BillingPackageKind = pkg.kind === "AI_TOPUP" ? "ai_topup" : "plan";
+  const kind: BillingPackageKind =
+    pkg.kind === "AI_TOPUP"
+      ? "ai_topup"
+      : pkg.kind === "ENTITLEMENT_TOPUP"
+        ? "entitlement_topup"
+        : "plan";
 
   const resolved = await resolveEffectivePlanForUser(params.userId);
   if (kind === "ai_topup" && resolved.plan !== "pro") {
     throw new Error("pro_required_for_topup");
+  }
+  if (kind === "entitlement_topup" && resolved.plan !== "pro") {
+    throw new Error("paid_plan_required_for_capacity_topup");
   }
 
   const orderId = `UTRADE_${crypto.randomUUID()}`;
@@ -877,6 +1571,26 @@ export async function applyPaidOrder(merchantOrderId: string, statusRaw: string)
     let nextStatus = existingSub.status === "ACTIVE" ? "ACTIVE" : "INACTIVE";
     let nextMaxRunning = normalizeInt(existingSub.maxRunningBots, FREE_MAX_RUNNING_BOTS, 0);
     let nextMaxTotal = normalizeInt(existingSub.maxBotsTotal, FREE_MAX_BOTS_TOTAL, 0);
+    let nextMaxRunningPredictionsAi = normalizeNullableInt(
+      existingSub.maxRunningPredictionsAi,
+      FREE_MAX_RUNNING_PREDICTIONS_AI,
+      0
+    );
+    let nextMaxPredictionsAiTotal = normalizeNullableInt(
+      existingSub.maxPredictionsAiTotal,
+      FREE_MAX_PREDICTIONS_AI_TOTAL,
+      0
+    );
+    let nextMaxRunningPredictionsComposite = normalizeNullableInt(
+      existingSub.maxRunningPredictionsComposite,
+      FREE_MAX_RUNNING_PREDICTIONS_COMPOSITE,
+      0
+    );
+    let nextMaxPredictionsCompositeTotal = normalizeNullableInt(
+      existingSub.maxPredictionsCompositeTotal,
+      FREE_MAX_PREDICTIONS_COMPOSITE_TOTAL,
+      0
+    );
     let nextAllowedExchanges = normalizeStringArray(existingSub.allowedExchanges, ["*"]);
     let nextMonthlyTokens = toBigInt(existingSub.monthlyAiTokensIncluded);
     const currentBalance = toBigInt(existingSub.aiTokenBalance);
@@ -899,6 +1613,54 @@ export async function applyPaidOrder(merchantOrderId: string, statusRaw: string)
           : normalizeInt(pkg.maxBotsTotal, FREE_MAX_BOTS_TOTAL, 0);
       nextAllowedExchanges = normalizeStringArray(pkg.allowedExchanges, ["*"]);
       nextMonthlyTokens = toBigInt(pkg.monthlyAiTokens);
+      nextMaxRunningPredictionsAi =
+        packagePlan === "pro"
+          ? normalizeNullableInt(
+            pkg.maxRunningPredictionsAi,
+            PRO_MAX_RUNNING_PREDICTIONS_AI,
+            0
+          )
+          : normalizeNullableInt(
+            pkg.maxRunningPredictionsAi,
+            FREE_MAX_RUNNING_PREDICTIONS_AI,
+            0
+          );
+      nextMaxPredictionsAiTotal =
+        packagePlan === "pro"
+          ? normalizeNullableInt(
+            pkg.maxPredictionsAiTotal,
+            PRO_MAX_PREDICTIONS_AI_TOTAL,
+            0
+          )
+          : normalizeNullableInt(
+            pkg.maxPredictionsAiTotal,
+            FREE_MAX_PREDICTIONS_AI_TOTAL,
+            0
+          );
+      nextMaxRunningPredictionsComposite =
+        packagePlan === "pro"
+          ? normalizeNullableInt(
+            pkg.maxRunningPredictionsComposite,
+            PRO_MAX_RUNNING_PREDICTIONS_COMPOSITE,
+            0
+          )
+          : normalizeNullableInt(
+            pkg.maxRunningPredictionsComposite,
+            FREE_MAX_RUNNING_PREDICTIONS_COMPOSITE,
+            0
+          );
+      nextMaxPredictionsCompositeTotal =
+        packagePlan === "pro"
+          ? normalizeNullableInt(
+            pkg.maxPredictionsCompositeTotal,
+            PRO_MAX_PREDICTIONS_COMPOSITE_TOTAL,
+            0
+          )
+          : normalizeNullableInt(
+            pkg.maxPredictionsCompositeTotal,
+            FREE_MAX_PREDICTIONS_COMPOSITE_TOTAL,
+            0
+          );
       reason = "MONTHLY_GRANT";
       if (packagePlan === "pro") {
         const startAt =
@@ -914,9 +1676,38 @@ export async function applyPaidOrder(merchantOrderId: string, statusRaw: string)
         delta = nextBalance - currentBalance;
       }
     } else {
-      delta = toBigInt(pkg.topupAiTokens);
-      nextBalance = currentBalance + delta;
-      reason = "TOPUP";
+      if (pkg.kind === "AI_TOPUP") {
+        delta = toBigInt(pkg.topupAiTokens);
+        nextBalance = currentBalance + delta;
+        reason = "TOPUP";
+      } else {
+        const validUntil =
+          existingSub.proValidUntil instanceof Date && existingSub.proValidUntil.getTime() > now.getTime()
+            ? existingSub.proValidUntil
+            : null;
+        if (!validUntil) {
+          throw new Error("paid_plan_required_for_capacity_topup");
+        }
+        await tx.subscriptionCapacityGrant.create({
+          data: {
+            userId: order.userId,
+            subscriptionId: existingSub.id,
+            orderId: order.id,
+            planScope: "PRO",
+            deltaRunningBots: normalizeCapacityDelta(pkg.topupRunningBots),
+            deltaBotsTotal: normalizeCapacityDelta(pkg.topupBotsTotal),
+            deltaRunningPredictionsAi: normalizeCapacityDelta(pkg.topupRunningPredictionsAi),
+            deltaPredictionsAiTotal: normalizeCapacityDelta(pkg.topupPredictionsAiTotal),
+            deltaRunningPredictionsComposite: normalizeCapacityDelta(
+              pkg.topupRunningPredictionsComposite
+            ),
+            deltaPredictionsCompositeTotal: normalizeCapacityDelta(
+              pkg.topupPredictionsCompositeTotal
+            ),
+            validUntil
+          }
+        });
+      }
     }
 
     const updatedSub = await tx.userSubscription.update({
@@ -927,6 +1718,10 @@ export async function applyPaidOrder(merchantOrderId: string, statusRaw: string)
         proValidUntil: nextValidUntil,
         maxRunningBots: nextMaxRunning,
         maxBotsTotal: nextMaxTotal,
+        maxRunningPredictionsAi: nextMaxRunningPredictionsAi,
+        maxPredictionsAiTotal: nextMaxPredictionsAiTotal,
+        maxRunningPredictionsComposite: nextMaxRunningPredictionsComposite,
+        maxPredictionsCompositeTotal: nextMaxPredictionsCompositeTotal,
         allowedExchanges: nextAllowedExchanges,
         aiTokenBalance: nextBalance,
         monthlyAiTokensIncluded: nextMonthlyTokens
@@ -973,17 +1768,60 @@ export async function getSubscriptionSummary(userId: string): Promise<{
   plan: EffectivePlan;
   status: "active" | "inactive";
   proValidUntil: string | null;
-  limits: { maxRunningBots: number; maxBotsTotal: number; allowedExchanges: string[] };
-  usage: { totalBots: number; runningBots: number };
+  limits: {
+    maxRunningBots: number;
+    maxBotsTotal: number;
+    allowedExchanges: string[];
+    bots: {
+      maxRunning: number;
+      maxTotal: number;
+    };
+    predictions: {
+      local: {
+        maxRunning: number | null;
+        maxTotal: number | null;
+      };
+      ai: {
+        maxRunning: number | null;
+        maxTotal: number | null;
+      };
+      composite: {
+        maxRunning: number | null;
+        maxTotal: number | null;
+      };
+    };
+  };
+  usage: {
+    totalBots: number;
+    runningBots: number;
+    bots: {
+      running: number;
+      total: number;
+    };
+    predictions: {
+      local: {
+        running: number;
+        total: number;
+      };
+      ai: {
+        running: number;
+        total: number;
+      };
+      composite: {
+        running: number;
+        total: number;
+      };
+    };
+  };
   ai: { tokenBalance: string; tokenUsedLifetime: string; monthlyIncluded: string; billingEnabled: boolean };
   packages: any[];
   orders: any[];
 }> {
   await ensureBillingDefaults();
   const resolved = await resolveEffectivePlanForUser(userId);
-  const [totalBots, runningBots, packages, orders] = await Promise.all([
-    db.bot.count({ where: { userId } }),
-    db.bot.count({ where: { userId, status: "running" } }),
+  const [limits, usage, packages, orders] = await Promise.all([
+    resolveEffectiveQuotaForUser(userId),
+    resolveQuotaUsageForUser(userId),
     listActiveBillingPackages(),
     db.billingOrder.findMany({
       where: { userId },
@@ -1007,13 +1845,17 @@ export async function getSubscriptionSummary(userId: string): Promise<{
     status: resolved.status,
     proValidUntil: resolved.proValidUntil,
     limits: {
-      maxRunningBots: resolved.maxRunningBots,
-      maxBotsTotal: resolved.maxBotsTotal,
-      allowedExchanges: resolved.allowedExchanges
+      maxRunningBots: limits.bots.maxRunning,
+      maxBotsTotal: limits.bots.maxTotal,
+      allowedExchanges: resolved.allowedExchanges,
+      bots: limits.bots,
+      predictions: limits.predictions
     },
     usage: {
-      totalBots,
-      runningBots
+      totalBots: usage.bots.total,
+      runningBots: usage.bots.running,
+      bots: usage.bots,
+      predictions: usage.predictions
     },
     ai: {
       tokenBalance: resolved.aiTokenBalance.toString(),
@@ -1044,15 +1886,21 @@ export async function listSubscriptionOrders(userId: string): Promise<any[]> {
   });
 }
 
-export async function getEntitlementsForBotStart(userId: string): Promise<{
+export async function getEntitlementsForBotStart(
+  userId: string,
+  caps?: EffectiveQuotaCaps | null
+): Promise<{
   maxRunningBots: number;
   maxBotsTotal: number;
   allowedExchanges: string[];
 }> {
-  const resolved = await resolveEffectivePlanForUser(userId);
+  const [quota, resolved] = await Promise.all([
+    resolveEffectiveQuotaForUser(userId, caps),
+    resolveEffectivePlanForUser(userId)
+  ]);
   return {
-    maxRunningBots: resolved.maxRunningBots,
-    maxBotsTotal: resolved.maxBotsTotal,
+    maxRunningBots: quota.bots.maxRunning,
+    maxBotsTotal: quota.bots.maxTotal,
     allowedExchanges: resolved.allowedExchanges
   };
 }
@@ -1268,16 +2116,31 @@ export async function upsertBillingPackage(params: {
   plan: EffectivePlan | null;
   maxRunningBots: number | null;
   maxBotsTotal: number | null;
+  maxRunningPredictionsAi: number | null;
+  maxPredictionsAiTotal: number | null;
+  maxRunningPredictionsComposite: number | null;
+  maxPredictionsCompositeTotal: number | null;
   allowedExchanges: string[];
   monthlyAiTokens: number;
   topupAiTokens: number;
+  topupRunningBots: number | null;
+  topupBotsTotal: number | null;
+  topupRunningPredictionsAi: number | null;
+  topupPredictionsAiTotal: number | null;
+  topupRunningPredictionsComposite: number | null;
+  topupPredictionsCompositeTotal: number | null;
   meta?: Record<string, unknown> | null;
 }): Promise<any> {
   const data = {
     code: params.code.trim(),
     name: params.name.trim(),
     description: params.description ?? null,
-    kind: params.kind === "ai_topup" ? "AI_TOPUP" : "PLAN",
+    kind:
+      params.kind === "ai_topup"
+        ? "AI_TOPUP"
+        : params.kind === "entitlement_topup"
+          ? "ENTITLEMENT_TOPUP"
+          : "PLAN",
     isActive: Boolean(params.isActive),
     sortOrder: normalizeInt(params.sortOrder, 0, 0),
     currency: (params.currency || "USD").trim().toUpperCase(),
@@ -1288,9 +2151,45 @@ export async function upsertBillingPackage(params: {
       params.maxRunningBots === null ? null : normalizeInt(params.maxRunningBots, 0, 0),
     maxBotsTotal:
       params.maxBotsTotal === null ? null : normalizeInt(params.maxBotsTotal, 0, 0),
+    maxRunningPredictionsAi:
+      params.maxRunningPredictionsAi === null
+        ? null
+        : normalizeInt(params.maxRunningPredictionsAi, 0, 0),
+    maxPredictionsAiTotal:
+      params.maxPredictionsAiTotal === null
+        ? null
+        : normalizeInt(params.maxPredictionsAiTotal, 0, 0),
+    maxRunningPredictionsComposite:
+      params.maxRunningPredictionsComposite === null
+        ? null
+        : normalizeInt(params.maxRunningPredictionsComposite, 0, 0),
+    maxPredictionsCompositeTotal:
+      params.maxPredictionsCompositeTotal === null
+        ? null
+        : normalizeInt(params.maxPredictionsCompositeTotal, 0, 0),
     allowedExchanges: normalizeStringArray(params.allowedExchanges, ["*"]),
     monthlyAiTokens: BigInt(Math.max(0, Math.trunc(params.monthlyAiTokens))),
     topupAiTokens: BigInt(Math.max(0, Math.trunc(params.topupAiTokens))),
+    topupRunningBots:
+      params.topupRunningBots === null ? null : normalizeInt(params.topupRunningBots, 0, 0),
+    topupBotsTotal:
+      params.topupBotsTotal === null ? null : normalizeInt(params.topupBotsTotal, 0, 0),
+    topupRunningPredictionsAi:
+      params.topupRunningPredictionsAi === null
+        ? null
+        : normalizeInt(params.topupRunningPredictionsAi, 0, 0),
+    topupPredictionsAiTotal:
+      params.topupPredictionsAiTotal === null
+        ? null
+        : normalizeInt(params.topupPredictionsAiTotal, 0, 0),
+    topupRunningPredictionsComposite:
+      params.topupRunningPredictionsComposite === null
+        ? null
+        : normalizeInt(params.topupRunningPredictionsComposite, 0, 0),
+    topupPredictionsCompositeTotal:
+      params.topupPredictionsCompositeTotal === null
+        ? null
+        : normalizeInt(params.topupPredictionsCompositeTotal, 0, 0),
     meta: params.meta ?? null
   };
 
