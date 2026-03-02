@@ -23,8 +23,14 @@ export type BillingFeatureFlags = {
 
 type CcpayCreateInvoiceResponse = {
   code?: number;
+  msg?: string;
+  message?: string;
+  error?: string;
   data?: {
     invoiceUrl?: string;
+    msg?: string;
+    message?: string;
+    error?: string;
   };
 };
 
@@ -736,7 +742,19 @@ export async function createBillingCheckout(params: {
         paymentStatusRaw: `http_${response.status}`
       }
     });
-    throw new Error(`ccpayment_error:http_${response.status}:provider_code_${providerCode}`);
+    const providerMessage = extractCcpayProviderMessage(body);
+    console.warn("[billing] ccpayment createInvoiceUrl failed", {
+      orderId,
+      userId: params.userId,
+      packageId: pkg.id,
+      httpStatus: response.status,
+      providerCode,
+      providerMessage: providerMessage ?? null
+    });
+    const messageSuffix = providerMessage ? `:provider_msg_${providerMessage}` : "";
+    throw new Error(
+      `ccpayment_error:http_${response.status}:provider_code_${providerCode}${messageSuffix}`
+    );
   }
 
   const updated = await db.billingOrder.update({
@@ -751,6 +769,24 @@ export async function createBillingCheckout(params: {
     order: updated,
     payUrl: String(invoiceUrl)
   };
+}
+
+function extractCcpayProviderMessage(body: CcpayCreateInvoiceResponse): string | null {
+  const candidates = [
+    body.msg,
+    body.message,
+    body.error,
+    body.data?.msg,
+    body.data?.message,
+    body.data?.error
+  ];
+  for (const item of candidates) {
+    if (typeof item !== "string") continue;
+    const normalized = item.trim().replace(/\s+/g, " ");
+    if (!normalized) continue;
+    return normalized.slice(0, 180);
+  }
+  return null;
 }
 
 export async function recordWebhookEvent(params: {
