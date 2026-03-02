@@ -11634,8 +11634,140 @@ app.get("/settings/access-section", requireAuth, async (_req, res) => {
 });
 
 app.get("/settings/subscription", requireAuth, async (_req, res) => {
-  const user = readUserFromLocals(res);
-  if (!(await isBillingEnabled())) {
+  try {
+    const user = readUserFromLocals(res);
+    if (!(await isBillingEnabled())) {
+      return res.json({
+        billingEnabled: false,
+        plan: "free",
+        status: "active",
+        proValidUntil: null,
+        limits: {
+          maxRunningBots: 1,
+          maxBotsTotal: 2,
+          allowedExchanges: ["*"],
+          bots: {
+            maxRunning: 1,
+            maxTotal: 2
+          },
+          predictions: {
+            local: {
+              maxRunning: null,
+              maxTotal: null
+            },
+            ai: {
+              maxRunning: null,
+              maxTotal: null
+            },
+            composite: {
+              maxRunning: null,
+              maxTotal: null
+            }
+          }
+        },
+        usage: {
+          totalBots: 0,
+          runningBots: 0,
+          bots: {
+            running: 0,
+            total: 0
+          },
+          predictions: {
+            local: {
+              running: 0,
+              total: 0
+            },
+            ai: {
+              running: 0,
+              total: 0
+            },
+            composite: {
+              running: 0,
+              total: 0
+            }
+          }
+        },
+        ai: {
+          tokenBalance: "0",
+          tokenUsedLifetime: "0",
+          monthlyIncluded: "0",
+          billingEnabled: false
+        },
+        packages: [],
+        orders: []
+      });
+    }
+
+    const summary = await getSubscriptionSummary(user.id);
+    return res.json({
+      billingEnabled: true,
+      ...summary,
+      packages: summary.packages.map((pkg: any) => ({
+        id: pkg.id,
+        code: pkg.code,
+        name: pkg.name,
+        description: pkg.description ?? null,
+        kind:
+          pkg.kind === "AI_TOPUP"
+            ? "ai_topup"
+            : pkg.kind === "ENTITLEMENT_TOPUP"
+              ? "entitlement_topup"
+              : "plan",
+        isActive: Boolean(pkg.isActive),
+        sortOrder: Number(pkg.sortOrder ?? 0),
+        currency: String(pkg.currency ?? "USD"),
+        priceCents: Number(pkg.priceCents ?? 0),
+        billingMonths: Number(pkg.billingMonths ?? 1),
+        plan: pkg.plan === "PRO" ? "pro" : pkg.plan === "FREE" ? "free" : null,
+        maxRunningBots: pkg.maxRunningBots ?? null,
+        maxBotsTotal: pkg.maxBotsTotal ?? null,
+        maxRunningPredictionsAi: pkg.maxRunningPredictionsAi ?? null,
+        maxPredictionsAiTotal: pkg.maxPredictionsAiTotal ?? null,
+        maxRunningPredictionsComposite: pkg.maxRunningPredictionsComposite ?? null,
+        maxPredictionsCompositeTotal: pkg.maxPredictionsCompositeTotal ?? null,
+        allowedExchanges: Array.isArray(pkg.allowedExchanges) ? pkg.allowedExchanges : ["*"],
+        monthlyAiTokens:
+          typeof pkg.monthlyAiTokens === "bigint"
+            ? pkg.monthlyAiTokens.toString()
+            : String(pkg.monthlyAiTokens ?? "0"),
+        topupAiTokens:
+          typeof pkg.topupAiTokens === "bigint"
+            ? pkg.topupAiTokens.toString()
+            : String(pkg.topupAiTokens ?? "0"),
+        topupRunningBots: pkg.topupRunningBots ?? null,
+        topupBotsTotal: pkg.topupBotsTotal ?? null,
+        topupRunningPredictionsAi: pkg.topupRunningPredictionsAi ?? null,
+        topupPredictionsAiTotal: pkg.topupPredictionsAiTotal ?? null,
+        topupRunningPredictionsComposite: pkg.topupRunningPredictionsComposite ?? null,
+        topupPredictionsCompositeTotal: pkg.topupPredictionsCompositeTotal ?? null
+      })),
+      orders: summary.orders.map((order: any) => ({
+        id: order.id,
+        merchantOrderId: order.merchantOrderId,
+        status: String(order.status ?? "PENDING").toLowerCase(),
+        amountCents: Number(order.amountCents ?? 0),
+        currency: order.currency ?? "USD",
+        payUrl: order.payUrl ?? null,
+        paymentStatusRaw: order.paymentStatusRaw ?? null,
+        paidAt: order.paidAt instanceof Date ? order.paidAt.toISOString() : null,
+        createdAt: order.createdAt instanceof Date ? order.createdAt.toISOString() : null,
+        package: order.pkg ? {
+          id: order.pkg.id,
+          code: order.pkg.code,
+          name: order.pkg.name,
+          kind:
+            order.pkg.kind === "AI_TOPUP"
+              ? "ai_topup"
+              : order.pkg.kind === "ENTITLEMENT_TOPUP"
+                ? "entitlement_topup"
+                : "plan"
+        } : null
+      }))
+    });
+  } catch (error) {
+    console.error("[billing] settings subscription endpoint failed", {
+      error: error instanceof Error ? error.message : String(error)
+    });
     return res.json({
       billingEnabled: false,
       plan: "free",
@@ -11693,70 +11825,10 @@ app.get("/settings/subscription", requireAuth, async (_req, res) => {
         billingEnabled: false
       },
       packages: [],
-      orders: []
+      orders: [],
+      fallbackReason: "subscription_unavailable"
     });
   }
-
-  const summary = await getSubscriptionSummary(user.id);
-  return res.json({
-    billingEnabled: true,
-    ...summary,
-    packages: summary.packages.map((pkg: any) => ({
-      id: pkg.id,
-      code: pkg.code,
-      name: pkg.name,
-      description: pkg.description ?? null,
-      kind:
-        pkg.kind === "AI_TOPUP"
-          ? "ai_topup"
-          : pkg.kind === "ENTITLEMENT_TOPUP"
-            ? "entitlement_topup"
-            : "plan",
-      isActive: Boolean(pkg.isActive),
-      sortOrder: Number(pkg.sortOrder ?? 0),
-      currency: String(pkg.currency ?? "USD"),
-      priceCents: Number(pkg.priceCents ?? 0),
-      billingMonths: Number(pkg.billingMonths ?? 1),
-      plan: pkg.plan === "PRO" ? "pro" : pkg.plan === "FREE" ? "free" : null,
-      maxRunningBots: pkg.maxRunningBots ?? null,
-      maxBotsTotal: pkg.maxBotsTotal ?? null,
-      maxRunningPredictionsAi: pkg.maxRunningPredictionsAi ?? null,
-      maxPredictionsAiTotal: pkg.maxPredictionsAiTotal ?? null,
-      maxRunningPredictionsComposite: pkg.maxRunningPredictionsComposite ?? null,
-      maxPredictionsCompositeTotal: pkg.maxPredictionsCompositeTotal ?? null,
-      allowedExchanges: Array.isArray(pkg.allowedExchanges) ? pkg.allowedExchanges : ["*"],
-      monthlyAiTokens: typeof pkg.monthlyAiTokens === "bigint" ? pkg.monthlyAiTokens.toString() : String(pkg.monthlyAiTokens ?? "0"),
-      topupAiTokens: typeof pkg.topupAiTokens === "bigint" ? pkg.topupAiTokens.toString() : String(pkg.topupAiTokens ?? "0"),
-      topupRunningBots: pkg.topupRunningBots ?? null,
-      topupBotsTotal: pkg.topupBotsTotal ?? null,
-      topupRunningPredictionsAi: pkg.topupRunningPredictionsAi ?? null,
-      topupPredictionsAiTotal: pkg.topupPredictionsAiTotal ?? null,
-      topupRunningPredictionsComposite: pkg.topupRunningPredictionsComposite ?? null,
-      topupPredictionsCompositeTotal: pkg.topupPredictionsCompositeTotal ?? null
-    })),
-    orders: summary.orders.map((order: any) => ({
-      id: order.id,
-      merchantOrderId: order.merchantOrderId,
-      status: String(order.status ?? "PENDING").toLowerCase(),
-      amountCents: Number(order.amountCents ?? 0),
-      currency: order.currency ?? "USD",
-      payUrl: order.payUrl ?? null,
-      paymentStatusRaw: order.paymentStatusRaw ?? null,
-      paidAt: order.paidAt instanceof Date ? order.paidAt.toISOString() : null,
-      createdAt: order.createdAt instanceof Date ? order.createdAt.toISOString() : null,
-      package: order.pkg ? {
-        id: order.pkg.id,
-        code: order.pkg.code,
-        name: order.pkg.name,
-        kind:
-          order.pkg.kind === "AI_TOPUP"
-            ? "ai_topup"
-            : order.pkg.kind === "ENTITLEMENT_TOPUP"
-              ? "entitlement_topup"
-              : "plan"
-      } : null
-    }))
-  });
 });
 
 app.get("/settings/subscription/orders", requireAuth, async (_req, res) => {
