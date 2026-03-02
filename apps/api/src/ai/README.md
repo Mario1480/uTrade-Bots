@@ -20,7 +20,7 @@
 - `AI_GPT5_EXPLAINER_RETRY_MAX_TOKENS` (default: max(`AI_GPT5_EXPLAINER_MAX_TOKENS` + 800, 1.5x))
 - `AI_GPT5_EXPLAINER_MAX_ATTEMPTS` (default: `3` for `gpt-5*`, before fallback model is used)
 - `AI_GPT5_EXPLAINER_FINAL_MAX_TOKENS` (default: 1.6x retry budget, used on final `gpt-5*` attempt)
-- `AI_OLLAMA_4H_MIN_EXPLANATION_CHARS` (default: `420`)
+- `AI_OLLAMA_4H_MIN_EXPLANATION_CHARS` (default: `200`)
 - `AI_OLLAMA_4H_MIN_EXPLANATION_SENTENCES` (default: `8`)
 - `AI_PROMPT_OHLCV_MAX_BARS` (default: `500`, min `20`, max `500`) - hard cap for stored OHLCV bars
 - `AI_CACHE_TTL_SEC` (default: `300`)

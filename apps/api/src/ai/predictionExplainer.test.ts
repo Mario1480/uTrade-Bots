@@ -893,7 +893,7 @@ test("ollama 4h quality gate triggers one explanation expansion retry", async ()
     );
 
     assert.equal(calls, 2);
-    assert.equal(output.explanation.length >= 420, true);
+    assert.equal(output.explanation.length >= 200, true);
   } finally {
     if (previousProvider === undefined) delete process.env.AI_PROVIDER;
     else process.env.AI_PROVIDER = previousProvider;
