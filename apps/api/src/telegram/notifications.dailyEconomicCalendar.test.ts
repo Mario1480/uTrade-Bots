@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { filterEconomicEventsByLocalDate } from "./notifications.js";
+import { filterEconomicEventsByLocalDate, formatTelegramTagsLine } from "./notifications.js";
 
 test("filterEconomicEventsByLocalDate keeps only events in target local date", () => {
   const events = [
@@ -52,4 +52,15 @@ test("filterEconomicEventsByLocalDate keeps only events in target local date", (
   });
 
   assert.deepEqual(filtered.map((event) => event.id), ["1", "2"]);
+});
+
+test("formatTelegramTagsLine returns null for empty input", () => {
+  assert.equal(formatTelegramTagsLine(undefined), null);
+  assert.equal(formatTelegramTagsLine([]), null);
+  assert.equal(formatTelegramTagsLine(["", "   "]), null);
+});
+
+test("formatTelegramTagsLine trims and deduplicates tags", () => {
+  const line = formatTelegramTagsLine([" news_risk ", "range_bound", "news_risk", ""]);
+  assert.equal(line, "Tags: news_risk, range_bound");
 });

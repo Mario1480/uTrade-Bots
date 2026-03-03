@@ -77,6 +77,17 @@ function buildTelegramText(lines: Array<string | null | undefined>): string {
   return `${truncated}\n…[truncated]`;
 }
 
+export function formatTelegramTagsLine(tags: string[] | null | undefined): string | null {
+  if (!Array.isArray(tags) || tags.length === 0) return null;
+  const normalized = Array.from(new Set(
+    tags
+      .map((tag) => (typeof tag === "string" ? tag.trim() : ""))
+      .filter(Boolean)
+  )).slice(0, 8);
+  if (normalized.length === 0) return null;
+  return `Tags: ${normalized.join(", ")}`;
+}
+
 function shiftDateKey(dateKey: string, days: number): string {
   const base = new Date(`${dateKey}T00:00:00.000Z`);
   const shifted = new Date(base.getTime() + days * 24 * 60 * 60 * 1000);
@@ -287,6 +298,7 @@ export async function notifyTradablePrediction(params: {
   source: "manual" | "auto";
   signalSource: PredictionSignalSource;
   aiPromptTemplateName?: string | null;
+  tags?: string[];
 }): Promise<void> {
   if (!isTradableSignal({
     signal: params.signal,
@@ -308,6 +320,7 @@ export async function notifyTradablePrediction(params: {
     typeof params.aiPromptTemplateName === "string" && params.aiPromptTemplateName.trim()
       ? params.aiPromptTemplateName.trim()
       : null;
+  const tagsLine = formatTelegramTagsLine(params.tags);
   const deskLink = buildManualDeskPredictionLink(params.predictionId);
 
   const text = buildTelegramText([
@@ -316,6 +329,7 @@ export async function notifyTradablePrediction(params: {
     `Signal: ${signalLabel}`,
     `Source: ${params.signalSource}`, 
     `Strategy: ${promptName ?? "n/a"}`,
+    tagsLine,
     `Confidence: ${confidencePct.toFixed(1)}% (target ${params.confidenceTargetPct.toFixed(0)}%)`,
     `Expected move: ${params.expectedMovePct.toFixed(2)}%`,
     `Exchange: ${params.exchangeAccountLabel}`,
@@ -353,6 +367,7 @@ export async function notifyMarketAnalysisUpdate(params: {
   source: "manual" | "auto";
   signalSource: PredictionSignalSource;
   aiPromptTemplateName?: string | null;
+  tags?: string[];
 }): Promise<void> {
   const config = await resolveTelegramConfig(params.userId);
   if (!config) return;
@@ -361,6 +376,7 @@ export async function notifyMarketAnalysisUpdate(params: {
     typeof params.aiPromptTemplateName === "string" && params.aiPromptTemplateName.trim()
       ? params.aiPromptTemplateName.trim()
       : null;
+  const tagsLine = formatTelegramTagsLine(params.tags);
   const explanation = typeof params.explanation === "string" ? params.explanation.trim() : "";
   const deskLink = buildManualDeskPredictionLink(params.predictionId);
   const confidencePct = confidenceToPct(params.confidence);
@@ -369,6 +385,7 @@ export async function notifyMarketAnalysisUpdate(params: {
     `${params.symbol} (${params.marketType}, ${params.timeframe})`,
     `Source: ${params.signalSource}`,
     `Strategy: ${promptName ?? "n/a"}`,
+    tagsLine,
     explanation ? `Analysis: ${explanation}` : null
   ]);
 
@@ -397,6 +414,7 @@ export async function notifyPredictionOutcome(params: {
   predictionId: string;
   outcomeResult: "tp_hit" | "sl_hit";
   outcomePnlPct: number | null;
+  tags?: string[];
 }): Promise<boolean> {
   const config = await resolveTelegramConfig(params.userId);
   if (!config) {
@@ -409,21 +427,23 @@ export async function notifyPredictionOutcome(params: {
     ? `${Number(params.outcomePnlPct).toFixed(2)}%`
     : "n/a";
   const emoji = params.outcomeResult === "tp_hit" ? "✅" : "🛑";
+  const tagsLine = formatTelegramTagsLine(params.tags);
 
-  const lines = [
+  const text = buildTelegramText([
     `${emoji} SIGNAL OUTCOME`,
     `${params.symbol} (${params.marketType}, ${params.timeframe})`,
     `Side: ${sideLabel}`,
+    tagsLine,
     `Result: ${outcomeLabel}`,
     `PnL: ${pnlText}`,
     `Exchange: ${params.exchangeAccountLabel}`,
     `Signal ID: ${params.predictionId}`
-  ];
+  ]);
 
   try {
     await sendTelegramMessage({
       ...config,
-      text: lines.join("\n")
+      text
     });
     return true;
   } catch (error) {

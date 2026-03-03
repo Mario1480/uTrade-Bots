@@ -5291,6 +5291,7 @@ async function generateAutoPredictionForUser(
       explanation: created.explanation.explanation,
       source: "auto",
       signalSource: created.signalSource,
+      tags: stateTags,
       aiPromptTemplateName: resolveNotificationStrategyName({
         signalSource: created.signalSource,
         snapshot: featureSnapshotForState,
@@ -5313,6 +5314,7 @@ async function generateAutoPredictionForUser(
         explanation: created.explanation.explanation,
         source: "auto",
         signalSource: created.signalSource,
+        tags: stateTags,
         aiPromptTemplateName: resolveNotificationStrategyName({
           signalSource: created.signalSource,
           snapshot: featureSnapshotForState,
@@ -7234,6 +7236,7 @@ async function runPredictionOutcomeEvalCycle() {
         stopLossPrice: true,
         takeProfitPrice: true,
         horizonMs: true,
+        tags: true,
         featuresSnapshot: true,
         outcomeMeta: true,
         outcomeResult: true
@@ -7368,7 +7371,8 @@ async function runPredictionOutcomeEvalCycle() {
               signal,
               predictionId: row.id,
               outcomeResult: nextOutcomeResult,
-              outcomePnlPct
+              outcomePnlPct,
+              tags: normalizeTagList(row.tags)
             });
             if (sent) {
               const nextMeta = asRecord(evaluation.data.outcomeMeta);
@@ -9390,6 +9394,7 @@ async function refreshPredictionStateForTemplate(params: {
           explanation: explainer.explanation,
           source: "auto",
           signalSource: selectedPrediction.source,
+          tags,
           aiPromptTemplateName: resolveNotificationStrategyName({
             signalSource: selectedPrediction.source,
             snapshot: inferred.featureSnapshot,
@@ -9411,6 +9416,7 @@ async function refreshPredictionStateForTemplate(params: {
             explanation: explainer.explanation,
             source: "auto",
             signalSource: selectedPrediction.source,
+            tags,
             aiPromptTemplateName: resolveNotificationStrategyName({
               signalSource: selectedPrediction.source,
               snapshot: inferred.featureSnapshot,
@@ -14941,24 +14947,24 @@ app.post("/api/predictions/generate", requireAuth, async (req, res) => {
   });
 
   const snapshot = asRecord(created.featureSnapshot);
+  const notificationTags = enforceNewsRiskTag(
+    created.explanation.tags.length > 0
+      ? created.explanation.tags
+      : created.featureSnapshot.tags,
+    created.featureSnapshot
+  );
   const exchangeAccountId = readPrefillExchangeAccountId(snapshot);
   if (exchangeAccountId) {
     const exchange =
       typeof snapshot.prefillExchange === "string" && snapshot.prefillExchange.trim()
         ? normalizeExchangeValue(snapshot.prefillExchange)
         : "bitget";
-    const tags = enforceNewsRiskTag(
-      created.explanation.tags.length > 0
-        ? created.explanation.tags
-        : created.featureSnapshot.tags,
-      created.featureSnapshot
-    );
     const keyDrivers = normalizeKeyDriverList(created.explanation.keyDrivers);
     const tsDate = new Date(tsCreated);
     const changeHash = buildPredictionChangeHash({
       signal: created.prediction.signal,
       confidence: created.prediction.confidence,
-      tags,
+      tags: notificationTags,
       keyDrivers,
       featureSnapshot: created.featureSnapshot
     });
@@ -14990,7 +14996,7 @@ app.post("/api/predictions/generate", requireAuth, async (req, res) => {
       confidence: Number.isFinite(Number(created.prediction.confidence))
         ? Number(created.prediction.confidence)
         : 0,
-      tags,
+      tags: notificationTags,
       explanation: created.explanation.explanation,
       keyDrivers,
       featuresSnapshot: created.featureSnapshot,
@@ -15027,7 +15033,7 @@ app.post("/api/predictions/generate", requireAuth, async (req, res) => {
           signal: created.prediction.signal,
           confidence: created.prediction.confidence,
           expectedMovePct: created.prediction.expectedMovePct,
-          tags
+          tags: notificationTags
         },
         delta: { reason: "manual_generate" },
         horizonEvalRef: created.rowId,
@@ -15060,6 +15066,7 @@ app.post("/api/predictions/generate", requireAuth, async (req, res) => {
     explanation: created.explanation.explanation,
     source: "manual",
     signalSource: created.signalSource,
+    tags: notificationTags,
     aiPromptTemplateName: resolveNotificationStrategyName({
       signalSource: created.signalSource,
       snapshot,
@@ -15089,6 +15096,7 @@ app.post("/api/predictions/generate", requireAuth, async (req, res) => {
       explanation: created.explanation.explanation,
       source: "manual",
       signalSource: created.signalSource,
+      tags: notificationTags,
       aiPromptTemplateName: resolveNotificationStrategyName({
         signalSource: created.signalSource,
         snapshot,

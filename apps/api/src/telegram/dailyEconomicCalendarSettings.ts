@@ -192,7 +192,7 @@ function formatPartsByTimezone(now: Date, timezone: string): {
   hour: string;
   minute: string;
 } {
-  const formatter = new Intl.DateTimeFormat("en-CA", {
+  const formatter = new Intl.DateTimeFormat("en-GB", {
     timeZone: timezone,
     year: "numeric",
     month: "2-digit",
@@ -204,11 +204,15 @@ function formatPartsByTimezone(now: Date, timezone: string): {
   const parts = formatter.formatToParts(now);
   const pick = (type: Intl.DateTimeFormatPartTypes): string =>
     parts.find((part) => part.type === type)?.value ?? "";
+  const hourValue = pick("hour");
+  // Some ICU locale combinations can emit 24:xx around midnight.
+  // The scheduler compares HH:mm lexicographically and expects 00-23.
+  const normalizedHour = hourValue === "24" ? "00" : hourValue;
   return {
     year: pick("year"),
     month: pick("month"),
     day: pick("day"),
-    hour: pick("hour"),
+    hour: normalizedHour,
     minute: pick("minute")
   };
 }

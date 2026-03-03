@@ -2,6 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import {
   defaultDailyEconomicCalendarSettings,
+  getLocalDateTimeByTimezone,
   isDailyEconomicCalendarSendDue,
   mergeDailyEconomicCalendarSettings,
   parseStoredDailyEconomicCalendarSettings
@@ -85,4 +86,31 @@ test("isDailyEconomicCalendarSendDue evaluates local day send window", () => {
     now: new Date("2026-03-02T09:15:00.000Z")
   });
   assert.equal(alreadySent.due, false);
+});
+
+test("getLocalDateTimeByTimezone normalizes midnight hour to 00", () => {
+  const local = getLocalDateTimeByTimezone(
+    new Date("2026-03-03T23:05:00.000Z"),
+    "Europe/Berlin"
+  );
+  assert.equal(local.localDate, "2026-03-04");
+  assert.equal(local.localTime, "00:05");
+});
+
+test("isDailyEconomicCalendarSendDue does not trigger before send time after midnight", () => {
+  const due = isDailyEconomicCalendarSendDue({
+    settings: {
+      enabled: true,
+      currencies: ["USD"],
+      impacts: ["high"],
+      sendTimeLocal: "00:30",
+      timezone: "Europe/Berlin",
+      lastSentLocalDate: null,
+      lastSentAt: null
+    },
+    now: new Date("2026-03-03T23:05:00.000Z")
+  });
+  assert.equal(due.localDate, "2026-03-04");
+  assert.equal(due.localTime, "00:05");
+  assert.equal(due.due, false);
 });
