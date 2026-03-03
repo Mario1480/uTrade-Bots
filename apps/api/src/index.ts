@@ -3684,12 +3684,50 @@ function asNumber(value: unknown): number | null {
 }
 
 function parseBitgetCandles(value: unknown): CandleBar[] {
-  if (!Array.isArray(value)) return [];
+  const normalizeTs = (raw: number | null): number | null => {
+    if (raw === null || !Number.isFinite(raw)) return null;
+    return raw < 1_000_000_000_000 ? Math.trunc(raw * 1000) : Math.trunc(raw);
+  };
+
+  // MEXC packed format: { time:[], open:[], high:[], low:[], close:[], vol:[] }
+  if (!Array.isArray(value)) {
+    const packed = toRecordSafe(value);
+    if (!packed) return [];
+
+    const time = Array.isArray(packed.time) ? packed.time : [];
+    const open = Array.isArray(packed.open) ? packed.open : [];
+    const high = Array.isArray(packed.high) ? packed.high : [];
+    const low = Array.isArray(packed.low) ? packed.low : [];
+    const close = Array.isArray(packed.close) ? packed.close : [];
+    const vol = Array.isArray(packed.vol) ? packed.vol : [];
+    const size = Math.min(time.length, open.length, high.length, low.length, close.length);
+    if (size <= 0) return [];
+
+    const out: CandleBar[] = [];
+    for (let i = 0; i < size; i += 1) {
+      const o = asNumber(open[i]);
+      const h = asNumber(high[i]);
+      const l = asNumber(low[i]);
+      const c = asNumber(close[i]);
+      if (o === null || h === null || l === null || c === null) continue;
+      out.push({
+        ts: normalizeTs(asNumber(time[i])),
+        open: o,
+        high: h,
+        low: l,
+        close: c,
+        volume: asNumber(vol[i])
+      });
+    }
+    out.sort((a, b) => (a.ts ?? 0) - (b.ts ?? 0));
+    return out;
+  }
+
   const out: CandleBar[] = [];
 
   for (const row of value) {
     if (Array.isArray(row)) {
-      const ts = asNumber(row[0]);
+      const ts = normalizeTs(asNumber(row[0]));
       const open = asNumber(row[1]);
       const high = asNumber(row[2]);
       const low = asNumber(row[3]);
@@ -3708,7 +3746,7 @@ function parseBitgetCandles(value: unknown): CandleBar[] {
     const close = asNumber(rec.close ?? rec.c);
     if (open === null || high === null || low === null || close === null) continue;
     out.push({
-      ts: asNumber(rec.ts ?? rec.t ?? rec.time ?? rec.timestamp ?? rec.T),
+      ts: normalizeTs(asNumber(rec.ts ?? rec.t ?? rec.time ?? rec.timestamp ?? rec.T)),
       open,
       high,
       low,
