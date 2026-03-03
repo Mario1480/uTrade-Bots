@@ -169,6 +169,58 @@ function makeHistoryContextForCache(ts = "2026-02-14T12:00:00.000Z") {
   };
 }
 
+function makeBars(count: number) {
+  return Array.from({ length: count }, (_, idx) => ({
+    t: 1_771_000_000 + idx * 300,
+    o: 70_000 + idx,
+    h: 70_040 + idx,
+    l: 69_960 + idx,
+    c: 70_010 + idx,
+    v: 100 + idx
+  }));
+}
+
+function buildCompactionFeatureSnapshot() {
+  const bars = makeBars(140);
+  return {
+    ...baseInput.featureSnapshot,
+    ohlcvSeries: {
+      timeframe: "15m",
+      count: bars.length,
+      bars
+    },
+    historyContext: makeHistoryContextForCache(),
+    mtf: {
+      runTimeframe: "15m",
+      timeframes: ["15m", "1h"],
+      frames: {
+        "15m": {
+          ohlcvSeries: {
+            timeframe: "15m",
+            count: bars.length,
+            bars
+          },
+          historyContext: makeHistoryContextForCache("2026-02-14T12:00:00.000Z"),
+          advancedIndicators: {
+            smartMoneyConcepts: baseInput.featureSnapshot.advancedIndicators?.smartMoneyConcepts
+          }
+        },
+        "1h": {
+          ohlcvSeries: {
+            timeframe: "1h",
+            count: bars.length,
+            bars
+          },
+          historyContext: makeHistoryContextForCache("2026-02-14T11:00:00.000Z"),
+          advancedIndicators: {
+            smartMoneyConcepts: baseInput.featureSnapshot.advancedIndicators?.smartMoneyConcepts
+          }
+        }
+      }
+    }
+  };
+}
+
 test("schema validation success", () => {
   const value = validateExplainerOutput(
     {
@@ -479,6 +531,7 @@ test("fallback path is used on timeout error", async () => {
     timeframe: null,
     directionPreference: "either" as const,
     confidenceTargetPct: 60,
+    promptMode: "trading_explainer" as const,
     marketAnalysisUpdateEnabled: false,
     source: "db" as const,
     activePromptId: "test",
@@ -623,6 +676,7 @@ test("prompt preview trims ohlcvSeries and historyContext independently", async 
       timeframe: null,
       directionPreference: "either",
       confidenceTargetPct: 60,
+      promptMode: "trading_explainer" as const,
       marketAnalysisUpdateEnabled: false,
       source: "db",
       activePromptId: "prompt_test",
@@ -687,6 +741,7 @@ test("cache key ignores historyContext.bud.bytes but changes with history conten
     timeframe: null,
     directionPreference: "either" as const,
     confidenceTargetPct: 60,
+    promptMode: "trading_explainer" as const,
     marketAnalysisUpdateEnabled: false,
     source: "db" as const,
     activePromptId: "prompt_smc",
@@ -726,6 +781,293 @@ test("cache key ignores historyContext.bud.bytes but changes with history conten
 
   assert.equal(previewA.cacheKey, previewB.cacheKey);
   assert.notEqual(previewA.cacheKey, previewC.cacheKey);
+});
+
+test("minimal_v1 trading payload keeps setup context and drops scaffolding", async () => {
+  const prevMode = process.env.AI_PAYLOAD_PROFILE_MODE;
+  process.env.AI_PAYLOAD_PROFILE_MODE = "minimal_v1";
+  try {
+    const preview = await buildPredictionExplainerPromptPreview(
+      {
+        ...baseInput,
+        featureSnapshot: {
+          ...baseInput.featureSnapshot,
+          suggestedEntryPrice: 70010,
+          suggestedStopLoss: 69880,
+          suggestedTakeProfit: 70340,
+          qualitySampleSize: 52,
+          qualityWinRatePct: 58.5,
+          qualityAvgOutcomePnlPct: 0.94,
+          newsBlackout: false,
+          prefillExchange: "bitget",
+          autoScheduleEnabled: true
+        }
+      },
+      {
+        promptSettings: {
+          promptText: "Explain current setup",
+          indicatorKeys: ["smc", "history_context"] as const,
+          ohlcvBars: 100,
+          timeframes: ["15m"],
+          runTimeframe: "15m",
+          timeframe: "15m",
+          directionPreference: "either" as const,
+          confidenceTargetPct: 60,
+          promptMode: "trading_explainer" as const,
+          marketAnalysisUpdateEnabled: false,
+          source: "db" as const,
+          activePromptId: "prompt_trade",
+          activePromptName: "Trading explainer",
+          selectedFrom: "active_prompt" as const,
+          matchedScopeType: null,
+          matchedOverrideId: null
+        }
+      }
+    );
+
+    const payload = preview.userPayload as Record<string, unknown>;
+    const featureSnapshot = payload.featureSnapshot as Record<string, unknown>;
+
+    assert.equal(preview.payloadProfile, "minimal_v1_trading_explainer");
+    assert.equal(typeof payload.prediction, "object");
+    assert.equal(typeof payload.slTpSource, "string");
+    assert.equal(Array.isArray(payload.tagsAllowlist), true);
+    assert.equal("outputSchema" in payload, false);
+    assert.equal("groundingRules" in payload, false);
+    assert.equal("promptTimeframes" in payload, false);
+    assert.equal("promptRunTimeframe" in payload, false);
+    assert.equal("selectedIndicatorKeys" in payload, false);
+    assert.equal("meta" in payload, false);
+    assert.equal("suggestedEntryPrice" in featureSnapshot, true);
+    assert.equal("suggestedStopLoss" in featureSnapshot, true);
+    assert.equal("suggestedTakeProfit" in featureSnapshot, true);
+    assert.equal("qualitySampleSize" in featureSnapshot, true);
+    assert.equal("qualityWinRatePct" in featureSnapshot, true);
+    assert.equal("qualityAvgOutcomePnlPct" in featureSnapshot, true);
+    assert.equal("prefillExchange" in featureSnapshot, false);
+    assert.equal("autoScheduleEnabled" in featureSnapshot, false);
+    assert.equal(preview.payloadDroppedPaths.includes("payload.outputSchema"), true);
+  } finally {
+    if (prevMode === undefined) delete process.env.AI_PAYLOAD_PROFILE_MODE;
+    else process.env.AI_PAYLOAD_PROFILE_MODE = prevMode;
+  }
+});
+
+test("minimal_v1 market_analysis payload removes directional/setup context", async () => {
+  const prevMode = process.env.AI_PAYLOAD_PROFILE_MODE;
+  process.env.AI_PAYLOAD_PROFILE_MODE = "minimal_v1";
+  try {
+    const preview = await buildPredictionExplainerPromptPreview(
+      {
+        ...baseInput,
+        timeframe: "4h",
+        prediction: {
+          signal: "down",
+          expectedMovePct: 2.8,
+          confidence: 0.78
+        },
+        featureSnapshot: {
+          ...baseInput.featureSnapshot,
+          suggestedEntryPrice: 70010,
+          suggestedStopLoss: 69880,
+          suggestedTakeProfit: 70340,
+          qualitySampleSize: 52,
+          qualityWinRatePct: 58.5,
+          qualityAvgOutcomePnlPct: 0.94
+        }
+      },
+      {
+        promptSettings: {
+          promptText: "4h market analysis",
+          indicatorKeys: ["smc"] as const,
+          ohlcvBars: 100,
+          timeframes: ["4h"],
+          runTimeframe: "4h",
+          timeframe: "4h",
+          directionPreference: "either" as const,
+          confidenceTargetPct: 60,
+          promptMode: "market_analysis" as const,
+          marketAnalysisUpdateEnabled: true,
+          source: "db" as const,
+          activePromptId: "prompt_market_4h",
+          activePromptName: "4h market analysis",
+          selectedFrom: "active_prompt" as const,
+          matchedScopeType: null,
+          matchedOverrideId: null
+        }
+      }
+    );
+
+    const payload = preview.userPayload as Record<string, unknown>;
+    const featureSnapshot = payload.featureSnapshot as Record<string, unknown>;
+
+    assert.equal(preview.payloadProfile, "minimal_v1_market_analysis");
+    assert.equal(preview.runtimeProfile.analysisMode, "market_analysis");
+    assert.equal("prediction" in payload, false);
+    assert.equal("slTpSource" in payload, false);
+    assert.equal("suggestedEntryPrice" in featureSnapshot, false);
+    assert.equal("suggestedStopLoss" in featureSnapshot, false);
+    assert.equal("suggestedTakeProfit" in featureSnapshot, false);
+    assert.equal("qualitySampleSize" in featureSnapshot, false);
+    assert.equal("qualityWinRatePct" in featureSnapshot, false);
+    assert.equal("qualityAvgOutcomePnlPct" in featureSnapshot, false);
+  } finally {
+    if (prevMode === undefined) delete process.env.AI_PAYLOAD_PROFILE_MODE;
+    else process.env.AI_PAYLOAD_PROFILE_MODE = prevMode;
+  }
+});
+
+test("minimal_v2 trading payload compacts mtf/history/ohlcv before budget trim", async () => {
+  const prevMode = process.env.AI_PAYLOAD_PROFILE_MODE;
+  process.env.AI_PAYLOAD_PROFILE_MODE = "minimal_v2";
+  try {
+    const preview = await buildPredictionExplainerPromptPreview(
+      {
+        ...baseInput,
+        featureSnapshot: buildCompactionFeatureSnapshot()
+      },
+      {
+        promptSettings: {
+          promptText: "Trading explain compact v2",
+          indicatorKeys: ["smc", "history_context"] as const,
+          ohlcvBars: 140,
+          timeframes: ["15m"],
+          runTimeframe: "15m",
+          timeframe: "15m",
+          directionPreference: "either" as const,
+          confidenceTargetPct: 60,
+          promptMode: "trading_explainer" as const,
+          marketAnalysisUpdateEnabled: false,
+          source: "db" as const,
+          activePromptId: "prompt_trade_v2",
+          activePromptName: "Trading v2",
+          selectedFrom: "active_prompt" as const,
+          matchedScopeType: null,
+          matchedOverrideId: null
+        }
+      }
+    );
+
+    const payload = preview.userPayload as Record<string, unknown>;
+    const featureSnapshot = payload.featureSnapshot as Record<string, unknown>;
+    const mtf = featureSnapshot.mtf as Record<string, unknown>;
+    const frames = (mtf.frames ?? {}) as Record<string, unknown>;
+    const primaryBars = ((featureSnapshot.ohlcvSeries as Record<string, unknown>).bars ?? []) as unknown[];
+    const history = featureSnapshot.historyContext as Record<string, unknown>;
+    const historyEvents = (history.ev ?? []) as unknown[];
+    const historyLastBars = ((history.lastBars as Record<string, unknown>).ohlc ?? []) as unknown[];
+
+    assert.equal(preview.payloadProfile, "minimal_v2_trading_explainer");
+    assert.equal(preview.payloadTraceMeta.payloadCompactionProfile, "minimal_v2_trading");
+    assert.equal(Object.keys(frames).length, 1);
+    assert.equal(Boolean(frames["15m"]), true);
+    assert.equal(primaryBars.length <= 80, true);
+    assert.equal(historyEvents.length <= 20, true);
+    assert.equal(historyLastBars.length <= 20, true);
+    assert.equal(preview.payloadTraceMeta.payloadCompactionDroppedPaths.length > 0, true);
+  } finally {
+    if (prevMode === undefined) delete process.env.AI_PAYLOAD_PROFILE_MODE;
+    else process.env.AI_PAYLOAD_PROFILE_MODE = prevMode;
+  }
+});
+
+test("minimal_v2 market_analysis payload uses stricter compaction limits", async () => {
+  const prevMode = process.env.AI_PAYLOAD_PROFILE_MODE;
+  process.env.AI_PAYLOAD_PROFILE_MODE = "minimal_v2";
+  try {
+    const preview = await buildPredictionExplainerPromptPreview(
+      {
+        ...baseInput,
+        timeframe: "4h",
+        featureSnapshot: buildCompactionFeatureSnapshot()
+      },
+      {
+        promptSettings: {
+          promptText: "4h market analysis compact v2",
+          indicatorKeys: ["smc", "history_context"] as const,
+          ohlcvBars: 140,
+          timeframes: ["4h"],
+          runTimeframe: "4h",
+          timeframe: "4h",
+          directionPreference: "either" as const,
+          confidenceTargetPct: 60,
+          promptMode: "market_analysis" as const,
+          marketAnalysisUpdateEnabled: true,
+          source: "db" as const,
+          activePromptId: "prompt_market_v2",
+          activePromptName: "Market v2",
+          selectedFrom: "active_prompt" as const,
+          matchedScopeType: null,
+          matchedOverrideId: null
+        }
+      }
+    );
+
+    const payload = preview.userPayload as Record<string, unknown>;
+    const featureSnapshot = payload.featureSnapshot as Record<string, unknown>;
+    const primaryBars = ((featureSnapshot.ohlcvSeries as Record<string, unknown>).bars ?? []) as unknown[];
+    const history = featureSnapshot.historyContext as Record<string, unknown>;
+    const historyEvents = (history.ev ?? []) as unknown[];
+    const historyLastBars = ((history.lastBars as Record<string, unknown>).ohlc ?? []) as unknown[];
+
+    assert.equal(preview.payloadProfile, "minimal_v2_market_analysis");
+    assert.equal(preview.runtimeProfile.analysisMode, "market_analysis");
+    assert.equal(preview.payloadTraceMeta.payloadCompactionProfile, "minimal_v2_analysis");
+    assert.equal(primaryBars.length <= 60, true);
+    assert.equal(historyEvents.length <= 12, true);
+    assert.equal(historyLastBars.length <= 16, true);
+    assert.equal("prediction" in payload, false);
+  } finally {
+    if (prevMode === undefined) delete process.env.AI_PAYLOAD_PROFILE_MODE;
+    else process.env.AI_PAYLOAD_PROFILE_MODE = prevMode;
+  }
+});
+
+test("market_analysis cache key ignores baseline prediction changes", async () => {
+  const prevMode = process.env.AI_PAYLOAD_PROFILE_MODE;
+  process.env.AI_PAYLOAD_PROFILE_MODE = "minimal_v1";
+  try {
+    const promptSettings = {
+      promptText: "4h market analysis",
+      indicatorKeys: ["smc"] as const,
+      ohlcvBars: 100,
+      timeframes: ["4h"],
+      runTimeframe: "4h",
+      timeframe: "4h",
+      directionPreference: "either" as const,
+      confidenceTargetPct: 60,
+      promptMode: "market_analysis" as const,
+      marketAnalysisUpdateEnabled: true,
+      source: "db" as const,
+      activePromptId: "prompt_market_4h",
+      activePromptName: "4h market analysis",
+      selectedFrom: "active_prompt" as const,
+      matchedScopeType: null,
+      matchedOverrideId: null
+    };
+    const previewA = await buildPredictionExplainerPromptPreview(
+      {
+        ...baseInput,
+        timeframe: "4h",
+        prediction: { signal: "up", expectedMovePct: 1.8, confidence: 0.71 }
+      },
+      { promptSettings }
+    );
+    const previewB = await buildPredictionExplainerPromptPreview(
+      {
+        ...baseInput,
+        timeframe: "4h",
+        prediction: { signal: "down", expectedMovePct: 4.1, confidence: 0.23 }
+      },
+      { promptSettings }
+    );
+
+    assert.equal(previewA.runtimeProfile.analysisMode, "market_analysis");
+    assert.equal(previewA.cacheKey, previewB.cacheKey);
+  } finally {
+    if (prevMode === undefined) delete process.env.AI_PAYLOAD_PROFILE_MODE;
+    else process.env.AI_PAYLOAD_PROFILE_MODE = prevMode;
+  }
 });
 
 test("grounding filters dropped historyContext driver paths after budget trim", () => {
@@ -768,6 +1110,7 @@ test("preview adds ollama 4h runtime hints for long-form explanation", async () 
           timeframe: "4h",
           directionPreference: "either" as const,
           confidenceTargetPct: 60,
+          promptMode: "market_analysis" as const,
           marketAnalysisUpdateEnabled: true,
           source: "db" as const,
           activePromptId: "prompt_market_4h",
@@ -792,6 +1135,48 @@ test("preview adds ollama 4h runtime hints for long-form explanation", async () 
   }
 });
 
+test("preview enforces 3-paragraph runtime hints for openai 4h market analysis", async () => {
+  const previousProvider = process.env.AI_PROVIDER;
+  process.env.AI_PROVIDER = "openai";
+  invalidateAiModelCache();
+  try {
+    const preview = await buildPredictionExplainerPromptPreview(
+      {
+        ...baseInput,
+        timeframe: "4h"
+      },
+      {
+        promptSettings: {
+          promptText: "4h market analysis",
+          indicatorKeys: ["smc"] as const,
+          ohlcvBars: 100,
+          timeframes: ["4h"],
+          runTimeframe: "4h",
+          timeframe: "4h",
+          directionPreference: "either" as const,
+          confidenceTargetPct: 60,
+          promptMode: "market_analysis" as const,
+          marketAnalysisUpdateEnabled: true,
+          source: "db" as const,
+          activePromptId: "prompt_market_4h",
+          activePromptName: "4h market analysis",
+          selectedFrom: "active_prompt" as const,
+          matchedScopeType: null,
+          matchedOverrideId: null
+        }
+      }
+    );
+
+    assert.equal(preview.runtimeProfile.paragraphFormatRequired, true);
+    assert.equal(preview.runtimeProfile.requiredParagraphs, 3);
+    assert.equal(preview.systemMessage.includes("exactly 3 paragraphs"), true);
+  } finally {
+    if (previousProvider === undefined) delete process.env.AI_PROVIDER;
+    else process.env.AI_PROVIDER = previousProvider;
+    invalidateAiModelCache();
+  }
+});
+
 test("4h market analysis enforces neutral aiPrediction", async () => {
   resetAiAnalyzerState();
   const output = await generatePredictionExplanation(
@@ -810,6 +1195,7 @@ test("4h market analysis enforces neutral aiPrediction", async () => {
         timeframe: "4h",
         directionPreference: "either" as const,
         confidenceTargetPct: 60,
+        promptMode: "market_analysis" as const,
         marketAnalysisUpdateEnabled: true,
         source: "db" as const,
         activePromptId: "prompt_market_4h",
@@ -861,6 +1247,7 @@ test("ollama 4h quality gate triggers one explanation expansion retry", async ()
           timeframe: "4h",
           directionPreference: "either" as const,
           confidenceTargetPct: 60,
+          promptMode: "trading_explainer" as const,
           marketAnalysisUpdateEnabled: false,
           source: "db" as const,
           activePromptId: "prompt_market_4h",
@@ -903,6 +1290,73 @@ test("ollama 4h quality gate triggers one explanation expansion retry", async ()
   }
 });
 
+test("openai 4h market analysis retries once when paragraph format is missing", async () => {
+  const previousProvider = process.env.AI_PROVIDER;
+  process.env.AI_PROVIDER = "openai";
+  invalidateAiModelCache();
+  resetAiAnalyzerState();
+
+  let calls = 0;
+  try {
+    const output = await generatePredictionExplanation(
+      {
+        ...baseInput,
+        timeframe: "4h",
+        tsCreated: "2026-02-09T10:40:00.000Z"
+      },
+      {
+        requireSuccessfulAi: true,
+        promptSettings: {
+          promptText: "4h market analysis",
+          indicatorKeys: ["smc"] as const,
+          ohlcvBars: 100,
+          timeframes: ["4h"],
+          runTimeframe: "4h",
+          timeframe: "4h",
+          directionPreference: "either" as const,
+          confidenceTargetPct: 60,
+          promptMode: "market_analysis" as const,
+          marketAnalysisUpdateEnabled: true,
+          source: "db" as const,
+          activePromptId: "prompt_market_4h",
+          activePromptName: "4h market analysis",
+          selectedFrom: "active_prompt" as const,
+          matchedScopeType: null,
+          matchedOverrideId: null
+        },
+        callAiFn: async () => {
+          calls += 1;
+          if (calls === 1) {
+            return JSON.stringify({
+              explanation:
+                "Trend remains mixed while momentum stays fragile and structure is unresolved liquidity and FVG context remains sensitive around recent highs and volume is uneven while volatility is elevated uncertainty remains significant and caution is warranted until confirmation appears",
+              tags: ["range_bound"],
+              keyDrivers: [{ name: "indicators.rsi_14", value: 54.2 }],
+              aiPrediction: { signal: "neutral", expectedMovePct: 0.8, confidence: 0.42 },
+              disclaimer: "grounded_features_only"
+            });
+          }
+          return JSON.stringify({
+            explanation:
+              "Trend is mixed on 4h and momentum remains fragile as rebounds fail to build consistent continuation.\n\nStructure still shows unresolved liquidity and fair value gap interactions near recent highs while volume participation remains uneven.\n\nVolatility is elevated and uncertainty is high, so this remains a conditional market-analysis view until clearer confirmation appears.",
+            tags: ["range_bound"],
+            keyDrivers: [{ name: "indicators.rsi_14", value: 54.2 }],
+            aiPrediction: { signal: "neutral", expectedMovePct: 0.8, confidence: 0.42 },
+            disclaimer: "grounded_features_only"
+          });
+        }
+      }
+    );
+
+    assert.equal(calls, 2);
+    assert.equal(output.explanation.includes("\n\n"), true);
+  } finally {
+    if (previousProvider === undefined) delete process.env.AI_PROVIDER;
+    else process.env.AI_PROVIDER = previousProvider;
+    invalidateAiModelCache();
+  }
+});
+
 test("ollama 4h accepts near-cap explanations with 7 long sentences", async () => {
   const previousProvider = process.env.AI_PROVIDER;
   const previousOllamaMode = process.env.AI_SIGNAL_ENGINE_OLLAMA;
@@ -940,6 +1394,7 @@ test("ollama 4h accepts near-cap explanations with 7 long sentences", async () =
           timeframe: "4h",
           directionPreference: "either" as const,
           confidenceTargetPct: 60,
+          promptMode: "trading_explainer" as const,
           marketAnalysisUpdateEnabled: false,
           source: "db" as const,
           activePromptId: "prompt_market_4h",

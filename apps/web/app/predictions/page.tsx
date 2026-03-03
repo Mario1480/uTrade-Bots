@@ -1878,6 +1878,12 @@ export default function PredictionsPage() {
               compositeStrategyName: row.compositeStrategyName
             })}
           </div>
+          {row.explanation ? (
+            <div className="predictionContextExplanation">
+              <strong>AI Explanation</strong>
+              <div className="predictionContextExplanationText">{row.explanation}</div>
+            </div>
+          ) : null}
 
           {dataGap ? (
             <span className="predictionDetailWarning">

@@ -13,6 +13,8 @@ type IndicatorOption = {
   description: string;
 };
 
+type PromptMode = "trading_explainer" | "market_analysis";
+
 type PromptTemplate = {
   id: string;
   name: string;
@@ -26,6 +28,7 @@ type PromptTemplate = {
   confidenceTargetPct: number;
   slTpSource: "local" | "ai" | "hybrid";
   newsRiskMode: "off" | "block";
+  promptMode: PromptMode;
   marketAnalysisUpdateEnabled: boolean;
   isPublic: boolean;
   createdAt: string;
@@ -66,6 +69,7 @@ type PreviewResponse = {
       directionPreference: "long" | "short" | "either";
       confidenceTargetPct: number;
       newsRiskMode: "off" | "block";
+      promptMode: PromptMode;
       marketAnalysisUpdateEnabled: boolean;
       source: "default" | "db";
       activePromptId: string | null;
@@ -93,6 +97,10 @@ function toUpperSymbol(value: string): string {
 
 function clonePrompts(prompts: PromptTemplate[]): PromptTemplate[] {
   return prompts.map((item) => ({
+    promptMode:
+      item.promptMode === "market_analysis" || Boolean(item.marketAnalysisUpdateEnabled)
+        ? "market_analysis"
+        : "trading_explainer",
     id: item.id,
     name: item.name,
     promptText: item.promptText,
@@ -108,18 +116,29 @@ function clonePrompts(prompts: PromptTemplate[]): PromptTemplate[] {
     runTimeframe: item.runTimeframe ?? item.timeframe ?? null,
     timeframe: item.runTimeframe ?? item.timeframe ?? null,
     directionPreference:
-      item.directionPreference === "long" || item.directionPreference === "short"
-        ? item.directionPreference
-        : "either",
-    confidenceTargetPct: Number.isFinite(Number(item.confidenceTargetPct))
-      ? Math.max(0, Math.min(100, Number(item.confidenceTargetPct)))
-      : 60,
+      item.promptMode === "market_analysis" || Boolean(item.marketAnalysisUpdateEnabled)
+        ? "either"
+        : (item.directionPreference === "long" || item.directionPreference === "short"
+            ? item.directionPreference
+            : "either"),
+    confidenceTargetPct:
+      item.promptMode === "market_analysis" || Boolean(item.marketAnalysisUpdateEnabled)
+        ? 60
+        : (Number.isFinite(Number(item.confidenceTargetPct))
+            ? Math.max(0, Math.min(100, Number(item.confidenceTargetPct)))
+            : 60),
     slTpSource:
-      item.slTpSource === "ai" || item.slTpSource === "hybrid"
-        ? item.slTpSource
-        : "local",
-    newsRiskMode: item.newsRiskMode === "block" ? "block" : "off",
-    marketAnalysisUpdateEnabled: Boolean(item.marketAnalysisUpdateEnabled),
+      item.promptMode === "market_analysis" || Boolean(item.marketAnalysisUpdateEnabled)
+        ? "local"
+        : (item.slTpSource === "ai" || item.slTpSource === "hybrid"
+            ? item.slTpSource
+            : "local"),
+    newsRiskMode:
+      item.promptMode === "market_analysis" || Boolean(item.marketAnalysisUpdateEnabled)
+        ? "off"
+        : (item.newsRiskMode === "block" ? "block" : "off"),
+    marketAnalysisUpdateEnabled:
+      item.promptMode === "market_analysis" || Boolean(item.marketAnalysisUpdateEnabled),
     isPublic: item.isPublic,
     createdAt: item.createdAt,
     updatedAt: item.updatedAt
@@ -156,11 +175,11 @@ export default function AdminAiPromptsPage() {
   const [promptIndicatorKeys, setPromptIndicatorKeys] = useState<string[]>([]);
   const [promptTimeframes, setPromptTimeframes] = useState<Array<"5m" | "15m" | "1h" | "4h" | "1d">>([]);
   const [promptRunTimeframe, setPromptRunTimeframe] = useState<"" | "5m" | "15m" | "1h" | "4h" | "1d">("");
+  const [promptMode, setPromptMode] = useState<PromptMode>("trading_explainer");
   const [promptDirectionPreference, setPromptDirectionPreference] = useState<"long" | "short" | "either">("either");
   const [promptConfidenceTargetPct, setPromptConfidenceTargetPct] = useState("60");
   const [promptSlTpSource, setPromptSlTpSource] = useState<"local" | "ai" | "hybrid">("local");
   const [promptNewsRiskMode, setPromptNewsRiskMode] = useState<"off" | "block">("off");
-  const [promptMarketAnalysisUpdateEnabled, setPromptMarketAnalysisUpdateEnabled] = useState(false);
   const [promptOhlcvBars, setPromptOhlcvBars] = useState("100");
 
   const [previewExchange, setPreviewExchange] = useState("bitget");
@@ -246,12 +265,23 @@ export default function AdminAiPromptsPage() {
     setPromptIndicatorKeys([]);
     setPromptTimeframes([]);
     setPromptRunTimeframe("");
+    setPromptMode("trading_explainer");
     setPromptDirectionPreference("either");
     setPromptConfidenceTargetPct("60");
     setPromptSlTpSource("local");
     setPromptNewsRiskMode("off");
-    setPromptMarketAnalysisUpdateEnabled(false);
     setPromptOhlcvBars("100");
+  }
+
+  function handlePromptModeChange(nextMode: PromptMode) {
+    setPromptMode(nextMode);
+    if (nextMode === "market_analysis") {
+      setPromptDirectionPreference("either");
+      setPromptConfidenceTargetPct("60");
+      setPromptSlTpSource("local");
+      setPromptNewsRiskMode("off");
+      return;
+    }
   }
 
   function loadPromptIntoForm(prompt: PromptTemplate) {
@@ -265,6 +295,11 @@ export default function AdminAiPromptsPage() {
       : (prompt.timeframe ? [prompt.timeframe] : []);
     setPromptTimeframes(nextTimeframes);
     setPromptRunTimeframe((prompt.runTimeframe ?? prompt.timeframe ?? "") as "" | "5m" | "15m" | "1h" | "4h" | "1d");
+    const nextMode: PromptMode =
+      prompt.promptMode === "market_analysis" || Boolean(prompt.marketAnalysisUpdateEnabled)
+        ? "market_analysis"
+        : "trading_explainer";
+    setPromptMode(nextMode);
     setPromptDirectionPreference(prompt.directionPreference ?? "either");
     setPromptConfidenceTargetPct(String(prompt.confidenceTargetPct ?? 60));
     setPromptSlTpSource(
@@ -273,7 +308,6 @@ export default function AdminAiPromptsPage() {
         : "local"
     );
     setPromptNewsRiskMode(prompt.newsRiskMode === "block" ? "block" : "off");
-    setPromptMarketAnalysisUpdateEnabled(Boolean(prompt.marketAnalysisUpdateEnabled));
     setPromptOhlcvBars(String(prompt.ohlcvBars ?? 100));
   }
 
@@ -313,7 +347,10 @@ export default function AdminAiPromptsPage() {
       setError(t("messages.promptNameRequired"));
       return;
     }
-    if (!Number.isFinite(confidenceTargetPct) || confidenceTargetPct < 0 || confidenceTargetPct > 100) {
+    if (
+      promptMode === "trading_explainer"
+      && (!Number.isFinite(confidenceTargetPct) || confidenceTargetPct < 0 || confidenceTargetPct > 100)
+    ) {
       setError(t("messages.confidenceRange"));
       return;
     }
@@ -335,6 +372,7 @@ export default function AdminAiPromptsPage() {
     const normalizedRunTimeframe = normalizedTimeframes.length > 0
       ? ((promptRunTimeframe || normalizedTimeframes[0]) as "5m" | "15m" | "1h" | "4h" | "1d")
       : null;
+    const isMarketAnalysis = promptMode === "market_analysis";
     const nextPrompt: PromptTemplate = {
       id: editingPromptId ?? makePromptId(),
       name,
@@ -344,11 +382,12 @@ export default function AdminAiPromptsPage() {
       timeframes: normalizedTimeframes,
       runTimeframe: normalizedRunTimeframe,
       timeframe: normalizedRunTimeframe,
-      directionPreference: promptDirectionPreference,
-      confidenceTargetPct: Math.round(confidenceTargetPct),
-      slTpSource: promptSlTpSource,
-      newsRiskMode: promptNewsRiskMode,
-      marketAnalysisUpdateEnabled: promptMarketAnalysisUpdateEnabled,
+      directionPreference: isMarketAnalysis ? "either" : promptDirectionPreference,
+      confidenceTargetPct: isMarketAnalysis ? 60 : Math.round(confidenceTargetPct),
+      slTpSource: isMarketAnalysis ? "local" : promptSlTpSource,
+      newsRiskMode: isMarketAnalysis ? "off" : promptNewsRiskMode,
+      promptMode,
+      marketAnalysisUpdateEnabled: isMarketAnalysis,
       isPublic: promptIsPublic,
       createdAt:
         editingPromptId
@@ -557,13 +596,21 @@ export default function AdminAiPromptsPage() {
               </div>
 
               <div className="settingsTwoColGrid" style={{ marginBottom: 8 }}>
-                <label className="inlineCheck">
-                  <input
-                    type="checkbox"
-                    checked={promptMarketAnalysisUpdateEnabled}
-                    onChange={(e) => setPromptMarketAnalysisUpdateEnabled(e.target.checked)}
-                  />
-                  {t("marketAnalysisUpdateEnabled")}
+                <label className="settingsField">
+                  <span className="settingsFieldLabel">{t("promptMode")}</span>
+                  <select
+                    className="input"
+                    value={promptMode}
+                    onChange={(e) => handlePromptModeChange(e.target.value as PromptMode)}
+                  >
+                    <option value="trading_explainer">{t("promptModeTrading")}</option>
+                    <option value="market_analysis">{t("promptModeAnalysis")}</option>
+                  </select>
+                  <span className="settingsMutedText">
+                    {promptMode === "market_analysis"
+                      ? t("analysisAutoDefaultsHint")
+                      : t("promptModeHint")}
+                  </span>
                 </label>
               </div>
 
@@ -600,63 +647,69 @@ export default function AdminAiPromptsPage() {
                     ))}
                   </select>
                 </label>
-                <label className="settingsField">
-                  <span className="settingsFieldLabel">Direction preference</span>
-                  <select
-                    className="input"
-                    value={promptDirectionPreference}
-                    onChange={(e) => setPromptDirectionPreference(e.target.value as "long" | "short" | "either")}
-                  >
-                    <option value="either">either</option>
-                    <option value="long">long only</option>
-                    <option value="short">short only</option>
-                  </select>
-                </label>
+                {promptMode === "trading_explainer" ? (
+                  <label className="settingsField">
+                    <span className="settingsFieldLabel">Direction preference</span>
+                    <select
+                      className="input"
+                      value={promptDirectionPreference}
+                      onChange={(e) => setPromptDirectionPreference(e.target.value as "long" | "short" | "either")}
+                    >
+                      <option value="either">either</option>
+                      <option value="long">long only</option>
+                      <option value="short">short only</option>
+                    </select>
+                  </label>
+                ) : null}
               </div>
 
               <div className="settingsTwoColGrid" style={{ marginBottom: 8 }}>
-                <label className="settingsField">
-                  <span className="settingsFieldLabel">Confidence target (%)</span>
-                  <input
-                    className="input"
-                    type="number"
-                    min={0}
-                    max={100}
-                    step={1}
-                    value={promptConfidenceTargetPct}
-                    onChange={(e) => setPromptConfidenceTargetPct(e.target.value)}
-                  />
-                </label>
-                <label className="settingsField">
-                  <span className="settingsFieldLabel">{t("slTpSource")}</span>
-                  <select
-                    className="input"
-                    value={promptSlTpSource}
-                    onChange={(e) => setPromptSlTpSource(e.target.value as "local" | "ai" | "hybrid")}
-                  >
-                    <option value="local">{t("slTpSourceLocal")}</option>
-                    <option value="ai">{t("slTpSourceAi")}</option>
-                    <option value="hybrid">{t("slTpSourceHybrid")}</option>
-                  </select>
-                  <span className="settingsMutedText">
-                    {promptSlTpSource === "ai"
-                      ? t("slTpSourceHintAi")
-                      : promptSlTpSource === "hybrid"
-                        ? t("slTpSourceHintHybrid")
-                      : t("slTpSourceHintLocal")}
-                  </span>
-                </label>
-                <label className="settingsField">
-                  <span className="settingsFieldLabel">{t("newsRiskMode")}</span>
-                  <select
-                    className="input"
-                    value={promptNewsRiskMode}
-                    onChange={(e) => setPromptNewsRiskMode(e.target.value as "off" | "block")}
-                  >
-                    <option value="off">{t("newsRiskModeOff")}</option>
-                    <option value="block">{t("newsRiskModeBlock")}</option>
-                  </select>
-                </label>
+                {promptMode === "trading_explainer" ? (
+                  <>
+                    <label className="settingsField">
+                      <span className="settingsFieldLabel">Confidence target (%)</span>
+                      <input
+                        className="input"
+                        type="number"
+                        min={0}
+                        max={100}
+                        step={1}
+                        value={promptConfidenceTargetPct}
+                        onChange={(e) => setPromptConfidenceTargetPct(e.target.value)}
+                      />
+                    </label>
+                    <label className="settingsField">
+                      <span className="settingsFieldLabel">{t("slTpSource")}</span>
+                      <select
+                        className="input"
+                        value={promptSlTpSource}
+                        onChange={(e) => setPromptSlTpSource(e.target.value as "local" | "ai" | "hybrid")}
+                      >
+                        <option value="local">{t("slTpSourceLocal")}</option>
+                        <option value="ai">{t("slTpSourceAi")}</option>
+                        <option value="hybrid">{t("slTpSourceHybrid")}</option>
+                      </select>
+                      <span className="settingsMutedText">
+                        {promptSlTpSource === "ai"
+                          ? t("slTpSourceHintAi")
+                          : promptSlTpSource === "hybrid"
+                            ? t("slTpSourceHintHybrid")
+                            : t("slTpSourceHintLocal")}
+                      </span>
+                    </label>
+                    <label className="settingsField">
+                      <span className="settingsFieldLabel">{t("newsRiskMode")}</span>
+                      <select
+                        className="input"
+                        value={promptNewsRiskMode}
+                        onChange={(e) => setPromptNewsRiskMode(e.target.value as "off" | "block")}
+                      >
+                        <option value="off">{t("newsRiskModeOff")}</option>
+                        <option value="block">{t("newsRiskModeBlock")}</option>
+                      </select>
+                    </label>
+                  </>
+                ) : null}
                 <label className="settingsField">
                   <span className="settingsFieldLabel">OHLCV bars for AI</span>
                   <input
@@ -714,11 +767,11 @@ export default function AdminAiPromptsPage() {
                       <th>Public</th>
                       <th>TF</th>
                       <th>{t("runTimeframeShort")}</th>
+                      <th>{t("promptMode")}</th>
                       <th>Dir</th>
                       <th>Conf %</th>
                       <th>{t("slTpSourceShort")}</th>
                       <th>{t("newsRiskMode")}</th>
-                      <th>{t("analysisUpdate")}</th>
                       <th>OHLCV</th>
                       <th>Indicators</th>
                       <th>Updated</th>
@@ -727,28 +780,34 @@ export default function AdminAiPromptsPage() {
                     </tr>
                   </thead>
                   <tbody>
-                    {prompts.map((prompt) => (
-                      <tr key={prompt.id}>
-                        <td>{prompt.name}</td>
-                        <td>{prompt.isPublic ? "yes" : "no"}</td>
-                        <td>{prompt.timeframes?.length ? prompt.timeframes.join(", ") : "-"}</td>
-                        <td>{prompt.runTimeframe ?? prompt.timeframe ?? "-"}</td>
-                        <td>{prompt.directionPreference ?? "either"}</td>
-                        <td>{Number.isFinite(Number(prompt.confidenceTargetPct)) ? Number(prompt.confidenceTargetPct).toFixed(0) : "60"}</td>
-                        <td>{prompt.slTpSource ?? "local"}</td>
-                        <td>{prompt.newsRiskMode === "block" ? t("newsRiskModeBlock") : t("newsRiskModeOff")}</td>
-                        <td>{prompt.marketAnalysisUpdateEnabled ? t("yes") : t("no")}</td>
-                        <td>{Number.isFinite(Number(prompt.ohlcvBars)) ? Math.trunc(Number(prompt.ohlcvBars)) : 100}</td>
-                        <td>{prompt.indicatorKeys.length}</td>
-                        <td>{prompt.updatedAt ? new Date(prompt.updatedAt).toLocaleString() : "-"}</td>
-                        <td>{activePromptId === prompt.id ? "active" : "-"}</td>
-                        <td style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
-                          <button className="btn" type="button" onClick={() => setActivePromptId(prompt.id)}>{t("setActive")}</button>
-                          <button className="btn" type="button" onClick={() => loadPromptIntoForm(prompt)}>{t("edit")}</button>
-                          <button className="btn" type="button" onClick={() => deletePrompt(prompt.id)}>{t("delete")}</button>
-                        </td>
-                      </tr>
-                    ))}
+                    {prompts.map((prompt) => {
+                      const mode: PromptMode =
+                        prompt.promptMode === "market_analysis" || prompt.marketAnalysisUpdateEnabled
+                          ? "market_analysis"
+                          : "trading_explainer";
+                      return (
+                        <tr key={prompt.id}>
+                          <td>{prompt.name}</td>
+                          <td>{prompt.isPublic ? "yes" : "no"}</td>
+                          <td>{prompt.timeframes?.length ? prompt.timeframes.join(", ") : "-"}</td>
+                          <td>{prompt.runTimeframe ?? prompt.timeframe ?? "-"}</td>
+                          <td>{mode === "market_analysis" ? t("promptModeAnalysis") : t("promptModeTrading")}</td>
+                          <td>{mode === "market_analysis" ? "-" : (prompt.directionPreference ?? "either")}</td>
+                          <td>{mode === "market_analysis" ? "-" : (Number.isFinite(Number(prompt.confidenceTargetPct)) ? Number(prompt.confidenceTargetPct).toFixed(0) : "60")}</td>
+                          <td>{mode === "market_analysis" ? "-" : (prompt.slTpSource ?? "local")}</td>
+                          <td>{mode === "market_analysis" ? "-" : (prompt.newsRiskMode === "block" ? t("newsRiskModeBlock") : t("newsRiskModeOff"))}</td>
+                          <td>{Number.isFinite(Number(prompt.ohlcvBars)) ? Math.trunc(Number(prompt.ohlcvBars)) : 100}</td>
+                          <td>{prompt.indicatorKeys.length}</td>
+                          <td>{prompt.updatedAt ? new Date(prompt.updatedAt).toLocaleString() : "-"}</td>
+                          <td>{activePromptId === prompt.id ? "active" : "-"}</td>
+                          <td style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+                            <button className="btn" type="button" onClick={() => setActivePromptId(prompt.id)}>{t("setActive")}</button>
+                            <button className="btn" type="button" onClick={() => loadPromptIntoForm(prompt)}>{t("edit")}</button>
+                            <button className="btn" type="button" onClick={() => deletePrompt(prompt.id)}>{t("delete")}</button>
+                          </td>
+                        </tr>
+                      );
+                    })}
                   </tbody>
                 </table>
               </div>

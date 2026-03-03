@@ -100,6 +100,27 @@ test("applyAiPayloadBudget trims history context and writes trim metadata", () =
   assert.equal((trimmed.meta as any).trim.length > 0, true);
 });
 
+test("applyAiPayloadBudget can skip attaching payload meta", () => {
+  const payload = {
+    symbol: "BTCUSDT",
+    marketType: "perp",
+    timeframe: "5m",
+    prediction: { signal: "up", expectedMovePct: 1.2, confidence: 0.62 },
+    featureSnapshot: {
+      historyContext: makeHistoryContext(30, 30)
+    }
+  } as Record<string, unknown>;
+
+  const { payload: trimmed, metrics } = applyAiPayloadBudget(payload, {
+    maxPayloadBytes: 2500,
+    maxHistoryBytes: 1200,
+    attachMeta: false
+  });
+
+  assert.equal(typeof (trimmed as any).meta, "undefined");
+  assert.equal(Array.isArray(metrics.trimFlags), true);
+});
+
 test("applyAiPayloadBudget marks over-budget payloads after last-resort trim", () => {
   const payload = {
     symbol: "BTCUSDT",
@@ -191,6 +212,63 @@ test("applyAiPayloadBudget can drop heavy mtf/ohlcv payload sections to meet tig
     metrics.trimFlags.some((flag) =>
       flag.includes("trimmed") || flag.endsWith("_dropped")
     ),
+    true
+  );
+});
+
+test("pre-compacted payload needs fewer budget trims than raw heavy payload", () => {
+  const bars = Array.from({ length: 140 }, (_, idx) => ({
+    t: 1_771_000_000 + idx * 300,
+    o: 70_000 + idx,
+    h: 70_040 + idx,
+    l: 69_960 + idx,
+    c: 70_010 + idx,
+    v: 100 + idx
+  }));
+  const makePayload = (barLimit: number, eventLimit: number, lastBarsLimit: number) => ({
+    symbol: "BTCUSDT",
+    marketType: "perp",
+    timeframe: "4h",
+    featureSnapshot: {
+      ohlcvSeries: {
+        timeframe: "4h",
+        count: Math.min(barLimit, bars.length),
+        bars: bars.slice(-Math.min(barLimit, bars.length))
+      },
+      historyContext: {
+        ...makeHistoryContext(eventLimit, lastBarsLimit)
+      },
+      mtf: {
+        runTimeframe: "4h",
+        frames: {
+          "4h": {
+            ohlcvSeries: {
+              timeframe: "4h",
+              count: Math.min(barLimit, bars.length),
+              bars: bars.slice(-Math.min(barLimit, bars.length))
+            },
+            historyContext: {
+              ...makeHistoryContext(eventLimit, lastBarsLimit)
+            }
+          }
+        }
+      }
+    }
+  }) as Record<string, unknown>;
+
+  const rawPayload = makePayload(140, 36, 36);
+  const preCompactedPayload = makePayload(60, 12, 16);
+  const rawBudget = applyAiPayloadBudget(rawPayload, {
+    maxPayloadBytes: 5500,
+    maxHistoryBytes: 2200
+  });
+  const compactBudget = applyAiPayloadBudget(preCompactedPayload, {
+    maxPayloadBytes: 5500,
+    maxHistoryBytes: 2200
+  });
+
+  assert.equal(
+    compactBudget.metrics.trimFlags.length <= rawBudget.metrics.trimFlags.length,
     true
   );
 });

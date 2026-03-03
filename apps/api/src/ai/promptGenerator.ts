@@ -1,9 +1,11 @@
 import { callAi, getAiModelAsync, type CallAiOptions } from "./provider.js";
 import {
   AI_PROMPT_INDICATOR_OPTIONS,
+  normalizePromptFieldsByMode,
   type AiPromptDirectionPreference,
   type AiPromptIndicatorKey,
   type AiPromptIndicatorOptionPublic,
+  type AiPromptMode,
   type AiPromptNewsRiskMode,
   type AiPromptSettingsStored,
   type AiPromptSlTpSource,
@@ -56,6 +58,7 @@ export type CreateGeneratedPromptDraftInput = {
   ohlcvBars?: number;
   timeframes: AiPromptTimeframe[];
   runTimeframe: AiPromptTimeframe | null;
+  promptMode?: AiPromptMode;
   directionPreference?: AiPromptDirectionPreference;
   confidenceTargetPct?: number;
   slTpSource?: AiPromptSlTpSource;
@@ -461,10 +464,15 @@ export function createGeneratedPromptDraft(
   const promptId = input.promptId ?? makePromptId();
   const timeframes = uniqueTimeframes(input.timeframes);
   const runTimeframe = normalizeRunTimeframe(timeframes, input.runTimeframe);
-  const directionPreference = input.directionPreference ?? "either";
-  const confidenceTargetPct = normalizeConfidenceTarget(input.confidenceTargetPct);
-  const slTpSource = input.slTpSource ?? "local";
-  const newsRiskMode = input.newsRiskMode ?? "off";
+  const promptMode = input.promptMode === "market_analysis" ? "market_analysis" : "trading_explainer";
+  const normalizedByMode = normalizePromptFieldsByMode({
+    promptMode,
+    directionPreference: input.directionPreference ?? "either",
+    confidenceTargetPct: normalizeConfidenceTarget(input.confidenceTargetPct),
+    slTpSource: input.slTpSource ?? "local",
+    newsRiskMode: input.newsRiskMode ?? "off",
+    marketAnalysisUpdateEnabled: promptMode === "market_analysis"
+  });
   const ohlcvBars = normalizeOhlcvBars(input.ohlcvBars);
 
   const createdPrompt: AiPromptTemplate = {
@@ -476,11 +484,12 @@ export function createGeneratedPromptDraft(
     timeframes,
     runTimeframe,
     timeframe: runTimeframe,
-    directionPreference,
-    confidenceTargetPct,
-    slTpSource,
-    newsRiskMode,
-    marketAnalysisUpdateEnabled: false,
+    directionPreference: normalizedByMode.directionPreference,
+    confidenceTargetPct: normalizedByMode.confidenceTargetPct,
+    slTpSource: normalizedByMode.slTpSource,
+    newsRiskMode: normalizedByMode.newsRiskMode,
+    promptMode: normalizedByMode.promptMode,
+    marketAnalysisUpdateEnabled: normalizedByMode.marketAnalysisUpdateEnabled,
     isPublic: input.isPublic,
     createdAt: input.nowIso,
     updatedAt: input.nowIso

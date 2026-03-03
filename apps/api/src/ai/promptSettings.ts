@@ -161,6 +161,7 @@ export type AiPromptTimeframe = "5m" | "15m" | "1h" | "4h" | "1d";
 export type AiPromptDirectionPreference = "long" | "short" | "either";
 export type AiPromptSlTpSource = "local" | "ai" | "hybrid";
 export type AiPromptNewsRiskMode = "off" | "block";
+export type AiPromptMode = "trading_explainer" | "market_analysis";
 
 export type AiPromptTemplate = {
   id: string;
@@ -175,6 +176,7 @@ export type AiPromptTemplate = {
   confidenceTargetPct: number;
   slTpSource: AiPromptSlTpSource;
   newsRiskMode: AiPromptNewsRiskMode;
+  promptMode: AiPromptMode;
   marketAnalysisUpdateEnabled: boolean;
   isPublic: boolean;
   createdAt: string;
@@ -204,6 +206,7 @@ export type AiPromptRuntimeSettings = {
   confidenceTargetPct: number;
   slTpSource: AiPromptSlTpSource;
   newsRiskMode: AiPromptNewsRiskMode;
+  promptMode: AiPromptMode;
   marketAnalysisUpdateEnabled: boolean;
   source: "default" | "db";
   activePromptId: string | null;
@@ -281,6 +284,7 @@ const DEFAULT_PROMPT_DIRECTION_PREFERENCE: AiPromptDirectionPreference = "either
 const DEFAULT_PROMPT_CONFIDENCE_TARGET_PCT = 60;
 const DEFAULT_PROMPT_SL_TP_SOURCE: AiPromptSlTpSource = "local";
 const DEFAULT_PROMPT_NEWS_RISK_MODE: AiPromptNewsRiskMode = "off";
+export const DEFAULT_AI_PROMPT_MODE: AiPromptMode = "trading_explainer";
 
 const cacheTtlMs =
   Math.max(5, Number(process.env.AI_PROMPT_SETTINGS_CACHE_TTL_SEC ?? "30")) *
@@ -302,6 +306,7 @@ export const DEFAULT_AI_PROMPT_SETTINGS: AiPromptSettingsStored = {
       confidenceTargetPct: DEFAULT_PROMPT_CONFIDENCE_TARGET_PCT,
       slTpSource: DEFAULT_PROMPT_SL_TP_SOURCE,
       newsRiskMode: DEFAULT_PROMPT_NEWS_RISK_MODE,
+      promptMode: DEFAULT_AI_PROMPT_MODE,
       marketAnalysisUpdateEnabled: false,
       isPublic: false,
       createdAt: new Date(0).toISOString(),
@@ -443,6 +448,57 @@ function normalizeNewsRiskMode(
   return value === "block" ? "block" : fallback;
 }
 
+function normalizePromptMode(value: unknown): AiPromptMode | null {
+  if (value === "trading_explainer" || value === "market_analysis") return value;
+  return null;
+}
+
+export function resolvePromptModeFromFlags(params: {
+  promptMode?: unknown;
+  marketAnalysisUpdateEnabled?: unknown;
+}): AiPromptMode {
+  const explicitMode = normalizePromptMode(params.promptMode);
+  if (explicitMode) return explicitMode;
+  return normalizeBool(params.marketAnalysisUpdateEnabled, false)
+    ? "market_analysis"
+    : "trading_explainer";
+}
+
+export function normalizePromptFieldsByMode(params: {
+  promptMode: AiPromptMode;
+  directionPreference: AiPromptDirectionPreference;
+  confidenceTargetPct: number;
+  slTpSource: AiPromptSlTpSource;
+  newsRiskMode: AiPromptNewsRiskMode;
+  marketAnalysisUpdateEnabled?: boolean;
+}): {
+  promptMode: AiPromptMode;
+  directionPreference: AiPromptDirectionPreference;
+  confidenceTargetPct: number;
+  slTpSource: AiPromptSlTpSource;
+  newsRiskMode: AiPromptNewsRiskMode;
+  marketAnalysisUpdateEnabled: boolean;
+} {
+  if (params.promptMode === "market_analysis") {
+    return {
+      promptMode: "market_analysis",
+      directionPreference: DEFAULT_PROMPT_DIRECTION_PREFERENCE,
+      confidenceTargetPct: DEFAULT_PROMPT_CONFIDENCE_TARGET_PCT,
+      slTpSource: DEFAULT_PROMPT_SL_TP_SOURCE,
+      newsRiskMode: DEFAULT_PROMPT_NEWS_RISK_MODE,
+      marketAnalysisUpdateEnabled: true
+    };
+  }
+  return {
+    promptMode: "trading_explainer",
+    directionPreference: params.directionPreference,
+    confidenceTargetPct: params.confidenceTargetPct,
+    slTpSource: params.slTpSource,
+    newsRiskMode: params.newsRiskMode,
+    marketAnalysisUpdateEnabled: false
+  };
+}
+
 function normalizeOhlcvBars(value: unknown, fallback: number): number {
   const parsed = Number(value);
   if (!Number.isFinite(parsed)) return fallback;
@@ -463,16 +519,12 @@ function parseTemplate(value: unknown, index: number): AiPromptTemplate | null {
     timeframes,
     legacyTimeframe
   );
-
-  return {
-    id,
-    name: sanitizeName(objectValue.name, `Prompt ${index + 1}`),
-    promptText: sanitizePromptText(objectValue.promptText),
-    indicatorKeys: normalizeIndicatorKeys(objectValue.indicatorKeys),
-    ohlcvBars: normalizeOhlcvBars(objectValue.ohlcvBars, DEFAULT_PROMPT_OHLCV_BARS),
-    timeframes,
-    runTimeframe,
-    timeframe: runTimeframe,
+  const promptMode = resolvePromptModeFromFlags({
+    promptMode: objectValue.promptMode,
+    marketAnalysisUpdateEnabled: objectValue.marketAnalysisUpdateEnabled
+  });
+  const normalizedByMode = normalizePromptFieldsByMode({
+    promptMode,
     directionPreference: normalizeDirectionPreference(
       objectValue.directionPreference,
       DEFAULT_PROMPT_DIRECTION_PREFERENCE
@@ -492,7 +544,24 @@ function parseTemplate(value: unknown, index: number): AiPromptTemplate | null {
     marketAnalysisUpdateEnabled: normalizeBool(
       objectValue.marketAnalysisUpdateEnabled,
       false
-    ),
+    )
+  });
+
+  return {
+    id,
+    name: sanitizeName(objectValue.name, `Prompt ${index + 1}`),
+    promptText: sanitizePromptText(objectValue.promptText),
+    indicatorKeys: normalizeIndicatorKeys(objectValue.indicatorKeys),
+    ohlcvBars: normalizeOhlcvBars(objectValue.ohlcvBars, DEFAULT_PROMPT_OHLCV_BARS),
+    timeframes,
+    runTimeframe,
+    timeframe: runTimeframe,
+    directionPreference: normalizedByMode.directionPreference,
+    confidenceTargetPct: normalizedByMode.confidenceTargetPct,
+    slTpSource: normalizedByMode.slTpSource,
+    newsRiskMode: normalizedByMode.newsRiskMode,
+    promptMode: normalizedByMode.promptMode,
+    marketAnalysisUpdateEnabled: normalizedByMode.marketAnalysisUpdateEnabled,
     isPublic: normalizeBool(objectValue.isPublic, false),
     createdAt: parseDateIso(objectValue.createdAt, nowIso),
     updatedAt: parseDateIso(objectValue.updatedAt, nowIso)
@@ -526,6 +595,7 @@ function cloneStoredSettings(value: AiPromptSettingsStored): AiPromptSettingsSto
       confidenceTargetPct: item.confidenceTargetPct,
       slTpSource: item.slTpSource,
       newsRiskMode: item.newsRiskMode,
+      promptMode: item.promptMode,
       marketAnalysisUpdateEnabled: item.marketAnalysisUpdateEnabled,
       isPublic: item.isPublic,
       createdAt: item.createdAt,
@@ -646,6 +716,7 @@ export function resolveAiPromptRuntimeSettingsForContext(
     confidenceTargetPct: active.confidenceTargetPct,
     slTpSource: active.slTpSource,
     newsRiskMode: active.newsRiskMode,
+    promptMode: active.promptMode,
     marketAnalysisUpdateEnabled: active.marketAnalysisUpdateEnabled,
     source,
     activePromptId: active.id,
@@ -671,6 +742,7 @@ function toRuntimeFromTemplate(
     confidenceTargetPct: template.confidenceTargetPct,
     slTpSource: template.slTpSource,
     newsRiskMode: template.newsRiskMode,
+    promptMode: template.promptMode,
     marketAnalysisUpdateEnabled: template.marketAnalysisUpdateEnabled,
     source,
     activePromptId: template.id,
@@ -712,6 +784,7 @@ export function getAiPromptTemplateByIdFromSettings(
     confidenceTargetPct: found.confidenceTargetPct,
     slTpSource: found.slTpSource,
     newsRiskMode: found.newsRiskMode,
+    promptMode: found.promptMode,
     marketAnalysisUpdateEnabled: found.marketAnalysisUpdateEnabled,
     isPublic: found.isPublic,
     createdAt: found.createdAt,
@@ -804,6 +877,7 @@ export function getPublicAiPromptTemplates(
       confidenceTargetPct: item.confidenceTargetPct,
       slTpSource: item.slTpSource,
       newsRiskMode: item.newsRiskMode,
+      promptMode: item.promptMode,
       marketAnalysisUpdateEnabled: item.marketAnalysisUpdateEnabled,
       isPublic: item.isPublic,
       createdAt: item.createdAt,
@@ -840,26 +914,32 @@ export function parseStoredAiPromptSettings(value: unknown): AiPromptSettingsSto
       timeframes,
       runTimeframe,
       timeframe: runTimeframe,
-      directionPreference: normalizeDirectionPreference(
-        objectValue.directionPreference,
-        DEFAULT_PROMPT_DIRECTION_PREFERENCE
-      ),
-      confidenceTargetPct: normalizeConfidenceTarget(
-        objectValue.confidenceTargetPct,
-        DEFAULT_PROMPT_CONFIDENCE_TARGET_PCT
-      ),
-      slTpSource: normalizeSlTpSource(
-        objectValue.slTpSource,
-        DEFAULT_PROMPT_SL_TP_SOURCE
-      ),
-      newsRiskMode: normalizeNewsRiskMode(
-        objectValue.newsRiskMode,
-        DEFAULT_PROMPT_NEWS_RISK_MODE
-      ),
-      marketAnalysisUpdateEnabled: normalizeBool(
-        objectValue.marketAnalysisUpdateEnabled,
-        false
-      ),
+      ...normalizePromptFieldsByMode({
+        promptMode: resolvePromptModeFromFlags({
+          promptMode: objectValue.promptMode,
+          marketAnalysisUpdateEnabled: objectValue.marketAnalysisUpdateEnabled
+        }),
+        directionPreference: normalizeDirectionPreference(
+          objectValue.directionPreference,
+          DEFAULT_PROMPT_DIRECTION_PREFERENCE
+        ),
+        confidenceTargetPct: normalizeConfidenceTarget(
+          objectValue.confidenceTargetPct,
+          DEFAULT_PROMPT_CONFIDENCE_TARGET_PCT
+        ),
+        slTpSource: normalizeSlTpSource(
+          objectValue.slTpSource,
+          DEFAULT_PROMPT_SL_TP_SOURCE
+        ),
+        newsRiskMode: normalizeNewsRiskMode(
+          objectValue.newsRiskMode,
+          DEFAULT_PROMPT_NEWS_RISK_MODE
+        ),
+        marketAnalysisUpdateEnabled: normalizeBool(
+          objectValue.marketAnalysisUpdateEnabled,
+          false
+        )
+      }),
       isPublic: false,
       createdAt: nowIso,
       updatedAt: nowIso
@@ -887,15 +967,11 @@ export function parseStoredAiPromptSettings(value: unknown): AiPromptSettingsSto
         timeframes,
         legacyTimeframe
       );
-      return {
-        id: `legacy_preset_${key.toLowerCase()}`,
-        name: sanitizeName(raw.name, fallbackName),
-        promptText: sanitizePromptText(raw.promptText),
-        indicatorKeys: normalizeIndicatorKeys(raw.indicatorKeys),
-        ohlcvBars: normalizeOhlcvBars(raw.ohlcvBars, DEFAULT_PROMPT_OHLCV_BARS),
-        timeframes,
-        runTimeframe,
-        timeframe: runTimeframe,
+      const normalizedByMode = normalizePromptFieldsByMode({
+        promptMode: resolvePromptModeFromFlags({
+          promptMode: raw.promptMode,
+          marketAnalysisUpdateEnabled: raw.marketAnalysisUpdateEnabled
+        }),
         directionPreference: normalizeDirectionPreference(
           raw.directionPreference,
           DEFAULT_PROMPT_DIRECTION_PREFERENCE
@@ -915,7 +991,23 @@ export function parseStoredAiPromptSettings(value: unknown): AiPromptSettingsSto
         marketAnalysisUpdateEnabled: normalizeBool(
           raw.marketAnalysisUpdateEnabled,
           false
-        ),
+        )
+      });
+      return {
+        id: `legacy_preset_${key.toLowerCase()}`,
+        name: sanitizeName(raw.name, fallbackName),
+        promptText: sanitizePromptText(raw.promptText),
+        indicatorKeys: normalizeIndicatorKeys(raw.indicatorKeys),
+        ohlcvBars: normalizeOhlcvBars(raw.ohlcvBars, DEFAULT_PROMPT_OHLCV_BARS),
+        timeframes,
+        runTimeframe,
+        timeframe: runTimeframe,
+        directionPreference: normalizedByMode.directionPreference,
+        confidenceTargetPct: normalizedByMode.confidenceTargetPct,
+        slTpSource: normalizedByMode.slTpSource,
+        newsRiskMode: normalizedByMode.newsRiskMode,
+        promptMode: normalizedByMode.promptMode,
+        marketAnalysisUpdateEnabled: normalizedByMode.marketAnalysisUpdateEnabled,
         isPublic: false,
         createdAt: nowIso,
         updatedAt: nowIso

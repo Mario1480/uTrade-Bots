@@ -13,6 +13,8 @@ type IndicatorOption = {
   description: string;
 };
 
+type PromptMode = "trading_explainer" | "market_analysis";
+
 type AiPromptsResponse = {
   availableIndicators: IndicatorOption[];
 };
@@ -30,6 +32,7 @@ type PromptTemplate = {
   confidenceTargetPct: number;
   slTpSource: "local" | "ai" | "hybrid";
   newsRiskMode: "off" | "block";
+  promptMode: PromptMode;
   isPublic: boolean;
 };
 
@@ -49,6 +52,7 @@ type GenerateRequestBody = {
   confidenceTargetPct: number;
   slTpSource: "local" | "ai" | "hybrid";
   newsRiskMode: "off" | "block";
+  promptMode: PromptMode;
   setActive: boolean;
   isPublic: boolean;
 };
@@ -93,6 +97,7 @@ export default function AdminAiPromptGeneratorPage() {
   const [runTimeframe, setRunTimeframe] = useState<"" | "5m" | "15m" | "1h" | "4h" | "1d">("");
   const [setActive, setSetActive] = useState(false);
   const [isPublic, setIsPublic] = useState(false);
+  const [promptMode, setPromptMode] = useState<PromptMode>("trading_explainer");
   const [directionPreference, setDirectionPreference] = useState<"long" | "short" | "either">("either");
   const [confidenceTargetPct, setConfidenceTargetPct] = useState("60");
   const [slTpSource, setSlTpSource] = useState<"local" | "ai" | "hybrid">("local");
@@ -166,6 +171,16 @@ export default function AdminAiPromptGeneratorPage() {
     });
   }
 
+  function handlePromptModeChange(nextMode: PromptMode) {
+    setPromptMode(nextMode);
+    if (nextMode === "market_analysis") {
+      setDirectionPreference("either");
+      setConfidenceTargetPct("60");
+      setSlTpSource("local");
+      setNewsRiskMode("off");
+    }
+  }
+
   function buildGenerateBody(): GenerateRequestBody | null {
     setError(null);
     setNotice(null);
@@ -189,7 +204,10 @@ export default function AdminAiPromptGeneratorPage() {
       return null;
     }
     const confidenceTarget = Number(confidenceTargetPct);
-    if (!Number.isFinite(confidenceTarget) || confidenceTarget < 0 || confidenceTarget > 100) {
+    if (
+      promptMode === "trading_explainer"
+      && (!Number.isFinite(confidenceTarget) || confidenceTarget < 0 || confidenceTarget > 100)
+    ) {
       setError(t("messages.confidenceRange"));
       return null;
     }
@@ -199,6 +217,7 @@ export default function AdminAiPromptGeneratorPage() {
       return null;
     }
 
+    const isMarketAnalysis = promptMode === "market_analysis";
     return {
       name: promptName,
       strategyDescription: strategyText,
@@ -206,10 +225,11 @@ export default function AdminAiPromptGeneratorPage() {
       ohlcvBars: Math.trunc(ohlcvBarsNum),
       timeframes,
       runTimeframe: timeframes.length > 0 ? (runTimeframe || timeframes[0]) : null,
-      directionPreference,
-      confidenceTargetPct: confidenceTarget,
-      slTpSource,
-      newsRiskMode,
+      directionPreference: isMarketAnalysis ? "either" : directionPreference,
+      confidenceTargetPct: isMarketAnalysis ? 60 : confidenceTarget,
+      slTpSource: isMarketAnalysis ? "local" : slTpSource,
+      newsRiskMode: isMarketAnalysis ? "off" : newsRiskMode,
+      promptMode,
       setActive,
       isPublic
     };
@@ -342,6 +362,23 @@ export default function AdminAiPromptGeneratorPage() {
 
           <div className="settingsTwoColGrid" style={{ marginBottom: 10 }}>
             <label className="settingsField">
+              <span className="settingsFieldLabel">{t("promptMode")}</span>
+              <select
+                className="input"
+                value={promptMode}
+                onChange={(event) => handlePromptModeChange(event.target.value as PromptMode)}
+              >
+                <option value="trading_explainer">{t("promptModeTrading")}</option>
+                <option value="market_analysis">{t("promptModeAnalysis")}</option>
+              </select>
+              <span className="settingsMutedText">
+                {promptMode === "market_analysis" ? t("analysisAutoDefaultsHint") : t("promptModeHint")}
+              </span>
+            </label>
+          </div>
+
+          <div className="settingsTwoColGrid" style={{ marginBottom: 10 }}>
+            <label className="settingsField">
               <span className="settingsFieldLabel">{t("timeframes")}</span>
               <span className="settingsMutedText">{t("maxTimeframesHint")}</span>
               <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginTop: 6 }}>
@@ -374,53 +411,57 @@ export default function AdminAiPromptGeneratorPage() {
           </div>
 
           <div className="settingsTwoColGrid" style={{ marginBottom: 10 }}>
-            <label className="settingsField">
-              <span className="settingsFieldLabel">{t("directionPreference")}</span>
-              <select
-                className="input"
-                value={directionPreference}
-                onChange={(event) => setDirectionPreference(event.target.value as "long" | "short" | "either")}
-              >
-                <option value="either">{t("directionEither")}</option>
-                <option value="long">{t("directionLong")}</option>
-                <option value="short">{t("directionShort")}</option>
-              </select>
-            </label>
-            <label className="settingsField">
-              <span className="settingsFieldLabel">{t("confidenceTargetPct")}</span>
-              <input
-                className="input"
-                type="number"
-                min={0}
-                max={100}
-                step={1}
-                value={confidenceTargetPct}
-                onChange={(event) => setConfidenceTargetPct(event.target.value)}
-              />
-            </label>
-            <label className="settingsField">
-              <span className="settingsFieldLabel">{t("slTpSource")}</span>
-              <select
-                className="input"
-                value={slTpSource}
-                onChange={(event) => setSlTpSource(event.target.value as "local" | "ai" | "hybrid")}
-              >
-                <option value="local">{t("slTpSourceLocal")}</option>
-                <option value="ai">{t("slTpSourceAi")}</option>
-                <option value="hybrid">{t("slTpSourceHybrid")}</option>
-              </select>
-            </label>
-            <label className="settingsField">
-              <span className="settingsFieldLabel">{t("newsRiskMode")}</span>
-              <select
-                className="input"
-                value={newsRiskMode}
-                onChange={(event) => setNewsRiskMode(event.target.value as "off" | "block")}
-              >
-                <option value="off">{t("newsRiskModeOff")}</option>
-                <option value="block">{t("newsRiskModeBlock")}</option>
-              </select>
-            </label>
+            {promptMode === "trading_explainer" ? (
+              <>
+                <label className="settingsField">
+                  <span className="settingsFieldLabel">{t("directionPreference")}</span>
+                  <select
+                    className="input"
+                    value={directionPreference}
+                    onChange={(event) => setDirectionPreference(event.target.value as "long" | "short" | "either")}
+                  >
+                    <option value="either">{t("directionEither")}</option>
+                    <option value="long">{t("directionLong")}</option>
+                    <option value="short">{t("directionShort")}</option>
+                  </select>
+                </label>
+                <label className="settingsField">
+                  <span className="settingsFieldLabel">{t("confidenceTargetPct")}</span>
+                  <input
+                    className="input"
+                    type="number"
+                    min={0}
+                    max={100}
+                    step={1}
+                    value={confidenceTargetPct}
+                    onChange={(event) => setConfidenceTargetPct(event.target.value)}
+                  />
+                </label>
+                <label className="settingsField">
+                  <span className="settingsFieldLabel">{t("slTpSource")}</span>
+                  <select
+                    className="input"
+                    value={slTpSource}
+                    onChange={(event) => setSlTpSource(event.target.value as "local" | "ai" | "hybrid")}
+                  >
+                    <option value="local">{t("slTpSourceLocal")}</option>
+                    <option value="ai">{t("slTpSourceAi")}</option>
+                    <option value="hybrid">{t("slTpSourceHybrid")}</option>
+                  </select>
+                </label>
+                <label className="settingsField">
+                  <span className="settingsFieldLabel">{t("newsRiskMode")}</span>
+                  <select
+                    className="input"
+                    value={newsRiskMode}
+                    onChange={(event) => setNewsRiskMode(event.target.value as "off" | "block")}
+                  >
+                    <option value="off">{t("newsRiskModeOff")}</option>
+                    <option value="block">{t("newsRiskModeBlock")}</option>
+                  </select>
+                </label>
+              </>
+            ) : null}
             <label className="settingsField">
               <span className="settingsFieldLabel">{t("ohlcvBars")}</span>
               <input

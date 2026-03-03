@@ -5,6 +5,7 @@ import { trimHistoryContextForAi, type HistoryContextV1 } from "./historyContext
 export type AiPayloadBudgetOptions = {
   maxPayloadBytes?: number;
   maxHistoryBytes?: number;
+  attachMeta?: boolean;
 };
 
 export type AiPayloadBudgetMetrics = {
@@ -449,6 +450,7 @@ export function applyAiPayloadBudget(
 
   const payload = deepClone(rawPayload);
   const trimFlags: string[] = [];
+  const attachMeta = options.attachMeta !== false;
 
   const initialHistory = getHistoryContext(payload);
   if (initialHistory) {
@@ -475,10 +477,12 @@ export function applyAiPayloadBudget(
   let bytes = bytesOf(workingPayload);
   let overBudget = budgetTrimmed.overBudget || bytes > maxPayloadBytes;
   let estimatedTokens = estimateTokensByBytes(bytes);
-  let meta = ensurePayloadMeta(workingPayload);
-  meta.trim = uniqueFlags([...(Array.isArray(meta.trim) ? (meta.trim as string[]) : []), ...mergedTrimFlags]);
-  meta.payloadBytes = bytes;
-  meta.estimatedTokens = estimatedTokens;
+  if (attachMeta) {
+    const meta = ensurePayloadMeta(workingPayload);
+    meta.trim = uniqueFlags([...(Array.isArray(meta.trim) ? (meta.trim as string[]) : []), ...mergedTrimFlags]);
+    meta.payloadBytes = bytes;
+    meta.estimatedTokens = estimatedTokens;
+  }
 
   bytes = bytesOf(workingPayload);
   if (bytes > maxPayloadBytes) {
@@ -488,16 +492,20 @@ export function applyAiPayloadBudget(
     bytes = bytesOf(workingPayload);
     overBudget = secondPass.overBudget || bytes > maxPayloadBytes;
     estimatedTokens = estimateTokensByBytes(bytes);
-    meta = ensurePayloadMeta(workingPayload);
-    meta.trim = uniqueFlags([...(Array.isArray(meta.trim) ? (meta.trim as string[]) : []), ...mergedTrimFlags]);
-    meta.payloadBytes = bytes;
-    meta.estimatedTokens = estimatedTokens;
+    if (attachMeta) {
+      const meta = ensurePayloadMeta(workingPayload);
+      meta.trim = uniqueFlags([...(Array.isArray(meta.trim) ? (meta.trim as string[]) : []), ...mergedTrimFlags]);
+      meta.payloadBytes = bytes;
+      meta.estimatedTokens = estimatedTokens;
+    }
   }
 
   if (overBudget) {
     mergedTrimFlags = uniqueFlags([...mergedTrimFlags, "payload_budget_exceeded"]);
-    meta = ensurePayloadMeta(workingPayload);
-    meta.trim = uniqueFlags([...(Array.isArray(meta.trim) ? (meta.trim as string[]) : []), ...mergedTrimFlags]);
+    if (attachMeta) {
+      const meta = ensurePayloadMeta(workingPayload);
+      meta.trim = uniqueFlags([...(Array.isArray(meta.trim) ? (meta.trim as string[]) : []), ...mergedTrimFlags]);
+    }
   }
 
   const historyHash = historyHashForTelemetry(getHistoryContext(workingPayload));

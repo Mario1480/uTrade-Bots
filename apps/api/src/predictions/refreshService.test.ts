@@ -6,7 +6,11 @@ import {
   evaluateSignificantChange,
   refreshIntervalsMsFromSec,
   refreshIntervalMsForTimeframe,
+  resolveEffectiveAutoRefreshIntervalMs,
+  resolveMarketAnalysisMinIntervalMs,
+  resolveRunTimeframeForCadence,
   resolveRefreshIntervalsSec,
+  isMarketAnalysisSnapshot,
   shouldMarkUnstableFlips,
   shouldCallAiForRefresh,
   shouldThrottleRepeatedEvent,
@@ -31,6 +35,54 @@ test("refreshIntervalMsForTimeframe uses provided interval map", () => {
     "1h": 700
   });
   assert.equal(refreshIntervalMsForTimeframe("1h", intervalsMs), 700_000);
+});
+
+test("market-analysis cadence uses max(configured, runTimeframe interval)", () => {
+  const configuredIntervals = refreshIntervalsMsFromSec({
+    "4h": 1800
+  });
+  const effectiveMs = resolveEffectiveAutoRefreshIntervalMs({
+    timeframe: "4h",
+    runTimeframe: "4h",
+    isMarketAnalysis: true,
+    configuredIntervalsMs: configuredIntervals
+  });
+  assert.equal(effectiveMs, resolveMarketAnalysisMinIntervalMs("4h"));
+  assert.equal(effectiveMs, 4 * 60 * 60 * 1000);
+});
+
+test("trading cadence keeps configured interval", () => {
+  const configuredIntervals = refreshIntervalsMsFromSec({
+    "15m": 300
+  });
+  const effectiveMs = resolveEffectiveAutoRefreshIntervalMs({
+    timeframe: "15m",
+    runTimeframe: "4h",
+    isMarketAnalysis: false,
+    configuredIntervalsMs: configuredIntervals
+  });
+  assert.equal(effectiveMs, 300_000);
+});
+
+test("resolveRunTimeframeForCadence reads promptRunTimeframe with fallback", () => {
+  assert.equal(
+    resolveRunTimeframeForCadence("15m", {
+      promptRunTimeframe: "4h"
+    }),
+    "4h"
+  );
+  assert.equal(
+    resolveRunTimeframeForCadence("1h", {
+      promptRunTimeframe: "invalid"
+    }),
+    "1h"
+  );
+});
+
+test("isMarketAnalysisSnapshot parses strict and string booleans", () => {
+  assert.equal(isMarketAnalysisSnapshot({ aiPromptMarketAnalysisUpdateEnabled: true }), true);
+  assert.equal(isMarketAnalysisSnapshot({ aiPromptMarketAnalysisUpdateEnabled: "1" }), true);
+  assert.equal(isMarketAnalysisSnapshot({ aiPromptMarketAnalysisUpdateEnabled: "false" }), false);
 });
 
 test("buildPredictionChangeHash is stable for same input", () => {

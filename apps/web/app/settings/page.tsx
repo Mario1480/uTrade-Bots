@@ -66,6 +66,8 @@ type StrategyIndicatorOption = {
   description: string;
 };
 
+type PromptMode = "trading_explainer" | "market_analysis";
+
 type StrategyPromptTemplate = {
   id: string;
   name: string;
@@ -79,6 +81,8 @@ type StrategyPromptTemplate = {
   confidenceTargetPct: number;
   slTpSource: "local" | "ai" | "hybrid";
   newsRiskMode: "off" | "block";
+  promptMode: PromptMode;
+  marketAnalysisUpdateEnabled?: boolean;
   isPublic: boolean;
   createdAt: string;
   updatedAt: string;
@@ -107,6 +111,7 @@ type StrategyGenerateBody = {
   confidenceTargetPct: number;
   slTpSource: "local" | "ai" | "hybrid";
   newsRiskMode: "off" | "block";
+  promptMode: PromptMode;
 };
 
 type SettingsAccordionKey =
@@ -253,6 +258,7 @@ export default function SettingsPage() {
   const [strategyIndicatorKeys, setStrategyIndicatorKeys] = useState<string[]>([]);
   const [strategyTimeframes, setStrategyTimeframes] = useState<Array<"5m" | "15m" | "1h" | "4h" | "1d">>([]);
   const [strategyRunTimeframe, setStrategyRunTimeframe] = useState<"" | "5m" | "15m" | "1h" | "4h" | "1d">("");
+  const [strategyPromptMode, setStrategyPromptMode] = useState<PromptMode>("trading_explainer");
   const [strategyDirectionPreference, setStrategyDirectionPreference] = useState<"long" | "short" | "either">("either");
   const [strategyConfidenceTargetPct, setStrategyConfidenceTargetPct] = useState("60");
   const [strategySlTpSource, setStrategySlTpSource] = useState<"local" | "ai" | "hybrid">("local");
@@ -312,6 +318,16 @@ export default function SettingsPage() {
     });
   }
 
+  function handleStrategyPromptModeChange(nextMode: PromptMode) {
+    setStrategyPromptMode(nextMode);
+    if (nextMode === "market_analysis") {
+      setStrategyDirectionPreference("either");
+      setStrategyConfidenceTargetPct("60");
+      setStrategySlTpSource("local");
+      setStrategyNewsRiskMode("off");
+    }
+  }
+
   function buildStrategyGenerateBody(): StrategyGenerateBody | null {
     setError(null);
     setNotice(null);
@@ -335,7 +351,10 @@ export default function SettingsPage() {
       return null;
     }
     const confidenceTarget = Number(strategyConfidenceTargetPct);
-    if (!Number.isFinite(confidenceTarget) || confidenceTarget < 0 || confidenceTarget > 100) {
+    if (
+      strategyPromptMode === "trading_explainer"
+      && (!Number.isFinite(confidenceTarget) || confidenceTarget < 0 || confidenceTarget > 100)
+    ) {
       setError(tMain("strategy.messages.confidenceRange"));
       return null;
     }
@@ -345,6 +364,7 @@ export default function SettingsPage() {
       return null;
     }
 
+    const isMarketAnalysis = strategyPromptMode === "market_analysis";
     return {
       name,
       strategyDescription: description,
@@ -352,10 +372,11 @@ export default function SettingsPage() {
       ohlcvBars: Math.trunc(ohlcvBars),
       timeframes: strategyTimeframes,
       runTimeframe: strategyTimeframes.length > 0 ? (strategyRunTimeframe || strategyTimeframes[0]) : null,
-      directionPreference: strategyDirectionPreference,
-      confidenceTargetPct: confidenceTarget,
-      slTpSource: strategySlTpSource,
-      newsRiskMode: strategyNewsRiskMode
+      directionPreference: isMarketAnalysis ? "either" : strategyDirectionPreference,
+      confidenceTargetPct: isMarketAnalysis ? 60 : confidenceTarget,
+      slTpSource: isMarketAnalysis ? "local" : strategySlTpSource,
+      newsRiskMode: isMarketAnalysis ? "off" : strategyNewsRiskMode,
+      promptMode: strategyPromptMode
     };
   }
 
@@ -1246,31 +1267,39 @@ export default function SettingsPage() {
                         <div className="settingsMutedText">{tMain("strategy.noPrompts")}</div>
                       ) : (
                         <div style={{ display: "grid", gap: 8 }}>
-                          {strategyPrompts.map((item) => (
-                            <div key={item.id} className="card" style={{ padding: 10, display: "grid", gap: 6 }}>
-                              <div style={{ display: "flex", justifyContent: "space-between", gap: 8, flexWrap: "wrap" }}>
-                                <strong>{item.name}</strong>
-                                <span className="settingsMutedText">
-                                  {new Date(item.updatedAt).toLocaleString()}
-                                </span>
+                          {strategyPrompts.map((item) => {
+                            const mode: PromptMode =
+                              item.promptMode === "market_analysis" || item.marketAnalysisUpdateEnabled
+                                ? "market_analysis"
+                                : "trading_explainer";
+                            return (
+                              <div key={item.id} className="card" style={{ padding: 10, display: "grid", gap: 6 }}>
+                                <div style={{ display: "flex", justifyContent: "space-between", gap: 8, flexWrap: "wrap" }}>
+                                  <strong>{item.name}</strong>
+                                  <span className="settingsMutedText">
+                                    {new Date(item.updatedAt).toLocaleString()}
+                                  </span>
+                                </div>
+                                <div className="settingsMutedText">
+                                  {tMain("strategy.promptMode")}: {mode === "market_analysis" ? tMain("strategy.promptModeAnalysis") : tMain("strategy.promptModeTrading")}
+                                  {" · "}
+                                  {tMain("strategy.timeframesLabel")}: {item.timeframes.join(", ") || tMain("strategy.none")}
+                                  {" · "}
+                                  {tMain("strategy.runTimeframeLabel")}: {item.runTimeframe ?? tMain("strategy.none")}
+                                </div>
+                                <div>
+                                  <button
+                                    className="btn"
+                                    type="button"
+                                    disabled={strategyDeletingId === item.id}
+                                    onClick={() => void deleteStrategyPrompt(item.id)}
+                                  >
+                                    {strategyDeletingId === item.id ? tCommon("deleting") : tMain("actions.delete")}
+                                  </button>
+                                </div>
                               </div>
-                              <div className="settingsMutedText">
-                                {tMain("strategy.timeframesLabel")}: {item.timeframes.join(", ") || tMain("strategy.none")}
-                                {" · "}
-                                {tMain("strategy.runTimeframeLabel")}: {item.runTimeframe ?? tMain("strategy.none")}
-                              </div>
-                              <div>
-                                <button
-                                  className="btn"
-                                  type="button"
-                                  disabled={strategyDeletingId === item.id}
-                                  onClick={() => void deleteStrategyPrompt(item.id)}
-                                >
-                                  {strategyDeletingId === item.id ? tCommon("deleting") : tMain("actions.delete")}
-                                </button>
-                              </div>
-                            </div>
-                          ))}
+                            );
+                          })}
                         </div>
                       )}
 
@@ -1297,6 +1326,23 @@ export default function SettingsPage() {
                           onChange={(event) => setStrategyDescription(event.target.value)}
                           placeholder={tMain("strategy.strategyPlaceholder")}
                         />
+                      </label>
+
+                      <label className="settingsField">
+                        <span className="settingsFieldLabel">{tMain("strategy.promptMode")}</span>
+                        <select
+                          className="input"
+                          value={strategyPromptMode}
+                          onChange={(event) => handleStrategyPromptModeChange(event.target.value as PromptMode)}
+                        >
+                          <option value="trading_explainer">{tMain("strategy.promptModeTrading")}</option>
+                          <option value="market_analysis">{tMain("strategy.promptModeAnalysis")}</option>
+                        </select>
+                        <span className="settingsMutedText">
+                          {strategyPromptMode === "market_analysis"
+                            ? tMain("strategy.analysisAutoDefaultsHint")
+                            : tMain("strategy.promptModeHint")}
+                        </span>
                       </label>
 
                       <div className="settingsTwoColGrid">
@@ -1332,53 +1378,57 @@ export default function SettingsPage() {
                       </div>
 
                       <div className="settingsTwoColGrid">
-                        <label className="settingsField">
-                          <span className="settingsFieldLabel">{tMain("strategy.directionPreference")}</span>
-                          <select
-                            className="input"
-                            value={strategyDirectionPreference}
-                            onChange={(event) => setStrategyDirectionPreference(event.target.value as "long" | "short" | "either")}
-                          >
-                            <option value="either">{tMain("strategy.directionEither")}</option>
-                            <option value="long">{tMain("strategy.directionLong")}</option>
-                            <option value="short">{tMain("strategy.directionShort")}</option>
-                          </select>
-                        </label>
-                        <label className="settingsField">
-                          <span className="settingsFieldLabel">{tMain("strategy.confidenceTargetPct")}</span>
-                          <input
-                            className="input"
-                            type="number"
-                            min={0}
-                            max={100}
-                            step={1}
-                            value={strategyConfidenceTargetPct}
-                            onChange={(event) => setStrategyConfidenceTargetPct(event.target.value)}
-                          />
-                        </label>
-                        <label className="settingsField">
-                          <span className="settingsFieldLabel">{tMain("strategy.slTpSource")}</span>
-                          <select
-                            className="input"
-                            value={strategySlTpSource}
-                            onChange={(event) => setStrategySlTpSource(event.target.value as "local" | "ai" | "hybrid")}
-                          >
-                            <option value="local">{tMain("strategy.slTpSourceLocal")}</option>
-                            <option value="ai">{tMain("strategy.slTpSourceAi")}</option>
-                            <option value="hybrid">{tMain("strategy.slTpSourceHybrid")}</option>
-                          </select>
-                        </label>
-                        <label className="settingsField">
-                          <span className="settingsFieldLabel">{tMain("strategy.newsRiskMode")}</span>
-                          <select
-                            className="input"
-                            value={strategyNewsRiskMode}
-                            onChange={(event) => setStrategyNewsRiskMode(event.target.value as "off" | "block")}
-                          >
-                            <option value="off">{tMain("strategy.newsRiskModeOff")}</option>
-                            <option value="block">{tMain("strategy.newsRiskModeBlock")}</option>
-                          </select>
-                        </label>
+                        {strategyPromptMode === "trading_explainer" ? (
+                          <>
+                            <label className="settingsField">
+                              <span className="settingsFieldLabel">{tMain("strategy.directionPreference")}</span>
+                              <select
+                                className="input"
+                                value={strategyDirectionPreference}
+                                onChange={(event) => setStrategyDirectionPreference(event.target.value as "long" | "short" | "either")}
+                              >
+                                <option value="either">{tMain("strategy.directionEither")}</option>
+                                <option value="long">{tMain("strategy.directionLong")}</option>
+                                <option value="short">{tMain("strategy.directionShort")}</option>
+                              </select>
+                            </label>
+                            <label className="settingsField">
+                              <span className="settingsFieldLabel">{tMain("strategy.confidenceTargetPct")}</span>
+                              <input
+                                className="input"
+                                type="number"
+                                min={0}
+                                max={100}
+                                step={1}
+                                value={strategyConfidenceTargetPct}
+                                onChange={(event) => setStrategyConfidenceTargetPct(event.target.value)}
+                              />
+                            </label>
+                            <label className="settingsField">
+                              <span className="settingsFieldLabel">{tMain("strategy.slTpSource")}</span>
+                              <select
+                                className="input"
+                                value={strategySlTpSource}
+                                onChange={(event) => setStrategySlTpSource(event.target.value as "local" | "ai" | "hybrid")}
+                              >
+                                <option value="local">{tMain("strategy.slTpSourceLocal")}</option>
+                                <option value="ai">{tMain("strategy.slTpSourceAi")}</option>
+                                <option value="hybrid">{tMain("strategy.slTpSourceHybrid")}</option>
+                              </select>
+                            </label>
+                            <label className="settingsField">
+                              <span className="settingsFieldLabel">{tMain("strategy.newsRiskMode")}</span>
+                              <select
+                                className="input"
+                                value={strategyNewsRiskMode}
+                                onChange={(event) => setStrategyNewsRiskMode(event.target.value as "off" | "block")}
+                              >
+                                <option value="off">{tMain("strategy.newsRiskModeOff")}</option>
+                                <option value="block">{tMain("strategy.newsRiskModeBlock")}</option>
+                              </select>
+                            </label>
+                          </>
+                        ) : null}
                         <label className="settingsField">
                           <span className="settingsFieldLabel">{tMain("strategy.ohlcvBars")}</span>
                           <input

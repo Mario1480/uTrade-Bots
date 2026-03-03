@@ -1381,7 +1381,9 @@ function TradePageContent() {
               {activePrefill.explanation ? (
                 <details>
                   <summary style={{ cursor: "pointer", fontSize: 12 }}>{t("prefill.aiExplanation")}</summary>
-                  <div style={{ marginTop: 6, fontSize: 12 }}>{activePrefill.explanation}</div>
+                  <div style={{ marginTop: 6, fontSize: 12, whiteSpace: "pre-wrap", overflowWrap: "anywhere" }}>
+                    {activePrefill.explanation}
+                  </div>
                 </details>
               ) : null}
 

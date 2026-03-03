@@ -4,8 +4,11 @@ import {
   getAiPromptRuntimeSettingsByTemplateId,
   getAiPromptTemplateById,
   isAiPromptIndicatorKey,
+  normalizePromptFieldsByMode,
+  resolvePromptModeFromFlags,
   type AiPromptDirectionPreference,
   type AiPromptIndicatorKey,
+  type AiPromptMode,
   type AiPromptNewsRiskMode,
   type AiPromptRuntimeSettings,
   type AiPromptScopeContext,
@@ -34,6 +37,7 @@ type UserPromptTemplateRow = {
   confidenceTargetPct: number;
   slTpSource: string;
   newsRiskMode: string;
+  promptMode?: string | null;
   marketAnalysisUpdateEnabled: boolean;
   isPublic: boolean;
   createdAt: Date;
@@ -48,6 +52,7 @@ export type CreateUserAiPromptInput = {
   ohlcvBars: number;
   timeframes: AiPromptTimeframe[];
   runTimeframe: AiPromptTimeframe | null;
+  promptMode?: AiPromptMode;
   directionPreference: AiPromptDirectionPreference;
   confidenceTargetPct: number;
   slTpSource: AiPromptSlTpSource;
@@ -129,6 +134,17 @@ function toPublicTemplate(row: UserPromptTemplateRow): UserAiPromptTemplate {
       ? row.slTpSource
       : "local";
   const newsRiskMode: AiPromptNewsRiskMode = row.newsRiskMode === "block" ? "block" : "off";
+  const normalizedByMode = normalizePromptFieldsByMode({
+    promptMode: resolvePromptModeFromFlags({
+      promptMode: row.promptMode,
+      marketAnalysisUpdateEnabled: row.marketAnalysisUpdateEnabled
+    }),
+    directionPreference,
+    confidenceTargetPct: clampConfidence(row.confidenceTargetPct),
+    slTpSource,
+    newsRiskMode,
+    marketAnalysisUpdateEnabled: Boolean(row.marketAnalysisUpdateEnabled)
+  });
 
   const indicatorKeys: AiPromptIndicatorKey[] = [];
   const seenIndicatorKeys = new Set<AiPromptIndicatorKey>();
@@ -149,11 +165,12 @@ function toPublicTemplate(row: UserPromptTemplateRow): UserAiPromptTemplate {
     timeframes: normalizedTimeframes,
     runTimeframe: normalizedRunTimeframe,
     timeframe,
-    directionPreference,
-    confidenceTargetPct: clampConfidence(row.confidenceTargetPct),
-    slTpSource,
-    newsRiskMode,
-    marketAnalysisUpdateEnabled: Boolean(row.marketAnalysisUpdateEnabled),
+    directionPreference: normalizedByMode.directionPreference,
+    confidenceTargetPct: normalizedByMode.confidenceTargetPct,
+    slTpSource: normalizedByMode.slTpSource,
+    newsRiskMode: normalizedByMode.newsRiskMode,
+    promptMode: normalizedByMode.promptMode,
+    marketAnalysisUpdateEnabled: normalizedByMode.marketAnalysisUpdateEnabled,
     isPublic: Boolean(row.isPublic),
     createdAt: row.createdAt.toISOString(),
     updatedAt: row.updatedAt.toISOString()
@@ -175,6 +192,7 @@ function toRuntimeFromUserTemplate(template: UserAiPromptTemplate): AiPromptRunt
     confidenceTargetPct: template.confidenceTargetPct,
     slTpSource: template.slTpSource,
     newsRiskMode: template.newsRiskMode,
+    promptMode: template.promptMode,
     marketAnalysisUpdateEnabled: template.marketAnalysisUpdateEnabled,
     source: "db",
     activePromptId: template.id,
@@ -212,6 +230,14 @@ export async function createUserAiPromptTemplate(
   const now = input.now;
   const timeframes = uniqueTimeframes(input.timeframes);
   const runTimeframe = normalizeRunTimeframe(timeframes, input.runTimeframe);
+  const normalizedByMode = normalizePromptFieldsByMode({
+    promptMode: input.promptMode === "market_analysis" ? "market_analysis" : "trading_explainer",
+    directionPreference: input.directionPreference,
+    confidenceTargetPct: clampConfidence(input.confidenceTargetPct),
+    slTpSource: input.slTpSource,
+    newsRiskMode: input.newsRiskMode,
+    marketAnalysisUpdateEnabled: input.promptMode === "market_analysis"
+  });
   const indicatorKeys: AiPromptIndicatorKey[] = [];
   const seenIndicatorKeys = new Set<AiPromptIndicatorKey>();
   for (const key of input.indicatorKeys) {
@@ -231,11 +257,11 @@ export async function createUserAiPromptTemplate(
       timeframes,
       runTimeframe,
       timeframe: runTimeframe,
-      directionPreference: input.directionPreference,
-      confidenceTargetPct: clampConfidence(input.confidenceTargetPct),
-      slTpSource: input.slTpSource,
-      newsRiskMode: input.newsRiskMode,
-      marketAnalysisUpdateEnabled: false,
+      directionPreference: normalizedByMode.directionPreference,
+      confidenceTargetPct: normalizedByMode.confidenceTargetPct,
+      slTpSource: normalizedByMode.slTpSource,
+      newsRiskMode: normalizedByMode.newsRiskMode,
+      marketAnalysisUpdateEnabled: normalizedByMode.marketAnalysisUpdateEnabled,
       isPublic: false,
       createdAt: now,
       updatedAt: now

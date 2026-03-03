@@ -3412,6 +3412,25 @@ a { color: inherit; }
   overflow-wrap: anywhere;
 }
 
+.predictionContextExplanation {
+  margin-top: 8px;
+  padding: 8px 10px;
+  border: 1px solid rgba(255, 193, 7, 0.2);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.02);
+  display: grid;
+  gap: 6px;
+}
+
+.predictionContextExplanationText {
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+
 .predictionUpdateCell {
   display: flex;
   flex-wrap: wrap;

@@ -126,8 +126,11 @@ export type ExplainerPromptPreview = {
   scopeContext: AiPromptScopeContext;
   runtimeSettings: AiPromptRuntimeSettings;
   runtimeProfile: ExplainerRuntimeProfile;
+  payloadProfile: ResolvedPayloadProfile["profile"];
   systemMessage: string;
   userPayload: Record<string, unknown>;
+  payloadDroppedPaths: string[];
+  payloadTraceMeta: PayloadTraceMeta;
   payloadBudgetMetrics: AiPayloadBudgetMetrics;
   promptInput: ExplainerInput;
   cacheKey: string;
@@ -138,8 +141,10 @@ type ExplainerAnalysisMode = AgentAnalysisMode;
 type ExplanationQualityMetrics = {
   explanationLength: number;
   explanationSentenceCount: number;
+  explanationParagraphCount: number;
   meetsLength: boolean;
   meetsSentenceCount: boolean;
+  meetsParagraphs: boolean;
 };
 
 type ExplainerRuntimeProfile = {
@@ -149,8 +154,40 @@ type ExplainerRuntimeProfile = {
   enforceNeutralPrediction: boolean;
   explanationMinChars: number;
   explanationMinSentences: number;
+  requiredParagraphs: number;
+  paragraphFormatRequired: boolean;
   runtimeHints: string[];
   agentSignalProfile: AgentSignalProfile;
+};
+
+type PayloadProfileMode = "legacy" | "minimal_v1" | "minimal_v2";
+
+type ResolvedPayloadProfile = {
+  mode: PayloadProfileMode;
+  profile:
+    | "legacy"
+    | "minimal_v1_trading_explainer"
+    | "minimal_v1_market_analysis"
+    | "minimal_v2_trading_explainer"
+    | "minimal_v2_market_analysis";
+  analysisMode: ExplainerAnalysisMode;
+};
+
+type PayloadCompactionProfile = "none" | "minimal_v2_trading" | "minimal_v2_analysis";
+
+type PayloadBuildResult = {
+  payload: Record<string, unknown>;
+  droppedPaths: string[];
+};
+
+type PayloadTraceMeta = {
+  payloadProfile: ResolvedPayloadProfile["profile"];
+  payloadCompactionProfile: PayloadCompactionProfile;
+  payloadTopLevelKeys: string[];
+  payloadFeatureSnapshotKeys: string[];
+  payloadDroppedPaths: string[];
+  payloadCompactionDroppedPaths: string[];
+  payloadBytes: number;
 };
 
 const SYSTEM_MESSAGE =
@@ -162,6 +199,45 @@ const SYSTEM_MESSAGE =
   "Do not claim volume spikes or fair value gaps unless those fields explicitly support it. " +
   "Never mention TradingView.";
 
+const MINIMAL_V1_FEATURE_DROP_COMMON = [
+  "prefillExchange",
+  "prefillExchangeAccountId",
+  "autoScheduleEnabled",
+  "autoSchedulePaused",
+  "requestedLeverage",
+  "positionSizeHint",
+  "thresholdSource",
+  "thresholdVersion",
+  "thresholdWindowFrom",
+  "thresholdWindowTo",
+  "thresholdComputedAt",
+  "thresholdBars"
+] as const;
+
+const MINIMAL_V1_FEATURE_DROP_MARKET_ANALYSIS = [
+  "suggestedEntryPrice",
+  "suggestedStopLoss",
+  "suggestedTakeProfit",
+  "qualitySampleSize",
+  "qualityWinRatePct",
+  "qualityAvgOutcomePnlPct"
+] as const;
+
+const MINIMAL_V1_TOP_LEVEL_DROP_COMMON = [
+  "meta",
+  "outputSchema",
+  "groundingRules",
+  "promptTimeframes",
+  "promptRunTimeframe",
+  "selectedIndicatorKeys",
+  "tsCreated"
+] as const;
+
+const MINIMAL_V1_TOP_LEVEL_DROP_MARKET_ANALYSIS = [
+  "prediction",
+  "slTpSource"
+] as const;
+
 function readEnvNumber(
   value: string | undefined,
   fallback: number,
@@ -170,6 +246,14 @@ function readEnvNumber(
   const parsed = Number(value);
   if (!Number.isFinite(parsed)) return fallback;
   return Math.max(min, parsed);
+}
+
+function normalizePayloadProfileMode(value: unknown): PayloadProfileMode {
+  if (typeof value !== "string") return "legacy";
+  const normalized = value.trim().toLowerCase();
+  if (normalized === "minimal_v1") return "minimal_v1";
+  if (normalized === "minimal_v2") return "minimal_v2";
+  return "legacy";
 }
 
 const EXPLAINER_TIMEOUT_MS = readEnvNumber(
@@ -284,10 +368,19 @@ function withTraceMetaPayload(
     neutralEnforced?: boolean;
     explanationLength?: number | null;
     explanationSentenceCount?: number | null;
+    explanationParagraphCount?: number | null;
+    paragraphFormatRequired?: boolean;
     requestedModel?: string | null;
     resolvedModel?: string | null;
     attemptedModels?: string[];
     fallbackReason?: string | null;
+    payloadProfile?: PayloadTraceMeta["payloadProfile"] | null;
+    payloadCompactionProfile?: PayloadTraceMeta["payloadCompactionProfile"] | null;
+    payloadTopLevelKeys?: string[];
+    payloadFeatureSnapshotKeys?: string[];
+    payloadDroppedPaths?: string[];
+    payloadCompactionDroppedPaths?: string[];
+    payloadBytes?: number | null;
   }
 ): Record<string, unknown> {
   const normalizedTokens =
@@ -301,6 +394,10 @@ function withTraceMetaPayload(
   const normalizedExplanationSentenceCount =
     Number.isFinite(Number(input.explanationSentenceCount)) && input.explanationSentenceCount !== null
       ? Math.max(0, Math.trunc(Number(input.explanationSentenceCount)))
+      : null;
+  const normalizedExplanationParagraphCount =
+    Number.isFinite(Number(input.explanationParagraphCount)) && input.explanationParagraphCount !== null
+      ? Math.max(0, Math.trunc(Number(input.explanationParagraphCount)))
       : null;
   const requestedModel =
     typeof input.requestedModel === "string" && input.requestedModel.trim()
@@ -320,6 +417,48 @@ function withTraceMetaPayload(
     typeof input.fallbackReason === "string" && input.fallbackReason.trim()
       ? input.fallbackReason.trim().slice(0, 1000)
       : null;
+  const payloadProfile =
+    input.payloadProfile === "legacy"
+    || input.payloadProfile === "minimal_v1_trading_explainer"
+    || input.payloadProfile === "minimal_v1_market_analysis"
+    || input.payloadProfile === "minimal_v2_trading_explainer"
+    || input.payloadProfile === "minimal_v2_market_analysis"
+      ? input.payloadProfile
+      : "legacy";
+  const payloadCompactionProfile =
+    input.payloadCompactionProfile === "minimal_v2_trading"
+    || input.payloadCompactionProfile === "minimal_v2_analysis"
+    || input.payloadCompactionProfile === "none"
+      ? input.payloadCompactionProfile
+      : "none";
+  const payloadTopLevelKeys = Array.isArray(input.payloadTopLevelKeys)
+    ? [...new Set(input.payloadTopLevelKeys
+      .map((value) => (typeof value === "string" ? value.trim() : ""))
+      .filter((value) => value.length > 0))]
+      .slice(0, 50)
+    : [];
+  const payloadFeatureSnapshotKeys = Array.isArray(input.payloadFeatureSnapshotKeys)
+    ? [...new Set(input.payloadFeatureSnapshotKeys
+      .map((value) => (typeof value === "string" ? value.trim() : ""))
+      .filter((value) => value.length > 0))]
+      .slice(0, 100)
+    : [];
+  const payloadDroppedPaths = Array.isArray(input.payloadDroppedPaths)
+    ? [...new Set(input.payloadDroppedPaths
+      .map((value) => (typeof value === "string" ? value.trim() : ""))
+      .filter((value) => value.length > 0))]
+      .slice(0, 100)
+    : [];
+  const payloadCompactionDroppedPaths = Array.isArray(input.payloadCompactionDroppedPaths)
+    ? [...new Set(input.payloadCompactionDroppedPaths
+      .map((value) => (typeof value === "string" ? value.trim() : ""))
+      .filter((value) => value.length > 0))]
+      .slice(0, 100)
+    : [];
+  const payloadBytes =
+    Number.isFinite(Number(input.payloadBytes)) && input.payloadBytes !== null
+      ? Math.max(0, Math.trunc(Number(input.payloadBytes)))
+      : null;
   return {
     ...userPayload,
     __trace: {
@@ -330,17 +469,241 @@ function withTraceMetaPayload(
       neutralEnforced: input.neutralEnforced === true,
       explanationLength: normalizedExplanationLength,
       explanationSentenceCount: normalizedExplanationSentenceCount,
+      explanationParagraphCount: normalizedExplanationParagraphCount,
+      paragraphFormatRequired: input.paragraphFormatRequired === true,
       requestedModel,
       resolvedModel,
       attemptedModels,
-      fallbackReason
+      fallbackReason,
+      payloadProfile,
+      payloadCompactionProfile,
+      payloadTopLevelKeys,
+      payloadFeatureSnapshotKeys,
+      payloadDroppedPaths,
+      payloadCompactionDroppedPaths,
+      payloadBytes
     }
   };
 }
 
-function buildSystemMessage(customPromptText: string, runtimeHints: string[] = []): string {
+function resolvePayloadProfile(analysisMode: ExplainerAnalysisMode): ResolvedPayloadProfile {
+  const payloadProfileMode = normalizePayloadProfileMode(process.env.AI_PAYLOAD_PROFILE_MODE);
+  if (payloadProfileMode === "legacy") {
+    return {
+      mode: "legacy",
+      profile: "legacy",
+      analysisMode
+    };
+  }
+  if (payloadProfileMode === "minimal_v1") {
+    return {
+      mode: "minimal_v1",
+      profile: analysisMode === "market_analysis"
+        ? "minimal_v1_market_analysis"
+        : "minimal_v1_trading_explainer",
+      analysisMode
+    };
+  }
+  return {
+    mode: "minimal_v2",
+    profile: analysisMode === "market_analysis"
+      ? "minimal_v2_market_analysis"
+      : "minimal_v2_trading_explainer",
+    analysisMode
+  };
+}
+
+function cloneRecord(value: Record<string, unknown>): Record<string, unknown> {
+  return JSON.parse(JSON.stringify(value)) as Record<string, unknown>;
+}
+
+function asUniqueSortedStrings(values: string[]): string[] {
+  return [...new Set(values.map((value) => value.trim()).filter((value) => value.length > 0))].sort((a, b) =>
+    a.localeCompare(b)
+  );
+}
+
+function unsetByPath(target: Record<string, unknown>, path: string): boolean {
+  const segments = path.split(".").map((part) => part.trim()).filter((part) => part.length > 0);
+  if (segments.length === 0) return false;
+  let cursor: unknown = target;
+  for (let idx = 0; idx < segments.length - 1; idx += 1) {
+    if (!cursor || typeof cursor !== "object" || Array.isArray(cursor)) return false;
+    const record = cursor as Record<string, unknown>;
+    const next = record[segments[idx]];
+    if (!next || typeof next !== "object" || Array.isArray(next)) return false;
+    cursor = next;
+  }
+  if (!cursor || typeof cursor !== "object" || Array.isArray(cursor)) return false;
+  const record = cursor as Record<string, unknown>;
+  const leaf = segments[segments.length - 1];
+  if (!(leaf in record)) return false;
+  delete record[leaf];
+  return true;
+}
+
+function dropPathsFromObject(
+  source: Record<string, unknown>,
+  paths: readonly string[],
+  prefix: string
+): { next: Record<string, unknown>; dropped: string[] } {
+  const next = cloneRecord(source);
+  const dropped: string[] = [];
+  for (const path of paths) {
+    if (unsetByPath(next, path)) {
+      dropped.push(`${prefix}.${path}`);
+    }
+  }
+  return { next, dropped };
+}
+
+function listObjectKeys(value: unknown): string[] {
+  const record = asObject(value);
+  if (!record) return [];
+  return Object.keys(record).sort((a, b) => a.localeCompare(b));
+}
+
+function buildPayloadPromptHints(payloadProfile: ResolvedPayloadProfile): string[] {
+  if (payloadProfile.mode === "legacy") return [];
+  return [
+    "Return only one strict JSON object with fields: explanation, tags, keyDrivers, aiPrediction, optional levels, disclaimer.",
+    "Do not output markdown, code fences, commentary, or any preface/suffix text.",
+    "Grounding: reference only values present in featureSnapshot; do not infer missing values.",
+    "Only reference stochrsi/volume/fvg when present and non-null.",
+    "Only reference advancedIndicators fields when present and non-null.",
+    "historyContext may be used only when present; do not invent history fields.",
+    "Do not claim volume spikes unless rel_vol or vol_z supports it.",
+    "Do not claim fair value gaps unless counts or distances support it.",
+    "Levels are optional; include numeric entry_ref/stop_loss/take_profit only when explicitly supported."
+  ];
+}
+
+function buildLegacyPromptPayload(
+  input: ExplainerInput,
+  settings: Pick<
+    AiPromptRuntimeSettings,
+    "promptText" | "indicatorKeys" | "ohlcvBars" | "timeframes" | "runTimeframe" | "slTpSource"
+  >
+): Record<string, unknown> {
+  return {
+    symbol: input.symbol,
+    marketType: input.marketType,
+    timeframe: input.timeframe,
+    tsCreated: input.tsCreated,
+    prediction: input.prediction,
+    featureSnapshot: input.featureSnapshot,
+    tagsAllowlist: EXPLAINER_TAG_ALLOWLIST,
+    outputSchema: {
+      explanation: "string <= 1000 chars",
+      tags: "string[] <= 5 items, must be from tagsAllowlist",
+      keyDrivers: "{name: string, value: any}[] <= 5 items, names from featureSnapshot key paths only",
+      aiPrediction: "{signal: up|down|neutral, expectedMovePct: number, confidence: number 0..1}",
+      levels: "{optional: {entry_ref?: number, stop_loss?: number, take_profit?: number}}",
+      disclaimer: "grounded_features_only"
+    },
+    selectedIndicatorKeys: settings.indicatorKeys,
+    ohlcvBars: settings.ohlcvBars,
+    slTpSource: settings.slTpSource,
+    promptTimeframes: settings.timeframes,
+    promptRunTimeframe: settings.runTimeframe,
+    groundingRules: [
+      "Only reference values that exist in featureSnapshot",
+      "Only reference stochrsi/volume/fvg when present and non-null",
+      "Only reference advancedIndicators fields when present and non-null",
+      "historyContext is derived and may be referenced only when present; do not invent missing history fields",
+      "Do not claim volume spikes unless rel_vol or vol_z supports it",
+      "Do not claim fair value gaps unless fvg counts or distances support it",
+      "aiPrediction must be inferred from featureSnapshot and can differ from prediction",
+      "levels are optional; include only numeric entry_ref/stop_loss/take_profit when explicitly supported by featureSnapshot"
+    ]
+  };
+}
+
+function buildTradingExplainerPayload(
+  input: ExplainerInput,
+  settings: Pick<AiPromptRuntimeSettings, "slTpSource">
+): PayloadBuildResult {
+  const slTpSource =
+    typeof settings.slTpSource === "string" && settings.slTpSource.trim()
+      ? settings.slTpSource
+      : "local";
+  const trimmedFeature = dropPathsFromObject(
+    input.featureSnapshot,
+    MINIMAL_V1_FEATURE_DROP_COMMON,
+    "featureSnapshot"
+  );
+  return {
+    payload: {
+      symbol: input.symbol,
+      marketType: input.marketType,
+      timeframe: input.timeframe,
+      prediction: input.prediction,
+      featureSnapshot: trimmedFeature.next,
+      tagsAllowlist: EXPLAINER_TAG_ALLOWLIST,
+      slTpSource
+    },
+    droppedPaths: asUniqueSortedStrings([
+      ...trimmedFeature.dropped,
+      ...MINIMAL_V1_TOP_LEVEL_DROP_COMMON.map((row) => `payload.${row}`)
+    ])
+  };
+}
+
+function buildMarketAnalysisPayload(input: ExplainerInput): PayloadBuildResult {
+  const trimmedCommon = dropPathsFromObject(
+    input.featureSnapshot,
+    MINIMAL_V1_FEATURE_DROP_COMMON,
+    "featureSnapshot"
+  );
+  const trimmedFeature = dropPathsFromObject(
+    trimmedCommon.next,
+    MINIMAL_V1_FEATURE_DROP_MARKET_ANALYSIS,
+    "featureSnapshot"
+  );
+  return {
+    payload: {
+      symbol: input.symbol,
+      marketType: input.marketType,
+      timeframe: input.timeframe,
+      featureSnapshot: trimmedFeature.next,
+      tagsAllowlist: EXPLAINER_TAG_ALLOWLIST
+    },
+    droppedPaths: asUniqueSortedStrings([
+      ...trimmedCommon.dropped,
+      ...trimmedFeature.dropped,
+      ...MINIMAL_V1_TOP_LEVEL_DROP_COMMON.map((row) => `payload.${row}`),
+      ...MINIMAL_V1_TOP_LEVEL_DROP_MARKET_ANALYSIS.map((row) => `payload.${row}`)
+    ])
+  };
+}
+
+function buildPromptPayload(
+  input: ExplainerInput,
+  settings: Pick<
+    AiPromptRuntimeSettings,
+    "promptText" | "indicatorKeys" | "ohlcvBars" | "timeframes" | "runTimeframe" | "slTpSource"
+  >,
+  payloadProfile: ResolvedPayloadProfile
+): PayloadBuildResult {
+  if (payloadProfile.mode === "legacy") {
+    return {
+      payload: buildLegacyPromptPayload(input, settings),
+      droppedPaths: []
+    };
+  }
+  if (payloadProfile.analysisMode === "market_analysis") {
+    return buildMarketAnalysisPayload(input);
+  }
+  return buildTradingExplainerPayload(input, settings);
+}
+
+function buildSystemMessage(
+  customPromptText: string,
+  runtimeHints: string[] = [],
+  payloadHints: string[] = []
+): string {
   const trimmed = customPromptText.trim();
-  const hintText = runtimeHints
+  const hintText = [...runtimeHints, ...payloadHints]
     .map((item) => item.trim())
     .filter((item) => item.length > 0)
     .join("\n");
@@ -375,6 +738,37 @@ function countSentences(value: string): number {
     .filter((row) => row.length > 0).length;
 }
 
+function countParagraphs(value: string): number {
+  const trimmed = value.trim();
+  if (!trimmed) return 0;
+  return trimmed
+    .split(/\n\s*\n+/)
+    .map((row) => row.trim())
+    .filter((row) => row.length > 0).length;
+}
+
+function splitIntoSentences(value: string): string[] {
+  return value
+    .trim()
+    .split(/(?<=[.!?])\s+/)
+    .map((row) => row.trim())
+    .filter((row) => row.length > 0);
+}
+
+function formatIntoParagraphs(value: string, requiredParagraphs: number): string {
+  const target = Math.max(1, Math.trunc(requiredParagraphs));
+  if (target <= 1) return value.trim();
+  const sentences = splitIntoSentences(value);
+  if (sentences.length < target) return value.trim();
+  const paragraphSize = Math.ceil(sentences.length / target);
+  const paragraphs: string[] = [];
+  for (let idx = 0; idx < sentences.length; idx += paragraphSize) {
+    paragraphs.push(sentences.slice(idx, idx + paragraphSize).join(" ").trim());
+  }
+  if (paragraphs.length < target) return value.trim();
+  return paragraphs.slice(0, target).join("\n\n").trim();
+}
+
 function shouldRelaxSentenceRequirement(
   profile: ExplainerRuntimeProfile,
   explanationLength: number,
@@ -393,29 +787,45 @@ function evaluateExplanationQuality(
 ): ExplanationQualityMetrics {
   const explanationLength = explanation.trim().length;
   const explanationSentenceCount = countSentences(explanation);
+  const explanationParagraphCount = countParagraphs(explanation);
   const meetsSentenceCount =
     explanationSentenceCount >= profile.explanationMinSentences
     || shouldRelaxSentenceRequirement(profile, explanationLength, explanationSentenceCount);
+  const meetsParagraphs =
+    profile.requiredParagraphs <= 0
+      ? true
+      : explanationParagraphCount >= profile.requiredParagraphs;
   return {
     explanationLength,
     explanationSentenceCount,
+    explanationParagraphCount,
     meetsLength: explanationLength >= profile.explanationMinChars,
-    meetsSentenceCount
+    meetsSentenceCount,
+    meetsParagraphs
   };
 }
 
 function buildProviderRuntimeHints(profile: ExplainerRuntimeProfile): string[] {
   const hints: string[] = [];
-  if (profile.provider !== "ollama") return hints;
+  if (profile.provider === "ollama") {
+    hints.push("For local Ollama: return strict JSON only and avoid prefacing text.");
+  }
 
-  hints.push("For local Ollama: return strict JSON only and avoid prefacing text.");
-
-  if (profile.timeframe === "4h") {
+  if (profile.timeframe === "4h" && profile.analysisMode === "market_analysis") {
     hints.push("Write explanation as 8-12 complete sentences in flowing prose.");
     hints.push(
       "Follow this order in explanation: trend, momentum, structure, liquidity/FVG, volume, volatility, uncertainty, conclusion."
     );
     hints.push("Do not use bullet points inside explanation.");
+  }
+  if (profile.paragraphFormatRequired && profile.requiredParagraphs > 0) {
+    hints.push(
+      `Format explanation as exactly ${profile.requiredParagraphs} paragraphs separated by one blank line.`
+    );
+    hints.push("Paragraph 1: trend and momentum.");
+    hints.push("Paragraph 2: structure, liquidity/FVG and volume.");
+    hints.push("Paragraph 3: risk, uncertainty and conclusion.");
+    hints.push("No markdown headings, no bullet points.");
   }
 
   if (profile.enforceNeutralPrediction) {
@@ -436,6 +846,7 @@ function buildExplainerRuntimeProfile(input: {
   const analysisMode: ExplainerAnalysisMode = isMarketAnalysis
     ? "market_analysis"
     : "trading_explainer";
+  const requiredParagraphs = isMarketAnalysis ? 3 : 0;
   const explanationMinChars =
     input.aiProvider === "ollama" && input.timeframe === "4h"
       ? OLLAMA_4H_MIN_EXPLANATION_CHARS
@@ -451,6 +862,8 @@ function buildExplainerRuntimeProfile(input: {
     enforceNeutralPrediction: isMarketAnalysis,
     explanationMinChars,
     explanationMinSentences,
+    requiredParagraphs,
+    paragraphFormatRequired: requiredParagraphs > 0,
     runtimeHints: [],
     agentSignalProfile: {
       analysisMode,
@@ -476,8 +889,11 @@ function appendQualityRepairInstruction(
     "Quality correction:",
     "You already returned valid JSON. Keep all fields and values unchanged except `explanation`.",
     `Expand explanation to at least ${Math.max(1, profile.explanationMinSentences)} sentences and at least ${Math.max(1, profile.explanationMinChars)} characters.`,
+    profile.requiredParagraphs > 0
+      ? `Use exactly ${profile.requiredParagraphs} paragraphs separated by one blank line.`
+      : "",
     "Use flowing prose and keep factual grounding unchanged."
-  ];
+  ].filter((line) => line.length > 0);
   return `${systemMessage}\n\n${instructionLines.join("\n")}`;
 }
 
@@ -488,30 +904,34 @@ function tryLocalExplanationRepair(
   if (!parsedCandidate || typeof parsedCandidate !== "object" || Array.isArray(parsedCandidate)) {
     return null;
   }
-  if (profile.provider !== "ollama" || profile.timeframe !== "4h") {
-    return null;
-  }
   const record = { ...(parsedCandidate as Record<string, unknown>) };
   const explanationRaw =
     typeof record.explanation === "string" ? record.explanation.trim() : "";
   if (!explanationRaw) return null;
 
-  let explanation = clampText(explanationRaw);
-  let sentenceCount = countSentences(explanation);
-  if (sentenceCount >= profile.explanationMinSentences) {
-    return {
-      ...record,
-      explanation
-    };
-  }
-  if (sentenceCount < profile.explanationMinSentences - 1) {
-    return null;
-  }
-  if (explanation.length < EXPLAINER_MAX_EXPLANATION_CHARS - 100) {
+  let explanation = clampText(explanationRaw).trim();
+  const qualityInitial = evaluateExplanationQuality(explanation, profile);
+
+  if (
+    profile.provider === "ollama"
+    && profile.timeframe === "4h"
+    && !qualityInitial.meetsSentenceCount
+    && qualityInitial.explanationSentenceCount >= profile.explanationMinSentences - 1
+    && qualityInitial.explanationLength < EXPLAINER_MAX_EXPLANATION_CHARS - 100
+  ) {
     explanation = clampText(
       `${explanation} Uncertainty remains elevated and this view should stay conditional until structure confirms.`
-    );
-    sentenceCount = countSentences(explanation);
+    ).trim();
+  }
+  if (profile.requiredParagraphs > 0) {
+    const paragraphCandidate = formatIntoParagraphs(explanation, profile.requiredParagraphs);
+    if (countParagraphs(paragraphCandidate) >= profile.requiredParagraphs) {
+      explanation = clampText(paragraphCandidate).trim();
+    }
+  }
+  const qualityFinal = evaluateExplanationQuality(explanation, profile);
+  if (!qualityFinal.meetsLength || !qualityFinal.meetsSentenceCount || !qualityFinal.meetsParagraphs) {
+    return null;
   }
 
   return {
@@ -695,7 +1115,12 @@ function applyOhlcvBarsLimit(
 }
 
 function trimSingleHistoryContext(
-  historyContextRaw: unknown
+  historyContextRaw: unknown,
+  options?: {
+    maxEvents?: number;
+    lastBars?: number;
+    maxBytes?: number;
+  }
 ): { next: HistoryContextPack | null; changed: boolean } {
   const parsed = asObject(historyContextRaw);
   if (!parsed) return { next: null, changed: false };
@@ -704,16 +1129,23 @@ function trimSingleHistoryContext(
   if (!lastBars || !Array.isArray(lastBars.ohlc)) return { next: null, changed: false };
   if (!Array.isArray(parsed.ev)) return { next: null, changed: false };
   const trimmed = trimHistoryContextForAi(parsed as unknown as HistoryContextPack, {
-    maxEvents: EXPLAINER_HISTORY_CONTEXT_MAX_EVENTS,
-    lastBars: EXPLAINER_HISTORY_CONTEXT_LAST_BARS,
-    maxBytes: EXPLAINER_HISTORY_CONTEXT_MAX_BYTES
+    maxEvents: options?.maxEvents ?? EXPLAINER_HISTORY_CONTEXT_MAX_EVENTS,
+    lastBars: options?.lastBars ?? EXPLAINER_HISTORY_CONTEXT_LAST_BARS,
+    maxBytes: options?.maxBytes ?? EXPLAINER_HISTORY_CONTEXT_MAX_BYTES
   });
   const changed = JSON.stringify(trimmed) !== JSON.stringify(parsed);
   return { next: trimmed, changed };
 }
 
-function applyHistoryContextLimit(snapshot: Record<string, unknown>): Record<string, unknown> {
-  const topTrim = trimSingleHistoryContext(snapshot.historyContext);
+function applyHistoryContextLimit(
+  snapshot: Record<string, unknown>,
+  options?: {
+    maxEvents?: number;
+    lastBars?: number;
+    maxBytes?: number;
+  }
+): Record<string, unknown> {
+  const topTrim = trimSingleHistoryContext(snapshot.historyContext, options);
   let nextSnapshot = topTrim.changed
     ? {
       ...snapshot,
@@ -728,12 +1160,12 @@ function applyHistoryContextLimit(snapshot: Record<string, unknown>): Record<str
   let framesChanged = false;
   const nextFrames: Record<string, unknown> = {};
   for (const [timeframe, frameRaw] of Object.entries(framesRaw)) {
-    const frame = asObject(frameRaw);
-    if (!frame) {
-      nextFrames[timeframe] = frameRaw;
-      continue;
-    }
-    const frameTrim = trimSingleHistoryContext(frame.historyContext);
+      const frame = asObject(frameRaw);
+      if (!frame) {
+        nextFrames[timeframe] = frameRaw;
+        continue;
+      }
+    const frameTrim = trimSingleHistoryContext(frame.historyContext, options);
     if (frameTrim.changed) {
       framesChanged = true;
       nextFrames[timeframe] = {
@@ -751,6 +1183,170 @@ function applyHistoryContextLimit(snapshot: Record<string, unknown>): Record<str
       ...mtfRaw,
       frames: nextFrames
     }
+  };
+}
+
+function getArrayLengthAtPath(source: Record<string, unknown>, path: string): number | null {
+  const segments = path.split(".").map((segment) => segment.trim()).filter((segment) => segment.length > 0);
+  let cursor: unknown = source;
+  for (const segment of segments) {
+    if (!cursor || typeof cursor !== "object" || Array.isArray(cursor)) return null;
+    cursor = (cursor as Record<string, unknown>)[segment];
+  }
+  return Array.isArray(cursor) ? cursor.length : null;
+}
+
+function compactMtfToRunTimeframe(
+  snapshot: Record<string, unknown>
+): { snapshot: Record<string, unknown>; droppedPaths: string[] } {
+  const mtfRaw = asObject(snapshot.mtf);
+  const framesRaw = asObject(mtfRaw?.frames);
+  if (!mtfRaw || !framesRaw) {
+    return { snapshot, droppedPaths: [] };
+  }
+  const frameKeys = Object.keys(framesRaw);
+  if (frameKeys.length <= 1) {
+    return { snapshot, droppedPaths: [] };
+  }
+  const runTimeframeRaw = typeof mtfRaw.runTimeframe === "string" ? mtfRaw.runTimeframe.trim() : "";
+  const runTimeframe = runTimeframeRaw && framesRaw[runTimeframeRaw]
+    ? runTimeframeRaw
+    : frameKeys[0];
+  const runFrame = framesRaw[runTimeframe];
+  if (!runFrame) {
+    return { snapshot, droppedPaths: [] };
+  }
+  const droppedPaths = frameKeys
+    .filter((key) => key !== runTimeframe)
+    .map((key) => `payload.featureSnapshot.mtf.frames.${key}`);
+  if (droppedPaths.length === 0) {
+    return { snapshot, droppedPaths: [] };
+  }
+  return {
+    snapshot: {
+      ...snapshot,
+      mtf: {
+        ...mtfRaw,
+        runTimeframe,
+        timeframes: [runTimeframe],
+        frames: {
+          [runTimeframe]: runFrame
+        }
+      }
+    },
+    droppedPaths
+  };
+}
+
+function compactFeatureSnapshotForAi(input: {
+  snapshot: Record<string, unknown>;
+  payloadProfile: ResolvedPayloadProfile;
+}): {
+  snapshot: Record<string, unknown>;
+  compactionProfile: PayloadCompactionProfile;
+  droppedPaths: string[];
+} {
+  if (input.payloadProfile.mode !== "minimal_v2") {
+    return {
+      snapshot: input.snapshot,
+      compactionProfile: "none",
+      droppedPaths: []
+    };
+  }
+  const isMarketAnalysis = input.payloadProfile.analysisMode === "market_analysis";
+  const compactionProfile: PayloadCompactionProfile = isMarketAnalysis
+    ? "minimal_v2_analysis"
+    : "minimal_v2_trading";
+  const ohlcvBarsLimit = isMarketAnalysis ? 60 : 80;
+  const historyEventsLimit = isMarketAnalysis ? 12 : 20;
+  const historyLastBarsLimit = isMarketAnalysis ? 16 : 20;
+
+  const before = cloneRecord(input.snapshot);
+  let compacted = cloneRecord(input.snapshot);
+  const droppedPaths: string[] = [];
+
+  const mtfCompaction = compactMtfToRunTimeframe(compacted);
+  compacted = mtfCompaction.snapshot;
+  droppedPaths.push(...mtfCompaction.droppedPaths);
+
+  compacted = applyOhlcvBarsLimit(compacted, ohlcvBarsLimit);
+  compacted = applyHistoryContextLimit(compacted, {
+    maxEvents: historyEventsLimit,
+    lastBars: historyLastBarsLimit,
+    maxBytes: EXPLAINER_HISTORY_CONTEXT_MAX_BYTES
+  });
+
+  const runTimeframe = (() => {
+    const mtf = asObject(compacted.mtf);
+    const run = typeof mtf?.runTimeframe === "string" ? mtf.runTimeframe.trim() : "";
+    return run.length > 0 ? run : null;
+  })();
+
+  const trackedArrayPaths = [
+    "ohlcvSeries.bars",
+    "historyContext.ev",
+    "historyContext.lastBars.ohlc"
+  ];
+  for (const path of trackedArrayPaths) {
+    const beforeLen = getArrayLengthAtPath(before, path);
+    const afterLen = getArrayLengthAtPath(compacted, path);
+    if (beforeLen !== null && afterLen !== null && afterLen < beforeLen) {
+      droppedPaths.push(`payload.featureSnapshot.${path}`);
+    }
+  }
+  if (runTimeframe) {
+    for (const path of ["ohlcvSeries.bars", "historyContext.ev", "historyContext.lastBars.ohlc"]) {
+      const fullPath = `mtf.frames.${runTimeframe}.${path}`;
+      const beforeLen = getArrayLengthAtPath(before, fullPath);
+      const afterLen = getArrayLengthAtPath(compacted, fullPath);
+      if (beforeLen !== null && afterLen !== null && afterLen < beforeLen) {
+        droppedPaths.push(`payload.featureSnapshot.${fullPath}`);
+      }
+    }
+  }
+
+  return {
+    snapshot: compacted,
+    compactionProfile,
+    droppedPaths: asUniqueSortedStrings(droppedPaths)
+  };
+}
+
+function applyPayloadCompactionForAi(input: {
+  payload: Record<string, unknown>;
+  payloadProfile: ResolvedPayloadProfile;
+}): {
+  payload: Record<string, unknown>;
+  compactionProfile: PayloadCompactionProfile;
+  droppedPaths: string[];
+} {
+  if (input.payloadProfile.mode !== "minimal_v2") {
+    return {
+      payload: input.payload,
+      compactionProfile: "none",
+      droppedPaths: []
+    };
+  }
+  const nextPayload = cloneRecord(input.payload);
+  const featureSnapshot = asObject(nextPayload.featureSnapshot);
+  if (!featureSnapshot) {
+    return {
+      payload: nextPayload,
+      compactionProfile: input.payloadProfile.analysisMode === "market_analysis"
+        ? "minimal_v2_analysis"
+        : "minimal_v2_trading",
+      droppedPaths: []
+    };
+  }
+  const compacted = compactFeatureSnapshotForAi({
+    snapshot: featureSnapshot,
+    payloadProfile: input.payloadProfile
+  });
+  nextPayload.featureSnapshot = compacted.snapshot;
+  return {
+    payload: nextPayload,
+    compactionProfile: compacted.compactionProfile,
+    droppedPaths: compacted.droppedPaths
   };
 }
 
@@ -1090,10 +1686,11 @@ export function validateExplainerOutput(
 
   if (options.runtimeProfile) {
     const quality = evaluateExplanationQuality(output.explanation, options.runtimeProfile);
-    if (!quality.meetsLength || !quality.meetsSentenceCount) {
+    if (!quality.meetsLength || !quality.meetsSentenceCount || !quality.meetsParagraphs) {
       throw new Error(
         `explanation_quality_failed:length=${quality.explanationLength},sentences=${quality.explanationSentenceCount},` +
-        `required_chars=${options.runtimeProfile.explanationMinChars},required_sentences=${options.runtimeProfile.explanationMinSentences}`
+        `paragraphs=${quality.explanationParagraphCount},required_chars=${options.runtimeProfile.explanationMinChars},` +
+        `required_sentences=${options.runtimeProfile.explanationMinSentences},required_paragraphs=${options.runtimeProfile.requiredParagraphs}`
       );
     }
   }
@@ -1418,64 +2015,30 @@ export function buildPredictionExplainerCacheKey(params: {
   promptVersion: string;
   symbol: string;
   timeframe: string;
-  signal: "up" | "down" | "neutral";
-  confidence: number;
+  analysisMode: ExplainerAnalysisMode;
+  signal?: "up" | "down" | "neutral";
+  confidence?: number;
   featureSnapshotHash: string;
   historyContextHash: string;
 }): string {
-  const confidenceBucket = normalizeConfidenceBucket(params.confidence);
+  const signal = params.analysisMode === "trading_explainer"
+    ? (params.signal ?? "neutral")
+    : "analysis";
+  const confidenceBucket = params.analysisMode === "trading_explainer"
+    ? normalizeConfidenceBucket(params.confidence ?? 0)
+    : 0;
   return [
     "explain",
     params.model,
     params.promptVersion,
+    params.analysisMode,
     params.symbol,
     params.timeframe,
-    params.signal,
+    signal,
     String(confidenceBucket),
     params.featureSnapshotHash,
     params.historyContextHash
   ].join(":");
-}
-
-function buildPromptPayload(
-  input: ExplainerInput,
-  settings: Pick<
-    AiPromptRuntimeSettings,
-    "promptText" | "indicatorKeys" | "ohlcvBars" | "timeframes" | "runTimeframe" | "slTpSource"
-  >
-) {
-  return {
-    symbol: input.symbol,
-    marketType: input.marketType,
-    timeframe: input.timeframe,
-    tsCreated: input.tsCreated,
-    prediction: input.prediction,
-    featureSnapshot: input.featureSnapshot,
-    tagsAllowlist: EXPLAINER_TAG_ALLOWLIST,
-    outputSchema: {
-      explanation: "string <= 1000 chars",
-      tags: "string[] <= 5 items, must be from tagsAllowlist",
-      keyDrivers: "{name: string, value: any}[] <= 5 items, names from featureSnapshot key paths only",
-      aiPrediction: "{signal: up|down|neutral, expectedMovePct: number, confidence: number 0..1}",
-      levels: "{optional: {entry_ref?: number, stop_loss?: number, take_profit?: number}}",
-      disclaimer: "grounded_features_only"
-    },
-    selectedIndicatorKeys: settings.indicatorKeys,
-    ohlcvBars: settings.ohlcvBars,
-    slTpSource: settings.slTpSource,
-    promptTimeframes: settings.timeframes,
-    promptRunTimeframe: settings.runTimeframe,
-    groundingRules: [
-      "Only reference values that exist in featureSnapshot",
-      "Only reference stochrsi/volume/fvg when present and non-null",
-      "Only reference advancedIndicators fields when present and non-null",
-      "historyContext is derived and may be referenced only when present; do not invent missing history fields",
-      "Do not claim volume spikes unless rel_vol or vol_z supports it",
-      "Do not claim fair value gaps unless fvg counts or distances support it",
-      "aiPrediction must be inferred from featureSnapshot and can differ from prediction",
-      "levels are optional; include only numeric entry_ref/stop_loss/take_profit when explicitly supported by featureSnapshot"
-    ]
-  };
 }
 
 function normalizeContextString(value: unknown): string | null {
@@ -1611,23 +2174,49 @@ export async function buildPredictionExplainerPromptPreview(
     ...input,
     featureSnapshot: runtimeFeatureSnapshotWithHistory
   };
-  const rawPayload = buildPromptPayload(promptInput, runtimeSettings);
-  const payloadBudget = applyAiPayloadBudget(
-    rawPayload,
-    aiProvider === "ollama"
-      ? {
-          maxPayloadBytes: OLLAMA_MAX_PAYLOAD_BYTES,
-          maxHistoryBytes: OLLAMA_MAX_HISTORY_BYTES
-        }
-      : undefined
-  );
-  const userPayload = payloadBudget.payload;
   const runtimeProfile = buildExplainerRuntimeProfile({
     aiProvider,
     timeframe: input.timeframe,
     runtimeSettings
   });
-  const systemMessage = buildSystemMessage(runtimeSettings.promptText, runtimeProfile.runtimeHints);
+  const payloadProfile = resolvePayloadProfile(runtimeProfile.analysisMode);
+  const payloadBuild = buildPromptPayload(promptInput, runtimeSettings, payloadProfile);
+  const payloadCompaction = applyPayloadCompactionForAi({
+    payload: payloadBuild.payload,
+    payloadProfile
+  });
+  const rawPayload = payloadCompaction.payload;
+  const payloadBudget = applyAiPayloadBudget(
+    rawPayload,
+    aiProvider === "ollama"
+      ? {
+          maxPayloadBytes: OLLAMA_MAX_PAYLOAD_BYTES,
+          maxHistoryBytes: OLLAMA_MAX_HISTORY_BYTES,
+          attachMeta: payloadProfile.mode === "legacy"
+        }
+      : {
+          attachMeta: payloadProfile.mode === "legacy"
+        }
+  );
+  const userPayload = payloadBudget.payload;
+  const payloadTraceMeta: PayloadTraceMeta = {
+    payloadProfile: payloadProfile.profile,
+    payloadCompactionProfile: payloadCompaction.compactionProfile,
+    payloadTopLevelKeys: listObjectKeys(userPayload),
+    payloadFeatureSnapshotKeys: listObjectKeys(asObject(userPayload.featureSnapshot)),
+    payloadDroppedPaths: asUniqueSortedStrings([
+      ...payloadBuild.droppedPaths,
+      ...payloadCompaction.droppedPaths,
+      ...payloadBudget.metrics.trimFlags.map((flag) => `budget:${flag}`)
+    ]),
+    payloadCompactionDroppedPaths: payloadCompaction.droppedPaths,
+    payloadBytes: payloadBudget.metrics.bytes
+  };
+  const systemMessage = buildSystemMessage(
+    runtimeSettings.promptText,
+    runtimeProfile.runtimeHints,
+    buildPayloadPromptHints(payloadProfile)
+  );
   const featureSnapshot = asObject(userPayload.featureSnapshot) ?? {};
   const resolvedModel = await getAiModelAsync();
   const cacheKey = buildPredictionExplainerCacheKey({
@@ -1635,8 +2224,9 @@ export async function buildPredictionExplainerPromptPreview(
     promptVersion: buildPromptVersion(runtimeSettings, runtimeProfile),
     symbol: promptInput.symbol,
     timeframe: promptInput.timeframe,
-    signal: promptInput.prediction.signal,
-    confidence: promptInput.prediction.confidence,
+    analysisMode: runtimeProfile.analysisMode,
+    signal: runtimeProfile.analysisMode === "trading_explainer" ? promptInput.prediction.signal : undefined,
+    confidence: runtimeProfile.analysisMode === "trading_explainer" ? promptInput.prediction.confidence : undefined,
     featureSnapshotHash: buildFeatureSnapshotHash(featureSnapshot),
     historyContextHash: buildHistoryContextHash(featureSnapshot)
   });
@@ -1646,8 +2236,11 @@ export async function buildPredictionExplainerPromptPreview(
     scopeContext,
     runtimeSettings,
     runtimeProfile,
+    payloadProfile: payloadProfile.profile,
     systemMessage,
     userPayload,
+    payloadDroppedPaths: payloadTraceMeta.payloadDroppedPaths,
+    payloadTraceMeta,
     payloadBudgetMetrics: payloadBudget.metrics,
     promptInput,
     cacheKey
@@ -1666,6 +2259,7 @@ export async function generatePredictionExplanation(
     runtimeProfile,
     systemMessage,
     userPayload,
+    payloadTraceMeta,
     payloadBudgetMetrics,
     cacheKey
   } = preview;
@@ -1703,8 +2297,10 @@ export async function generatePredictionExplanation(
     const payloadBudgetMeta: ExplanationQualityMetrics = {
       explanationLength: 0,
       explanationSentenceCount: 0,
+      explanationParagraphCount: 0,
       meetsLength: true,
-      meetsSentenceCount: true
+      meetsSentenceCount: true,
+      meetsParagraphs: true
     };
       await recordAiTraceLog({
         ...traceBase,
@@ -1716,10 +2312,19 @@ export async function generatePredictionExplanation(
           neutralEnforced: false,
           explanationLength: payloadBudgetMeta.explanationLength,
           explanationSentenceCount: payloadBudgetMeta.explanationSentenceCount,
+          explanationParagraphCount: payloadBudgetMeta.explanationParagraphCount,
+          paragraphFormatRequired: runtimeProfile.paragraphFormatRequired,
           requestedModel: aiModel,
           resolvedModel: aiModel,
           attemptedModels: [aiModel],
-          fallbackReason: "payload_budget_exceeded"
+          fallbackReason: "payload_budget_exceeded",
+          payloadProfile: payloadTraceMeta.payloadProfile,
+          payloadCompactionProfile: payloadTraceMeta.payloadCompactionProfile,
+          payloadTopLevelKeys: payloadTraceMeta.payloadTopLevelKeys,
+          payloadFeatureSnapshotKeys: payloadTraceMeta.payloadFeatureSnapshotKeys,
+          payloadDroppedPaths: payloadTraceMeta.payloadDroppedPaths,
+          payloadCompactionDroppedPaths: payloadTraceMeta.payloadCompactionDroppedPaths,
+          payloadBytes: payloadTraceMeta.payloadBytes
         }),
       rawResponse: null,
       parsedResponse: null,
@@ -1893,7 +2498,7 @@ export async function generatePredictionExplanation(
             parsedCandidate: parsedJson,
             rawCandidate: raw,
             model: agentResult.model,
-            allowQualityRepair: aiProvider === "ollama"
+            allowQualityRepair: aiProvider === "ollama" || runtimeProfile.paragraphFormatRequired
           });
           parsedJson = finalized.parsedCandidate;
           raw = finalized.rawCandidate;
@@ -1912,10 +2517,19 @@ export async function generatePredictionExplanation(
               neutralEnforced: lastNeutralEnforced,
               explanationLength: lastExplanationMetrics.explanationLength,
               explanationSentenceCount: lastExplanationMetrics.explanationSentenceCount,
+              explanationParagraphCount: lastExplanationMetrics.explanationParagraphCount,
+              paragraphFormatRequired: runtimeProfile.paragraphFormatRequired,
               requestedModel: aiModel,
               resolvedModel: resolvedModelForTrace ?? agentResult.model,
               attemptedModels: attemptedModelsForTrace,
-              fallbackReason: fallbackReasonForTrace
+              fallbackReason: fallbackReasonForTrace,
+              payloadProfile: payloadTraceMeta.payloadProfile,
+              payloadCompactionProfile: payloadTraceMeta.payloadCompactionProfile,
+              payloadTopLevelKeys: payloadTraceMeta.payloadTopLevelKeys,
+              payloadFeatureSnapshotKeys: payloadTraceMeta.payloadFeatureSnapshotKeys,
+              payloadDroppedPaths: payloadTraceMeta.payloadDroppedPaths,
+              payloadCompactionDroppedPaths: payloadTraceMeta.payloadCompactionDroppedPaths,
+              payloadBytes: payloadTraceMeta.payloadBytes
             }),
             rawResponse: raw ?? null,
             parsedResponse: finalized.output,
@@ -1995,7 +2609,7 @@ export async function generatePredictionExplanation(
                 parsedCandidate: parsedJson,
                 rawCandidate: raw,
                 model: currentModel,
-                allowQualityRepair: aiProvider === "ollama"
+                allowQualityRepair: aiProvider === "ollama" || runtimeProfile.paragraphFormatRequired
               });
               validated = finalized.output;
               parsedJson = finalized.parsedCandidate;
@@ -2029,10 +2643,19 @@ export async function generatePredictionExplanation(
               neutralEnforced: lastNeutralEnforced,
               explanationLength: lastExplanationMetrics?.explanationLength ?? null,
               explanationSentenceCount: lastExplanationMetrics?.explanationSentenceCount ?? null,
+              explanationParagraphCount: lastExplanationMetrics?.explanationParagraphCount ?? null,
+              paragraphFormatRequired: runtimeProfile.paragraphFormatRequired,
               requestedModel: aiModel,
               resolvedModel: resolvedModelForTrace ?? currentModel,
               attemptedModels: attemptedModelsForTrace,
-              fallbackReason: fallbackReasonForTrace
+              fallbackReason: fallbackReasonForTrace,
+              payloadProfile: payloadTraceMeta.payloadProfile,
+              payloadCompactionProfile: payloadTraceMeta.payloadCompactionProfile,
+              payloadTopLevelKeys: payloadTraceMeta.payloadTopLevelKeys,
+              payloadFeatureSnapshotKeys: payloadTraceMeta.payloadFeatureSnapshotKeys,
+              payloadDroppedPaths: payloadTraceMeta.payloadDroppedPaths,
+              payloadCompactionDroppedPaths: payloadTraceMeta.payloadCompactionDroppedPaths,
+              payloadBytes: payloadTraceMeta.payloadBytes
             }),
             rawResponse: raw ?? null,
             parsedResponse: validated,
@@ -2101,7 +2724,7 @@ export async function generatePredictionExplanation(
               parsedCandidate: parsedJson,
               rawCandidate: raw,
               model: agentResult.model,
-              allowQualityRepair: aiProvider === "ollama"
+              allowQualityRepair: aiProvider === "ollama" || runtimeProfile.paragraphFormatRequired
             });
             parsedJson = finalized.parsedCandidate;
             raw = finalized.rawCandidate;
@@ -2120,10 +2743,19 @@ export async function generatePredictionExplanation(
                 neutralEnforced: lastNeutralEnforced,
                 explanationLength: lastExplanationMetrics.explanationLength,
                 explanationSentenceCount: lastExplanationMetrics.explanationSentenceCount,
+                explanationParagraphCount: lastExplanationMetrics.explanationParagraphCount,
+                paragraphFormatRequired: runtimeProfile.paragraphFormatRequired,
                 requestedModel: aiModel,
                 resolvedModel: resolvedModelForTrace ?? agentResult.model,
                 attemptedModels: attemptedModelsForTrace,
-                fallbackReason: fallbackReasonForTrace
+                fallbackReason: fallbackReasonForTrace,
+                payloadProfile: payloadTraceMeta.payloadProfile,
+                payloadCompactionProfile: payloadTraceMeta.payloadCompactionProfile,
+                payloadTopLevelKeys: payloadTraceMeta.payloadTopLevelKeys,
+                payloadFeatureSnapshotKeys: payloadTraceMeta.payloadFeatureSnapshotKeys,
+                payloadDroppedPaths: payloadTraceMeta.payloadDroppedPaths,
+                payloadCompactionDroppedPaths: payloadTraceMeta.payloadCompactionDroppedPaths,
+                payloadBytes: payloadTraceMeta.payloadBytes
               }),
               rawResponse: raw ?? null,
               parsedResponse: finalized.output,
@@ -2163,10 +2795,19 @@ export async function generatePredictionExplanation(
             neutralEnforced: lastNeutralEnforced,
             explanationLength: lastExplanationMetrics?.explanationLength ?? null,
             explanationSentenceCount: lastExplanationMetrics?.explanationSentenceCount ?? null,
+            explanationParagraphCount: lastExplanationMetrics?.explanationParagraphCount ?? null,
+            paragraphFormatRequired: runtimeProfile.paragraphFormatRequired,
             requestedModel: aiModel,
             resolvedModel: resolvedModelForTrace ?? aiModel,
             attemptedModels: attemptedModelsForTrace.length > 0 ? attemptedModelsForTrace : [aiModel],
-            fallbackReason: fallbackReasonForTrace
+            fallbackReason: fallbackReasonForTrace,
+            payloadProfile: payloadTraceMeta.payloadProfile,
+            payloadCompactionProfile: payloadTraceMeta.payloadCompactionProfile,
+            payloadTopLevelKeys: payloadTraceMeta.payloadTopLevelKeys,
+            payloadFeatureSnapshotKeys: payloadTraceMeta.payloadFeatureSnapshotKeys,
+            payloadDroppedPaths: payloadTraceMeta.payloadDroppedPaths,
+            payloadCompactionDroppedPaths: payloadTraceMeta.payloadCompactionDroppedPaths,
+            payloadBytes: payloadTraceMeta.payloadBytes
           }),
           rawResponse: raw,
           parsedResponse: parsedJson,

@@ -15,6 +15,7 @@ function makeRuntime(overrides: Partial<AiPromptRuntimeSettings> = {}): AiPrompt
     confidenceTargetPct: 60,
     slTpSource: "local",
     newsRiskMode: "off",
+    promptMode: "trading_explainer",
     marketAnalysisUpdateEnabled: false,
     source: "db",
     activePromptId: "default_core",
@@ -62,6 +63,7 @@ test("resolveAiPromptRuntimeForUserSelection prioritizes own template over globa
         confidenceTargetPct: 70,
         slTpSource: "hybrid",
         newsRiskMode: "block",
+        promptMode: "trading_explainer",
         marketAnalysisUpdateEnabled: false,
         isPublic: false,
         createdAt: "2026-02-24T10:00:00.000Z",
@@ -79,6 +81,39 @@ test("resolveAiPromptRuntimeForUserSelection prioritizes own template over globa
   assert.equal(resolved.templateName, "Own Prompt");
   assert.equal(resolved.isOwnTemplate, true);
   assert.equal(resolved.runtimeSettings.directionPreference, "long");
+});
+
+test("resolveAiPromptRuntimeForUserSelection keeps market_analysis mode for own template", async () => {
+  const resolved = await resolveAiPromptRuntimeForUserSelection({
+    userId: "user_1",
+    templateId: "uap_analysis",
+    context: {},
+    deps: {
+      getOwnById: async () => ({
+        id: "uap_analysis",
+        name: "Own Analysis",
+        promptText: "analysis",
+        indicatorKeys: ["smc"],
+        ohlcvBars: 120,
+        timeframes: ["4h"],
+        runTimeframe: "4h",
+        timeframe: "4h",
+        directionPreference: "either",
+        confidenceTargetPct: 60,
+        slTpSource: "local",
+        newsRiskMode: "off",
+        promptMode: "market_analysis",
+        marketAnalysisUpdateEnabled: true,
+        isPublic: false,
+        createdAt: "2026-02-24T10:00:00.000Z",
+        updatedAt: "2026-02-24T10:00:00.000Z"
+      })
+    }
+  });
+
+  assert.ok(resolved);
+  assert.equal(resolved.runtimeSettings.promptMode, "market_analysis");
+  assert.equal(resolved.runtimeSettings.marketAnalysisUpdateEnabled, true);
 });
 
 test("resolveAiPromptRuntimeForUserSelection falls back to global template runtime", async () => {
@@ -103,6 +138,7 @@ test("resolveAiPromptRuntimeForUserSelection falls back to global template runti
         confidenceTargetPct: 60,
         slTpSource: "local",
         newsRiskMode: "off",
+        promptMode: "trading_explainer",
         marketAnalysisUpdateEnabled: false,
         isPublic: true,
         createdAt: "2026-02-24T10:00:00.000Z",

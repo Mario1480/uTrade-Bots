@@ -12,6 +12,10 @@ This implementation introduces a state/history split for predictions:
 - For each active state template:
   - refresh when due by timeframe-specific refresh interval
   - optionally refresh early when trigger probe detects regime/trend changes
+- `market_analysis` templates are cadence-guarded:
+  - auto refresh never happens before the prompt `runTimeframe` window elapsed
+  - effective interval is `max(configured_refresh_interval, runTimeframe_interval)`
+  - trigger probes are skipped while that guard is active
 - AI explainer is gated:
   - only on significant changes
   - only when signal/confidence/tags changed materially

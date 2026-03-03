@@ -64,6 +64,10 @@ type AiTraceLogItem = {
   neutralEnforced: boolean;
   explanationLength: number | null;
   explanationSentenceCount: number | null;
+  explanationParagraphCount: number | null;
+  paragraphFormatRequired: boolean;
+  payloadCompactionProfile: "none" | "minimal_v2_trading" | "minimal_v2_analysis";
+  payloadCompactionDroppedPaths: string[];
   requestedModel: string | null;
   resolvedModel: string | null;
   attemptedModels: string[];
@@ -532,6 +536,9 @@ export default function AdminAiTracePage() {
                       {row.neutralEnforced ? " · neutral-enforced" : ""}
                       {row.explanationLength !== null ? ` · chars: ${row.explanationLength}` : ""}
                       {row.explanationSentenceCount !== null ? ` · sentences: ${row.explanationSentenceCount}` : ""}
+                      {row.explanationParagraphCount !== null ? ` · paragraphs: ${row.explanationParagraphCount}` : ""}
+                      {row.paragraphFormatRequired ? " · paragraph-format" : ""}
+                      {row.payloadCompactionProfile !== "none" ? ` · ${row.payloadCompactionProfile}` : ""}
                       {row.latencyMs !== null ? ` · ${row.latencyMs}ms` : ""}
                       {row.totalTokens !== null ? ` · tokens: ${row.totalTokens}` : ""}
                       {row.requestedModel && row.resolvedModel && row.requestedModel !== row.resolvedModel
@@ -558,6 +565,11 @@ export default function AdminAiTracePage() {
                       {row.fallbackReason ? (
                         <pre style={{ margin: 0, fontSize: 12, whiteSpace: "pre-wrap" }}>
                           fallbackReason: {row.fallbackReason}
+                        </pre>
+                      ) : null}
+                      {row.payloadCompactionDroppedPaths.length > 0 ? (
+                        <pre style={{ margin: 0, fontSize: 12, whiteSpace: "pre-wrap" }}>
+                          payloadCompactionDroppedPaths: {row.payloadCompactionDroppedPaths.join(", ")}
                         </pre>
                       ) : null}
 

@@ -90,6 +90,7 @@ AI Predictions:
 - `AI_API_KEY`
 - `AI_SIGNAL_ENGINE` (`legacy` default, `agent_v1` für Tool-Calling-Agent)
 - `AI_SIGNAL_ENGINE_OLLAMA` (optional; `legacy` nur als Kompatibilitäts-Override)
+- `AI_PAYLOAD_PROFILE_MODE` (`legacy` default, `minimal_v1` oder `minimal_v2` für mode-spezifische Minimal-Payloads)
 - `AI_MODEL`
 - `AI_OLLAMA_4H_MIN_EXPLANATION_CHARS` (default `420`)
 - `AI_OLLAMA_4H_MIN_EXPLANATION_SENTENCES` (default `8`)
@@ -111,6 +112,7 @@ AI Predictions:
   - `PREDICTION_REFRESH_4H_SECONDS`
   - `PREDICTION_REFRESH_1D_SECONDS`
   - Details: `docs/prediction-refresh-scheduler.md`
+  - `market_analysis` auto-updates are cadence-guarded to at least the prompt `runTimeframe` window (manual runs can still execute immediately)
 - Evaluator v1:
   - `PREDICTION_EVALUATOR_ENABLED`
   - `PREDICTION_EVALUATOR_POLL_SECONDS`
@@ -131,6 +133,7 @@ AI_BASE_URL=http://localhost:11434/v1
 AI_MODEL=qwen3:8b
 AI_API_KEY=ollama
 AI_SIGNAL_ENGINE=agent_v1
+AI_PAYLOAD_PROFILE_MODE=legacy
 # optional:
 # AI_SIGNAL_ENGINE_OLLAMA=legacy
 ```
@@ -163,8 +166,29 @@ Salad Runtime Control (manuell, im Admin-Backend):
 
 Ollama Prompt-Fit Runtime:
 - Es werden keine separaten Prompt-Kopien gepflegt; provider/timeframe-spezifische Runtime-Hints werden an den System-Prompt angehängt.
-- Für `ollama + 4h` wird eine lange Analyse erzwungen (8-12 Sätze, Fließtext).
+- Für `4h + market_analysis` wird eine lange Analyse erzwungen (8-12 Sätze, Fließtext).
+- Für `4h + market_analysis` wird die Erklärung in 3 Absätzen formatiert (jeweils mit Leerzeile getrennt), für Ollama und OpenAI.
 - Wenn `marketAnalysisUpdateEnabled=true` bei `4h`, wird `aiPrediction` neutral-only normalisiert (`neutral/0/0`).
+
+Payload Profiles:
+- `AI_PAYLOAD_PROFILE_MODE=legacy` lässt das bisherige Payload-Format unverändert.
+- `AI_PAYLOAD_PROFILE_MODE=minimal_v1` trennt Payloads strikt nach Modus:
+  - `trading_explainer`: mit `prediction`/Setup-Kontext.
+  - `market_analysis`: ohne directional/setup Felder.
+- `AI_PAYLOAD_PROFILE_MODE=minimal_v2` nutzt die Feldtrennung aus `minimal_v1` und reduziert zusätzlich große Arrays vor dem Budget-Trimming:
+  - `trading_explainer`: `ohlcvSeries<=80`, `historyContext.ev<=20`, `historyContext.lastBars.ohlc<=20`, nur MTF-Run-Timeframe.
+  - `market_analysis`: `ohlcvSeries<=60`, `historyContext.ev<=12`, `historyContext.lastBars.ohlc<=16`, nur MTF-Run-Timeframe.
+- Prompt-Scaffolding wird in `minimal_v1` nicht mehr im User-Payload gesendet, sondern über System-Instruktionen geführt.
+
+Prompt-Mode UX (alle Prompt-Editoren):
+- Neuer kompatibler Feldwert `promptMode`: `trading_explainer` oder `market_analysis`.
+- Persistenz bleibt kompatibel über `marketAnalysisUpdateEnabled`; Server mappt beide Richtungen.
+- Für `market_analysis` werden Trading-Felder serverseitig erzwungen auf:
+  - `directionPreference=either`
+  - `confidenceTargetPct=60`
+  - `slTpSource=local`
+  - `newsRiskMode=off`
+- Im UI wird der Modus zuerst gewählt; Trading-spezifische Felder sind in Analyse-Modus ausgeblendet und werden beim Umschalten auf Analyse auf Defaults zurückgesetzt.
 
 Economic Calendar (FMP) + News Blackout:
 - `FMP_API_KEY` (optional ENV fallback; preferred via Admin-UI)

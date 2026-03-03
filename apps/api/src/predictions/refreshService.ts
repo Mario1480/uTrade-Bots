@@ -58,6 +58,12 @@ export type RefreshDecision = {
 
 export type PredictionRefreshIntervalsSec = Record<PredictionTimeframe, number>;
 export type PredictionRefreshIntervalsMs = Record<PredictionTimeframe, number>;
+export type EffectiveAutoRefreshIntervalInput = {
+  timeframe: PredictionTimeframe;
+  runTimeframe: PredictionTimeframe;
+  isMarketAnalysis: boolean;
+  configuredIntervalsMs?: Partial<Record<PredictionTimeframe, number>> | null;
+};
 
 const DEFAULT_AI_COOLDOWN_MS =
   Math.max(
@@ -91,6 +97,14 @@ const REFRESH_INTERVALS_MS: PredictionRefreshIntervalsMs = {
   "1h": REFRESH_INTERVALS_SEC["1h"] * 1000,
   "4h": REFRESH_INTERVALS_SEC["4h"] * 1000,
   "1d": REFRESH_INTERVALS_SEC["1d"] * 1000
+};
+
+const TIMEFRAME_INTERVAL_MS: Record<PredictionTimeframe, number> = {
+  "5m": 5 * 60 * 1000,
+  "15m": 15 * 60 * 1000,
+  "1h": 60 * 60 * 1000,
+  "4h": 4 * 60 * 60 * 1000,
+  "1d": 24 * 60 * 60 * 1000
 };
 
 function normalizeRefreshIntervalSec(
@@ -146,6 +160,33 @@ function confidenceToPct(value: number): number {
   return Math.max(0, Math.min(100, normalized));
 }
 
+function normalizePredictionTimeframe(value: unknown): PredictionTimeframe | null {
+  if (typeof value !== "string") return null;
+  const normalized = value.trim();
+  if (
+    normalized === "5m"
+    || normalized === "15m"
+    || normalized === "1h"
+    || normalized === "4h"
+    || normalized === "1d"
+  ) {
+    return normalized;
+  }
+  return null;
+}
+
+function normalizeBoolean(value: unknown): boolean | null {
+  if (typeof value === "boolean") return value;
+  if (value === 1 || value === "1") return true;
+  if (value === 0 || value === "0") return false;
+  if (typeof value === "string") {
+    const normalized = value.trim().toLowerCase();
+    if (normalized === "true" || normalized === "on" || normalized === "yes") return true;
+    if (normalized === "false" || normalized === "off" || normalized === "no") return false;
+  }
+  return null;
+}
+
 export function refreshIntervalMsForTimeframe(
   timeframe: PredictionTimeframe,
   intervalsMs?: Partial<Record<PredictionTimeframe, number>> | null
@@ -155,6 +196,32 @@ export function refreshIntervalMsForTimeframe(
     return Math.max(REFRESH_INTERVAL_MIN_SEC[timeframe] * 1000, Math.trunc(override));
   }
   return REFRESH_INTERVALS_MS[timeframe] ?? 300_000;
+}
+
+export function isMarketAnalysisSnapshot(
+  snapshot: Record<string, unknown> | null | undefined
+): boolean {
+  const raw = snapshot?.aiPromptMarketAnalysisUpdateEnabled;
+  return normalizeBoolean(raw) === true;
+}
+
+export function resolveRunTimeframeForCadence(
+  templateTimeframe: PredictionTimeframe,
+  snapshot: Record<string, unknown> | null | undefined
+): PredictionTimeframe {
+  return normalizePredictionTimeframe(snapshot?.promptRunTimeframe) ?? templateTimeframe;
+}
+
+export function resolveMarketAnalysisMinIntervalMs(runTimeframe: PredictionTimeframe): number {
+  return TIMEFRAME_INTERVAL_MS[runTimeframe] ?? TIMEFRAME_INTERVAL_MS["1h"];
+}
+
+export function resolveEffectiveAutoRefreshIntervalMs(
+  input: EffectiveAutoRefreshIntervalInput
+): number {
+  const configured = refreshIntervalMsForTimeframe(input.timeframe, input.configuredIntervalsMs);
+  if (!input.isMarketAnalysis) return configured;
+  return Math.max(configured, resolveMarketAnalysisMinIntervalMs(input.runTimeframe));
 }
 
 export function buildPredictionStateUniqueKey(input: {

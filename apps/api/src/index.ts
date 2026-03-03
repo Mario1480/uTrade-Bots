@@ -113,7 +113,9 @@ import {
   getPublicAiPromptTemplates,
   invalidateAiPromptSettingsCache,
   isAiPromptIndicatorKey,
+  normalizePromptFieldsByMode,
   parseStoredAiPromptSettings,
+  resolvePromptModeFromFlags,
   resolveAiPromptRuntimeSettingsForContext,
   type AiPromptSettingsStored,
   type AiPromptTemplate,
@@ -240,6 +242,9 @@ import {
   evaluateSignificantChange,
   refreshIntervalsMsFromSec,
   refreshIntervalMsForTimeframe,
+  resolveEffectiveAutoRefreshIntervalMs,
+  resolveRunTimeframeForCadence,
+  isMarketAnalysisSnapshot,
   shouldMarkUnstableFlips,
   shouldThrottleRepeatedEvent,
   type PredictionRefreshIntervalsMs,
@@ -846,6 +851,7 @@ const aiPromptTemplateSchema = z.object({
   confidenceTargetPct: z.number().min(0).max(100).default(60),
   slTpSource: z.enum(["local", "ai", "hybrid"]).default("local"),
   newsRiskMode: z.enum(["off", "block"]).default("off"),
+  promptMode: z.enum(["trading_explainer", "market_analysis"]).optional(),
   marketAnalysisUpdateEnabled: z.boolean().default(false),
   isPublic: z.boolean().default(false),
   createdAt: z.string().datetime().optional(),
@@ -939,6 +945,7 @@ const adminAiPromptsGenerateBaseSchema = z.object({
   confidenceTargetPct: z.number().min(0).max(100).default(60),
   slTpSource: z.enum(["local", "ai", "hybrid"]).default("local"),
   newsRiskMode: z.enum(["off", "block"]).default("off"),
+  promptMode: z.enum(["trading_explainer", "market_analysis"]).optional(),
   setActive: z.boolean().default(false),
   isPublic: z.boolean().default(false)
 });
@@ -970,7 +977,8 @@ const userAiPromptsGenerateBaseSchema = z.object({
   directionPreference: z.enum(["long", "short", "either"]).default("either"),
   confidenceTargetPct: z.number().min(0).max(100).default(60),
   slTpSource: z.enum(["local", "ai", "hybrid"]).default("local"),
-  newsRiskMode: z.enum(["off", "block"]).default("off")
+  newsRiskMode: z.enum(["off", "block"]).default("off"),
+  promptMode: z.enum(["trading_explainer", "market_analysis"]).optional()
 });
 
 const userAiPromptsGeneratePreviewSchema = userAiPromptsGenerateBaseSchema
@@ -7979,12 +7987,80 @@ async function resolveGlobalPredictionRefreshIntervalsMs(): Promise<PredictionRe
   }
 }
 
+function resolveTemplateAutoCadenceGate(
+  template: Pick<PredictionRefreshTemplate, "timeframe" | "featureSnapshot" | "tsUpdated">,
+  refreshIntervalsMs: PredictionRefreshIntervalsMs,
+  nowMs: number
+): {
+  isMarketAnalysis: boolean;
+  runTimeframe: PredictionTimeframe;
+  elapsedMs: number;
+  requiredMs: number;
+  blocked: boolean;
+} {
+  const isMarketAnalysis = isMarketAnalysisSnapshot(template.featureSnapshot);
+  const runTimeframe = resolveRunTimeframeForCadence(
+    template.timeframe,
+    template.featureSnapshot
+  );
+  const requiredMs = resolveEffectiveAutoRefreshIntervalMs({
+    timeframe: template.timeframe,
+    runTimeframe,
+    isMarketAnalysis,
+    configuredIntervalsMs: refreshIntervalsMs
+  });
+  const elapsedMs = Math.max(0, nowMs - template.tsUpdated.getTime());
+  return {
+    isMarketAnalysis,
+    runTimeframe,
+    elapsedMs,
+    requiredMs,
+    blocked: isMarketAnalysis && elapsedMs < requiredMs
+  };
+}
+
+function logAnalysisCadenceBlock(params: {
+  stage: "scheduler_probe_filter" | "trigger_probe_guard" | "refresh_guard";
+  stateId: string;
+  symbol: string;
+  timeframe: PredictionTimeframe;
+  runTimeframe: PredictionTimeframe;
+  elapsedMs: number;
+  requiredMs: number;
+}) {
+  // eslint-disable-next-line no-console
+  console.info("[predictions:refresh] analysis cadence blocked", {
+    reason: "analysis_min_interval_blocked",
+    stage: params.stage,
+    stateId: params.stateId,
+    symbol: params.symbol,
+    timeframe: params.timeframe,
+    runTimeframe: params.runTimeframe,
+    elapsedMs: params.elapsedMs,
+    requiredMs: params.requiredMs
+  });
+}
+
 async function probePredictionRefreshTrigger(
   template: PredictionRefreshTemplate,
   refreshIntervalsMs: PredictionRefreshIntervalsMs
 ): Promise<{ refresh: boolean; reasons: string[] }> {
   let adapter: BitgetFuturesAdapter | null = null;
   try {
+    const cadence = resolveTemplateAutoCadenceGate(template, refreshIntervalsMs, Date.now());
+    if (cadence.blocked) {
+      logAnalysisCadenceBlock({
+        stage: "trigger_probe_guard",
+        stateId: template.stateId,
+        symbol: template.symbol,
+        timeframe: template.timeframe,
+        runTimeframe: cadence.runTimeframe,
+        elapsedMs: cadence.elapsedMs,
+        requiredMs: cadence.requiredMs
+      });
+      return { refresh: false, reasons: [] };
+    }
+
     const resolvedAccount = await resolveMarketDataTradingAccount(template.userId, template.exchangeAccountId);
     adapter = createBitgetAdapter(resolvedAccount.marketDataAccount);
     await adapter.contractCache.warmup();
@@ -8058,7 +8134,7 @@ async function probePredictionRefreshTrigger(
       timeframe: template.timeframe,
       nowMs: Date.now(),
       lastUpdatedMs: template.tsUpdated.getTime(),
-      refreshIntervalMs: refreshIntervalMsForTimeframe(template.timeframe, refreshIntervalsMs),
+      refreshIntervalMs: cadence.requiredMs,
       previousFeatureSnapshot: template.featureSnapshot,
       currentFeatureSnapshot: inferred.featureSnapshot,
       previousTriggerState: predictionTriggerDebounceState.get(template.stateId) ?? null,
@@ -8086,6 +8162,7 @@ async function probePredictionRefreshTrigger(
 async function refreshPredictionStateForTemplate(params: {
   template: PredictionRefreshTemplate;
   reason: string;
+  refreshIntervalsMs: PredictionRefreshIntervalsMs;
 }): Promise<{ refreshed: boolean; significant: boolean; aiCalled: boolean }> {
   const { template } = params;
   let adapter: BitgetFuturesAdapter | null = null;
@@ -8100,6 +8177,22 @@ async function refreshPredictionStateForTemplate(params: {
     });
     if (!liveState || !Boolean(liveState.autoScheduleEnabled) || Boolean(liveState.autoSchedulePaused)) {
       return { refreshed: false, significant: false, aiCalled: false };
+    }
+
+    if (params.reason !== "manual_create") {
+      const cadence = resolveTemplateAutoCadenceGate(template, params.refreshIntervalsMs, Date.now());
+      if (cadence.blocked) {
+        logAnalysisCadenceBlock({
+          stage: "refresh_guard",
+          stateId: template.stateId,
+          symbol: template.symbol,
+          timeframe: template.timeframe,
+          runTimeframe: cadence.runTimeframe,
+          elapsedMs: cadence.elapsedMs,
+          requiredMs: cadence.requiredMs
+        });
+        return { refreshed: false, significant: false, aiCalled: false };
+      }
     }
 
     const resolvedAccount = await resolveMarketDataTradingAccount(template.userId, template.exchangeAccountId);
@@ -9381,15 +9474,16 @@ async function runPredictionAutoCycle() {
     const now = Date.now();
 
     const dueTemplates = active.filter((template) => {
-      const intervalMs = refreshIntervalMsForTimeframe(template.timeframe, refreshIntervalsMs);
-      return now - template.tsUpdated.getTime() >= intervalMs;
+      const cadence = resolveTemplateAutoCadenceGate(template, refreshIntervalsMs, now);
+      return cadence.elapsedMs >= cadence.requiredMs;
     });
 
     for (const template of dueTemplates) {
       if (refreshed >= PREDICTION_REFRESH_MAX_RUNS_PER_CYCLE) break;
       const result = await refreshPredictionStateForTemplate({
         template,
-        reason: "scheduled_due"
+        reason: "scheduled_due",
+        refreshIntervalsMs
       });
       if (!result.refreshed) continue;
       predictionTriggerDebounceState.delete(template.stateId);
@@ -9402,6 +9496,20 @@ async function runPredictionAutoCycle() {
       const remaining = active
         .filter((template) => !dueTemplates.some((item) => item.stateId === template.stateId))
         .filter((template) => now - template.tsUpdated.getTime() >= PREDICTION_REFRESH_TRIGGER_MIN_AGE_MS)
+        .filter((template) => {
+          const cadence = resolveTemplateAutoCadenceGate(template, refreshIntervalsMs, now);
+          if (!cadence.blocked) return true;
+          logAnalysisCadenceBlock({
+            stage: "scheduler_probe_filter",
+            stateId: template.stateId,
+            symbol: template.symbol,
+            timeframe: template.timeframe,
+            runTimeframe: cadence.runTimeframe,
+            elapsedMs: cadence.elapsedMs,
+            requiredMs: cadence.requiredMs
+          });
+          return false;
+        })
         .slice(0, PREDICTION_REFRESH_TRIGGER_PROBE_LIMIT);
 
       for (const template of remaining) {
@@ -9410,7 +9518,8 @@ async function runPredictionAutoCycle() {
         if (!triggerProbe.refresh) continue;
         const result = await refreshPredictionStateForTemplate({
           template,
-          reason: triggerProbe.reasons.join(",") || "triggered"
+          reason: triggerProbe.reasons.join(",") || "triggered",
+          refreshIntervalsMs
         });
         if (!result.refreshed) continue;
         predictionTriggerDebounceState.delete(template.stateId);
@@ -12325,6 +12434,17 @@ function normalizeAiPromptSettingsPayload(
       timeframes,
       legacyTimeframe
     );
+    const normalizedByMode = normalizePromptFieldsByMode({
+      promptMode: resolvePromptModeFromFlags({
+        promptMode: (row as { promptMode?: unknown }).promptMode,
+        marketAnalysisUpdateEnabled: row.marketAnalysisUpdateEnabled
+      }),
+      directionPreference: row.directionPreference,
+      confidenceTargetPct: row.confidenceTargetPct,
+      slTpSource: row.slTpSource ?? "local",
+      newsRiskMode: row.newsRiskMode === "block" ? "block" : "off",
+      marketAnalysisUpdateEnabled: Boolean(row.marketAnalysisUpdateEnabled)
+    });
     prompts.push({
       id,
       name: row.name.trim(),
@@ -12334,11 +12454,12 @@ function normalizeAiPromptSettingsPayload(
       timeframes,
       runTimeframe,
       timeframe: runTimeframe,
-      directionPreference: row.directionPreference,
-      confidenceTargetPct: row.confidenceTargetPct,
-      slTpSource: row.slTpSource ?? "local",
-      newsRiskMode: row.newsRiskMode === "block" ? "block" : "off",
-      marketAnalysisUpdateEnabled: Boolean(row.marketAnalysisUpdateEnabled),
+      directionPreference: normalizedByMode.directionPreference,
+      confidenceTargetPct: normalizedByMode.confidenceTargetPct,
+      slTpSource: normalizedByMode.slTpSource,
+      newsRiskMode: normalizedByMode.newsRiskMode,
+      promptMode: normalizedByMode.promptMode,
+      marketAnalysisUpdateEnabled: normalizedByMode.marketAnalysisUpdateEnabled,
       isPublic: Boolean(row.isPublic),
       createdAt,
       updatedAt
@@ -12894,6 +13015,7 @@ app.post("/admin/settings/ai-prompts/generate-save", requireAuth, async (req, re
       ohlcvBars: parsed.data.ohlcvBars,
       timeframes: parsed.data.timeframes,
       runTimeframe: parsed.data.runTimeframe ?? null,
+      promptMode: parsed.data.promptMode,
       directionPreference: parsed.data.directionPreference,
       confidenceTargetPct: parsed.data.confidenceTargetPct,
       slTpSource: parsed.data.slTpSource,
@@ -13148,6 +13270,7 @@ app.post("/settings/ai-prompts/own/generate-save", requireAuth, async (req, res)
     ohlcvBars: parsed.data.ohlcvBars,
     timeframes: parsed.data.timeframes,
     runTimeframe: parsed.data.runTimeframe ?? null,
+    promptMode: parsed.data.promptMode,
     directionPreference: parsed.data.directionPreference,
     confidenceTargetPct: parsed.data.confidenceTargetPct,
     slTpSource: parsed.data.slTpSource,
@@ -13214,6 +13337,7 @@ app.get("/settings/ai-prompts/public", requireAuth, async (_req, res) => {
       confidenceTargetPct: item.confidenceTargetPct,
       slTpSource: item.slTpSource,
       newsRiskMode: item.newsRiskMode,
+      promptMode: item.promptMode,
       isPublic: item.isPublic,
       updatedAt: item.updatedAt
     })),
@@ -14060,6 +14184,10 @@ app.get("/admin/ai-trace/logs", requireAuth, async (req, res) => {
     neutralEnforced: boolean;
     explanationLength: number | null;
     explanationSentenceCount: number | null;
+    explanationParagraphCount: number | null;
+    paragraphFormatRequired: boolean;
+    payloadCompactionProfile: "none" | "minimal_v2_trading" | "minimal_v2_analysis";
+    payloadCompactionDroppedPaths: string[];
     requestedModel: string | null;
     resolvedModel: string | null;
     attemptedModels: string[];
@@ -14074,6 +14202,10 @@ app.get("/admin/ai-trace/logs", requireAuth, async (req, res) => {
         neutralEnforced: false,
         explanationLength: null,
         explanationSentenceCount: null,
+        explanationParagraphCount: null,
+        paragraphFormatRequired: false,
+        payloadCompactionProfile: "none",
+        payloadCompactionDroppedPaths: [],
         requestedModel: null,
         resolvedModel: null,
         attemptedModels: [],
@@ -14090,6 +14222,10 @@ app.get("/admin/ai-trace/logs", requireAuth, async (req, res) => {
         neutralEnforced: false,
         explanationLength: null,
         explanationSentenceCount: null,
+        explanationParagraphCount: null,
+        paragraphFormatRequired: false,
+        payloadCompactionProfile: "none",
+        payloadCompactionDroppedPaths: [],
         requestedModel: null,
         resolvedModel: null,
         attemptedModels: [],
@@ -14115,11 +14251,29 @@ app.get("/admin/ai-trace/logs", requireAuth, async (req, res) => {
       Number.isFinite(explanationSentenceCountRaw) && explanationSentenceCountRaw >= 0
         ? Math.max(0, Math.trunc(explanationSentenceCountRaw))
         : null;
+    const explanationParagraphCountRaw = Number(record.explanationParagraphCount);
+    const explanationParagraphCount =
+      Number.isFinite(explanationParagraphCountRaw) && explanationParagraphCountRaw >= 0
+        ? Math.max(0, Math.trunc(explanationParagraphCountRaw))
+        : null;
     const analysisMode =
       record.analysisMode === "market_analysis"
         ? "market_analysis"
         : "trading_explainer";
     const neutralEnforced = record.neutralEnforced === true;
+    const paragraphFormatRequired = record.paragraphFormatRequired === true;
+    const payloadCompactionProfile =
+      record.payloadCompactionProfile === "minimal_v2_trading"
+      || record.payloadCompactionProfile === "minimal_v2_analysis"
+      || record.payloadCompactionProfile === "none"
+        ? record.payloadCompactionProfile
+        : "none";
+    const payloadCompactionDroppedPaths = Array.isArray(record.payloadCompactionDroppedPaths)
+      ? record.payloadCompactionDroppedPaths
+        .map((value) => (typeof value === "string" ? value.trim() : ""))
+        .filter((value) => value.length > 0)
+        .slice(0, 100)
+      : [];
     const requestedModel =
       typeof record.requestedModel === "string" && record.requestedModel.trim()
         ? record.requestedModel.trim().slice(0, 128)
@@ -14146,6 +14300,10 @@ app.get("/admin/ai-trace/logs", requireAuth, async (req, res) => {
       neutralEnforced,
       explanationLength,
       explanationSentenceCount,
+      explanationParagraphCount,
+      paragraphFormatRequired,
+      payloadCompactionProfile,
+      payloadCompactionDroppedPaths,
       requestedModel,
       resolvedModel,
       attemptedModels,

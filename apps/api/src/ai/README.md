@@ -12,6 +12,7 @@
 - `AI_MODEL` (OpenAI default: `gpt-4o-mini`, Ollama default: `qwen3:8b`)
 - `AI_SIGNAL_ENGINE` (`legacy` default, `agent_v1` enables tool-calling agent loop)
 - `AI_SIGNAL_ENGINE_OLLAMA` (optional, default auto-agent; set `legacy` only for forced compatibility mode)
+- `AI_PAYLOAD_PROFILE_MODE` (`legacy` default, `minimal_v1` or `minimal_v2` for mode-specific minimal payloads)
 - `AI_TIMEOUT_MS` (default: `15000`)
 - `AI_EXPLAINER_TIMEOUT_MS` (optional override for prediction explainer calls)
 - `AI_EXPLAINER_MAX_TOKENS` (default: `650` for prediction explainer calls)
@@ -50,14 +51,37 @@
 - Final output is mapped back to the existing external prediction contract (`up/down/neutral`).
 - Structured schema is runtime-profile aware (`explanation` required, min length adjustable by provider/timeframe profile).
 
-## Ollama Runtime Hints (Prompt-Fit)
+## Runtime Hints (Prompt-Fit)
 - Single prompt templates are kept; provider/timeframe hints are appended at runtime.
-- For `ollama + 4h`, explanation quality target is long-form (8-12 sentences) with a fixed narrative order:
+- For `4h + market_analysis`, explanation quality target is long-form (8-12 sentences) with a fixed narrative order:
   - trend -> momentum -> structure -> liquidity/FVG -> volume -> volatility -> uncertainty -> conclusion
+- For `4h + market_analysis`, explanation format is enforced as exactly 3 paragraphs (blank line between paragraphs) for both OpenAI and Ollama.
 - If explanation quality is below threshold, one targeted correction pass is triggered:
   - keep all fields unchanged
   - expand only `explanation`
   - return strict JSON only
+
+## Payload Profiles (legacy vs minimal_v1/minimal_v2)
+- `legacy` keeps the existing one-size payload shape.
+- `minimal_v1` selects payload by analysis mode:
+  - `trading_explainer`: keeps `prediction`, `slTpSource`, `ohlcvSeries`, `newsRisk/newsBlackout`, SMC, suggested levels, quality fields.
+  - `market_analysis`: removes directional/setup fields (`prediction`, suggested levels, quality fields), keeps neutral analysis context.
+- `minimal_v2` keeps the `minimal_v1` field split and additionally compacts heavy arrays before budget trimming:
+  - `trading_explainer`: `ohlcvSeries<=80`, `historyContext.ev<=20`, `historyContext.lastBars.ohlc<=20`, keep only MTF run timeframe.
+  - `market_analysis`: `ohlcvSeries<=60`, `historyContext.ev<=12`, `historyContext.lastBars.ohlc<=16`, keep only MTF run timeframe.
+- Prompt scaffolding fields (`outputSchema`, `groundingRules`, `selectedIndicatorKeys`, `promptTimeframes`, `promptRunTimeframe`) are moved to system instructions in `minimal_v1`.
+- `meta` is no longer attached to model payload in `minimal_v1`/`minimal_v2` (telemetry stays internal).
+
+## Prompt Mode UX (Trading vs Analysis)
+- Prompt templates now support `promptMode` (`trading_explainer` or `market_analysis`) as a compatible API field.
+- Persisted source of truth remains `marketAnalysisUpdateEnabled`; mode is mapped both ways for backward compatibility.
+- Server-side normalization rules:
+  - `market_analysis` -> force `directionPreference=either`, `confidenceTargetPct=60`, `slTpSource=local`, `newsRiskMode=off`, `marketAnalysisUpdateEnabled=true`
+  - `trading_explainer` -> `marketAnalysisUpdateEnabled=false`; trading fields remain as provided
+- UI behavior in all prompt editors:
+  - Select mode first.
+  - Trading-only fields are hidden in analysis mode.
+  - Switching to analysis resets hidden trading fields to defaults.
 
 ## 4h Market Analysis Neutral-Only
 - If `marketAnalysisUpdateEnabled=true` and timeframe is `4h`, prediction normalization enforces:
@@ -77,6 +101,7 @@ AI_BASE_URL=http://localhost:11434/v1
 AI_MODEL=qwen3:8b
 AI_API_KEY=ollama
 AI_SIGNAL_ENGINE=agent_v1
+AI_PAYLOAD_PROFILE_MODE=legacy
 # optional hard override if needed:
 # AI_SIGNAL_ENGINE_OLLAMA=legacy
 ```

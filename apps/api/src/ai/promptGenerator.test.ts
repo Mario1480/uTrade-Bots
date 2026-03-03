@@ -23,6 +23,7 @@ const baseSettings: AiPromptSettingsStored = {
       confidenceTargetPct: 60,
       slTpSource: "local",
       newsRiskMode: "off",
+      promptMode: "trading_explainer",
       marketAnalysisUpdateEnabled: false,
       isPublic: false,
       createdAt: "2026-02-22T09:00:00.000Z",
@@ -109,6 +110,7 @@ test("createGeneratedPromptDraft honors setActive true/false", () => {
   assert.equal(inactive.payload.prompts[0]?.confidenceTargetPct, 77);
   assert.equal(inactive.payload.prompts[0]?.slTpSource, "hybrid");
   assert.equal(inactive.payload.prompts[0]?.newsRiskMode, "block");
+  assert.equal(inactive.payload.prompts[0]?.promptMode, "trading_explainer");
   assert.equal(inactive.payload.prompts[0]?.ohlcvBars, 320);
 
   const active = createGeneratedPromptDraft({
@@ -146,7 +148,35 @@ test("createGeneratedPromptDraft uses defaults for optional runtime fields", () 
   assert.equal(draft.payload.prompts[0]?.confidenceTargetPct, 60);
   assert.equal(draft.payload.prompts[0]?.slTpSource, "local");
   assert.equal(draft.payload.prompts[0]?.newsRiskMode, "off");
+  assert.equal(draft.payload.prompts[0]?.promptMode, "trading_explainer");
   assert.equal(draft.payload.prompts[0]?.ohlcvBars, 100);
+});
+
+test("createGeneratedPromptDraft enforces analysis defaults for market_analysis mode", () => {
+  const draft = createGeneratedPromptDraft({
+    existingSettings: baseSettings,
+    name: "Generated analysis",
+    promptText: "analysis",
+    indicatorKeys: ["rsi"],
+    timeframes: ["4h"],
+    runTimeframe: "4h",
+    promptMode: "market_analysis",
+    directionPreference: "long",
+    confidenceTargetPct: 12,
+    slTpSource: "ai",
+    newsRiskMode: "block",
+    setActive: false,
+    isPublic: false,
+    nowIso: "2026-02-22T10:16:00.000Z",
+    promptId: "prompt_analysis"
+  });
+
+  assert.equal(draft.payload.prompts[0]?.promptMode, "market_analysis");
+  assert.equal(draft.payload.prompts[0]?.marketAnalysisUpdateEnabled, true);
+  assert.equal(draft.payload.prompts[0]?.directionPreference, "either");
+  assert.equal(draft.payload.prompts[0]?.confidenceTargetPct, 60);
+  assert.equal(draft.payload.prompts[0]?.slTpSource, "local");
+  assert.equal(draft.payload.prompts[0]?.newsRiskMode, "off");
 });
 
 test("createGeneratedPromptDraft preserves provided preview prompt text", () => {

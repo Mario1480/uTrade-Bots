@@ -165,6 +165,7 @@ test("ai prompt template defaults marketAnalysisUpdateEnabled to false", () => {
   });
 
   assert.equal(parsed.prompts[0]?.marketAnalysisUpdateEnabled, false);
+  assert.equal(parsed.prompts[0]?.promptMode, "trading_explainer");
   assert.equal(parsed.prompts[0]?.slTpSource, "local");
   assert.deepEqual(parsed.prompts[0]?.timeframes, []);
   assert.equal(parsed.prompts[0]?.runTimeframe, null);
@@ -192,13 +193,51 @@ test("ai prompt template keeps marketAnalysisUpdateEnabled=true and exposes it i
   });
 
   assert.equal(parsed.prompts[0]?.marketAnalysisUpdateEnabled, true);
+  assert.equal(parsed.prompts[0]?.promptMode, "market_analysis");
+  assert.equal(parsed.prompts[0]?.directionPreference, "either");
+  assert.equal(parsed.prompts[0]?.confidenceTargetPct, 60);
+  assert.equal(parsed.prompts[0]?.slTpSource, "local");
+  assert.equal(parsed.prompts[0]?.newsRiskMode, "off");
   assert.deepEqual(parsed.prompts[0]?.timeframes, ["1h", "5m"]);
   assert.equal(parsed.prompts[0]?.runTimeframe, "5m");
   assert.equal(parsed.prompts[0]?.timeframe, "5m");
   const runtime = resolveAiPromptRuntimeSettingsForContext(parsed, {}, "db");
   assert.equal(runtime.marketAnalysisUpdateEnabled, true);
+  assert.equal(runtime.promptMode, "market_analysis");
   assert.deepEqual(runtime.timeframes, ["1h", "5m"]);
   assert.equal(runtime.runTimeframe, "5m");
+});
+
+test("promptMode=market_analysis overrides conflicting trading fields", () => {
+  const parsed = parseStoredAiPromptSettings({
+    activePromptId: "prompt_mode",
+    prompts: [
+      {
+        id: "prompt_mode",
+        name: "Mode Prompt",
+        promptText: "x",
+        indicatorKeys: ["rsi"],
+        ohlcvBars: 100,
+        timeframes: ["4h"],
+        runTimeframe: "4h",
+        promptMode: "market_analysis",
+        directionPreference: "short",
+        confidenceTargetPct: 33,
+        slTpSource: "ai",
+        newsRiskMode: "block",
+        marketAnalysisUpdateEnabled: false,
+        isPublic: false
+      }
+    ]
+  });
+
+  const prompt = parsed.prompts[0];
+  assert.equal(prompt?.promptMode, "market_analysis");
+  assert.equal(prompt?.marketAnalysisUpdateEnabled, true);
+  assert.equal(prompt?.directionPreference, "either");
+  assert.equal(prompt?.confidenceTargetPct, 60);
+  assert.equal(prompt?.slTpSource, "local");
+  assert.equal(prompt?.newsRiskMode, "off");
 });
 
 test("legacy timeframe maps to timeframes and runTimeframe", () => {
