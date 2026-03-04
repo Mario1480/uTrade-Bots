@@ -26,12 +26,14 @@ const btcContract: ContractInfo = {
 function createExchangeMock(options: {
   contract?: ContractInfo | null;
   apiAllowed?: boolean;
+  positions?: Array<{ symbol: string; side: "long" | "short"; size: number; entryPrice: number; markPrice?: number }>;
 } = {}) {
   return {
     placeOrderCalls: 0,
     cancelOrderCalls: 0,
     leverageCalls: 0,
     lastPlaceOrder: null as unknown,
+    lastCancelOrderId: null as string | null,
     contract: options.contract ?? (options.apiAllowed === false ? { ...btcContract, apiAllowed: false } : btcContract),
     toCanonicalSymbol(symbol: string) {
       return symbol.replace(/[^A-Za-z0-9]/g, "").toUpperCase();
@@ -46,7 +48,7 @@ function createExchangeMock(options: {
       return { equity: 0 };
     },
     async getPositions() {
-      return [];
+      return options.positions ?? [];
     },
     async setLeverage() {
       this.leverageCalls += 1;
@@ -57,8 +59,9 @@ function createExchangeMock(options: {
       this.lastPlaceOrder = req;
       return { orderId: "1" };
     },
-    async cancelOrder() {
+    async cancelOrder(orderId: string) {
       this.cancelOrderCalls += 1;
+      this.lastCancelOrderId = orderId;
       return;
     }
   };
@@ -131,6 +134,8 @@ test("engine rounds size and price before placeOrder", async () => {
     type: "limit",
     qty: 1.234,
     price: 123.45,
+    takeProfitPrice: undefined,
+    stopLossPrice: undefined,
     reduceOnly: undefined
   });
 });
@@ -158,6 +163,8 @@ test("engine computes qty from desiredNotionalUsd", async () => {
     type: "market",
     qty: 10,
     price: undefined,
+    takeProfitPrice: undefined,
+    stopLossPrice: undefined,
     reduceOnly: undefined
   });
 });
@@ -170,6 +177,115 @@ test("engine executes none intent as noop", async () => {
 
   const result = await engine.execute({ type: "none" });
   assert.deepEqual(result, { status: "noop" });
+  assert.equal(ex.placeOrderCalls, 0);
+  assert.equal(ex.cancelOrderCalls, 0);
+});
+
+test("engine close intent cancels by cancelOrderId when provided", async () => {
+  const ex = createExchangeMock();
+  const engine = new FuturesEngine(ex);
+
+  const result = await engine.execute({
+    type: "close",
+    symbol: "BTCUSDT",
+    reason: "manual",
+    order: {
+      cancelOrderId: "ord_123"
+    }
+  });
+
+  assert.deepEqual(result, { status: "accepted" });
+  assert.equal(ex.cancelOrderCalls, 1);
+  assert.equal(ex.lastCancelOrderId, "ord_123");
+  assert.equal(ex.placeOrderCalls, 0);
+});
+
+test("engine close intent places reduce-only market order against open position", async () => {
+  const ex = createExchangeMock({
+    positions: [
+      {
+        symbol: "BTCUSDT",
+        side: "long",
+        size: 1.23456,
+        entryPrice: 100
+      }
+    ]
+  });
+  const engine = new FuturesEngine(ex);
+
+  const result = await engine.execute({
+    type: "close",
+    symbol: "BTC_USDT",
+    reason: "signal_exit"
+  });
+
+  assert.equal(result.status, "accepted");
+  assert.equal(ex.placeOrderCalls, 1);
+  assert.deepEqual(ex.lastPlaceOrder, {
+    symbol: "BTC_USDT",
+    side: "sell",
+    type: "market",
+    qty: 1.234,
+    price: undefined,
+    reduceOnly: true
+  });
+});
+
+test("engine close intent can partially close with explicit qty", async () => {
+  const ex = createExchangeMock({
+    positions: [
+      {
+        symbol: "BTCUSDT",
+        side: "short",
+        size: 2,
+        entryPrice: 100
+      }
+    ]
+  });
+  const engine = new FuturesEngine(ex);
+
+  const result = await engine.execute({
+    type: "close",
+    symbol: "BTCUSDT",
+    reason: "scale_out",
+    order: {
+      qty: 0.5,
+      reduceOnly: true
+    }
+  });
+
+  assert.equal(result.status, "accepted");
+  assert.equal(ex.placeOrderCalls, 1);
+  assert.deepEqual(ex.lastPlaceOrder, {
+    symbol: "BTC_USDT",
+    side: "buy",
+    type: "market",
+    qty: 0.5,
+    price: undefined,
+    reduceOnly: true
+  });
+});
+
+test("engine close intent returns accepted when no matching open position exists", async () => {
+  const ex = createExchangeMock({
+    positions: [
+      {
+        symbol: "ETHUSDT",
+        side: "long",
+        size: 1,
+        entryPrice: 100
+      }
+    ]
+  });
+  const engine = new FuturesEngine(ex);
+
+  const result = await engine.execute({
+    type: "close",
+    symbol: "BTCUSDT",
+    reason: "signal_exit"
+  });
+
+  assert.deepEqual(result, { status: "accepted" });
   assert.equal(ex.placeOrderCalls, 0);
   assert.equal(ex.cancelOrderCalls, 0);
 });

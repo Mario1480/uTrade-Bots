@@ -1632,7 +1632,7 @@ export default function SettingsPage() {
                         </label>
                         {mexcMode ? (
                           <div className="settingsMutedText">
-                            MEXC Futures nutzt `apiKey` + `apiSecret`. Passphrase wird nicht benötigt.
+                            MEXC Spot nutzt `apiKey` + `apiSecret`. Passphrase wird nicht benötigt.
                           </div>
                         ) : null}
                       </>

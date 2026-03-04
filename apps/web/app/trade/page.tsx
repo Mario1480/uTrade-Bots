@@ -21,6 +21,8 @@ type ExchangeAccountItem = {
   apiKeyMasked: string;
   lastUsedAt: string | null;
   marketDataExchange?: string | null;
+  supportsSpotManual?: boolean;
+  supportsPerpManual?: boolean;
 };
 
 type TradingSettings = {
@@ -207,6 +209,12 @@ function errMsg(e: unknown): string {
     if (text.toLowerCase().includes("mexc capability") && text.toLowerCase().includes("disabled")) {
       return "MEXC ist aktuell im Read-only Stage-Modus (Order-Writes deaktiviert).";
     }
+    if (text.includes("mexc_perp_disabled") || code === "mexc_perp_disabled") {
+      return "MEXC Perp ist aktuell deaktiviert.";
+    }
+    if (text.includes("mexc_spot_disabled") || code === "mexc_spot_disabled") {
+      return "MEXC Spot ist aktuell deaktiviert.";
+    }
     if (text.includes("spot_mode_not_supported_for_exchange")) {
       return "Spot mode ist für dieses Konto nicht verfügbar.";
     }
@@ -339,12 +347,24 @@ function TradePageContent() {
   );
   const spotModeSupportedForAccount = useMemo(() => {
     if (!selectedAccount) return false;
+    if (typeof selectedAccount.supportsSpotManual === "boolean") {
+      return selectedAccount.supportsSpotManual;
+    }
     const exchange = String(selectedAccount.exchange ?? "").toLowerCase();
     if (exchange === "bitget") return true;
+    if (exchange === "mexc") return true;
     if (exchange === "paper" && String(selectedAccount.marketDataExchange ?? "").toLowerCase() === "bitget") {
       return true;
     }
     return false;
+  }, [selectedAccount]);
+  const perpModeSupportedForAccount = useMemo(() => {
+    if (!selectedAccount) return false;
+    if (typeof selectedAccount.supportsPerpManual === "boolean") {
+      return selectedAccount.supportsPerpManual;
+    }
+    const exchange = String(selectedAccount.exchange ?? "").toLowerCase();
+    return exchange !== "mexc";
   }, [selectedAccount]);
   const isSpotMode = marketType === "spot";
   const isSpotSell = isSpotMode && spotOrderSide === "sell";
@@ -915,6 +935,15 @@ function TradePageContent() {
       void persistSettings({ marketType: "perp" });
     }
   }, [isSpotMode, selectedAccountId, spotModeSupportedForAccount]);
+
+  useEffect(() => {
+    if (!selectedAccountId) return;
+    if (marketType === "perp" && !perpModeSupportedForAccount) {
+      setMarketType("spot");
+      setSoftWarning(t("messages.perpModeNotAvailableForAccount"));
+      void persistSettings({ marketType: "spot" });
+    }
+  }, [marketType, perpModeSupportedForAccount, selectedAccountId]);
 
   useEffect(() => {
     if (!isSpotMode) return;
@@ -1703,6 +1732,7 @@ function TradePageContent() {
                 <div className="tradeOrderModeSwitch">
                   <button
                     className={`tradeOrderModeBtn ${marketType === "perp" ? "tradeOrderModeBtnActive" : ""}`}
+                    disabled={!perpModeSupportedForAccount}
                     onClick={() => {
                       setMarketType("perp");
                       void persistSettings({ marketType: "perp" });
@@ -1725,6 +1755,8 @@ function TradePageContent() {
                 </div>
                 {!spotModeSupportedForAccount ? (
                   <div className="tradeDeskSectionHint">{t("messages.spotModeNotAvailableForAccount")}</div>
+                ) : !perpModeSupportedForAccount ? (
+                  <div className="tradeDeskSectionHint">{t("messages.perpModeNotAvailableForAccount")}</div>
                 ) : null}
               </div>
 

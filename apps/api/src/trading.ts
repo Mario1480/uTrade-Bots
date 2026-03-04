@@ -13,6 +13,18 @@ const DEFAULT_PAPER_BALANCE_USD = Math.max(
   Number(process.env.PAPER_TRADING_START_BALANCE_USD ?? "10000")
 );
 
+function envEnabled(name: string, fallback: boolean): boolean {
+  const raw = process.env[name];
+  if (raw === undefined) return fallback;
+  return !["0", "false", "off", "no"].includes(String(raw).trim().toLowerCase());
+}
+
+const MEXC_FUTURES_ENABLED_LEGACY = envEnabled("MEXC_FUTURES_ENABLED", false);
+const MEXC_PERP_ENABLED = envEnabled(
+  "MEXC_PERP_ENABLED",
+  MEXC_FUTURES_ENABLED_LEGACY
+);
+
 export type TradingAccount = {
   id: string;
   userId: string;
@@ -923,6 +935,13 @@ export function createFuturesAdapter(account: TradingAccount): BitgetFuturesAdap
     });
   }
   if (account.exchange === "mexc") {
+    if (!MEXC_PERP_ENABLED) {
+      throw new ManualTradingError(
+        "mexc_perp_disabled",
+        400,
+        "mexc_perp_disabled"
+      );
+    }
     return new MexcFuturesAdapter({
       apiKey: account.apiKey,
       apiSecret: account.apiSecret,

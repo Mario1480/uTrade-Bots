@@ -194,7 +194,9 @@ async function processRunBotJob(data: RunBotJobData | unknown) {
         stateJson: {
           ticks,
           outcome: tickResult.outcome,
-          gate: tickResult.gate
+          gate: tickResult.gate,
+          signalDecision: tickResult.trace.signal,
+          executionDecision: tickResult.trace.execution
         }
       });
     } catch (error) {
@@ -250,7 +252,9 @@ async function runPollSupervisor() {
               lastTickAt: new Date(),
               stateJson: {
                 outcome: tickResult.outcome,
-                gate: tickResult.gate
+                gate: tickResult.gate,
+                signalDecision: tickResult.trace.signal,
+                executionDecision: tickResult.trace.execution
               }
             });
           } catch (error) {

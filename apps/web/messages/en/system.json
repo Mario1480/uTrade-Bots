@@ -652,14 +652,14 @@
     }
   },
   "trade": {
-    "title": "Manual Trading Desk",
-    "subtitle": "TradingView + futures order controls.",
+    "title": "Trading Desk",
+    "subtitle": "TradingView + order controls.",
     "loadingPage": "Loading trade page...",
     "loadingDesk": "Loading trading desk...",
     "noAccountsTitle": "No exchange accounts available",
-    "noAccountsHint": "Add a futures exchange account first to use manual trading.",
+    "noAccountsHint": "Add a exchange account first to use manual trading.",
     "contextHint": "Select account, symbol and timeframe used by chart and order ticket.",
-    "orderEntryHint": "Place manual futures orders with live account data.",
+    "orderEntryHint": "Place manual orders with live account data.",
     "alerts": {
       "error": "Error",
       "actionFailed": "Action failed",
@@ -834,7 +834,8 @@
       "marketWebsocketError": "Market websocket error",
       "marketStreamDisconnected": "Market stream disconnected.",
       "userStreamDisconnected": "User stream disconnected.",
-      "spotModeNotAvailableForAccount": "Spot mode is only available for Bitget and Paper accounts linked to Bitget market data.",
+      "spotModeNotAvailableForAccount": "Spot mode is only available for Bitget, MEXC, and Paper accounts linked to Bitget market data.",
+      "perpModeNotAvailableForAccount": "Perp mode is currently not available for this account.",
       "leverageNotSupportedForSpot": "Leverage is not supported in spot mode.",
       "tpSlNotSupportedForSpot": "TP/SL is not supported in spot mode (v1).",
       "leverageRangeError": "Leverage must be between 1 and 125.",

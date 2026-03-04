@@ -1,56 +1,31 @@
-import {
-  FuturesEngine,
-  isGlobalTradingEnabled,
-  type EngineExecutionResult,
-  type EngineRiskEvent
-} from "@mm/futures-engine";
 import type { TradeIntent } from "@mm/futures-core";
-import { DummyStrategy } from "@mm/strategies";
 import type { ActiveFuturesBot } from "./db.js";
-import type { RiskEventType } from "./db.js";
 import {
-  loadLatestPredictionStateForGate,
   markExchangeAccountUsed,
   writeBotTick,
   writeRiskEvent
 } from "./db.js";
+import { resolveExecutionModeForBot } from "./execution/registry.js";
+import type { ExecutionMode, ExecutionResult } from "./execution/types.js";
 import { log } from "./logger.js";
 import {
-  applySizeMultiplierToIntent,
-  evaluateGate,
-  getPredictionGateMetrics,
-  readPredictionGatePolicy,
-  recordPredictionGateDecision,
-  type PredictionGateResult
-} from "./prediction-gate.js";
-import { runPredictionCopierTick } from "./prediction-copier.js";
+  coerceGateSummary,
+  defaultGateSummary,
+  type RunnerDecisionTrace
+} from "./runtime/decisionTrace.js";
+import { createLegacyDummySignalEngine } from "./signal/legacyDummySignalEngine.js";
+import { predictionCopierSignalEngine } from "./signal/predictionCopierSignalEngine.js";
+import type { SignalDecision, SignalEngine } from "./signal/types.js";
 
-const noopExchange = {
-  async getAccountState() {
-    return { equity: 0 };
-  },
-  async getPositions() {
-    return [];
-  },
-  async setLeverage() {
-    return;
-  },
-  async placeOrder() {
-    return { orderId: "noop" };
-  },
-  async cancelOrder() {
-    return;
-  }
-};
-
-const engine = new FuturesEngine(noopExchange, {
-  isTradingEnabled: () => isGlobalTradingEnabled()
-});
+const legacyDummySignalEngine = createLegacyDummySignalEngine();
 
 export type LoopTickResult = {
   outcome: "ok" | "blocked";
   intent: TradeIntent;
   reason: string;
+  signalReason: string;
+  executionReason: string;
+  trace: RunnerDecisionTrace;
   gate: {
     applied: boolean;
     allow: boolean;
@@ -60,197 +35,221 @@ export type LoopTickResult = {
   };
 };
 
-async function handleEngineRiskEvent(botId: string, event: EngineRiskEvent) {
-  const type: RiskEventType =
-    event.type === "KILL_SWITCH_BLOCK"
-      ? "KILL_SWITCH_BLOCK"
-      : "BOT_ERROR";
+export type LoopDependencies = {
+  resolveSignalEngine?: (bot: ActiveFuturesBot) => SignalEngine;
+  resolveExecutionMode?: (bot: ActiveFuturesBot) => ExecutionMode;
+  writeBotTickFn?: typeof writeBotTick;
+  writeRiskEventFn?: typeof writeRiskEvent;
+  markExchangeAccountUsedFn?: typeof markExchangeAccountUsed;
+};
 
-  await writeRiskEvent({
-    botId,
-    type,
-    message: event.message,
-    meta: {
-      engineType: event.type,
-      ...event.meta,
-      timestamp: event.timestamp
+function toEngineLikeReason(strategyKey: string, intent: TradeIntent, result: ExecutionResult): string {
+  if (result.metadata.preserveReason === true) {
+    return result.reason;
+  }
+
+  if (result.status === "blocked") {
+    return `blocked:${result.reason};strategy:${strategyKey};intent:${intent.type}`;
+  }
+
+  const engineStatusRaw = String(result.metadata.engineStatus ?? "").trim();
+  const engineStatus = engineStatusRaw || (result.status === "executed" ? "accepted" : "noop");
+  return `strategy:${strategyKey};intent:${intent.type};engine:${engineStatus}`;
+}
+
+function blockedBySignalDecision(signal: SignalDecision): boolean {
+  return signal.metadata.blockedBySignal === true;
+}
+
+function getSignalIntentType(signal: SignalDecision): TradeIntent["type"] {
+  const raw = String(signal.metadata.signalIntentType ?? "").trim().toLowerCase();
+  if (raw === "open" || raw === "close" || raw === "none") {
+    return raw;
+  }
+  return signal.legacyIntent.type;
+}
+
+function createSignalBlockedReason(bot: ActiveFuturesBot, signal: SignalDecision): string {
+  return `gated:${signal.reason};strategy:${bot.strategyKey};intent:${getSignalIntentType(signal)}`;
+}
+
+export function resolveSignalEngineForBot(bot: ActiveFuturesBot): SignalEngine {
+  if (bot.strategyKey === "prediction_copier") return predictionCopierSignalEngine;
+  return legacyDummySignalEngine;
+}
+
+export async function loopOnce(
+  bot: ActiveFuturesBot,
+  workerId?: string,
+  deps: LoopDependencies = {}
+): Promise<LoopTickResult> {
+  const resolveSignalEngine = deps.resolveSignalEngine ?? resolveSignalEngineForBot;
+  const resolveExecutionMode = deps.resolveExecutionMode ?? resolveExecutionModeForBot;
+  const writeBotTickFn = deps.writeBotTickFn ?? writeBotTick;
+  const writeRiskEventFn = deps.writeRiskEventFn ?? writeRiskEvent;
+  const markExchangeAccountUsedFn = deps.markExchangeAccountUsedFn ?? markExchangeAccountUsed;
+
+  const signalEngine = resolveSignalEngine(bot);
+  const executionMode = resolveExecutionMode(bot);
+  const now = new Date();
+
+  const signalDecision = await signalEngine.decide({
+    bot,
+    now,
+    workerId
+  });
+
+  const signalGate = coerceGateSummary(signalDecision.metadata.gate, defaultGateSummary());
+
+  const emitDecisionRiskEvent = async (params: {
+    type: "SIGNAL_DECISION" | "EXECUTION_DECISION";
+    message: string;
+    meta: Record<string, unknown>;
+  }) => {
+    try {
+      await writeRiskEventFn({
+        botId: bot.id,
+        type: params.type,
+        message: params.message,
+        meta: {
+          workerId: workerId ?? null,
+          strategyKey: bot.strategyKey,
+          ...params.meta
+        }
+      });
+    } catch (error) {
+      log.warn(
+        {
+          botId: bot.id,
+          strategyKey: bot.strategyKey,
+          eventType: params.type,
+          err: String(error)
+        },
+        "decision risk event write failed"
+      );
     }
-  });
-}
-
-function toReason(strategyKey: string, intent: TradeIntent, engineResult: EngineExecutionResult): string {
-  if (engineResult.status === "blocked") {
-    return `blocked:${engineResult.reason};strategy:${strategyKey};intent:${intent.type}`;
-  }
-  return `strategy:${strategyKey};intent:${intent.type};engine:${engineResult.status}`;
-}
-
-export async function loopOnce(bot: ActiveFuturesBot, workerId?: string): Promise<LoopTickResult> {
-  if (bot.strategyKey === "prediction_copier") {
-    const copierResult = await runPredictionCopierTick(bot, workerId);
-    await writeBotTick({
-      botId: bot.id,
-      status: "running",
-      reason: copierResult.reason,
-      intent: copierResult.intent,
-      workerId: workerId ?? null
-    });
-    await markExchangeAccountUsed(bot.exchangeAccountId);
-    return copierResult;
-  }
-
-  const strategyIntent = await DummyStrategy.onTick({
-    nowMs: Date.now(),
-    symbol: bot.symbol
-  });
-
-  const policy = readPredictionGatePolicy(bot.paramsJson ?? {});
-  let intent = strategyIntent;
-  let gateSummary: LoopTickResult["gate"] = {
-    applied: false,
-    allow: true,
-    reason: "gating_disabled",
-    sizeMultiplier: 1,
-    timeframe: null
   };
 
-  if (strategyIntent.type === "open" && policy.enabled) {
-    gateSummary = {
-      applied: true,
-      allow: true,
-      reason: "allowed",
-      sizeMultiplier: 1,
-      timeframe: policy.timeframe
-    };
-    let predictionGateResult: PredictionGateResult;
-    let predictionState: Awaited<ReturnType<typeof loadLatestPredictionStateForGate>> = null;
-    let gateError: string | null = null;
-
-    try {
-      predictionState = await loadLatestPredictionStateForGate({
-        userId: bot.userId,
-        exchange: bot.exchange,
-        exchangeAccountId: bot.exchangeAccountId,
-        symbol: bot.symbol,
-        marketType: "perp",
-        timeframe: policy.timeframe
-      });
-      predictionGateResult = evaluateGate(policy, predictionState);
-    } catch (error) {
-      gateError = String(error);
-      predictionGateResult = policy.failOpenOnError
-        ? {
-            allow: true,
-            reason: "prediction_state_unavailable_fail_open",
-            sizeMultiplier: policy.failOpenMultiplier
-          }
-        : {
-            allow: false,
-            reason: "prediction_state_unavailable",
-            sizeMultiplier: 1
-          };
+  await emitDecisionRiskEvent({
+    type: "SIGNAL_DECISION",
+    message: signalDecision.reason,
+    meta: {
+      signalEngine: signalEngine.key,
+      side: signalDecision.side,
+      confidence: signalDecision.confidence,
+      signalIntentType: getSignalIntentType(signalDecision),
+      blockedBySignal: blockedBySignalDecision(signalDecision),
+      signalGate,
+      signalMetadata: signalDecision.metadata
     }
-
-    gateSummary = {
-      applied: true,
-      allow: predictionGateResult.allow,
-      reason: predictionGateResult.reason,
-      sizeMultiplier: predictionGateResult.sizeMultiplier,
-      timeframe: policy.timeframe
-    };
-    recordPredictionGateDecision(predictionGateResult);
-    const gateMetrics = getPredictionGateMetrics();
-
-    const riskEventType: RiskEventType = predictionGateResult.allow
-      ? predictionGateResult.reason === "prediction_state_unavailable_fail_open"
-        ? "PREDICTION_GATE_FAIL_OPEN"
-        : "PREDICTION_GATE_ALLOW"
-      : "PREDICTION_GATE_BLOCK";
-    await writeRiskEvent({
-      botId: bot.id,
-      type: riskEventType,
-      message: predictionGateResult.reason,
-      meta: {
-        timeframe: policy.timeframe,
-        minConfidence: policy.minConfidence,
-        maxAgeSec: policy.maxAgeSec,
-        allowSignals: policy.allowSignals,
-        blockTags: policy.blockTags,
-        sizeMultiplier: predictionGateResult.sizeMultiplier,
-        confidence: predictionState ? Number(predictionState.confidence) : null,
-        signal: predictionState?.signal ?? null,
-        tags: predictionState?.tags ?? [],
-        predictionUpdatedAt: predictionState?.tsUpdated?.toISOString?.() ?? null,
-        gateError
-      }
-    });
-    log.info(
-      {
-        botId: bot.id,
-        symbol: bot.symbol,
-        timeframe: policy.timeframe,
-        confidence: predictionState ? Number(predictionState.confidence) : null,
-        tags: predictionState?.tags ?? [],
-        decision: predictionGateResult.allow ? "allow" : "deny",
-        reason: predictionGateResult.reason,
-        sizeMultiplier: predictionGateResult.sizeMultiplier,
-        allowedCount: gateMetrics.allowedCount,
-        gatedCount: gateMetrics.gatedCount,
-        avgMultiplier: gateMetrics.avgMultiplier
-      },
-      "prediction gate decision"
-    );
-
-    if (!predictionGateResult.allow) {
-      const reason = `gated:${predictionGateResult.reason};strategy:${bot.strategyKey};intent:${strategyIntent.type}`;
-      await writeBotTick({
-        botId: bot.id,
-        status: "running",
-        reason,
-        intent: strategyIntent,
-        workerId: workerId ?? null
-      });
-      await markExchangeAccountUsed(bot.exchangeAccountId);
-      return {
-        outcome: "blocked",
-        intent: strategyIntent,
-        reason,
-        gate: gateSummary
-      };
-    }
-
-    intent = applySizeMultiplierToIntent(strategyIntent, predictionGateResult.sizeMultiplier);
-  }
-
-  const engineResult = await engine.execute(intent, {
-    botId: bot.id,
-    emitRiskEvent: (event) => handleEngineRiskEvent(bot.id, event)
   });
 
-  const reason = toReason(bot.strategyKey, intent, engineResult);
-  await writeBotTick({
+  if (blockedBySignalDecision(signalDecision)) {
+    const reason = createSignalBlockedReason(bot, signalDecision);
+    const trace: RunnerDecisionTrace = {
+      signal: {
+        engine: signalEngine.key,
+        side: signalDecision.side,
+        confidence: signalDecision.confidence,
+        reason: signalDecision.reason,
+        metadata: signalDecision.metadata
+      },
+      execution: {
+        mode: executionMode.key,
+        status: "blocked",
+        reason: "skipped_due_to_signal_block",
+        metadata: {
+          blockedBySignal: true
+        }
+      }
+    };
+
+    await emitDecisionRiskEvent({
+      type: "EXECUTION_DECISION",
+      message: "skipped_due_to_signal_block",
+      meta: {
+        executionMode: executionMode.key,
+        status: "blocked",
+        reason: "skipped_due_to_signal_block",
+        executionMetadata: {
+          blockedBySignal: true
+        }
+      }
+    });
+
+    await writeBotTickFn({
+      botId: bot.id,
+      status: "running",
+      reason,
+      intent: signalDecision.legacyIntent,
+      workerId: workerId ?? null,
+      trace
+    });
+    await markExchangeAccountUsedFn(bot.exchangeAccountId);
+
+    return {
+      outcome: "blocked",
+      intent: signalDecision.legacyIntent,
+      reason,
+      signalReason: signalDecision.reason,
+      executionReason: "skipped_due_to_signal_block",
+      trace,
+      gate: signalGate
+    };
+  }
+
+  const executionResult = await executionMode.execute(signalDecision, {
+    bot,
+    now,
+    workerId
+  });
+
+  const reason = toEngineLikeReason(bot.strategyKey, executionResult.legacy.intent, executionResult);
+  const trace: RunnerDecisionTrace = {
+    signal: {
+      engine: signalEngine.key,
+      side: signalDecision.side,
+      confidence: signalDecision.confidence,
+      reason: signalDecision.reason,
+      metadata: signalDecision.metadata
+    },
+    execution: {
+      mode: executionMode.key,
+      status: executionResult.status,
+      reason: executionResult.reason,
+      metadata: executionResult.metadata
+    }
+  };
+
+  await emitDecisionRiskEvent({
+    type: "EXECUTION_DECISION",
+    message: executionResult.reason,
+    meta: {
+      executionMode: executionMode.key,
+      status: executionResult.status,
+      reason: executionResult.reason,
+      executionMetadata: executionResult.metadata
+    }
+  });
+
+  await writeBotTickFn({
     botId: bot.id,
     status: "running",
     reason,
-    intent,
-    workerId: workerId ?? null
+    intent: executionResult.legacy.intent,
+    workerId: workerId ?? null,
+    trace
   });
 
-  await markExchangeAccountUsed(bot.exchangeAccountId);
-
-  if (engineResult.status === "blocked") {
-    return {
-      outcome: "blocked",
-      intent,
-      reason,
-      gate: gateSummary
-    };
-  }
+  await markExchangeAccountUsedFn(bot.exchangeAccountId);
 
   return {
-    outcome: "ok",
-    intent,
+    outcome: executionResult.legacy.outcome,
+    intent: executionResult.legacy.intent,
     reason,
-    gate: gateSummary
+    signalReason: signalDecision.reason,
+    executionReason: executionResult.reason,
+    trace,
+    gate: executionResult.legacy.gate
   };
 }

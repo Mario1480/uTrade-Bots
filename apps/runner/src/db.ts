@@ -1,5 +1,6 @@
 import { prisma } from "@mm/db";
 import type { TradeIntent } from "@mm/futures-core";
+import type { RunnerDecisionTrace } from "./runtime/decisionTrace.js";
 import { decryptSecret } from "./secret-crypto.js";
 
 const db = prisma as any;
@@ -97,6 +98,8 @@ export type OpenBotTradeHistoryEntry = {
 };
 
 export type RiskEventType =
+  | "SIGNAL_DECISION"
+  | "EXECUTION_DECISION"
   | "KILL_SWITCH_BLOCK"
   | "CIRCUIT_BREAKER_TRIPPED"
   | "BOT_ERROR"
@@ -1475,8 +1478,16 @@ export async function writeBotTick(params: {
   reason: string | null;
   intent: TradeIntent;
   workerId?: string | null;
+  trace?: RunnerDecisionTrace | null;
 }) {
   const now = new Date();
+  const stateJson: Record<string, unknown> = {
+    intentType: params.intent.type
+  };
+  if (params.trace) {
+    stateJson.signalDecision = params.trace.signal;
+    stateJson.executionDecision = params.trace.execution;
+  }
   await upsertBotRuntime({
     botId: params.botId,
     status: params.status,
@@ -1484,9 +1495,7 @@ export async function writeBotTick(params: {
     workerId: params.workerId ?? null,
     lastHeartbeatAt: now,
     lastTickAt: now,
-    stateJson: {
-      intentType: params.intent.type
-    },
+    stateJson,
     ...(params.status === "error" ? { lastError: params.reason } : {})
   });
 }

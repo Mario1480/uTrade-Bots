@@ -61,6 +61,10 @@ function toOrderSide(positionSide: "long" | "short"): "buy" | "sell" {
   return positionSide === "long" ? "buy" : "sell";
 }
 
+function toCloseOrderSide(positionSide: "long" | "short"): "buy" | "sell" {
+  return positionSide === "long" ? "sell" : "buy";
+}
+
 function toCanonicalFallbackSymbol(symbol: string): string {
   return symbol.replace(/[^A-Za-z0-9]/g, "").toUpperCase();
 }
@@ -265,6 +269,8 @@ export class FuturesEngine {
         type: orderType,
         qty: normalizedQty,
         price: normalizedPrice,
+        takeProfitPrice: order.takeProfitPrice,
+        stopLossPrice: order.stopLossPrice,
         reduceOnly: order.reduceOnly
       });
 
@@ -312,11 +318,154 @@ export class FuturesEngine {
   }
 
   private async executeCloseIntent(
-    intent: Extract<TradeIntent, { type: "close" }>
+    intent: Extract<TradeIntent, { type: "close" }>,
+    ctx: EngineExecutionContext
   ): Promise<EngineExecutionResult> {
     const cancelOrderId = intent.order?.cancelOrderId;
     if (!cancelOrderId) {
-      return { status: "accepted" };
+      const contract = await this.resolveContractInfo(ctx, intent.symbol);
+      if (!contract) {
+        return this.block(ctx, {
+          type: "SYMBOL_UNKNOWN",
+          reason: "symbol_unknown",
+          message: `Unknown symbol ${intent.symbol}`,
+          meta: {
+            symbol: intent.symbol
+          }
+        });
+      }
+
+      if (!contract.apiAllowed) {
+        return this.block(ctx, {
+          type: "TRADING_NOT_ALLOWED",
+          reason: "trading_not_allowed",
+          message: `Trading disabled for ${contract.canonicalSymbol} (apiAllowed=false)`,
+          meta: {
+            symbol: contract.canonicalSymbol,
+            mexcSymbol: contract.mexcSymbol
+          }
+        });
+      }
+
+      const positions = await this.ex.getPositions();
+      const openPosition = positions.find((row) => {
+        const canonical = this.ex.toCanonicalSymbol?.(row.symbol) ?? toCanonicalFallbackSymbol(row.symbol);
+        return canonical === contract.canonicalSymbol && Number(row.size) > 0;
+      });
+
+      if (!openPosition) {
+        return { status: "accepted" };
+      }
+
+      const order = intent.order ?? {};
+      const roundMode = order.roundingMode ?? "down";
+      const stepSize = deriveStepSize(contract);
+      if (!stepSize) {
+        return this.block(ctx, {
+          type: "ORDER_VALIDATION_BLOCK",
+          reason: "validation",
+          message: `Missing step size for ${contract.canonicalSymbol}`,
+          meta: {
+            symbol: contract.canonicalSymbol,
+            errorName: "InvalidStepError"
+          }
+        });
+      }
+
+      const requestedQty = Number(order.qty ?? openPosition.size);
+      if (!Number.isFinite(requestedQty) || requestedQty <= 0) {
+        return this.block(ctx, {
+          type: "ORDER_VALIDATION_BLOCK",
+          reason: "validation",
+          message: `Close qty must be > 0 for ${contract.canonicalSymbol}`,
+          meta: {
+            symbol: contract.canonicalSymbol,
+            errorName: "QtyOutOfRangeError"
+          }
+        });
+      }
+
+      let normalizedQty = roundQtyToStep(requestedQty, stepSize, roundMode);
+      normalizedQty = Math.min(normalizedQty, Number(openPosition.size));
+      normalizedQty = clampQty(normalizedQty, contract.minVol, contract.maxVol);
+
+      const qtyValidation = validateQty(
+        normalizedQty,
+        stepSize,
+        contract.minVol,
+        contract.maxVol,
+        contract.canonicalSymbol
+      );
+      if (!qtyValidation.ok) {
+        return this.block(ctx, {
+          type: "ORDER_VALIDATION_BLOCK",
+          reason: "validation",
+          message: qtyValidation.error.message,
+          meta: {
+            symbol: contract.canonicalSymbol,
+            errorName: qtyValidation.error.name
+          }
+        });
+      }
+
+      const orderType = order.type ?? "market";
+      let normalizedPrice: number | undefined;
+
+      if (orderType === "limit") {
+        if (order.price === undefined) {
+          return this.block(ctx, {
+            type: "ORDER_VALIDATION_BLOCK",
+            reason: "validation",
+            message: `Limit order requires price for ${contract.canonicalSymbol}`,
+            meta: {
+              symbol: contract.canonicalSymbol,
+              errorName: "InvalidTickError"
+            }
+          });
+        }
+
+        const tickSize = deriveTickSize(contract);
+        if (!tickSize) {
+          return this.block(ctx, {
+            type: "ORDER_VALIDATION_BLOCK",
+            reason: "validation",
+            message: `Missing tick size for ${contract.canonicalSymbol}`,
+            meta: {
+              symbol: contract.canonicalSymbol,
+              errorName: "InvalidTickError"
+            }
+          });
+        }
+
+        normalizedPrice = roundPriceToTick(order.price, tickSize, roundMode);
+        const priceValidation = validatePrice(normalizedPrice, tickSize, contract.canonicalSymbol);
+        if (!priceValidation.ok) {
+          return this.block(ctx, {
+            type: "ORDER_VALIDATION_BLOCK",
+            reason: "validation",
+            message: priceValidation.error.message,
+            meta: {
+              symbol: contract.canonicalSymbol,
+              errorName: priceValidation.error.name
+            }
+          });
+        }
+      }
+
+      const exchangeSymbol = await this.resolveExchangeSymbol(contract.canonicalSymbol, contract);
+      const placed = await this.ex.placeOrder({
+        symbol: exchangeSymbol,
+        side: toCloseOrderSide(openPosition.side),
+        type: orderType,
+        qty: normalizedQty,
+        price: normalizedPrice,
+        reduceOnly: order.reduceOnly ?? true
+      });
+
+      return {
+        status: "accepted",
+        orderId: placed.orderId
+      };
     }
 
     await this.ex.cancelOrder(cancelOrderId);
@@ -351,7 +500,13 @@ export class FuturesEngine {
     }
 
     if (intent.type === "close") {
-      return this.executeCloseIntent(intent);
+      return this.executeCloseIntent(
+        {
+          ...intent,
+          symbol: this.ex.toCanonicalSymbol?.(intent.symbol) ?? toCanonicalFallbackSymbol(intent.symbol)
+        },
+        ctx
+      );
     }
 
     return { status: "noop" };

@@ -1,5 +1,6 @@
 import crypto from "node:crypto";
 import { HyperliquidFuturesAdapter, MexcFuturesAdapter } from "@mm/futures-exchange";
+import { CcxtSpotClient, CcxtSpotError } from "@mm/exchange";
 
 type HttpMethod = "GET" | "POST" | "DELETE";
 
@@ -72,6 +73,19 @@ function toNumber(value: unknown): number | null {
   const n = Number(value);
   return Number.isFinite(n) ? n : null;
 }
+
+function envEnabled(name: string, fallback: boolean): boolean {
+  const raw = process.env[name];
+  if (raw === undefined) return fallback;
+  return !["0", "false", "off", "no"].includes(String(raw).trim().toLowerCase());
+}
+
+const MEXC_SPOT_ENABLED = envEnabled("MEXC_SPOT_ENABLED", true);
+const MEXC_FUTURES_ENABLED_LEGACY = envEnabled("MEXC_FUTURES_ENABLED", false);
+const MEXC_PERP_ENABLED = envEnabled(
+  "MEXC_PERP_ENABLED",
+  MEXC_FUTURES_ENABLED_LEGACY
+);
 
 function stableStringify(value: unknown): string {
   if (value === undefined || value === null) return "";
@@ -346,7 +360,7 @@ async function syncHyperliquidAccount(input: ExchangeSyncInput): Promise<Exchang
   }
 }
 
-async function syncMexcAccount(input: ExchangeSyncInput): Promise<ExchangeSyncResult> {
+async function syncMexcFuturesAccount(input: ExchangeSyncInput): Promise<ExchangeSyncResult> {
   const adapter = new MexcFuturesAdapter({
     apiKey: input.apiKey.trim(),
     apiSecret: input.apiSecret.trim(),
@@ -410,6 +424,91 @@ async function syncMexcAccount(input: ExchangeSyncInput): Promise<ExchangeSyncRe
   }
 }
 
+async function syncMexcSpotAccount(input: ExchangeSyncInput): Promise<ExchangeSyncResult> {
+  const client = new CcxtSpotClient({
+    exchangeId: "mexc",
+    apiKey: input.apiKey.trim(),
+    apiSecret: input.apiSecret.trim(),
+    apiPassphrase: input.passphrase?.trim() || undefined
+  });
+
+  try {
+    const balances = await client.getBalances();
+    const preferred =
+      balances.find((row) => String(row.asset ?? "").toUpperCase() === "USDT") ??
+      balances.find((row) => {
+        const free = Number(row.free ?? 0);
+        const locked = Number(row.locked ?? 0);
+        return Number.isFinite(free + locked) && free + locked > 0;
+      }) ??
+      null;
+
+    const available = preferred ? toNumber(preferred.free) : null;
+    const locked = preferred ? toNumber(preferred.locked) : null;
+    const total =
+      available === null && locked === null
+        ? null
+        : Number(((available ?? 0) + (locked ?? 0)).toFixed(8));
+    const currency = preferred?.asset ? String(preferred.asset).toUpperCase() : "USDT";
+
+    return {
+      syncedAt: new Date(),
+      spotBudget: {
+        total,
+        available,
+        currency
+      },
+      futuresBudget: {
+        equity: null,
+        availableMargin: null,
+        marginCoin: null
+      },
+      pnlTodayUsd: null,
+      details: {
+        exchange: "mexc",
+        endpoint: "ccxt.fetchBalance",
+        productType: "spot"
+      }
+    };
+  } catch (error) {
+    const message = String(error ?? "");
+    const lower = message.toLowerCase();
+    if (error instanceof CcxtSpotError) {
+      const code =
+        error.code === "ccxt_spot_auth_failed"
+          ? "mexc_auth_failed"
+          : error.code === "ccxt_spot_rate_limited"
+            ? "mexc_rate_limited"
+            : error.code === "ccxt_spot_timeout"
+              ? "mexc_network_error"
+              : "mexc_sync_failed";
+      const status =
+        code === "mexc_auth_failed"
+          ? 401
+          : code === "mexc_rate_limited"
+            ? 429
+            : code === "mexc_network_error"
+              ? 504
+              : 502;
+      throw new ExchangeSyncError(`MEXC spot sync failed: ${error.message}`, status, code);
+    }
+    const isAuthError = /auth|apikey|api key|signature|permission|forbidden|invalid/.test(lower);
+    const isRateLimit = /rate limit|too many requests|429/.test(lower);
+    const isNetwork = /network|timeout|timed out|fetch failed/.test(lower);
+    throw new ExchangeSyncError(
+      `MEXC spot sync failed: ${message}`,
+      isAuthError ? 401 : isRateLimit ? 429 : isNetwork ? 504 : 502,
+      isAuthError
+        ? "mexc_auth_failed"
+        : isRateLimit
+          ? "mexc_rate_limited"
+          : isNetwork
+            ? "mexc_network_error"
+            : "mexc_sync_failed"
+    );
+  }
+}
+
 export async function syncExchangeAccount(input: ExchangeSyncInput): Promise<ExchangeSyncResult> {
   const exchange = input.exchange.trim().toLowerCase();
   if (exchange === "bitget") {
@@ -419,7 +518,17 @@ export async function syncExchangeAccount(input: ExchangeSyncInput): Promise<Exc
     return syncHyperliquidAccount(input);
   }
   if (exchange === "mexc") {
-    return syncMexcAccount(input);
+    if (MEXC_PERP_ENABLED) {
+      return syncMexcFuturesAccount(input);
+    }
+    if (!MEXC_SPOT_ENABLED) {
+      throw new ExchangeSyncError(
+        "MEXC integration is disabled by runtime flag.",
+        403,
+        "mexc_disabled"
+      );
+    }
+    return syncMexcSpotAccount(input);
   }
 
   throw new ExchangeSyncError(

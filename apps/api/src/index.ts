@@ -191,12 +191,12 @@ import {
   encodeTradeHistoryCursor,
   type BotTradeHistoryOutcome
 } from "./bots/tradeHistory.js";
-import { BitgetSpotClient } from "./spot/bitget-spot.client.js";
 import {
   marketTimeframeToBitgetSpotGranularity,
   normalizeSpotSymbol,
   splitCanonicalSymbol
 } from "./spot/bitget-spot.mapper.js";
+import { createSpotClient, type SpotClient } from "./spot/spot-client-factory.js";
 import {
   generateAndPersistPrediction,
   resolvePredictionTracking,
@@ -1567,9 +1567,18 @@ const EXCHANGE_AUTO_SYNC_INTERVAL_MS =
 const EXCHANGE_AUTO_SYNC_ENABLED = !["0", "false", "off", "no"].includes(
   String(process.env.EXCHANGE_AUTO_SYNC_ENABLED ?? "1").trim().toLowerCase()
 );
-const MEXC_FUTURES_ENABLED = !["0", "false", "off", "no"].includes(
-  String(process.env.MEXC_FUTURES_ENABLED ?? "1").trim().toLowerCase()
+const MEXC_SPOT_ENABLED = !["0", "false", "off", "no"].includes(
+  String(process.env.MEXC_SPOT_ENABLED ?? "1").trim().toLowerCase()
 );
+const MEXC_FUTURES_ENABLED = !["0", "false", "off", "no"].includes(
+  String(process.env.MEXC_FUTURES_ENABLED ?? "0").trim().toLowerCase()
+);
+const MEXC_PERP_ENABLED =
+  typeof process.env.MEXC_PERP_ENABLED === "string"
+    ? !["0", "false", "off", "no"].includes(
+        String(process.env.MEXC_PERP_ENABLED ?? "0").trim().toLowerCase()
+      )
+    : MEXC_FUTURES_ENABLED;
 const MANUAL_TRADING_SPOT_ENABLED = !["0", "false", "off", "no"].includes(
   String(
     process.env.MANUAL_TRADING_SPOT_ENABLED ??
@@ -1733,10 +1742,21 @@ const PASSWORD_RESET_OTP_TTL_MIN = Math.max(
   Number(process.env.PASSWORD_RESET_OTP_TTL_MIN ?? "15")
 );
 
+function getMexcExchangeLabel(): string {
+  if (MEXC_SPOT_ENABLED && MEXC_PERP_ENABLED) return "MEXC (Spot + Perp)";
+  if (MEXC_SPOT_ENABLED) return "MEXC (Spot)";
+  if (MEXC_PERP_ENABLED) return "MEXC (Perp)";
+  return "MEXC (Disabled)";
+}
+
+function isMexcEnabledAtRuntime(): boolean {
+  return MEXC_SPOT_ENABLED || MEXC_PERP_ENABLED;
+}
+
 const EXCHANGE_OPTION_CATALOG = [
   { value: "bitget", label: "Bitget (Futures)" },
   { value: "hyperliquid", label: "Hyperliquid (Perps)" },
-  { value: "mexc", label: MEXC_FUTURES_ENABLED ? "MEXC (Futures)" : "MEXC (Disabled)" },
+  { value: "mexc", label: getMexcExchangeLabel() },
   { value: "paper", label: "Paper (Simulated Trading)" }
 ] as const;
 
@@ -1746,7 +1766,7 @@ const EXCHANGE_OPTION_VALUES = new Set(EXCHANGE_OPTION_CATALOG.map((row) => row.
 
 function getRuntimeEnabledExchangeValues(): Set<ExchangeOption["value"]> {
   const enabled = new Set<ExchangeOption["value"]>(["bitget", "hyperliquid", "paper"]);
-  if (MEXC_FUTURES_ENABLED) {
+  if (isMexcEnabledAtRuntime()) {
     enabled.add("mexc");
   }
   return enabled;
@@ -16444,6 +16464,31 @@ function resolveManualOrderSide(
   return "sell";
 }
 
+function resolveManualSpotSupport(params: {
+  exchange: string;
+  marketDataExchange?: string | null;
+}): boolean {
+  if (!MANUAL_TRADING_SPOT_ENABLED) return false;
+  const exchange = String(params.exchange ?? "").toLowerCase();
+  const marketDataExchange = String(params.marketDataExchange ?? exchange).toLowerCase();
+  if (exchange === "bitget" && marketDataExchange === "bitget") return true;
+  if (exchange === "mexc" && marketDataExchange === "mexc") return MEXC_SPOT_ENABLED;
+  if (exchange === "paper" && marketDataExchange === "bitget") return true;
+  return false;
+}
+
+function resolveManualPerpSupport(params: {
+  exchange: string;
+  marketDataExchange?: string | null;
+}): boolean {
+  const exchange = String(params.exchange ?? "").toLowerCase();
+  const marketDataExchange = String(params.marketDataExchange ?? exchange).toLowerCase();
+  if (exchange === "paper" && (!marketDataExchange || marketDataExchange === "paper")) return false;
+  if (exchange === "mexc") return MEXC_PERP_ENABLED;
+  if (exchange === "paper" && marketDataExchange === "mexc") return MEXC_PERP_ENABLED;
+  return true;
+}
+
 function ensureManualSpotEligibility(resolved: Awaited<ReturnType<typeof resolveMarketDataTradingAccount>>) {
   if (!MANUAL_TRADING_SPOT_ENABLED) {
     throw new ManualTradingError(
@@ -16457,6 +16502,16 @@ function ensureManualSpotEligibility(resolved: Awaited<ReturnType<typeof resolve
   const marketData = String(resolved.marketDataAccount.exchange ?? "").toLowerCase();
 
   if (selected === "bitget" && marketData === "bitget") return;
+  if (selected === "mexc" && marketData === "mexc") {
+    if (!MEXC_SPOT_ENABLED) {
+      throw new ManualTradingError(
+        "mexc_spot_disabled",
+        403,
+        "mexc_spot_disabled"
+      );
+    }
+    return;
+  }
   if (selected === "paper" && marketData === "bitget") return;
   if (selected === "paper" && marketData !== "bitget") {
     throw new ManualTradingError(
@@ -16472,26 +16527,11 @@ function ensureManualSpotEligibility(resolved: Awaited<ReturnType<typeof resolve
   );
 }
 
-function createBitgetSpotClient(account: Awaited<ReturnType<typeof resolveTradingAccount>>): BitgetSpotClient {
-  if (String(account.exchange ?? "").toLowerCase() !== "bitget") {
-    throw new ManualTradingError(
-      "spot_mode_not_supported_for_exchange",
-      400,
-      "spot_mode_not_supported_for_exchange"
-    );
-  }
-  if (!account.passphrase?.trim()) {
-    throw new ManualTradingError(
-      "bitget_passphrase_required",
-      400,
-      "bitget_passphrase_required"
-    );
-  }
-  return new BitgetSpotClient({
-    apiKey: account.apiKey,
-    apiSecret: account.apiSecret,
-    apiPassphrase: account.passphrase
-  });
+function createManualSpotClient(
+  account: Awaited<ReturnType<typeof resolveTradingAccount>>,
+  endpoint: string
+): SpotClient {
+  return createSpotClient(account, { endpoint });
 }
 
 function inferSpotSummaryCurrency(symbol: string): string {
@@ -16505,7 +16545,7 @@ function parseSpotOrderType(raw: string | null | undefined): "market" | "limit" 
 }
 
 async function listBitgetSpotPositions(params: {
-  client: BitgetSpotClient;
+  client: SpotClient;
   symbol?: string | null;
   preferredQuoteAsset?: string | null;
 }): Promise<Array<{
@@ -16524,7 +16564,7 @@ async function listBitgetSpotPositions(params: {
   const quoteAsset = requestedPair?.quoteAsset ?? String(params.preferredQuoteAsset ?? "USDT").toUpperCase();
 
   const rows = balances.filter((row) => {
-    const asset = String(row.coin ?? "").trim().toUpperCase();
+    const asset = String(row.coin ?? row.asset ?? "").trim().toUpperCase();
     if (!asset) return false;
     if (asset === quoteAsset || asset === "USDT" || asset === "USDC") return false;
     if (requestedPair?.baseAsset && requestedPair.baseAsset !== asset) return false;
@@ -16534,7 +16574,7 @@ async function listBitgetSpotPositions(params: {
   });
 
   const items = await Promise.all(rows.map(async (row) => {
-    const baseAsset = String(row.coin ?? "").trim().toUpperCase();
+    const baseAsset = String(row.coin ?? row.asset ?? "").trim().toUpperCase();
     const symbol = `${baseAsset}${quoteAsset}`;
     let markPrice: number | null = null;
     try {
@@ -16572,7 +16612,7 @@ app.get("/api/symbols", requireAuth, async (req, res) => {
     const resolved = await resolveMarketDataTradingAccount(user.id, exchangeAccountId);
     if (marketType === "spot") {
       ensureManualSpotEligibility(resolved);
-      const spotClient = createBitgetSpotClient(resolved.marketDataAccount);
+      const spotClient = createManualSpotClient(resolved.marketDataAccount, "/api/symbols");
       const items = await spotClient.listSymbols();
       const defaultSymbol =
         items.find((item) => item.tradable)?.symbol ??
@@ -16626,7 +16666,7 @@ app.get("/api/market/candles", requireAuth, async (req, res) => {
       if (!symbol) {
         return res.status(400).json({ error: "symbol_required" });
       }
-      const spotClient = createBitgetSpotClient(resolved.marketDataAccount);
+      const spotClient = createManualSpotClient(resolved.marketDataAccount, "/api/market/candles");
       const granularity = marketTimeframeToBitgetSpotGranularity(parsed.data.timeframe);
       const raw = await spotClient.getCandles({
         symbol,
@@ -16696,7 +16736,7 @@ app.get("/api/account/summary", requireAuth, async (req, res) => {
     const resolved = await resolveMarketDataTradingAccount(user.id, exchangeAccountId);
     if (marketType === "spot") {
       ensureManualSpotEligibility(resolved);
-      const spotClient = createBitgetSpotClient(resolved.marketDataAccount);
+      const spotClient = createManualSpotClient(resolved.marketDataAccount, "/api/account/summary");
       const preferredSymbol = normalizeSpotSymbol(
         typeof req.query.symbol === "string" ? req.query.symbol : settings.symbol
       );
@@ -16740,7 +16780,7 @@ app.get("/api/account/summary", requireAuth, async (req, res) => {
         spotClient.getBalances()
       ]);
       const baseBalance = preferredBaseAsset
-        ? balances.find((row) => String(row.coin ?? "").trim().toUpperCase() === preferredBaseAsset)
+        ? balances.find((row) => String(row.coin ?? row.asset ?? "").trim().toUpperCase() === preferredBaseAsset)
         : null;
       const baseAvailable = baseBalance ? toFiniteNumber(baseBalance.available) : null;
       const baseFrozen = baseBalance ? toFiniteNumber(baseBalance.frozen ?? baseBalance.locked ?? baseBalance.lock) : null;
@@ -16749,7 +16789,7 @@ app.get("/api/account/summary", requireAuth, async (req, res) => {
           ? null
           : Number(((baseAvailable ?? 0) + (baseFrozen ?? 0)).toFixed(8));
       const positionsCount = balances.filter((row) => {
-        const asset = String(row.coin ?? "").trim().toUpperCase();
+        const asset = String(row.coin ?? row.asset ?? "").trim().toUpperCase();
         if (!asset || asset === summary.currency) return false;
         const available = Number(row.available ?? 0);
         const frozen = Number(row.frozen ?? row.locked ?? row.lock ?? 0);
@@ -16888,7 +16928,7 @@ app.get("/api/positions", requireAuth, async (req, res) => {
     const resolved = await resolveMarketDataTradingAccount(user.id, exchangeAccountId);
     if (marketType === "spot") {
       ensureManualSpotEligibility(resolved);
-      const spotClient = createBitgetSpotClient(resolved.marketDataAccount);
+      const spotClient = createManualSpotClient(resolved.marketDataAccount, "/api/positions");
       if (isPaperTradingAccount(resolved.selectedAccount)) {
         const items = await listPaperSpotPositions(
           resolved.selectedAccount,
@@ -16947,7 +16987,7 @@ app.get("/api/orders/open", requireAuth, async (req, res) => {
     const resolved = await resolveMarketDataTradingAccount(user.id, exchangeAccountId);
     if (marketType === "spot") {
       ensureManualSpotEligibility(resolved);
-      const spotClient = createBitgetSpotClient(resolved.marketDataAccount);
+      const spotClient = createManualSpotClient(resolved.marketDataAccount, "/api/orders/open");
       const items = isPaperTradingAccount(resolved.selectedAccount)
         ? await listPaperSpotOpenOrders(resolved.selectedAccount, spotClient, spotSymbol || undefined)
         : await spotClient.getOpenOrders(spotSymbol || undefined);
@@ -17011,7 +17051,7 @@ app.post("/api/orders", requireAuth, async (req, res) => {
       }
       const side = resolveManualOrderSide(parsed.data.side, marketType);
       if (isPaperTradingAccount(resolved.selectedAccount)) {
-        const spotClient = createBitgetSpotClient(resolved.marketDataAccount);
+        const spotClient = createManualSpotClient(resolved.marketDataAccount, "/api/orders");
         const placed = await placePaperSpotOrder(resolved.selectedAccount, spotClient, {
           symbol,
           side,
@@ -17026,7 +17066,7 @@ app.post("/api/orders", requireAuth, async (req, res) => {
           status: "accepted"
         });
       }
-      const spotClient = createBitgetSpotClient(resolved.marketDataAccount);
+      const spotClient = createManualSpotClient(resolved.marketDataAccount, "/api/orders");
       const placed = await spotClient.placeOrder({
         symbol,
         side,
@@ -17133,7 +17173,7 @@ app.post("/api/orders/edit", requireAuth, async (req, res) => {
       }
 
       if (isPaperTradingAccount(resolved.selectedAccount)) {
-        const spotClient = createBitgetSpotClient(resolved.marketDataAccount);
+        const spotClient = createManualSpotClient(resolved.marketDataAccount, "/api/orders/edit");
         const updated = await editPaperSpotOrder(resolved.selectedAccount, spotClient, {
           orderId: parsed.data.orderId,
           symbol,
@@ -17148,7 +17188,7 @@ app.post("/api/orders/edit", requireAuth, async (req, res) => {
         });
       }
 
-      const spotClient = createBitgetSpotClient(resolved.marketDataAccount);
+      const spotClient = createManualSpotClient(resolved.marketDataAccount, "/api/orders/edit");
       const current = (await spotClient.getOpenOrders(symbol)).find((row) => row.orderId === parsed.data.orderId);
       if (!current) {
         throw new ManualTradingError("order_not_found", 404, "order_not_found");
@@ -17240,7 +17280,7 @@ app.post("/api/orders/cancel", requireAuth, async (req, res) => {
     if (marketType === "spot") {
       ensureManualSpotEligibility(resolved);
       const symbol = normalizeSpotSymbol(parsed.data.symbol);
-      const spotClient = createBitgetSpotClient(resolved.marketDataAccount);
+      const spotClient = createManualSpotClient(resolved.marketDataAccount, "/api/orders/cancel");
       if (isPaperTradingAccount(resolved.selectedAccount)) {
         await cancelPaperSpotOrder(
           resolved.selectedAccount,
@@ -17316,7 +17356,7 @@ app.post("/api/orders/cancel-all", requireAuth, async (req, res) => {
     if (marketType === "spot") {
       ensureManualSpotEligibility(resolved);
       const symbol = normalizeSpotSymbol(symbolRaw);
-      const spotClient = createBitgetSpotClient(resolved.marketDataAccount);
+      const spotClient = createManualSpotClient(resolved.marketDataAccount, "/api/orders/cancel-all");
       const result = isPaperTradingAccount(resolved.selectedAccount)
         ? await cancelAllPaperSpotOrders(resolved.selectedAccount, spotClient, symbol || undefined)
         : await spotClient.cancelAll(symbol || undefined);
@@ -17421,7 +17461,9 @@ app.post("/api/positions/close", requireAuth, async (req, res) => {
     }
 
     const adapter = marketType === "perp" ? createBitgetAdapter(resolved.marketDataAccount) : null;
-    const spotClient = marketType === "spot" ? createBitgetSpotClient(resolved.marketDataAccount) : null;
+    const spotClient = marketType === "spot"
+      ? createManualSpotClient(resolved.marketDataAccount, "/api/positions/close")
+      : null;
 
     try {
       const symbol = marketType === "spot"
@@ -17724,6 +17766,8 @@ app.get("/exchange-accounts", requireAuth, async (_req, res) => {
     }
     const linkedMarketDataId = paperBindings[row.id] ?? null;
     const linkedMarketData = linkedMarketDataId ? linkedById.get(linkedMarketDataId) ?? null : null;
+    const exchange = normalizeExchangeValue(String(row.exchange ?? ""));
+    const marketDataExchange = linkedMarketData?.exchange ?? exchange;
     return {
       id: row.id,
       exchange: row.exchange,
@@ -17752,7 +17796,15 @@ app.get("/exchange-accounts", requireAuth, async (_req, res) => {
           : null,
       marketDataExchangeAccountId: linkedMarketDataId,
       marketDataExchange: linkedMarketData?.exchange ?? null,
-      marketDataLabel: linkedMarketData?.label ?? null
+      marketDataLabel: linkedMarketData?.label ?? null,
+      supportsSpotManual: resolveManualSpotSupport({
+        exchange,
+        marketDataExchange
+      }),
+      supportsPerpManual: resolveManualPerpSupport({
+        exchange,
+        marketDataExchange
+      })
     };
   });
 
@@ -17856,7 +17908,7 @@ app.get("/dashboard/overview", requireAuth, async (_req, res) => {
       try {
         const resolved = await resolveMarketDataTradingAccount(user.id, paperAccountId);
         if (normalizeExchangeValue(resolved.marketDataAccount.exchange) !== "bitget") return;
-        const spotClient = createBitgetSpotClient(resolved.marketDataAccount);
+        const spotClient = createManualSpotClient(resolved.marketDataAccount, "dashboard/exchange-overview");
         const spotSummary = await getPaperSpotAccountState(resolved.selectedAccount, spotClient);
         paperSpotBudgetByAccount.set(paperAccountId, {
           total: spotSummary.equity ?? null,
@@ -18675,11 +18727,11 @@ app.post("/exchange-accounts", requireAuth, async (req, res) => {
   }
 
   const requestedExchange = normalizeExchangeValue(parsed.data.exchange);
-  if (requestedExchange === "mexc" && !MEXC_FUTURES_ENABLED) {
+  if (requestedExchange === "mexc" && !isMexcEnabledAtRuntime()) {
     return res.status(403).json({
       error: "exchange_disabled",
-      code: "mexc_futures_disabled",
-      message: "MEXC futures integration is disabled by runtime flag."
+      code: "mexc_disabled",
+      message: "MEXC integration is disabled by runtime flag."
     });
   }
   const allowedExchanges = await getAllowedExchangeValues();
@@ -18810,7 +18862,10 @@ app.post("/exchange-accounts/:id/test-connection", requireAuth, async (req, res)
         let paperSpotBudget: Awaited<ReturnType<typeof syncExchangeAccount>>["spotBudget"] = null;
         if (normalizeExchangeValue(resolved.marketDataAccount.exchange) === "bitget") {
           try {
-            const spotClient = createBitgetSpotClient(resolved.marketDataAccount);
+            const spotClient = createManualSpotClient(
+              resolved.marketDataAccount,
+              "/exchange-accounts/:id/test-connection"
+            );
             const spotSummary = await getPaperSpotAccountState(resolved.selectedAccount, spotClient);
             paperSpotBudget = {
               total: spotSummary.equity ?? null,
@@ -19783,6 +19838,13 @@ app.put("/bots/:id", requireAuth, async (req, res) => {
 
   if (!bot) return res.status(404).json({ error: "bot_not_found" });
   if (!bot.futuresConfig) return res.status(409).json({ error: "futures_config_missing" });
+  if (normalizeExchangeValue(bot.exchange) === "mexc" && !MEXC_PERP_ENABLED) {
+    return res.status(400).json({
+      error: "mexc_perp_disabled",
+      code: "mexc_perp_disabled",
+      message: "MEXC Perp is disabled by runtime flag."
+    });
+  }
 
   const nextStrategyKey = parsed.data.strategyKey ?? bot.futuresConfig.strategyKey;
   const nextParamsJson = parsed.data.paramsJson ?? (bot.futuresConfig.paramsJson as Record<string, unknown> ?? {});
@@ -19931,6 +19993,13 @@ app.post("/bots", requireAuth, async (req, res) => {
     }
   });
   if (!account) return res.status(400).json({ error: "exchange_account_not_found" });
+  if (normalizeExchangeValue(account.exchange) === "mexc" && !MEXC_PERP_ENABLED) {
+    return res.status(400).json({
+      error: "mexc_perp_disabled",
+      code: "mexc_perp_disabled",
+      message: "MEXC Perp is disabled by runtime flag."
+    });
+  }
 
   let symbolForCreate = normalizeSymbolInput(parsed.data.symbol);
   let paramsJsonForCreate = asRecord(parsed.data.paramsJson);
@@ -20021,6 +20090,13 @@ app.post("/bots/:id/start", requireAuth, async (req, res) => {
   if (!bot) return res.status(404).json({ error: "bot_not_found" });
   if (!bot.futuresConfig) return res.status(409).json({ error: "futures_config_missing" });
   if (!bot.exchangeAccountId) return res.status(409).json({ error: "exchange_account_missing" });
+  if (normalizeExchangeValue(bot.exchange) === "mexc" && !MEXC_PERP_ENABLED) {
+    return res.status(400).json({
+      error: "mexc_perp_disabled",
+      code: "mexc_perp_disabled",
+      message: "MEXC Perp is disabled by runtime flag."
+    });
+  }
 
   if (bot.futuresConfig.strategyKey === "prediction_copier") {
     const { root, nested } = readPredictionCopierRootConfig(bot.futuresConfig.paramsJson);
@@ -20380,7 +20456,7 @@ async function handleMarketWsConnection(
   const requestedMarketType = url.searchParams.get("marketType");
 
   let context: MarketWsContext | null = null;
-  let spotClient: BitgetSpotClient | null = null;
+  let spotClient: SpotClient | null = null;
   let pollTimer: NodeJS.Timeout | null = null;
   let cleaned = false;
   const unsubs: Array<() => void> = [];
@@ -20408,7 +20484,7 @@ async function handleMarketWsConnection(
         exchangeAccountId ?? settings.exchangeAccountId
       );
       ensureManualSpotEligibility(resolved);
-      spotClient = createBitgetSpotClient(resolved.marketDataAccount);
+      spotClient = createManualSpotClient(resolved.marketDataAccount, "/ws/market");
       const symbols = await spotClient.listSymbols();
       const normalizedPreferred = normalizeSpotSymbol(requestedSymbol ?? settings.symbol);
       const symbol =
@@ -20655,7 +20731,7 @@ async function handleUserWsConnection(
   const requestedMarketType = url.searchParams.get("marketType");
 
   let context: MarketWsContext | null = null;
-  let spotClient: BitgetSpotClient | null = null;
+  let spotClient: SpotClient | null = null;
   let cleaned = false;
   let balanceTimer: NodeJS.Timeout | null = null;
   const unsubs: Array<() => void> = [];
@@ -20683,7 +20759,7 @@ async function handleUserWsConnection(
         exchangeAccountId ?? settings.exchangeAccountId
       );
       ensureManualSpotEligibility(resolved);
-      spotClient = createBitgetSpotClient(resolved.marketDataAccount);
+      spotClient = createManualSpotClient(resolved.marketDataAccount, "/ws/user");
       const paperMode = isPaperTradingAccount(resolved.selectedAccount);
 
       await saveTradingSettings(user.id, {

@@ -30,6 +30,8 @@ export type TradeOrderParams = {
   type?: OrderType;
   qty?: number;
   price?: number;
+  takeProfitPrice?: number;
+  stopLossPrice?: number;
   reduceOnly?: boolean;
   roundingMode?: "down" | "up" | "nearest";
   leverage?: number;

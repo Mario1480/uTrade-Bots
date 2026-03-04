@@ -1,5 +1,14 @@
 import type { Balance, MidPrice, Order, Quote, MyTrade } from "@mm/core";
 
+export type ExchangeCapabilities = {
+  supportsSpot: boolean;
+  supportsPerp: boolean;
+  supportsEditOrder: boolean;
+  supportsCancelAll: boolean;
+  supportsLeverage: boolean;
+  supportsTpSl: boolean;
+};
+
 export interface ExchangePublic {
   getMidPrice(symbol: string): Promise<MidPrice>;
   // Optional: WS streaming can be added later; runner can poll.
@@ -18,3 +27,7 @@ export interface ExchangePrivate {
 }
 
 export interface Exchange extends ExchangePublic, ExchangePrivate {}
+
+export interface ExchangeWithCapabilities extends Exchange {
+  getCapabilities?(): ExchangeCapabilities;
+}

@@ -1,6 +1,6 @@
 import crypto from "node:crypto";
 import type { TradeIntent } from "@mm/futures-core";
-import { isGlobalTradingEnabled } from "@mm/futures-engine";
+import { FuturesEngine, isGlobalTradingEnabled } from "@mm/futures-engine";
 import { BitgetFuturesAdapter, HyperliquidFuturesAdapter, MexcFuturesAdapter } from "@mm/futures-exchange";
 import type {
   ActiveFuturesBot,
@@ -133,6 +133,78 @@ const DEFAULT_PAPER_EQUITY_USD = Math.max(
   0,
   Number(process.env.PAPER_TRADING_START_BALANCE_USD ?? "10000")
 );
+const MEXC_FUTURES_ENABLED_LEGACY = !["0", "false", "off", "no"].includes(
+  String(process.env.MEXC_FUTURES_ENABLED ?? "0").trim().toLowerCase()
+);
+const MEXC_PERP_ENABLED =
+  typeof process.env.MEXC_PERP_ENABLED === "string"
+    ? !["0", "false", "off", "no"].includes(
+        String(process.env.MEXC_PERP_ENABLED ?? "0").trim().toLowerCase()
+      )
+    : MEXC_FUTURES_ENABLED_LEGACY;
+
+function mapEngineRiskTypeToRunnerRiskType(eventType: string): "KILL_SWITCH_BLOCK" | "BOT_ERROR" {
+  return eventType === "KILL_SWITCH_BLOCK" ? "KILL_SWITCH_BLOCK" : "BOT_ERROR";
+}
+
+export type PredictionCopierEngineExecutionResult = {
+  orderId: string | null;
+  blockedReason: string | null;
+};
+
+export type PredictionCopierEngineExecuteDeps = {
+  createEngine?: (adapter: unknown) => Pick<FuturesEngine, "execute">;
+  writeRiskEventFn?: typeof writeRiskEvent;
+};
+
+export async function executePredictionCopierIntentViaEngine(params: {
+  adapter: unknown;
+  botId: string;
+  intent: Extract<TradeIntent, { type: "open" | "close" }>;
+  deps?: PredictionCopierEngineExecuteDeps;
+}): Promise<PredictionCopierEngineExecutionResult> {
+  const createEngine = params.deps?.createEngine ?? ((adapter) => new FuturesEngine(adapter as any));
+  const writeRiskEventFn = params.deps?.writeRiskEventFn ?? writeRiskEvent;
+
+  const engine = createEngine(params.adapter);
+  const engineResult = await engine.execute(
+    params.intent,
+    {
+      botId: params.botId,
+      emitRiskEvent: async (event) => {
+        await writeRiskEventFn({
+          botId: params.botId,
+          type: mapEngineRiskTypeToRunnerRiskType(event.type),
+          message: event.message,
+          meta: {
+            engineType: event.type,
+            ...event.meta,
+            timestamp: event.timestamp
+          }
+        });
+      }
+    }
+  );
+
+  if (engineResult.status === "blocked") {
+    return {
+      orderId: null,
+      blockedReason: engineResult.reason
+    };
+  }
+
+  if (engineResult.status !== "accepted") {
+    return {
+      orderId: null,
+      blockedReason: "noop"
+    };
+  }
+
+  return {
+    orderId: engineResult.orderId ?? null,
+    blockedReason: null
+  };
+}
 
 function normalizeSymbol(value: string | null | undefined): string {
   return String(value ?? "").replace(/[^A-Za-z0-9]/g, "").toUpperCase();
@@ -696,6 +768,9 @@ function getOrCreateAdapter(bot: ActiveFuturesBot): SupportedFuturesAdapter {
   if (cached) return cached;
 
   const marketDataExchange = String(bot.marketData.exchange ?? "").trim().toLowerCase();
+  if (marketDataExchange === "mexc" && !MEXC_PERP_ENABLED) {
+    throw new Error("mexc_perp_disabled");
+  }
 
   const adapter: SupportedFuturesAdapter =
     marketDataExchange === "hyperliquid"
@@ -740,10 +815,57 @@ async function syncOpenPositionInState(botId: string, symbol: string, state: Bot
   });
 }
 
-export async function runPredictionCopierTick(
+
+export type PredictionCopierPreparedTick =
+  | {
+      kind: "blocked";
+      result: PredictionCopierTickResult;
+    }
+  | {
+      kind: "ready";
+      now: Date;
+      symbol: string;
+      config: PredictionCopierConfig;
+      executionExchange: "bitget" | "hyperliquid" | "mexc" | "paper";
+      adapter: SupportedFuturesAdapter;
+      tradeState: BotTradeState;
+      prediction: PredictionGateState | null;
+      predictionHash: string | null;
+      openPosition: NormalizedPosition | null;
+      markPrice: number | null;
+      leverage: number;
+      candidateNotionalUsd: number | null;
+      dailyTradeCount: number;
+      decision: PredictionCopierDecision;
+      sourceMode: "source_state_id" | "legacy_fallback";
+      workerId?: string;
+    };
+
+export type PredictionCopierPreparedTickReady = Extract<PredictionCopierPreparedTick, { kind: "ready" }>;
+
+function createBlockedPredictionCopierTick(params: {
+  config: PredictionCopierConfig;
+  reason: string;
+  gateReason?: string;
+}): PredictionCopierTickResult {
+  return {
+    outcome: "blocked",
+    intent: { type: "none" },
+    reason: params.reason,
+    gate: {
+      applied: true,
+      allow: false,
+      reason: params.gateReason ?? params.reason,
+      sizeMultiplier: 1,
+      timeframe: params.config.timeframe
+    }
+  };
+}
+
+export async function preparePredictionCopierTick(
   bot: ActiveFuturesBot,
   workerId?: string
-): Promise<PredictionCopierTickResult> {
+): Promise<PredictionCopierPreparedTick> {
   const symbol = normalizeSymbol(bot.symbol);
   const now = new Date();
   const config = readPredictionCopierConfig(bot);
@@ -759,31 +881,34 @@ export async function runPredictionCopierTick(
     marketDataExchange === "bitget" || marketDataExchange === "hyperliquid" || marketDataExchange === "mexc";
   if (!executionSupported || !marketDataSupported) {
     return {
-      outcome: "blocked",
-      intent: { type: "none" },
-      reason: "prediction_copier_exchange_not_supported",
-      gate: {
-        applied: true,
-        allow: false,
-        reason: "prediction_copier_exchange_not_supported",
-        sizeMultiplier: 1,
-        timeframe: config.timeframe
-      }
+      kind: "blocked",
+      result: createBlockedPredictionCopierTick({
+        config,
+        reason: "prediction_copier_exchange_not_supported"
+      })
+    };
+  }
+
+  if (
+    !MEXC_PERP_ENABLED &&
+    (executionExchange === "mexc" || marketDataExchange === "mexc")
+  ) {
+    return {
+      kind: "blocked",
+      result: createBlockedPredictionCopierTick({
+        config,
+        reason: "mexc_perp_disabled"
+      })
     };
   }
 
   if (!config.symbols.includes(symbol)) {
     return {
-      outcome: "blocked",
-      intent: { type: "none" },
-      reason: "prediction_copier_symbol_not_enabled",
-      gate: {
-        applied: true,
-        allow: false,
-        reason: "prediction_copier_symbol_not_enabled",
-        sizeMultiplier: 1,
-        timeframe: config.timeframe
-      }
+      kind: "blocked",
+      result: createBlockedPredictionCopierTick({
+        config,
+        reason: "prediction_copier_symbol_not_enabled"
+      })
     };
   }
 
@@ -818,31 +943,21 @@ export async function runPredictionCopierTick(
       }
     });
     return {
-      outcome: "blocked",
-      intent: { type: "none" },
-      reason: "prediction_source_missing",
-      gate: {
-        applied: true,
-        allow: false,
-        reason: "prediction_source_missing",
-        sizeMultiplier: 1,
-        timeframe: config.timeframe
-      }
+      kind: "blocked",
+      result: createBlockedPredictionCopierTick({
+        config,
+        reason: "prediction_source_missing"
+      })
     };
   }
 
   if (prediction && prediction.marketType !== "perp") {
     return {
-      outcome: "blocked",
-      intent: { type: "none" },
-      reason: "prediction_copier_spot_not_supported",
-      gate: {
-        applied: true,
-        allow: false,
-        reason: "prediction_copier_spot_not_supported",
-        sizeMultiplier: 1,
-        timeframe: config.timeframe
-      }
+      kind: "blocked",
+      result: createBlockedPredictionCopierTick({
+        config,
+        reason: "prediction_copier_spot_not_supported"
+      })
     };
   }
 
@@ -858,31 +973,21 @@ export async function runPredictionCopierTick(
       }
     });
     return {
-      outcome: "blocked",
-      intent: { type: "none" },
-      reason: "prediction_source_symbol_mismatch",
-      gate: {
-        applied: true,
-        allow: false,
-        reason: "prediction_source_symbol_mismatch",
-        sizeMultiplier: 1,
-        timeframe: config.timeframe
-      }
+      kind: "blocked",
+      result: createBlockedPredictionCopierTick({
+        config,
+        reason: "prediction_source_symbol_mismatch"
+      })
     };
   }
 
   if (prediction && prediction.timeframe !== config.timeframe) {
     return {
-      outcome: "blocked",
-      intent: { type: "none" },
-      reason: "prediction_source_timeframe_mismatch",
-      gate: {
-        applied: true,
-        allow: false,
-        reason: "prediction_source_timeframe_mismatch",
-        sizeMultiplier: 1,
-        timeframe: config.timeframe
-      }
+      kind: "blocked",
+      result: createBlockedPredictionCopierTick({
+        config,
+        reason: "prediction_source_timeframe_mismatch"
+      })
     };
   }
 
@@ -1113,6 +1218,52 @@ export async function runPredictionCopierTick(
     }
   });
 
+  return {
+    kind: "ready",
+    now,
+    symbol,
+    config,
+    executionExchange: executionExchange as "bitget" | "hyperliquid" | "mexc" | "paper",
+    adapter,
+    tradeState,
+    prediction,
+    predictionHash,
+    openPosition,
+    markPrice,
+    leverage,
+    candidateNotionalUsd,
+    dailyTradeCount,
+    decision,
+    sourceMode,
+    workerId
+  };
+}
+
+export async function executePredictionCopierPreparedTick(
+  bot: ActiveFuturesBot,
+  prepared: PredictionCopierPreparedTick
+): Promise<PredictionCopierTickResult> {
+  if (prepared.kind === "blocked") {
+    return prepared.result;
+  }
+
+  const {
+    now,
+    symbol,
+    config,
+    executionExchange,
+    adapter,
+    tradeState,
+    prediction,
+    predictionHash,
+    openPosition,
+    markPrice,
+    leverage,
+    candidateNotionalUsd,
+    dailyTradeCount,
+    decision
+  } = prepared;
+
   if (decision.action === "skip") {
     await syncOpenPositionInState(bot.id, symbol, tradeState, openPosition);
     return {
@@ -1160,7 +1311,6 @@ export async function runPredictionCopierTick(
       };
     }
 
-    const orderSide = openPosition.side === "long" ? "sell" : "buy";
     const entryPriceForPnl =
       Number.isFinite(Number(tradeState.openEntryPrice))
         ? Number(tradeState.openEntryPrice)
@@ -1198,14 +1348,36 @@ export async function runPredictionCopierTick(
             ?? openPosition.markPrice
             ?? openPosition.entryPrice
             ?? null
-        }).then((row) => ({ orderId: row.orderId ?? `paper_${bot.id}_${Date.now()}` }))
-      : await adapter.placeOrder({
-          symbol,
-          side: orderSide,
-          type: "market",
-          qty: openPosition.size,
-          reduceOnly: config.execution.reduceOnlyOnExit
+        }).then((row) => ({ orderId: row.orderId ?? `paper_${bot.id}_${Date.now()}`, blockedReason: null }))
+      : await executePredictionCopierIntentViaEngine({
+          adapter,
+          botId: bot.id,
+          intent: {
+            type: "close",
+            symbol,
+            reason: decision.reason,
+            order: {
+              type: "market",
+              qty: openPosition.size,
+              reduceOnly: config.execution.reduceOnlyOnExit
+            }
+          }
         });
+
+    if (placed.blockedReason) {
+      return {
+        outcome: "blocked",
+        intent: { type: "none" },
+        reason: `prediction_copier_exit_engine_blocked:${placed.blockedReason}`,
+        gate: {
+          applied: true,
+          allow: false,
+          reason: `exit_${placed.blockedReason}`,
+          sizeMultiplier: 1,
+          timeframe: config.timeframe
+        }
+      };
+    }
 
     await upsertBotTradeState({
       botId: bot.id,
@@ -1230,7 +1402,7 @@ export async function runPredictionCopierTick(
         exitPrice: exitPriceForPnl,
         outcome: mapExitOutcome(decision.reason),
         exitReason: decision.reason,
-        exitOrderId: placed.orderId
+        exitOrderId: placed.orderId ?? null
       });
       if (closedHistory.closedCount === 0) {
         await writeRiskEvent({
@@ -1240,7 +1412,7 @@ export async function runPredictionCopierTick(
           meta: {
             symbol,
             reason: decision.reason,
-            orderId: placed.orderId
+            orderId: placed.orderId ?? null
           }
         });
       }
@@ -1252,7 +1424,7 @@ export async function runPredictionCopierTick(
         meta: {
           symbol,
           reason: decision.reason,
-          orderId: placed.orderId,
+          orderId: placed.orderId ?? null,
           error: error instanceof Error ? error.message : String(error)
         }
       });
@@ -1263,13 +1435,14 @@ export async function runPredictionCopierTick(
       type: "PREDICTION_COPIER_TRADE",
       message: `exit:${decision.reason}`,
       meta: {
-        orderId: placed.orderId,
+        orderId: placed.orderId ?? null,
         symbol,
         side: openPosition.side,
         qty: openPosition.size,
         entryPrice: entryPriceForPnl,
         exitPrice: exitPriceForPnl,
         realizedPnlUsd,
+        realizedPnlPct,
         reason: decision.reason
       }
     });
@@ -1312,10 +1485,6 @@ export async function runPredictionCopierTick(
     };
   }
 
-  if (executionExchange !== "paper") {
-    await adapter.setLeverage(symbol, leverage, bot.marginMode);
-  }
-
   const qty = Number((candidateNotionalUsd / markPrice).toFixed(8));
   if (!Number.isFinite(qty) || qty <= 0) {
     return {
@@ -1332,7 +1501,6 @@ export async function runPredictionCopierTick(
     };
   }
 
-  const orderSide = decision.side === "long" ? "buy" : "sell";
   const limitPrice =
     config.execution.orderType === "limit"
       ? buildLimitEntryPrice(decision.side, markPrice, config.execution.limitOffsetBps)
@@ -1356,15 +1524,41 @@ export async function runPredictionCopierTick(
         fillPrice: markPrice,
         takeProfitPrice: tpSl.takeProfitPrice ?? null,
         stopLossPrice: tpSl.stopLossPrice ?? null
-      })
-    : await adapter.placeOrder({
-        symbol,
-        side: orderSide,
-        type: config.execution.orderType,
-        qty,
-        price: limitPrice,
-        ...tpSl
+      }).then((row) => ({ orderId: row.orderId ?? `paper_${bot.id}_${Date.now()}`, blockedReason: null }))
+    : await executePredictionCopierIntentViaEngine({
+        adapter,
+        botId: bot.id,
+        intent: {
+          type: "open",
+          symbol,
+          side: decision.side,
+          order: {
+            type: config.execution.orderType,
+            qty,
+            price: limitPrice,
+            leverage,
+            marginMode: bot.marginMode,
+            reduceOnly: false,
+            takeProfitPrice: tpSl.takeProfitPrice ?? undefined,
+            stopLossPrice: tpSl.stopLossPrice ?? undefined
+          }
+        }
       });
+
+  if (placed.blockedReason) {
+    return {
+      outcome: "blocked",
+      intent: { type: "none" },
+      reason: `prediction_copier_entry_engine_blocked:${placed.blockedReason}`,
+      gate: {
+        applied: true,
+        allow: false,
+        reason: `entry_${placed.blockedReason}`,
+        sizeMultiplier: 1,
+        timeframe: config.timeframe
+      }
+    };
+  }
 
   await upsertBotTradeState({
     botId: bot.id,
@@ -1400,7 +1594,7 @@ export async function runPredictionCopierTick(
       entryNotionalUsd: Number((qty * markPrice).toFixed(8)),
       tpPrice: tpSl.takeProfitPrice ?? null,
       slPrice: tpSl.stopLossPrice ?? null,
-      entryOrderId: placed.orderId,
+      entryOrderId: placed.orderId ?? null,
       predictionStateId: prediction?.id ?? null,
       predictionHash,
       predictionSignal: prediction ? normalizePredictionSignal(prediction.signal) : null,
@@ -1415,7 +1609,7 @@ export async function runPredictionCopierTick(
       meta: {
         symbol,
         side: decision.side,
-        orderId: placed.orderId,
+        orderId: placed.orderId ?? null,
         error: error instanceof Error ? error.message : String(error)
       }
     });
@@ -1426,7 +1620,7 @@ export async function runPredictionCopierTick(
     type: "PREDICTION_COPIER_TRADE",
     message: `enter:${decision.side}`,
     meta: {
-      orderId: placed.orderId,
+      orderId: placed.orderId ?? null,
       symbol,
       side: decision.side,
       qty,
@@ -1476,4 +1670,12 @@ export async function runPredictionCopierTick(
       timeframe: config.timeframe
     }
   };
+}
+
+export async function runPredictionCopierTick(
+  bot: ActiveFuturesBot,
+  workerId?: string
+): Promise<PredictionCopierTickResult> {
+  const prepared = await preparePredictionCopierTick(bot, workerId);
+  return executePredictionCopierPreparedTick(bot, prepared);
 }

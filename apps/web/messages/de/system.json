@@ -652,14 +652,14 @@
     }
   },
   "trade": {
-    "title": "Manuelles Trading Desk",
-    "subtitle": "Chart + Futures-Order-Steuerung.",
+    "title": "Trading Desk",
+    "subtitle": "Chart + Order-Controll.",
     "loadingPage": "Trade-Seite wird geladen...",
     "loadingDesk": "Trading Desk wird geladen...",
     "noAccountsTitle": "Keine Exchange-Konten verfügbar",
-    "noAccountsHint": "Füge zuerst ein Futures-Exchange-Konto hinzu, um manuell zu handeln.",
+    "noAccountsHint": "Füge zuerst ein Exchange-Konto hinzu, um manuell zu handeln.",
     "contextHint": "Wähle Konto, Symbol und Timeframe für Chart und Order-Ticket.",
-    "orderEntryHint": "Platziere manuelle Futures-Orders mit Live-Kontodaten.",
+    "orderEntryHint": "Platziere manuelle Orders mit Live-Kontodaten.",
     "alerts": {
       "error": "Fehler",
       "actionFailed": "Aktion fehlgeschlagen",
@@ -834,7 +834,8 @@
       "marketWebsocketError": "Market-Websocket-Fehler",
       "marketStreamDisconnected": "Market-Stream getrennt.",
       "userStreamDisconnected": "User-Stream getrennt.",
-      "spotModeNotAvailableForAccount": "Spot-Modus ist nur für Bitget und Paper-Konten mit Bitget-Marktdaten verfügbar.",
+      "spotModeNotAvailableForAccount": "Spot-Modus ist nur für Bitget, MEXC und Paper-Konten mit Bitget-Marktdaten verfügbar.",
+      "perpModeNotAvailableForAccount": "Perp-Modus ist für dieses Konto aktuell nicht verfügbar.",
       "leverageNotSupportedForSpot": "Leverage wird im Spot-Modus nicht unterstützt.",
       "tpSlNotSupportedForSpot": "TP/SL wird im Spot-Modus (v1) nicht unterstützt.",
       "leverageRangeError": "Leverage muss zwischen 1 und 125 liegen.",
