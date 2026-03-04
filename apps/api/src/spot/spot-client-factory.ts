@@ -494,11 +494,19 @@ function createNativeBitgetSpotClient(account: TradingAccount): SpotClient {
 }
 
 function createCcxtBackend(account: TradingAccount): SpotClient {
+  const exchange = String(account.exchange ?? "").trim().toLowerCase();
+  const binanceMarketDataOnly = exchange === "binance";
+  if (binanceMarketDataOnly && (account.apiKey || account.apiSecret || account.passphrase)) {
+    logger.info("spot_client_ignoring_credentials_for_market_data_only_exchange", {
+      exchange,
+      reason: "binance_market_data_only"
+    });
+  }
   const ccxtClient = new CcxtSpotClient({
     exchangeId: account.exchange,
-    apiKey: account.apiKey,
-    apiSecret: account.apiSecret,
-    apiPassphrase: account.passphrase ?? undefined
+    apiKey: binanceMarketDataOnly ? undefined : account.apiKey,
+    apiSecret: binanceMarketDataOnly ? undefined : account.apiSecret,
+    apiPassphrase: binanceMarketDataOnly ? undefined : (account.passphrase ?? undefined)
   });
   return new CcxtSpotBridge(ccxtClient);
 }
