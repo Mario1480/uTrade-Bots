@@ -52,7 +52,7 @@
     "unavailable": "Offene Positionen sind aktuell nicht verfuegbar.",
     "none": "Keine offenen Positionen gefunden.",
     "partial": "Einige Exchanges sind aktuell nicht verfuegbar ({count}).",
-    "actionOpenDesk": "Desk oeffnen",
+    "actionOpenDesk": "Desk öffnen",
     "side": {
       "long": "Long",
       "short": "Short"
@@ -87,10 +87,10 @@
   "lossAnalysis": {
     "title": "Account Loss Analysis",
     "subtitle": "Top-Risiko-Accounts nach Hybrid-Triggern fuer Tagesverlust und Margin.",
-    "openRiskSettings": "Risk-Einstellungen oeffnen",
+    "openRiskSettings": "Risk-Einstellungen öffnen",
     "loading": "Risikoanalyse wird geladen...",
-    "unavailable": "Risikoanalyse aktuell nicht verfuegbar.",
-    "none": "Keine Accounts fuer die Risikoanalyse verfuegbar.",
+    "unavailable": "Risikoanalyse aktuell nicht verfügbar.",
+    "none": "Keine Accounts für die Risikoanalyse verfügbar.",
     "severity": {
       "critical": "Kritisch",
       "warning": "Warnung",
