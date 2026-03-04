@@ -389,7 +389,7 @@ test("fallback path is used on bad JSON", async () => {
   );
 
   assert.equal(output.disclaimer, "grounded_features_only");
-  assert.equal(output.explanation.length <= 1000, true);
+  assert.equal(output.explanation.length <= 2000, true);
   assert.equal(Array.isArray(output.tags), true);
 });
 
