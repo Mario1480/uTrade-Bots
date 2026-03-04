@@ -116,7 +116,11 @@ function toNumber(value: unknown): number | null {
 function resolveBackend(exchange: string, forced?: SpotBackend): SpotBackend {
   if (forced) return forced;
   const normalized = String(exchange ?? "").trim().toLowerCase();
-  return CEX_SPOT_BACKEND_OVERRIDES[normalized] ?? CEX_SPOT_DEFAULT_BACKEND;
+  const configured = CEX_SPOT_BACKEND_OVERRIDES[normalized] ?? CEX_SPOT_DEFAULT_BACKEND;
+  if (configured === "native" && normalized !== "bitget") {
+    return "ccxt";
+  }
+  return configured;
 }
 
 function resolveWriteEnabled(exchange: string): boolean {

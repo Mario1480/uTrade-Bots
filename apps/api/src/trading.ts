@@ -148,6 +148,17 @@ export type NormalizedTrade = {
   ts: number | null;
 };
 
+export type PerpPriceReader = {
+  getLastPrice?(symbol: string): Promise<number | null>;
+  getTicker?(symbol: string): Promise<{ last?: number | null; mark?: number | null }>;
+  marketApi?: {
+    getTicker: (...args: any[]) => Promise<unknown>;
+    getCandles: (...args: any[]) => Promise<unknown>;
+  };
+  toExchangeSymbol?(symbol: string): Promise<string> | string;
+  productType?: string;
+};
+
 type PaperPositionState = {
   symbol: string;
   side: "long" | "short";
@@ -834,7 +845,13 @@ export async function resolveTradingAccount(userId: string, exchangeAccountId?: 
   }
 
   const exchange = String(account.exchange ?? "").toLowerCase();
-  if (exchange !== "bitget" && exchange !== "hyperliquid" && exchange !== "mexc" && !isPaperExchange(exchange)) {
+  if (
+    exchange !== "bitget" &&
+    exchange !== "hyperliquid" &&
+    exchange !== "mexc" &&
+    exchange !== "binance" &&
+    !isPaperExchange(exchange)
+  ) {
     throw new ManualTradingError(`exchange_not_supported:${exchange}`, 400, "exchange_not_supported");
   }
 
@@ -950,6 +967,13 @@ export function createFuturesAdapter(account: TradingAccount): BitgetFuturesAdap
       productType: process.env.MEXC_PRODUCT_TYPE ?? "USDT-FUTURES",
       marginCoin: process.env.MEXC_MARGIN_COIN ?? "USDT"
     });
+  }
+  if (account.exchange === "binance") {
+    throw new ManualTradingError(
+      "binance_market_data_only",
+      400,
+      "binance_market_data_only"
+    );
   }
   return new BitgetFuturesAdapter({
     apiKey: account.apiKey,
@@ -1202,8 +1226,17 @@ function toPaperOrderId(exchangeAccountId: string, seq: number): string {
   return `paper_${exchangeAccountId}_${String(seq).padStart(8, "0")}`;
 }
 
-async function fetchTickerPrice(adapter: BitgetFuturesAdapter, symbol: string): Promise<number> {
-  const exchangeSymbol = await adapter.toExchangeSymbol(symbol);
+async function fetchTickerPrice(priceReader: PerpPriceReader, symbol: string): Promise<number> {
+  if (typeof priceReader.getLastPrice === "function") {
+    const direct = Number(await priceReader.getLastPrice(symbol));
+    if (Number.isFinite(direct) && direct > 0) return direct;
+  }
+  if (typeof priceReader.getTicker === "function") {
+    const ticker = await priceReader.getTicker(symbol);
+    const fallback = Number(ticker?.mark ?? ticker?.last);
+    if (Number.isFinite(fallback) && fallback > 0) return fallback;
+  }
+
   const readTickerPrice = (value: unknown): number | null => {
     const candidates = Array.isArray(value) ? value : [value];
     for (const candidate of candidates) {
@@ -1257,38 +1290,43 @@ async function fetchTickerPrice(adapter: BitgetFuturesAdapter, symbol: string): 
     return latestClose;
   };
 
-  try {
-    const ticker = await adapter.marketApi.getTicker(exchangeSymbol, adapter.productType);
-    const tickerPrice = readTickerPrice(ticker);
-    if (tickerPrice !== null) return tickerPrice;
-  } catch {
-    // Fallback below uses latest candle close if ticker endpoint is unavailable.
-  }
+  if (
+    priceReader.marketApi &&
+    typeof priceReader.toExchangeSymbol === "function"
+  ) {
+    const exchangeSymbol = await priceReader.toExchangeSymbol(symbol);
+    try {
+      const ticker = await priceReader.marketApi.getTicker(exchangeSymbol, priceReader.productType);
+      const tickerPrice = readTickerPrice(ticker);
+      if (tickerPrice !== null) return tickerPrice;
+    } catch {
+      // Fallback below uses latest candle close.
+    }
 
-  try {
-    const candles = await adapter.marketApi.getCandles({
-      symbol: exchangeSymbol,
-      granularity: "1m",
-      limit: 3,
-      productType: adapter.productType
-    });
-    const candlePrice = readLatestCandleClose(candles);
-    if (candlePrice !== null) return candlePrice;
-  } catch {
-    // ignore and throw canonical manual-trading error below
+    try {
+      const candles = await priceReader.marketApi.getCandles({
+        symbol: exchangeSymbol,
+        granularity: "1m",
+        limit: 3,
+        productType: priceReader.productType
+      });
+      const candlePrice = readLatestCandleClose(candles);
+      if (candlePrice !== null) return candlePrice;
+    } catch {
+      // ignore and throw canonical error below
+    }
   }
-
   throw new ManualTradingError("paper_price_unavailable", 422, "paper_price_unavailable");
 }
 
 async function fetchMarkPriceMap(
-  adapter: BitgetFuturesAdapter,
+  priceReader: PerpPriceReader,
   symbols: string[]
 ): Promise<Map<string, number>> {
   const out = new Map<string, number>();
   for (const symbol of symbols) {
     try {
-      out.set(symbol, await fetchTickerPrice(adapter, symbol));
+      out.set(symbol, await fetchTickerPrice(priceReader, symbol));
     } catch {
       // Keep partial mark-price coverage.
     }
@@ -1309,7 +1347,7 @@ function isLimitOrderMarketable(
 
 async function reconcilePaperState(
   exchangeAccountId: string,
-  adapter: BitgetFuturesAdapter,
+  priceReader: PerpPriceReader,
   seedState?: PaperState
 ): Promise<PaperState> {
   const state = seedState ?? (await getPaperState(exchangeAccountId));
@@ -1323,7 +1361,7 @@ async function reconcilePaperState(
 
   if (symbols.size === 0) return state;
 
-  const markPrices = await fetchMarkPriceMap(adapter, Array.from(symbols));
+  const markPrices = await fetchMarkPriceMap(priceReader, Array.from(symbols));
   if (markPrices.size === 0) return state;
 
   let changed = false;
@@ -1411,11 +1449,11 @@ async function reconcilePaperState(
 
 export async function listPaperOpenOrders(
   account: TradingAccount,
-  adapter: BitgetFuturesAdapter,
+  priceReader: PerpPriceReader,
   symbol?: string
 ): Promise<NormalizedOrder[]> {
   const normalizedSymbol = symbol ? normalizeCanonicalSymbol(symbol) : null;
-  const state = await reconcilePaperState(account.id, adapter);
+  const state = await reconcilePaperState(account.id, priceReader);
   return state.orders
     .filter((row) => row.status === "open")
     .filter((row) => (normalizedSymbol ? row.symbol === normalizedSymbol : true))
@@ -1438,15 +1476,15 @@ export async function listPaperOpenOrders(
 
 export async function listPaperPositions(
   account: TradingAccount,
-  adapter: BitgetFuturesAdapter,
+  priceReader: PerpPriceReader,
   symbol?: string
 ): Promise<NormalizedPosition[]> {
-  const state = await reconcilePaperState(account.id, adapter);
+  const state = await reconcilePaperState(account.id, priceReader);
   const normalizedSymbol = symbol ? normalizeCanonicalSymbol(symbol) : null;
   const positions = normalizedSymbol
     ? state.positions.filter((row) => row.symbol === normalizedSymbol)
     : state.positions.slice();
-  const markPrices = await fetchMarkPriceMap(adapter, positions.map((row) => row.symbol));
+  const markPrices = await fetchMarkPriceMap(priceReader, positions.map((row) => row.symbol));
 
   return positions.map((row) => {
     const markPrice = markPrices.get(row.symbol) ?? null;
@@ -1471,10 +1509,10 @@ export async function listPaperPositions(
 
 export async function getPaperAccountState(
   account: TradingAccount,
-  adapter: BitgetFuturesAdapter
+  priceReader: PerpPriceReader
 ): Promise<{ equity: number; availableMargin: number; marginMode: "cross" }> {
-  const state = await reconcilePaperState(account.id, adapter);
-  const markPrices = await fetchMarkPriceMap(adapter, state.positions.map((row) => row.symbol));
+  const state = await reconcilePaperState(account.id, priceReader);
+  const markPrices = await fetchMarkPriceMap(priceReader, state.positions.map((row) => row.symbol));
   const positions = state.positions.map((row) => {
     const markPrice = markPrices.get(row.symbol) ?? null;
     const unrealizedPnl =
@@ -1578,7 +1616,7 @@ function applyPaperFill(params: {
 
 export async function placePaperOrder(
   account: TradingAccount,
-  adapter: BitgetFuturesAdapter,
+  priceReader: PerpPriceReader,
   input: {
     symbol: string;
     side: "buy" | "sell";
@@ -1598,8 +1636,8 @@ export async function placePaperOrder(
     throw new ManualTradingError("invalid_qty", 400, "invalid_qty");
   }
 
-  const state = await reconcilePaperState(account.id, adapter, await getPaperState(account.id));
-  const marketPrice = await fetchTickerPrice(adapter, symbol);
+  const state = await reconcilePaperState(account.id, priceReader, await getPaperState(account.id));
+  const marketPrice = await fetchTickerPrice(priceReader, symbol);
   const limitPrice = input.type === "limit" && Number.isFinite(Number(input.price)) && Number(input.price) > 0
     ? Number(input.price)
     : null;
@@ -1673,7 +1711,7 @@ export async function placePaperOrder(
 
 export async function closePaperPosition(
   account: TradingAccount,
-  adapter: BitgetFuturesAdapter,
+  priceReader: PerpPriceReader,
   symbol: string,
   side?: "long" | "short"
 ): Promise<string[]> {
@@ -1684,7 +1722,7 @@ export async function closePaperPosition(
   if (!current) return [];
   if (side && current.side !== side) return [];
 
-  const placed = await placePaperOrder(account, adapter, {
+  const placed = await placePaperOrder(account, priceReader, {
     symbol: normalized,
     side: current.side === "long" ? "sell" : "buy",
     type: "market",
@@ -1696,7 +1734,7 @@ export async function closePaperPosition(
 
 export async function setPaperPositionTpSl(
   account: TradingAccount,
-  adapter: BitgetFuturesAdapter,
+  priceReader: PerpPriceReader,
   input: {
     symbol: string;
     side?: "long" | "short";
@@ -1706,7 +1744,7 @@ export async function setPaperPositionTpSl(
 ): Promise<{ updated: boolean }> {
   const symbol = normalizeCanonicalSymbol(input.symbol);
   if (!symbol) throw new ManualTradingError("symbol_required", 400, "symbol_required");
-  const state = await reconcilePaperState(account.id, adapter, await getPaperState(account.id));
+  const state = await reconcilePaperState(account.id, priceReader, await getPaperState(account.id));
   const position = state.positions.find(
     (row) => row.symbol === symbol && (!input.side || row.side === input.side)
   );
@@ -1726,7 +1764,7 @@ export async function setPaperPositionTpSl(
 
 export async function editPaperOrder(
   account: TradingAccount,
-  adapter: BitgetFuturesAdapter,
+  priceReader: PerpPriceReader,
   input: {
     orderId: string;
     symbol?: string;
@@ -1737,7 +1775,7 @@ export async function editPaperOrder(
     stopLossPrice?: number | null;
   }
 ): Promise<{ orderId: string }> {
-  const state = await reconcilePaperState(account.id, adapter, await getPaperState(account.id));
+  const state = await reconcilePaperState(account.id, priceReader, await getPaperState(account.id));
   const normalizedSymbol = input.symbol ? normalizeCanonicalSymbol(input.symbol) : null;
   const row = state.orders.find(
     (order) =>
@@ -1776,11 +1814,11 @@ export async function editPaperOrder(
 
 export async function cancelPaperOrder(
   account: TradingAccount,
-  adapter: BitgetFuturesAdapter,
+  priceReader: PerpPriceReader,
   orderId: string,
   symbol?: string
 ): Promise<{ ok: boolean }> {
-  const state = await reconcilePaperState(account.id, adapter, await getPaperState(account.id));
+  const state = await reconcilePaperState(account.id, priceReader, await getPaperState(account.id));
   const normalizedSymbol = symbol ? normalizeCanonicalSymbol(symbol) : null;
   const row = state.orders.find(
     (order) =>
@@ -1797,10 +1835,10 @@ export async function cancelPaperOrder(
 
 export async function cancelAllPaperOrders(
   account: TradingAccount,
-  adapter: BitgetFuturesAdapter,
+  priceReader: PerpPriceReader,
   symbol?: string
 ): Promise<{ requested: number; cancelled: number; failed: number }> {
-  const state = await reconcilePaperState(account.id, adapter, await getPaperState(account.id));
+  const state = await reconcilePaperState(account.id, priceReader, await getPaperState(account.id));
   const normalizedSymbol = symbol ? normalizeCanonicalSymbol(symbol) : null;
   const targets = state.orders.filter(
     (order) => order.status === "open" && (!normalizedSymbol || order.symbol === normalizedSymbol)

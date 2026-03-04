@@ -272,7 +272,9 @@ export default function SettingsPage() {
   const licenseManagementEnabled = true;
   const passphraseRequired = exchange === "bitget";
   const mexcMode = exchange === "mexc";
+  const binanceMode = exchange === "binance";
   const paperMode = exchange === "paper";
+  const credentialsRequired = !paperMode && !binanceMode;
   const marketDataAccounts = accounts.filter((item) => item.exchange !== "paper");
   const query = searchParams.toString();
 
@@ -1613,11 +1615,21 @@ export default function SettingsPage() {
                       <>
                         <label className="settingsField">
                           <span className="settingsFieldLabel">{tMain("exchange.fields.apiKey")}</span>
-                          <input className="input" value={apiKey} onChange={(e) => setApiKey(e.target.value)} required />
+                          <input
+                            className="input"
+                            value={apiKey}
+                            onChange={(e) => setApiKey(e.target.value)}
+                            required={credentialsRequired}
+                          />
                         </label>
                         <label className="settingsField">
                           <span className="settingsFieldLabel">{tMain("exchange.fields.apiSecret")}</span>
-                          <input className="input" value={apiSecret} onChange={(e) => setApiSecret(e.target.value)} required />
+                          <input
+                            className="input"
+                            value={apiSecret}
+                            onChange={(e) => setApiSecret(e.target.value)}
+                            required={credentialsRequired}
+                          />
                         </label>
                         <label className="settingsField">
                           <span className="settingsFieldLabel">
@@ -1635,6 +1647,11 @@ export default function SettingsPage() {
                             MEXC Spot nutzt `apiKey` + `apiSecret`. Passphrase wird nicht benötigt.
                           </div>
                         ) : null}
+                        {binanceMode ? (
+                          <div className="settingsMutedText">
+                            Binance ist in v1 Market-Data-Only. API-Key/Secret sind optional.
+                          </div>
+                        ) : null}
                       </>
                     )}
                     <button
@@ -1647,7 +1664,7 @@ export default function SettingsPage() {
                         !label ||
                         (paperMode
                           ? !marketDataExchangeAccountId
-                          : (!apiKey || !apiSecret || (passphraseRequired && !passphrase)))
+                          : (credentialsRequired && (!apiKey || !apiSecret || (passphraseRequired && !passphrase))))
                       }
                     >
                       {saving ? tCommon("saving") : tMain("exchange.addAccount")}

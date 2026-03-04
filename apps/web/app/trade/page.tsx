@@ -218,8 +218,17 @@ function errMsg(e: unknown): string {
     if (text.includes("spot_mode_not_supported_for_exchange")) {
       return "Spot mode ist für dieses Konto nicht verfügbar.";
     }
-    if (text.includes("paper_spot_requires_bitget_market_data")) {
-      return "Paper Spot benötigt ein verknüpftes Bitget-Market-Data-Konto.";
+    if (
+      text.includes("paper_spot_requires_supported_market_data") ||
+      text.includes("paper_spot_requires_bitget_market_data")
+    ) {
+      return "Paper Spot benötigt ein verknüpftes Bitget- oder Binance-Market-Data-Konto.";
+    }
+    if (text.includes("paper_perp_requires_supported_market_data")) {
+      return "Paper Perp benötigt ein verknüpftes Market-Data-Konto (Bitget/Hyperliquid/MEXC/Binance).";
+    }
+    if (text.includes("binance_market_data_only") || code === "binance_market_data_only") {
+      return "Binance ist aktuell nur als Market-Data-Quelle für Paper freigeschaltet.";
     }
     if (text.includes("manual_spot_trading_disabled")) {
       return "Spot mode ist aktuell deaktiviert.";
@@ -354,6 +363,9 @@ function TradePageContent() {
     if (exchange === "bitget") return true;
     if (exchange === "mexc") return true;
     if (exchange === "paper" && String(selectedAccount.marketDataExchange ?? "").toLowerCase() === "bitget") {
+      return true;
+    }
+    if (exchange === "paper" && String(selectedAccount.marketDataExchange ?? "").toLowerCase() === "binance") {
       return true;
     }
     return false;

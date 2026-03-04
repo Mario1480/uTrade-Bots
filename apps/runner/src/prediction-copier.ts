@@ -31,7 +31,7 @@ export type PredictionCopierSide = "long" | "short";
 
 export type PredictionCopierConfig = {
   botType: "prediction_copier";
-  exchange: "bitget" | "hyperliquid" | "mexc" | "paper";
+  exchange: "bitget" | "hyperliquid" | "mexc" | "binance" | "paper";
   accountId: string;
   sourceStateId: string | null;
   sourceSnapshot: {
@@ -219,6 +219,31 @@ function clamp(value: number, min: number, max: number): number {
   return Math.max(min, Math.min(max, value));
 }
 
+async function fetchBinancePerpMarkPrice(symbol: string): Promise<number | null> {
+  const normalized = normalizeSymbol(symbol);
+  if (!normalized) return null;
+  const baseUrl = (process.env.BINANCE_PERP_BASE_URL ?? "https://fapi.binance.com").replace(/\/+$/, "");
+  const url = `${baseUrl}/fapi/v1/ticker/price?symbol=${encodeURIComponent(normalized)}`;
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 8000);
+  try {
+    const response = await fetch(url, {
+      method: "GET",
+      headers: { Accept: "application/json" },
+      signal: controller.signal
+    });
+    if (!response.ok) return null;
+    const payload = await response.json().catch(() => null);
+    if (!payload || typeof payload !== "object") return null;
+    const value = toNumber((payload as Record<string, unknown>).price);
+    return value !== null && value > 0 ? value : null;
+  } catch {
+    return null;
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
 function toBoolean(value: unknown, fallback: boolean): boolean {
   if (typeof value === "boolean") return value;
   if (typeof value === "number") return value > 0;
@@ -260,10 +285,11 @@ function normalizeTimeframe(value: unknown): PredictionCopierTimeframe {
   return "15m";
 }
 
-function normalizeExecutionExchange(value: unknown): "bitget" | "hyperliquid" | "mexc" | "paper" {
+function normalizeExecutionExchange(value: unknown): "bitget" | "hyperliquid" | "mexc" | "binance" | "paper" {
   const normalized = String(value ?? "").trim().toLowerCase();
   if (normalized === "hyperliquid") return "hyperliquid";
   if (normalized === "mexc") return "mexc";
+  if (normalized === "binance") return "binance";
   return normalized === "paper" ? "paper" : "bitget";
 }
 
@@ -826,8 +852,8 @@ export type PredictionCopierPreparedTick =
       now: Date;
       symbol: string;
       config: PredictionCopierConfig;
-      executionExchange: "bitget" | "hyperliquid" | "mexc" | "paper";
-      adapter: SupportedFuturesAdapter;
+      executionExchange: "bitget" | "hyperliquid" | "mexc" | "binance" | "paper";
+      adapter: SupportedFuturesAdapter | null;
       tradeState: BotTradeState;
       prediction: PredictionGateState | null;
       predictionHash: string | null;
@@ -876,15 +902,39 @@ export async function preparePredictionCopierTick(
     executionExchange === "bitget" ||
     executionExchange === "hyperliquid" ||
     executionExchange === "mexc" ||
+    executionExchange === "binance" ||
     executionExchange === "paper";
   const marketDataSupported =
-    marketDataExchange === "bitget" || marketDataExchange === "hyperliquid" || marketDataExchange === "mexc";
+    marketDataExchange === "bitget" ||
+    marketDataExchange === "hyperliquid" ||
+    marketDataExchange === "mexc" ||
+    marketDataExchange === "binance";
   if (!executionSupported || !marketDataSupported) {
     return {
       kind: "blocked",
       result: createBlockedPredictionCopierTick({
         config,
         reason: "prediction_copier_exchange_not_supported"
+      })
+    };
+  }
+
+  if (marketDataExchange === "binance" && executionExchange !== "paper") {
+    return {
+      kind: "blocked",
+      result: createBlockedPredictionCopierTick({
+        config,
+        reason: "binance_market_data_only"
+      })
+    };
+  }
+
+  if (executionExchange === "binance") {
+    return {
+      kind: "blocked",
+      result: createBlockedPredictionCopierTick({
+        config,
+        reason: "binance_market_data_only"
       })
     };
   }
@@ -912,8 +962,12 @@ export async function preparePredictionCopierTick(
     };
   }
 
-  const adapter = getOrCreateAdapter(bot);
-  await adapter.contractCache.refresh(false);
+  const adapter = marketDataExchange === "binance" && executionExchange === "paper"
+    ? null
+    : getOrCreateAdapter(bot);
+  if (adapter) {
+    await adapter.contractCache.refresh(false);
+  }
 
   const tradeState = await loadBotTradeState({ botId: bot.id, symbol, now });
   const sourceMode: "source_state_id" | "legacy_fallback" =
@@ -1002,12 +1056,16 @@ export async function preparePredictionCopierTick(
 
   if (executionExchange === "paper") {
     let markPrice: number | null = null;
-    try {
-      const exchangeSymbol = await adapter.toExchangeSymbol(symbol);
-      const ticker = await adapter.marketApi.getTicker(exchangeSymbol);
-      markPrice = parseTickerPrice(ticker);
-    } catch {
-      markPrice = null;
+    if (marketDataExchange === "binance") {
+      markPrice = await fetchBinancePerpMarkPrice(symbol);
+    } else if (adapter) {
+      try {
+        const exchangeSymbol = await adapter.toExchangeSymbol(symbol);
+        const ticker = await adapter.marketApi.getTicker(exchangeSymbol);
+        markPrice = parseTickerPrice(ticker);
+      } catch {
+        markPrice = null;
+      }
     }
     const paperPositions = await listPaperPositionsForRunner({
       exchangeAccountId: bot.exchangeAccountId
@@ -1035,6 +1093,15 @@ export async function preparePredictionCopierTick(
     }
     accountState = { equity };
   } else {
+    if (!adapter) {
+      return {
+        kind: "blocked",
+        result: createBlockedPredictionCopierTick({
+          config,
+          reason: "prediction_copier_missing_market_adapter"
+        })
+      };
+    }
     const [liveAccountState, livePositions] = await Promise.all([
       adapter.getAccountState(),
       adapter.getPositions()
@@ -1091,9 +1158,15 @@ export async function preparePredictionCopierTick(
 
   let markPrice = openPosition?.markPrice ?? openPosition?.entryPrice ?? null;
   if (markPrice === null || markPrice <= 0) {
-    const exchangeSymbol = await adapter.toExchangeSymbol(symbol);
-    const ticker = await adapter.marketApi.getTicker(exchangeSymbol);
-    markPrice = parseTickerPrice(ticker);
+    if (marketDataExchange === "binance" && executionExchange === "paper") {
+      markPrice = await fetchBinancePerpMarkPrice(symbol);
+    } else if (adapter) {
+      const exchangeSymbol = await adapter.toExchangeSymbol(symbol);
+      const ticker = await adapter.marketApi.getTicker(exchangeSymbol);
+      markPrice = parseTickerPrice(ticker);
+    } else {
+      markPrice = null;
+    }
   }
 
   const leverage = resolvePredictionCopierLeverage(bot.leverage);
@@ -1223,7 +1296,7 @@ export async function preparePredictionCopierTick(
     now,
     symbol,
     config,
-    executionExchange: executionExchange as "bitget" | "hyperliquid" | "mexc" | "paper",
+    executionExchange: executionExchange as "bitget" | "hyperliquid" | "mexc" | "binance" | "paper",
     adapter,
     tradeState,
     prediction,
@@ -1263,6 +1336,21 @@ export async function executePredictionCopierPreparedTick(
     dailyTradeCount,
     decision
   } = prepared;
+
+  if (executionExchange !== "paper" && !adapter) {
+    return {
+      outcome: "blocked",
+      intent: { type: "none" },
+      reason: "prediction_copier_missing_market_adapter",
+      gate: {
+        applied: true,
+        allow: false,
+        reason: "missing_market_adapter",
+        sizeMultiplier: 1,
+        timeframe: config.timeframe
+      }
+    };
+  }
 
   if (decision.action === "skip") {
     await syncOpenPositionInState(bot.id, symbol, tradeState, openPosition);

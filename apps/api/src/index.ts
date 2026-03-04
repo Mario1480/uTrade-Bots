@@ -198,6 +198,10 @@ import {
 } from "./spot/bitget-spot.mapper.js";
 import { createSpotClient, type SpotClient } from "./spot/spot-client-factory.js";
 import {
+  createPerpMarketDataClient,
+  type PerpMarketDataClient
+} from "./perp/perp-market-data.client.js";
+import {
   generateAndPersistPrediction,
   resolvePredictionTracking,
   type PredictionSignalMode,
@@ -425,14 +429,14 @@ const exchangeCreateSchema = z.object({
       });
     }
   }
-  if (exchange !== "paper" && !value.apiKey) {
+  if (exchange !== "paper" && exchange !== "binance" && !value.apiKey) {
     ctx.addIssue({
       code: z.ZodIssueCode.custom,
       path: ["apiKey"],
       message: "apiKey is required"
     });
   }
-  if (exchange !== "paper" && !value.apiSecret) {
+  if (exchange !== "paper" && exchange !== "binance" && !value.apiSecret) {
     ctx.addIssue({
       code: z.ZodIssueCode.custom,
       path: ["apiSecret"],
@@ -1585,6 +1589,12 @@ const MANUAL_TRADING_SPOT_ENABLED = !["0", "false", "off", "no"].includes(
     (process.env.NODE_ENV === "production" ? "0" : "1")
   ).trim().toLowerCase()
 );
+const BINANCE_SPOT_ENABLED = !["0", "false", "off", "no"].includes(
+  String(process.env.BINANCE_SPOT_ENABLED ?? "1").trim().toLowerCase()
+);
+const BINANCE_PERP_ENABLED = !["0", "false", "off", "no"].includes(
+  String(process.env.BINANCE_PERP_ENABLED ?? "1").trim().toLowerCase()
+);
 const BOT_QUEUE_RECOVERY_INTERVAL_MS =
   Math.max(5_000, Number(process.env.BOT_QUEUE_RECOVERY_INTERVAL_MS ?? "30000"));
 const PREDICTION_AUTO_ENABLED = !["0", "false", "off", "no"].includes(
@@ -1753,10 +1763,22 @@ function isMexcEnabledAtRuntime(): boolean {
   return MEXC_SPOT_ENABLED || MEXC_PERP_ENABLED;
 }
 
+function getBinanceExchangeLabel(): string {
+  if (BINANCE_SPOT_ENABLED && BINANCE_PERP_ENABLED) return "Binance (Market Data)";
+  if (BINANCE_SPOT_ENABLED) return "Binance (Spot Market Data)";
+  if (BINANCE_PERP_ENABLED) return "Binance (Perp Market Data)";
+  return "Binance (Disabled)";
+}
+
+function isBinanceEnabledAtRuntime(): boolean {
+  return BINANCE_SPOT_ENABLED || BINANCE_PERP_ENABLED;
+}
+
 const EXCHANGE_OPTION_CATALOG = [
   { value: "bitget", label: "Bitget (Futures)" },
   { value: "hyperliquid", label: "Hyperliquid (Perps)" },
   { value: "mexc", label: getMexcExchangeLabel() },
+  { value: "binance", label: getBinanceExchangeLabel() },
   { value: "paper", label: "Paper (Simulated Trading)" }
 ] as const;
 
@@ -1768,6 +1790,9 @@ function getRuntimeEnabledExchangeValues(): Set<ExchangeOption["value"]> {
   const enabled = new Set<ExchangeOption["value"]>(["bitget", "hyperliquid", "paper"]);
   if (isMexcEnabledAtRuntime()) {
     enabled.add("mexc");
+  }
+  if (isBinanceEnabledAtRuntime()) {
+    enabled.add("binance");
   }
   return enabled;
 }
@@ -4001,7 +4026,7 @@ function normalizePromptTimeframeSetForRuntime(
 }
 
 async function buildMtfFramesForPrediction(params: {
-  adapter: BitgetFuturesAdapter;
+  marketDataClient: PerpMarketDataClient;
   exchange: string;
   accountId: string;
   symbol: string;
@@ -4026,7 +4051,6 @@ async function buildMtfFramesForPrediction(params: {
     params.runTimeframe
   ).timeframes;
   const frames: Record<string, Record<string, unknown>> = {};
-  const exchangeSymbol = await params.adapter.toExchangeSymbol(params.symbol);
 
   for (const timeframe of dedupedTimeframes) {
     let candles: CandleBar[];
@@ -4056,9 +4080,9 @@ async function buildMtfFramesForPrediction(params: {
         indicatorSettings: indicatorComputeSettings,
         baseMinBars: 120
       });
-      const candlesRaw = await params.adapter.marketApi.getCandles({
-        symbol: exchangeSymbol,
-        productType: params.adapter.productType,
+      const candlesRaw = await params.marketDataClient.getCandles({
+        symbol: params.symbol,
+        timeframe,
         granularity: timeframeToBitgetGranularity(timeframe),
         limit: candleLookback
       });
@@ -4631,11 +4655,13 @@ async function generateAutoPredictionForUser(
 }> {
   const resolvedAccount = await resolveMarketDataTradingAccount(userId, payload.exchangeAccountId);
   const account = resolvedAccount.selectedAccount;
-  const adapter = createBitgetAdapter(resolvedAccount.marketDataAccount);
+  const perpClient = createManualPerpMarketDataClient(
+    resolvedAccount.marketDataAccount,
+    "prediction/generate-auto"
+  );
 
   try {
     const requestIsSuperadmin = Boolean(options?.isSuperadmin);
-    await adapter.contractCache.warmup();
     const canonicalSymbol = normalizeSymbolInput(payload.symbol);
     if (!canonicalSymbol) {
       throw new ManualTradingError("symbol_required", 400, "symbol_required");
@@ -4966,17 +4992,16 @@ async function generateAutoPredictionForUser(
     const indicatorComputeSettings = toIndicatorComputeSettings(indicatorSettingsResolution.config);
     const advancedIndicatorSettings = toAdvancedIndicatorComputeSettings(indicatorSettingsResolution.config);
 
-    const exchangeSymbol = await adapter.toExchangeSymbol(canonicalSymbol);
     const candleLookback = resolvePredictionCandleLookback({
       timeframe: effectiveTimeframe,
       indicatorSettings: indicatorComputeSettings,
       baseMinBars: 120
     });
     const [tickerRaw, candlesRaw] = await Promise.all([
-      adapter.marketApi.getTicker(exchangeSymbol, adapter.productType),
-      adapter.marketApi.getCandles({
-        symbol: exchangeSymbol,
-        productType: adapter.productType,
+      perpClient.getTicker(canonicalSymbol),
+      perpClient.getCandles({
+        symbol: canonicalSymbol,
+        timeframe: effectiveTimeframe,
         granularity: timeframeToBitgetGranularity(effectiveTimeframe),
         limit: candleLookback
       })
@@ -5094,7 +5119,7 @@ async function generateAutoPredictionForUser(
     });
     if (allowPromptTimeframeOverride && effectivePromptTimeframes.length > 0) {
       inferred.featureSnapshot.mtf = await buildMtfFramesForPrediction({
-        adapter,
+        marketDataClient: perpClient,
         exchange: account.exchange,
         accountId: payload.exchangeAccountId,
         symbol: canonicalSymbol,
@@ -5406,7 +5431,7 @@ async function generateAutoPredictionForUser(
         : null
     };
   } finally {
-    await adapter.close();
+    await perpClient.close();
   }
 }
 
@@ -6040,7 +6065,7 @@ async function runExchangeAutoSyncCycle() {
     const accounts: ExchangeAccountSecrets[] = await db.exchangeAccount.findMany({
       where: {
         exchange: {
-          in: ["bitget", "hyperliquid", "mexc"]
+          in: ["bitget", "hyperliquid", "mexc", "binance"]
         }
       },
       select: {
@@ -7343,12 +7368,14 @@ async function runPredictionOutcomeEvalCycle() {
     const nowMs = Date.now();
     for (const [key, groupRows] of grouped.entries()) {
       const [userId, exchangeAccountId] = key.split(":");
-      let adapter: BitgetFuturesAdapter | null = null;
+      let perpClient: PerpMarketDataClient | null = null;
       try {
         const resolvedAccount = await resolveMarketDataTradingAccount(userId, exchangeAccountId);
         const accountLabel = resolvedAccount.selectedAccount.label;
-        adapter = createBitgetAdapter(resolvedAccount.marketDataAccount);
-        await adapter.contractCache.warmup();
+        perpClient = createManualPerpMarketDataClient(
+          resolvedAccount.marketDataAccount,
+          "predictions/outcome-eval"
+        );
 
         for (const row of groupRows) {
           const timeframe = normalizePredictionTimeframe(row.timeframe);
@@ -7356,12 +7383,11 @@ async function runPredictionOutcomeEvalCycle() {
           const symbol = normalizeSymbolInput(row.symbol);
           if (!symbol) continue;
 
-          const exchangeSymbol = await adapter.toExchangeSymbol(symbol);
           const horizonMs = row.horizonMs ?? timeframeToIntervalMs(timeframe) * PREDICTION_OUTCOME_HORIZON_BARS;
           const endTime = Math.min(nowMs, row.tsCreated.getTime() + Math.max(60_000, horizonMs));
-          const candlesRaw = await adapter.marketApi.getCandles({
-            symbol: exchangeSymbol,
-            productType: adapter.productType,
+          const candlesRaw = await perpClient.getCandles({
+            symbol,
+            timeframe,
             granularity: timeframeToBitgetGranularity(timeframe),
             startTime: row.tsCreated.getTime(),
             endTime,
@@ -7444,8 +7470,8 @@ async function runPredictionOutcomeEvalCycle() {
         // eslint-disable-next-line no-console
         console.warn("[predictions:outcome] cycle group failed", { key, reason: String(error) });
       } finally {
-        if (adapter) {
-          await adapter.close();
+        if (perpClient) {
+          await perpClient.close();
         }
       }
     }
@@ -7554,12 +7580,14 @@ async function runPredictionPerformanceEvalCycle() {
     let evaluatedCount = 0;
     for (const [key, groupRows] of grouped.entries()) {
       const [userId, exchangeAccountId] = key.split(":");
-      let adapter: BitgetFuturesAdapter | null = null;
+      let perpClient: PerpMarketDataClient | null = null;
 
       try {
         const resolvedAccount = await resolveMarketDataTradingAccount(userId, exchangeAccountId);
-        adapter = createBitgetAdapter(resolvedAccount.marketDataAccount);
-        await adapter.contractCache.warmup();
+        perpClient = createManualPerpMarketDataClient(
+          resolvedAccount.marketDataAccount,
+          "predictions/performance-eval"
+        );
 
         for (const row of groupRows) {
           const timeframe = normalizePredictionTimeframe(row.timeframe);
@@ -7572,11 +7600,10 @@ async function runPredictionPerformanceEvalCycle() {
           const horizonEndMs = startTsMs + tfMs;
           const startBucketMs = toBucketStart(startTsMs, timeframe);
           const endBucketMs = toBucketStart(horizonEndMs, timeframe);
-          const exchangeSymbol = await adapter.toExchangeSymbol(symbol);
 
-          const candlesRaw = await adapter.marketApi.getCandles({
-            symbol: exchangeSymbol,
-            productType: adapter.productType,
+          const candlesRaw = await perpClient.getCandles({
+            symbol,
+            timeframe,
             granularity: timeframeToBitgetGranularity(timeframe),
             startTime: Math.max(0, startBucketMs - tfMs),
             endTime: endBucketMs + tfMs * 2,
@@ -7644,7 +7671,7 @@ async function runPredictionPerformanceEvalCycle() {
         // eslint-disable-next-line no-console
         console.warn("[predictions:evaluator] cycle group failed", { key, reason: String(error) });
       } finally {
-        if (adapter) await adapter.close();
+        if (perpClient) await perpClient.close();
       }
     }
 
@@ -8099,7 +8126,7 @@ async function probePredictionRefreshTrigger(
   template: PredictionRefreshTemplate,
   refreshIntervalsMs: PredictionRefreshIntervalsMs
 ): Promise<{ refresh: boolean; reasons: string[] }> {
-  let adapter: BitgetFuturesAdapter | null = null;
+  let perpClient: PerpMarketDataClient | null = null;
   try {
     const cadence = resolveTemplateAutoCadenceGate(template, refreshIntervalsMs, Date.now());
     if (cadence.blocked) {
@@ -8116,8 +8143,10 @@ async function probePredictionRefreshTrigger(
     }
 
     const resolvedAccount = await resolveMarketDataTradingAccount(template.userId, template.exchangeAccountId);
-    adapter = createBitgetAdapter(resolvedAccount.marketDataAccount);
-    await adapter.contractCache.warmup();
+    perpClient = createManualPerpMarketDataClient(
+      resolvedAccount.marketDataAccount,
+      "predictions/probe-refresh-trigger"
+    );
     const indicatorSettingsResolution = await resolveIndicatorSettings({
       db,
       exchange: template.exchange,
@@ -8127,15 +8156,14 @@ async function probePredictionRefreshTrigger(
     });
     const indicatorComputeSettings = toIndicatorComputeSettings(indicatorSettingsResolution.config);
 
-    const exchangeSymbol = await adapter.toExchangeSymbol(template.symbol);
     const lookback = resolvePredictionCandleLookback({
       timeframe: template.timeframe,
       indicatorSettings: indicatorComputeSettings,
       baseMinBars: 80
     });
-    const candlesRaw = await adapter.marketApi.getCandles({
-      symbol: exchangeSymbol,
-      productType: adapter.productType,
+    const candlesRaw = await perpClient.getCandles({
+      symbol: template.symbol,
+      timeframe: template.timeframe,
       granularity: timeframeToBitgetGranularity(template.timeframe),
       limit: lookback
     });
@@ -8154,7 +8182,7 @@ async function probePredictionRefreshTrigger(
       logVwapMetrics: false,
       settings: indicatorComputeSettings
     });
-    const tickerRaw = await adapter.marketApi.getTicker(exchangeSymbol, adapter.productType);
+    const tickerRaw = await perpClient.getTicker(template.symbol);
     const ticker = normalizeTickerPayload(coerceFirstItem(tickerRaw));
     const referencePrice = ticker.mark ?? ticker.last ?? closes[closes.length - 1];
     if (!referencePrice || !Number.isFinite(referencePrice)) {
@@ -8209,7 +8237,7 @@ async function probePredictionRefreshTrigger(
     predictionTriggerDebounceState.delete(template.stateId);
     return { refresh: false, reasons: [] };
   } finally {
-    if (adapter) await adapter.close();
+    if (perpClient) await perpClient.close();
   }
 }
 
@@ -8219,7 +8247,7 @@ async function refreshPredictionStateForTemplate(params: {
   refreshIntervalsMs: PredictionRefreshIntervalsMs;
 }): Promise<{ refreshed: boolean; significant: boolean; aiCalled: boolean }> {
   const { template } = params;
-  let adapter: BitgetFuturesAdapter | null = null;
+  let perpClient: PerpMarketDataClient | null = null;
   try {
     // Guard against pause/resume races while a scheduler cycle is already in progress.
     const liveState = await db.predictionState.findUnique({
@@ -8251,8 +8279,10 @@ async function refreshPredictionStateForTemplate(params: {
 
     const resolvedAccount = await resolveMarketDataTradingAccount(template.userId, template.exchangeAccountId);
     const account = resolvedAccount.selectedAccount;
-    adapter = createBitgetAdapter(resolvedAccount.marketDataAccount);
-    await adapter.contractCache.warmup();
+    perpClient = createManualPerpMarketDataClient(
+      resolvedAccount.marketDataAccount,
+      "predictions/refresh-state"
+    );
     const indicatorSettingsResolution = await resolveIndicatorSettings({
       db,
       exchange: account.exchange,
@@ -8263,17 +8293,16 @@ async function refreshPredictionStateForTemplate(params: {
     const indicatorComputeSettings = toIndicatorComputeSettings(indicatorSettingsResolution.config);
     const advancedIndicatorSettings = toAdvancedIndicatorComputeSettings(indicatorSettingsResolution.config);
 
-    const exchangeSymbol = await adapter.toExchangeSymbol(template.symbol);
     const candleLookback = resolvePredictionCandleLookback({
       timeframe: template.timeframe,
       indicatorSettings: indicatorComputeSettings,
       baseMinBars: 160
     });
     const [tickerRaw, candlesRaw] = await Promise.all([
-      adapter.marketApi.getTicker(exchangeSymbol, adapter.productType),
-      adapter.marketApi.getCandles({
-        symbol: exchangeSymbol,
-        productType: adapter.productType,
+      perpClient.getTicker(template.symbol),
+      perpClient.getCandles({
+        symbol: template.symbol,
+        timeframe: template.timeframe,
         granularity: timeframeToBitgetGranularity(template.timeframe),
         limit: candleLookback
       })
@@ -9103,7 +9132,7 @@ async function refreshPredictionStateForTemplate(params: {
     );
     if (shouldAttachPromptMtf && promptMtfConfig.timeframes.length > 0) {
       inferred.featureSnapshot.mtf = await buildMtfFramesForPrediction({
-        adapter,
+        marketDataClient: perpClient,
         exchange: account.exchange,
         accountId: template.exchangeAccountId,
         symbol: template.symbol,
@@ -9496,8 +9525,8 @@ async function refreshPredictionStateForTemplate(params: {
       aiCalled: false
     };
   } finally {
-    if (adapter) {
-      await adapter.close();
+    if (perpClient) {
+      await perpClient.close();
     }
   }
 }
@@ -16471,9 +16500,11 @@ function resolveManualSpotSupport(params: {
   if (!MANUAL_TRADING_SPOT_ENABLED) return false;
   const exchange = String(params.exchange ?? "").toLowerCase();
   const marketDataExchange = String(params.marketDataExchange ?? exchange).toLowerCase();
+  if (exchange === "binance") return false;
   if (exchange === "bitget" && marketDataExchange === "bitget") return true;
   if (exchange === "mexc" && marketDataExchange === "mexc") return MEXC_SPOT_ENABLED;
   if (exchange === "paper" && marketDataExchange === "bitget") return true;
+  if (exchange === "paper" && marketDataExchange === "binance") return BINANCE_SPOT_ENABLED;
   return false;
 }
 
@@ -16483,7 +16514,9 @@ function resolveManualPerpSupport(params: {
 }): boolean {
   const exchange = String(params.exchange ?? "").toLowerCase();
   const marketDataExchange = String(params.marketDataExchange ?? exchange).toLowerCase();
+  if (exchange === "binance") return false;
   if (exchange === "paper" && (!marketDataExchange || marketDataExchange === "paper")) return false;
+  if (exchange === "paper" && marketDataExchange === "binance") return BINANCE_PERP_ENABLED;
   if (exchange === "mexc") return MEXC_PERP_ENABLED;
   if (exchange === "paper" && marketDataExchange === "mexc") return MEXC_PERP_ENABLED;
   return true;
@@ -16501,6 +16534,14 @@ function ensureManualSpotEligibility(resolved: Awaited<ReturnType<typeof resolve
   const selected = String(resolved.selectedAccount.exchange ?? "").toLowerCase();
   const marketData = String(resolved.marketDataAccount.exchange ?? "").toLowerCase();
 
+  if (selected === "binance") {
+    throw new ManualTradingError(
+      "binance_market_data_only",
+      400,
+      "binance_market_data_only"
+    );
+  }
+
   if (selected === "bitget" && marketData === "bitget") return;
   if (selected === "mexc" && marketData === "mexc") {
     if (!MEXC_SPOT_ENABLED) {
@@ -16513,11 +16554,21 @@ function ensureManualSpotEligibility(resolved: Awaited<ReturnType<typeof resolve
     return;
   }
   if (selected === "paper" && marketData === "bitget") return;
-  if (selected === "paper" && marketData !== "bitget") {
+  if (selected === "paper" && marketData === "binance") {
+    if (!BINANCE_SPOT_ENABLED) {
+      throw new ManualTradingError(
+        "paper_spot_requires_supported_market_data",
+        400,
+        "paper_spot_requires_supported_market_data"
+      );
+    }
+    return;
+  }
+  if (selected === "paper" && marketData !== "bitget" && marketData !== "binance") {
     throw new ManualTradingError(
-      "paper_spot_requires_bitget_market_data",
+      "paper_spot_requires_supported_market_data",
       400,
-      "paper_spot_requires_bitget_market_data"
+      "paper_spot_requires_supported_market_data"
     );
   }
   throw new ManualTradingError(
@@ -16527,11 +16578,55 @@ function ensureManualSpotEligibility(resolved: Awaited<ReturnType<typeof resolve
   );
 }
 
+function ensureManualPerpEligibility(resolved: Awaited<ReturnType<typeof resolveMarketDataTradingAccount>>) {
+  const selected = String(resolved.selectedAccount.exchange ?? "").toLowerCase();
+  const marketData = String(resolved.marketDataAccount.exchange ?? "").toLowerCase();
+
+  if (selected === "binance") {
+    throw new ManualTradingError(
+      "binance_market_data_only",
+      400,
+      "binance_market_data_only"
+    );
+  }
+
+  if (selected === "paper") {
+    const supported =
+      marketData === "bitget" ||
+      marketData === "hyperliquid" ||
+      (marketData === "mexc" && MEXC_PERP_ENABLED) ||
+      (marketData === "binance" && BINANCE_PERP_ENABLED);
+    if (!supported) {
+      throw new ManualTradingError(
+        "paper_perp_requires_supported_market_data",
+        400,
+        "paper_perp_requires_supported_market_data"
+      );
+    }
+    return;
+  }
+
+  if (selected === "mexc" && !MEXC_PERP_ENABLED) {
+    throw new ManualTradingError(
+      "mexc_perp_disabled",
+      400,
+      "mexc_perp_disabled"
+    );
+  }
+}
+
 function createManualSpotClient(
   account: Awaited<ReturnType<typeof resolveTradingAccount>>,
   endpoint: string
 ): SpotClient {
   return createSpotClient(account, { endpoint });
+}
+
+function createManualPerpMarketDataClient(
+  account: Awaited<ReturnType<typeof resolveTradingAccount>>,
+  _endpoint: string
+): PerpMarketDataClient {
+  return createPerpMarketDataClient(account);
 }
 
 function inferSpotSummaryCurrency(symbol: string): string {
@@ -16627,19 +16722,24 @@ app.get("/api/symbols", requireAuth, async (req, res) => {
         defaultSymbol
       });
     }
-    const adapter = createBitgetAdapter(resolved.marketDataAccount);
-
+    ensureManualPerpEligibility(resolved);
+    const perpClient = createManualPerpMarketDataClient(resolved.marketDataAccount, "/api/symbols");
     try {
-      const symbols = await listSymbols(adapter);
+      const items = await perpClient.listSymbols();
+      const defaultSymbol =
+        items.find((item) => item.tradable)?.symbol ??
+        items[0]?.symbol ??
+        null;
       return res.json({
         exchangeAccountId: resolved.selectedAccount.id,
         exchange: resolved.selectedAccount.exchange,
         marketDataExchange: resolved.marketDataAccount.exchange,
         marketType,
-        ...symbols
+        items,
+        defaultSymbol
       });
     } finally {
-      await adapter.close();
+      await perpClient.close();
     }
   } catch (error) {
     return sendManualTradingError(res, error);
@@ -16685,19 +16785,20 @@ app.get("/api/market/candles", requireAuth, async (req, res) => {
         items
       });
     }
-    const adapter = createBitgetAdapter(resolved.marketDataAccount);
-
+    ensureManualPerpEligibility(resolved);
+    const perpClient = createManualPerpMarketDataClient(
+      resolved.marketDataAccount,
+      "/api/market/candles"
+    );
     try {
       const symbol = normalizeSymbolInput(parsed.data.symbol);
       if (!symbol) {
         return res.status(400).json({ error: "symbol_required" });
       }
-
-      const exchangeSymbol = await adapter.toExchangeSymbol(symbol);
       const granularity = marketTimeframeToBitgetGranularity(parsed.data.timeframe as "1m" | PredictionTimeframe);
-      const raw = await adapter.marketApi.getCandles({
-        symbol: exchangeSymbol,
-        productType: adapter.productType,
+      const raw = await perpClient.getCandles({
+        symbol,
+        timeframe: parsed.data.timeframe,
         granularity,
         limit: parsed.data.limit
       });
@@ -16715,7 +16816,7 @@ app.get("/api/market/candles", requireAuth, async (req, res) => {
         items
       });
     } finally {
-      await adapter.close();
+      await perpClient.close();
     }
   } catch (error) {
     return sendManualTradingError(res, error);
@@ -16813,13 +16914,17 @@ app.get("/api/account/summary", requireAuth, async (req, res) => {
         updatedAt: new Date().toISOString()
       });
     }
-    const adapter = createBitgetAdapter(resolved.marketDataAccount);
+    ensureManualPerpEligibility(resolved);
+    const perpClient = createManualPerpMarketDataClient(
+      resolved.marketDataAccount,
+      "/api/account/summary"
+    );
 
     try {
       if (isPaperTradingAccount(resolved.selectedAccount)) {
         const [summary, positions] = await Promise.all([
-          getPaperAccountState(resolved.selectedAccount, adapter),
-          listPaperPositions(resolved.selectedAccount, adapter)
+          getPaperAccountState(resolved.selectedAccount, perpClient),
+          listPaperPositions(resolved.selectedAccount, perpClient)
         ]);
 
         return res.json({
@@ -16835,21 +16940,25 @@ app.get("/api/account/summary", requireAuth, async (req, res) => {
         });
       }
 
-      const [summary, positions] = await Promise.all([adapter.getAccountState(), adapter.getPositions()]);
-
-      return res.json({
-        exchangeAccountId: resolved.selectedAccount.id,
-        exchange: resolved.selectedAccount.exchange,
-        marketDataExchange: resolved.marketDataAccount.exchange,
-        marketType,
-        equity: summary.equity ?? null,
-        availableMargin: summary.availableMargin ?? null,
-        marginMode: summary.marginMode ?? null,
-        positionsCount: positions.length,
-        updatedAt: new Date().toISOString()
-      });
+      const adapter = createBitgetAdapter(resolved.marketDataAccount);
+      try {
+        const [summary, positions] = await Promise.all([adapter.getAccountState(), adapter.getPositions()]);
+        return res.json({
+          exchangeAccountId: resolved.selectedAccount.id,
+          exchange: resolved.selectedAccount.exchange,
+          marketDataExchange: resolved.marketDataAccount.exchange,
+          marketType,
+          equity: summary.equity ?? null,
+          availableMargin: summary.availableMargin ?? null,
+          marginMode: summary.marginMode ?? null,
+          positionsCount: positions.length,
+          updatedAt: new Date().toISOString()
+        });
+      } finally {
+        await adapter.close();
+      }
     } finally {
-      await adapter.close();
+      await perpClient.close();
     }
   } catch (error) {
     return sendManualTradingError(res, error);
@@ -16952,18 +17061,29 @@ app.get("/api/positions", requireAuth, async (req, res) => {
         items: filtered
       });
     }
-    const adapter = createBitgetAdapter(resolved.marketDataAccount);
+    ensureManualPerpEligibility(resolved);
+    const perpClient = createManualPerpMarketDataClient(
+      resolved.marketDataAccount,
+      "/api/positions"
+    );
     try {
       const items = isPaperTradingAccount(resolved.selectedAccount)
-        ? await listPaperPositions(resolved.selectedAccount, adapter, perpSymbol ?? undefined)
-        : await listPositions(adapter, perpSymbol ?? undefined);
+        ? await listPaperPositions(resolved.selectedAccount, perpClient, perpSymbol ?? undefined)
+        : await (async () => {
+            const adapter = createBitgetAdapter(resolved.marketDataAccount);
+            try {
+              return await listPositions(adapter, perpSymbol ?? undefined);
+            } finally {
+              await adapter.close();
+            }
+          })();
       return res.json({
         exchangeAccountId: resolved.selectedAccount.id,
         marketType,
         items
       });
     } finally {
-      await adapter.close();
+      await perpClient.close();
     }
   } catch (error) {
     return sendManualTradingError(res, error);
@@ -16997,18 +17117,29 @@ app.get("/api/orders/open", requireAuth, async (req, res) => {
         items
       });
     }
-    const adapter = createBitgetAdapter(resolved.marketDataAccount);
+    ensureManualPerpEligibility(resolved);
+    const perpClient = createManualPerpMarketDataClient(
+      resolved.marketDataAccount,
+      "/api/orders/open"
+    );
     try {
       const items = isPaperTradingAccount(resolved.selectedAccount)
-        ? await listPaperOpenOrders(resolved.selectedAccount, adapter, perpSymbol ?? undefined)
-        : await listOpenOrders(adapter, perpSymbol ?? undefined);
+        ? await listPaperOpenOrders(resolved.selectedAccount, perpClient, perpSymbol ?? undefined)
+        : await (async () => {
+            const adapter = createBitgetAdapter(resolved.marketDataAccount);
+            try {
+              return await listOpenOrders(adapter, perpSymbol ?? undefined);
+            } finally {
+              await adapter.close();
+            }
+          })();
       return res.json({
         exchangeAccountId: resolved.selectedAccount.id,
         marketType,
         items
       });
     } finally {
-      await adapter.close();
+      await perpClient.close();
     }
   } catch (error) {
     return sendManualTradingError(res, error);
@@ -17081,17 +17212,18 @@ app.post("/api/orders", requireAuth, async (req, res) => {
         status: "accepted"
       });
     }
-    const adapter = createBitgetAdapter(resolved.marketDataAccount);
+    ensureManualPerpEligibility(resolved);
 
-    try {
-      const symbol = normalizeSymbolInput(parsed.data.symbol);
-      if (!symbol) {
-        return res.status(400).json({ error: "symbol_required" });
-      }
+    const symbol = normalizeSymbolInput(parsed.data.symbol);
+    if (!symbol) {
+      return res.status(400).json({ error: "symbol_required" });
+    }
 
-      if (isPaperTradingAccount(resolved.selectedAccount)) {
+    if (isPaperTradingAccount(resolved.selectedAccount)) {
+      const perpClient = createManualPerpMarketDataClient(resolved.marketDataAccount, "/api/orders");
+      try {
         const orderSide = resolveManualOrderSide(parsed.data.side, marketType);
-        const placed = await placePaperOrder(resolved.selectedAccount, adapter, {
+        const placed = await placePaperOrder(resolved.selectedAccount, perpClient, {
           symbol,
           side: orderSide,
           type: parsed.data.type,
@@ -17107,8 +17239,13 @@ app.post("/api/orders", requireAuth, async (req, res) => {
           orderId: placed.orderId,
           status: "accepted"
         });
+      } finally {
+        await perpClient.close();
       }
+    }
 
+    const adapter = createBitgetAdapter(resolved.marketDataAccount);
+    try {
       if (parsed.data.leverage !== undefined) {
         await adapter.setLeverage(
           symbol,
@@ -17219,14 +17356,15 @@ app.post("/api/orders/edit", requireAuth, async (req, res) => {
         ok: true
       });
     }
-    const adapter = createBitgetAdapter(resolved.marketDataAccount);
-    try {
-      const symbol = normalizeSymbolInput(parsed.data.symbol);
-      if (!symbol) {
-        return res.status(400).json({ error: "symbol_required" });
-      }
-      if (isPaperTradingAccount(resolved.selectedAccount)) {
-        const updated = await editPaperOrder(resolved.selectedAccount, adapter, {
+    ensureManualPerpEligibility(resolved);
+    const symbol = normalizeSymbolInput(parsed.data.symbol);
+    if (!symbol) {
+      return res.status(400).json({ error: "symbol_required" });
+    }
+    if (isPaperTradingAccount(resolved.selectedAccount)) {
+      const perpClient = createManualPerpMarketDataClient(resolved.marketDataAccount, "/api/orders/edit");
+      try {
+        const updated = await editPaperOrder(resolved.selectedAccount, perpClient, {
           orderId: parsed.data.orderId,
           symbol,
           price: parsed.data.price,
@@ -17240,7 +17378,13 @@ app.post("/api/orders/edit", requireAuth, async (req, res) => {
           orderId: updated.orderId,
           ok: true
         });
+      } finally {
+        await perpClient.close();
       }
+    }
+
+    const adapter = createBitgetAdapter(resolved.marketDataAccount);
+    try {
       const updated = await editOpenOrder(adapter, {
         symbol,
         orderId: parsed.data.orderId,
@@ -17303,13 +17447,19 @@ app.post("/api/orders/cancel", requireAuth, async (req, res) => {
       }
       return res.json({ ok: true, marketType });
     }
+    ensureManualPerpEligibility(resolved);
+    const symbol = normalizeSymbolInput(parsed.data.symbol);
+    if (isPaperTradingAccount(resolved.selectedAccount)) {
+      const perpClient = createManualPerpMarketDataClient(resolved.marketDataAccount, "/api/orders/cancel");
+      try {
+        await cancelPaperOrder(resolved.selectedAccount, perpClient, parsed.data.orderId, symbol ?? undefined);
+        return res.json({ ok: true, marketType });
+      } finally {
+        await perpClient.close();
+      }
+    }
     const adapter = createBitgetAdapter(resolved.marketDataAccount);
     try {
-      const symbol = normalizeSymbolInput(parsed.data.symbol);
-      if (isPaperTradingAccount(resolved.selectedAccount)) {
-        await cancelPaperOrder(resolved.selectedAccount, adapter, parsed.data.orderId, symbol ?? undefined);
-        return res.json({ ok: true, marketType });
-      }
       if (symbol) {
         await adapter.tradeApi.cancelOrder({
           symbol: await adapter.toExchangeSymbol(symbol),
@@ -17367,12 +17517,27 @@ app.post("/api/orders/cancel-all", requireAuth, async (req, res) => {
       });
     }
     const symbol = normalizeSymbolInput(symbolRaw);
+    ensureManualPerpEligibility(resolved);
+    if (isPaperTradingAccount(resolved.selectedAccount)) {
+      const perpClient = createManualPerpMarketDataClient(
+        resolved.marketDataAccount,
+        "/api/orders/cancel-all"
+      );
+      try {
+        const result = await cancelAllPaperOrders(resolved.selectedAccount, perpClient, symbol ?? undefined);
+        return res.json({
+          exchangeAccountId: resolved.selectedAccount.id,
+          marketType,
+          ...result
+        });
+      } finally {
+        await perpClient.close();
+      }
+    }
     const adapter = createBitgetAdapter(resolved.marketDataAccount);
 
     try {
-      const result = isPaperTradingAccount(resolved.selectedAccount)
-        ? await cancelAllPaperOrders(resolved.selectedAccount, adapter, symbol ?? undefined)
-        : await cancelAllOrders(adapter, symbol ?? undefined);
+      const result = await cancelAllOrders(adapter, symbol ?? undefined);
       return res.json({
         exchangeAccountId: resolved.selectedAccount.id,
         marketType,
@@ -17407,27 +17572,38 @@ app.post("/api/positions/tpsl", requireAuth, async (req, res) => {
       );
     }
     const resolved = await resolveMarketDataTradingAccount(user.id, parsed.data.exchangeAccountId);
+    ensureManualPerpEligibility(resolved);
+    const symbol = normalizeSymbolInput(parsed.data.symbol);
+    if (!symbol) {
+      return res.status(400).json({ error: "symbol_required" });
+    }
+    if (isPaperTradingAccount(resolved.selectedAccount)) {
+      const perpClient = createManualPerpMarketDataClient(resolved.marketDataAccount, "/api/positions/tpsl");
+      try {
+        await setPaperPositionTpSl(resolved.selectedAccount, perpClient, {
+          symbol,
+          side: parsed.data.side,
+          takeProfitPrice: parsed.data.takeProfitPrice,
+          stopLossPrice: parsed.data.stopLossPrice
+        });
+      } finally {
+        await perpClient.close();
+      }
+      return res.json({
+        exchangeAccountId: resolved.selectedAccount.id,
+        marketType,
+        symbol,
+        ok: true
+      });
+    }
     const adapter = createBitgetAdapter(resolved.marketDataAccount);
     try {
-      const symbol = normalizeSymbolInput(parsed.data.symbol);
-      if (!symbol) {
-        return res.status(400).json({ error: "symbol_required" });
-      }
-      if (isPaperTradingAccount(resolved.selectedAccount)) {
-        await setPaperPositionTpSl(resolved.selectedAccount, adapter, {
-          symbol,
-          side: parsed.data.side,
-          takeProfitPrice: parsed.data.takeProfitPrice,
-          stopLossPrice: parsed.data.stopLossPrice
-        });
-      } else {
-        await setPositionTpSl(adapter, {
-          symbol,
-          side: parsed.data.side,
-          takeProfitPrice: parsed.data.takeProfitPrice,
-          stopLossPrice: parsed.data.stopLossPrice
-        });
-      }
+      await setPositionTpSl(adapter, {
+        symbol,
+        side: parsed.data.side,
+        takeProfitPrice: parsed.data.takeProfitPrice,
+        stopLossPrice: parsed.data.stopLossPrice
+      });
       return res.json({
         exchangeAccountId: resolved.selectedAccount.id,
         marketType,
@@ -17458,9 +17634,17 @@ app.post("/api/positions/close", requireAuth, async (req, res) => {
     const resolved = await resolveMarketDataTradingAccount(user.id, parsed.data.exchangeAccountId);
     if (marketType === "spot") {
       ensureManualSpotEligibility(resolved);
+    } else {
+      ensureManualPerpEligibility(resolved);
     }
 
-    const adapter = marketType === "perp" ? createBitgetAdapter(resolved.marketDataAccount) : null;
+    const paperMode = isPaperTradingAccount(resolved.selectedAccount);
+    const adapter = marketType === "perp" && !paperMode
+      ? createBitgetAdapter(resolved.marketDataAccount)
+      : null;
+    const perpClient = marketType === "perp"
+      ? createManualPerpMarketDataClient(resolved.marketDataAccount, "/api/positions/close")
+      : null;
     const spotClient = marketType === "spot"
       ? createManualSpotClient(resolved.marketDataAccount, "/api/positions/close")
       : null;
@@ -17482,15 +17666,15 @@ app.post("/api/positions/close", requireAuth, async (req, res) => {
 
       const preCloseRows =
         marketType === "spot"
-          ? isPaperTradingAccount(resolved.selectedAccount)
+          ? paperMode
             ? await listPaperSpotPositions(resolved.selectedAccount, spotClient!, symbol)
             : await listBitgetSpotPositions({
                 client: spotClient!,
                 symbol,
                 preferredQuoteAsset: inferSpotSummaryCurrency(symbol)
               })
-          : isPaperTradingAccount(resolved.selectedAccount)
-            ? await listPaperPositions(resolved.selectedAccount, adapter!, symbol)
+          : paperMode
+            ? await listPaperPositions(resolved.selectedAccount, perpClient!, symbol)
             : await listPositions(adapter!, symbol);
       const exitPriceBySide = new Map<"long" | "short", number>();
       for (const row of preCloseRows) {
@@ -17514,7 +17698,7 @@ app.post("/api/positions/close", requireAuth, async (req, res) => {
       }
       const orderIds = await (
         marketType === "spot"
-          ? isPaperTradingAccount(resolved.selectedAccount)
+          ? paperMode
             ? await closePaperSpotPosition(resolved.selectedAccount, spotClient!, symbol)
             : (async () => {
                 const liveRows = await listBitgetSpotPositions({
@@ -17532,8 +17716,8 @@ app.post("/api/positions/close", requireAuth, async (req, res) => {
                 });
                 return [placed.orderId];
               })()
-          : isPaperTradingAccount(resolved.selectedAccount)
-            ? await closePaperPosition(resolved.selectedAccount, adapter!, symbol, parsed.data.side)
+          : paperMode
+            ? await closePaperPosition(resolved.selectedAccount, perpClient!, symbol, parsed.data.side)
             : await closePositionsMarket(adapter!, symbol, parsed.data.side)
       );
       const stateSync: {
@@ -17549,15 +17733,15 @@ app.post("/api/positions/close", requireAuth, async (req, res) => {
       try {
         const liveRows =
           marketType === "spot"
-            ? isPaperTradingAccount(resolved.selectedAccount)
+            ? paperMode
               ? await listPaperSpotPositions(resolved.selectedAccount, spotClient!, symbol)
               : await listBitgetSpotPositions({
                   client: spotClient!,
                   symbol,
                   preferredQuoteAsset: inferSpotSummaryCurrency(symbol)
                 })
-            : isPaperTradingAccount(resolved.selectedAccount)
-              ? await listPaperPositions(resolved.selectedAccount, adapter!, symbol)
+            : paperMode
+              ? await listPaperPositions(resolved.selectedAccount, perpClient!, symbol)
               : await listPositions(adapter!, symbol);
         stateSync.hasRemainingLivePosition = liveRows.some((row) => {
           const normalizedRowSymbol = marketType === "spot"
@@ -17711,6 +17895,9 @@ app.post("/api/positions/close", requireAuth, async (req, res) => {
         stateSync
       });
     } finally {
+      if (perpClient) {
+        await perpClient.close();
+      }
       if (adapter) {
         await adapter.close();
       }
@@ -17907,7 +18094,8 @@ app.get("/dashboard/overview", requireAuth, async (_req, res) => {
     paperIds.map(async (paperAccountId) => {
       try {
         const resolved = await resolveMarketDataTradingAccount(user.id, paperAccountId);
-        if (normalizeExchangeValue(resolved.marketDataAccount.exchange) !== "bitget") return;
+        const marketDataExchange = normalizeExchangeValue(resolved.marketDataAccount.exchange);
+        if (marketDataExchange !== "bitget" && marketDataExchange !== "binance") return;
         const spotClient = createManualSpotClient(resolved.marketDataAccount, "dashboard/exchange-overview");
         const spotSummary = await getPaperSpotAccountState(resolved.selectedAccount, spotClient);
         paperSpotBudgetByAccount.set(paperAccountId, {
@@ -18318,11 +18506,36 @@ app.get("/dashboard/open-positions", requireAuth, async (_req, res) => {
       const exchange = String(account.exchange ?? "");
       const exchangeLabel = String(account.label ?? "").trim() || exchange.toUpperCase();
       const resolved = await resolveMarketDataTradingAccount(user.id, exchangeAccountId);
+      const selectedExchange = normalizeExchangeValue(resolved.selectedAccount.exchange);
+      if (selectedExchange === "binance") {
+        return [];
+      }
+      if (isPaperTradingAccount(resolved.selectedAccount)) {
+        const perpClient = createManualPerpMarketDataClient(
+          resolved.marketDataAccount,
+          "dashboard/open-positions"
+        );
+        try {
+          const rows = await listPaperPositions(resolved.selectedAccount, perpClient);
+          return rows.map((row) => ({
+            exchangeAccountId,
+            exchange,
+            exchangeLabel,
+            symbol: String(row.symbol ?? ""),
+            side: row.side === "short" ? "short" : "long",
+            size: Number(row.size ?? 0),
+            entryPrice: toFiniteNumber(row.entryPrice),
+            stopLossPrice: toFiniteNumber(row.stopLossPrice),
+            takeProfitPrice: toFiniteNumber(row.takeProfitPrice),
+            unrealizedPnl: toFiniteNumber(row.unrealizedPnl)
+          }));
+        } finally {
+          await perpClient.close();
+        }
+      }
       const adapter = createBitgetAdapter(resolved.marketDataAccount);
       try {
-        const rows = isPaperTradingAccount(resolved.selectedAccount)
-          ? await listPaperPositions(resolved.selectedAccount, adapter)
-          : await listPositions(adapter);
+        const rows = await listPositions(adapter);
 
         return rows.map((row) => ({
           exchangeAccountId,
@@ -18734,6 +18947,13 @@ app.post("/exchange-accounts", requireAuth, async (req, res) => {
       message: "MEXC integration is disabled by runtime flag."
     });
   }
+  if (requestedExchange === "binance" && !isBinanceEnabledAtRuntime()) {
+    return res.status(403).json({
+      error: "exchange_disabled",
+      code: "binance_disabled",
+      message: "Binance integration is disabled by runtime flag."
+    });
+  }
   const allowedExchanges = await getAllowedExchangeValues();
   if (!allowedExchanges.includes(requestedExchange)) {
     return res.status(400).json({
@@ -18791,7 +19011,13 @@ app.post("/exchange-accounts", requireAuth, async (req, res) => {
     id: created.id,
     exchange: created.exchange,
     label: created.label,
-    apiKeyMasked: parsed.data.apiKey ? maskSecret(parsed.data.apiKey) : "paper",
+    apiKeyMasked: parsed.data.apiKey
+      ? maskSecret(parsed.data.apiKey)
+      : requestedExchange === "paper"
+        ? "paper"
+        : requestedExchange === "binance"
+          ? "public"
+          : "****",
     marketDataExchangeAccountId
   });
 });
@@ -18856,11 +19082,15 @@ app.post("/exchange-accounts/:id/test-connection", requireAuth, async (req, res)
   if (normalizeExchangeValue(account.exchange) === "paper") {
     try {
       const resolved = await resolveMarketDataTradingAccount(user.id, account.id);
-      const adapter = createBitgetAdapter(resolved.marketDataAccount);
+      const marketDataExchange = normalizeExchangeValue(resolved.marketDataAccount.exchange);
+      const perpClient = createManualPerpMarketDataClient(
+        resolved.marketDataAccount,
+        "/exchange-accounts/:id/test-connection"
+      );
       try {
-        const summary = await getPaperAccountState(resolved.selectedAccount, adapter);
+        const summary = await getPaperAccountState(resolved.selectedAccount, perpClient);
         let paperSpotBudget: Awaited<ReturnType<typeof syncExchangeAccount>>["spotBudget"] = null;
-        if (normalizeExchangeValue(resolved.marketDataAccount.exchange) === "bitget") {
+        if (marketDataExchange === "bitget" || marketDataExchange === "binance") {
           try {
             const spotClient = createManualSpotClient(
               resolved.marketDataAccount,
@@ -18902,7 +19132,7 @@ app.post("/exchange-accounts/:id/test-connection", requireAuth, async (req, res)
           details: synced.details
         });
       } finally {
-        await adapter.close();
+        await perpClient.close();
       }
     } catch (error) {
       return sendManualTradingError(res, error);
@@ -19703,27 +19933,54 @@ app.get("/bots/:id/open-trades", requireAuth, async (req, res) => {
   if (bot.exchangeAccountId) {
     try {
       const resolved = await resolveMarketDataTradingAccount(user.id, bot.exchangeAccountId);
-      const adapter = createBitgetAdapter(resolved.marketDataAccount);
-      try {
-        const liveRows = isPaperTradingAccount(resolved.selectedAccount)
-          ? await listPaperPositions(resolved.selectedAccount, adapter, bot.symbol)
-          : await listPositions(adapter, bot.symbol);
-        const normalizedSymbol = normalizeSymbolInput(bot.symbol);
-        const live = liveRows.find((row) => normalizeSymbolInput(row.symbol) === normalizedSymbol) ?? liveRows[0] ?? null;
-        if (live) {
-          exchangePosition = {
-            symbol: live.symbol,
-            side: live.side,
-            qty: live.size,
-            entryPrice: live.entryPrice,
-            markPrice: live.markPrice,
-            unrealizedPnl: live.unrealizedPnl,
-            tpPrice: live.takeProfitPrice,
-            slPrice: live.stopLossPrice
-          };
+      const selectedExchange = normalizeExchangeValue(resolved.selectedAccount.exchange);
+      if (selectedExchange === "binance") {
+        exchangePosition = null;
+      } else if (isPaperTradingAccount(resolved.selectedAccount)) {
+        const perpClient = createManualPerpMarketDataClient(
+          resolved.marketDataAccount,
+          "bots/detail-position"
+        );
+        try {
+          const liveRows = await listPaperPositions(resolved.selectedAccount, perpClient, bot.symbol);
+          const normalizedSymbol = normalizeSymbolInput(bot.symbol);
+          const live = liveRows.find((row) => normalizeSymbolInput(row.symbol) === normalizedSymbol) ?? liveRows[0] ?? null;
+          if (live) {
+            exchangePosition = {
+              symbol: live.symbol,
+              side: live.side,
+              qty: live.size,
+              entryPrice: live.entryPrice,
+              markPrice: live.markPrice,
+              unrealizedPnl: live.unrealizedPnl,
+              tpPrice: live.takeProfitPrice,
+              slPrice: live.stopLossPrice
+            };
+          }
+        } finally {
+          await perpClient.close();
         }
-      } finally {
-        await adapter.close();
+      } else {
+        const adapter = createBitgetAdapter(resolved.marketDataAccount);
+        try {
+          const liveRows = await listPositions(adapter, bot.symbol);
+          const normalizedSymbol = normalizeSymbolInput(bot.symbol);
+          const live = liveRows.find((row) => normalizeSymbolInput(row.symbol) === normalizedSymbol) ?? liveRows[0] ?? null;
+          if (live) {
+            exchangePosition = {
+              symbol: live.symbol,
+              side: live.side,
+              qty: live.size,
+              entryPrice: live.entryPrice,
+              markPrice: live.markPrice,
+              unrealizedPnl: live.unrealizedPnl,
+              tpPrice: live.takeProfitPrice,
+              slPrice: live.stopLossPrice
+            };
+          }
+        } finally {
+          await adapter.close();
+        }
       }
     } catch (error) {
       exchangeError = error instanceof Error ? error.message : String(error);
@@ -19843,6 +20100,13 @@ app.put("/bots/:id", requireAuth, async (req, res) => {
       error: "mexc_perp_disabled",
       code: "mexc_perp_disabled",
       message: "MEXC Perp is disabled by runtime flag."
+    });
+  }
+  if (normalizeExchangeValue(bot.exchange) === "binance") {
+    return res.status(400).json({
+      error: "binance_market_data_only",
+      code: "binance_market_data_only",
+      message: "Binance is market-data-only for paper execution in v1."
     });
   }
 
@@ -20000,6 +20264,13 @@ app.post("/bots", requireAuth, async (req, res) => {
       message: "MEXC Perp is disabled by runtime flag."
     });
   }
+  if (normalizeExchangeValue(account.exchange) === "binance") {
+    return res.status(400).json({
+      error: "binance_market_data_only",
+      code: "binance_market_data_only",
+      message: "Binance is market-data-only for paper execution in v1."
+    });
+  }
 
   let symbolForCreate = normalizeSymbolInput(parsed.data.symbol);
   let paramsJsonForCreate = asRecord(parsed.data.paramsJson);
@@ -20095,6 +20366,13 @@ app.post("/bots/:id/start", requireAuth, async (req, res) => {
       error: "mexc_perp_disabled",
       code: "mexc_perp_disabled",
       message: "MEXC Perp is disabled by runtime flag."
+    });
+  }
+  if (normalizeExchangeValue(bot.exchange) === "binance") {
+    return res.status(400).json({
+      error: "binance_market_data_only",
+      code: "binance_market_data_only",
+      message: "Binance is market-data-only for paper execution in v1."
     });
   }
 
@@ -20330,15 +20608,35 @@ app.post("/bots/:id/stop", requireAuth, async (req, res) => {
         throw new Error("bot_symbol_invalid");
       }
       const resolved = await resolveMarketDataTradingAccount(user.id, bot.exchangeAccountId);
-      const adapter = createBitgetAdapter(resolved.marketDataAccount);
-      try {
-        const orderIds = isPaperTradingAccount(resolved.selectedAccount)
-          ? await closePaperPosition(resolved.selectedAccount, adapter, symbol)
-          : await closePositionsMarket(adapter, symbol);
-        closeResult.closedCount = orderIds.length;
-        closeResult.orderIds = orderIds;
-      } finally {
-        await adapter.close();
+      const selectedExchange = normalizeExchangeValue(resolved.selectedAccount.exchange);
+      if (selectedExchange === "binance") {
+        throw new ManualTradingError(
+          "binance_market_data_only",
+          400,
+          "binance_market_data_only"
+        );
+      }
+      if (isPaperTradingAccount(resolved.selectedAccount)) {
+        const perpClient = createManualPerpMarketDataClient(
+          resolved.marketDataAccount,
+          "bots/close-position"
+        );
+        try {
+          const orderIds = await closePaperPosition(resolved.selectedAccount, perpClient, symbol);
+          closeResult.closedCount = orderIds.length;
+          closeResult.orderIds = orderIds;
+        } finally {
+          await perpClient.close();
+        }
+      } else {
+        const adapter = createBitgetAdapter(resolved.marketDataAccount);
+        try {
+          const orderIds = await closePositionsMarket(adapter, symbol);
+          closeResult.closedCount = orderIds.length;
+          closeResult.orderIds = orderIds;
+        } finally {
+          await adapter.close();
+        }
       }
     } catch (error) {
       closeResult.error = error instanceof Error ? error.message : String(error);
@@ -20457,6 +20755,7 @@ async function handleMarketWsConnection(
 
   let context: MarketWsContext | null = null;
   let spotClient: SpotClient | null = null;
+  let perpClient: PerpMarketDataClient | null = null;
   let pollTimer: NodeJS.Timeout | null = null;
   let cleaned = false;
   const unsubs: Array<() => void> = [];
@@ -20467,7 +20766,9 @@ async function handleMarketWsConnection(
     for (const unsub of unsubs) unsub();
     if (pollTimer) clearInterval(pollTimer);
     if (context) await context.stop();
+    if (perpClient) await perpClient.close();
     spotClient = null;
+    perpClient = null;
     pollTimer = null;
     context = null;
   };
@@ -20576,120 +20877,228 @@ async function handleMarketWsConnection(
         marketType
       });
     } else {
-      const resolved = await createMarketWsContext(
+      const preResolved = await resolveMarketDataTradingAccount(
         user.id,
         exchangeAccountId ?? settings.exchangeAccountId
       );
-      context = resolved.ctx;
+      const paperBinancePerp =
+        isPaperTradingAccount(preResolved.selectedAccount) &&
+        normalizeExchangeValue(preResolved.marketDataAccount.exchange) === "binance";
+      if (paperBinancePerp) {
+        ensureManualPerpEligibility(preResolved);
+        perpClient = createManualPerpMarketDataClient(preResolved.marketDataAccount, "/ws/market");
+        const items = await perpClient.listSymbols();
+        const symbol = pickWsSymbol(
+          requestedSymbol ?? settings.symbol,
+          items.map((row) => ({
+            canonicalSymbol: row.symbol,
+            apiAllowed: row.tradable
+          }))
+        );
+        if (!symbol) {
+          throw new ManualTradingError("no_symbols_available", 404, "no_symbols_available");
+        }
 
-      const contracts = context.adapter.contractCache.snapshot();
-      const symbol = pickWsSymbol(
-        requestedSymbol ?? settings.symbol,
-        contracts.map((row) => ({
-          canonicalSymbol: row.canonicalSymbol,
-          apiAllowed: row.apiAllowed
-        }))
-      );
-      if (!symbol) {
-        throw new ManualTradingError("no_symbols_available", 404, "no_symbols_available");
-      }
+        await saveTradingSettings(user.id, {
+          exchangeAccountId: preResolved.selectedAccount.id,
+          symbol,
+          marketType
+        });
 
-      await saveTradingSettings(user.id, {
-        exchangeAccountId: resolved.accountId,
-        symbol,
-        marketType
-      });
+        const sendPerpSnapshot = async () => {
+          if (!perpClient) return;
+          const [tickerSnapshot, depthSnapshot, tradesSnapshot] = await Promise.allSettled([
+            perpClient.getTicker(symbol),
+            perpClient.getDepth(symbol, 50),
+            perpClient.getTrades(symbol, 60)
+          ]);
+          if (tickerSnapshot.status === "fulfilled") {
+            wsSend(socket, {
+              type: "snapshot:ticker",
+              symbol,
+              data: {
+                ...tickerSnapshot.value,
+                symbol
+              }
+            });
+          }
+          if (depthSnapshot.status === "fulfilled") {
+            wsSend(socket, {
+              type: "snapshot:orderbook",
+              symbol,
+              data: normalizeOrderBookPayload({
+                bids: depthSnapshot.value.bids,
+                asks: depthSnapshot.value.asks,
+                ts: depthSnapshot.value.ts
+              })
+            });
+          }
+          if (tradesSnapshot.status === "fulfilled") {
+            wsSend(socket, {
+              type: "snapshot:trades",
+              symbol,
+              data: normalizeTradesPayload(tradesSnapshot.value)
+            });
+          }
+        };
 
-      unsubs.push(
-        context.adapter.onTicker((payload) => {
-          const row = coerceFirstItem(extractWsDataArray(payload));
-          const normalized = normalizeTickerPayload(row);
+        await sendPerpSnapshot();
+        pollTimer = setInterval(() => {
+          if (!perpClient) return;
+          void Promise.allSettled([
+            perpClient.getTicker(symbol).then((ticker) => {
+              wsSend(socket, {
+                type: "ticker",
+                symbol,
+                data: {
+                  ...ticker,
+                  symbol
+                }
+              });
+            }),
+            perpClient.getDepth(symbol, 50).then((depth) => {
+              wsSend(socket, {
+                type: "orderbook",
+                symbol,
+                data: normalizeOrderBookPayload({
+                  bids: depth.bids,
+                  asks: depth.asks,
+                  ts: depth.ts
+                })
+              });
+            }),
+            perpClient.getTrades(symbol, 60).then((trades) => {
+              wsSend(socket, {
+                type: "trades",
+                symbol,
+                data: normalizeTradesPayload(trades)
+              });
+            })
+          ]);
+        }, 2500);
+
+        wsSend(socket, {
+          type: "ready",
+          exchangeAccountId: preResolved.selectedAccount.id,
+          symbol,
+          marketType
+        });
+      } else {
+        const resolved = await createMarketWsContext(
+          user.id,
+          exchangeAccountId ?? settings.exchangeAccountId
+        );
+        context = resolved.ctx;
+
+        const contracts = context.adapter.contractCache.snapshot();
+        const symbol = pickWsSymbol(
+          requestedSymbol ?? settings.symbol,
+          contracts.map((row) => ({
+            canonicalSymbol: row.canonicalSymbol,
+            apiAllowed: row.apiAllowed
+          }))
+        );
+        if (!symbol) {
+          throw new ManualTradingError("no_symbols_available", 404, "no_symbols_available");
+        }
+
+        await saveTradingSettings(user.id, {
+          exchangeAccountId: resolved.accountId,
+          symbol,
+          marketType
+        });
+
+        unsubs.push(
+          context.adapter.onTicker((payload) => {
+            const row = coerceFirstItem(extractWsDataArray(payload));
+            const normalized = normalizeTickerPayload(row);
+            wsSend(socket, {
+              type: "ticker",
+              symbol,
+              data: {
+                ...normalized,
+                symbol
+              }
+            });
+          })
+        );
+        unsubs.push(
+          context.adapter.onDepth((payload) => {
+            const row = coerceFirstItem(extractWsDataArray(payload));
+            const normalized = normalizeOrderBookPayload(row);
+            wsSend(socket, {
+              type: "orderbook",
+              symbol,
+              data: normalized
+            });
+          })
+        );
+        unsubs.push(
+          (context.adapter as any).onTrades((payload: unknown) => {
+            const rows = extractWsDataArray(payload);
+            const normalized = normalizeTradesPayload(rows).map((trade) => ({
+              ...trade,
+              symbol: symbol
+            }));
+            wsSend(socket, {
+              type: "trades",
+              symbol,
+              data: normalized
+            });
+          })
+        );
+
+        await Promise.all([
+          context.adapter.subscribeTicker(symbol),
+          context.adapter.subscribeDepth(symbol),
+          (context.adapter as any).subscribeTrades(symbol)
+        ]);
+
+        const exchangeSymbol = await context.adapter.toExchangeSymbol(symbol);
+
+        const [tickerSnapshot, depthSnapshot, tradesSnapshot] = await Promise.allSettled([
+          context.adapter.marketApi.getTicker(exchangeSymbol, context.adapter.productType),
+          context.adapter.marketApi.getDepth(exchangeSymbol, 50, context.adapter.productType),
+          context.adapter.marketApi.getTrades(exchangeSymbol, 60, context.adapter.productType)
+        ]);
+
+        if (tickerSnapshot.status === "fulfilled") {
           wsSend(socket, {
-            type: "ticker",
+            type: "snapshot:ticker",
             symbol,
             data: {
-              ...normalized,
+              ...normalizeTickerPayload(coerceFirstItem(tickerSnapshot.value)),
               symbol
             }
           });
-        })
-      );
-      unsubs.push(
-        context.adapter.onDepth((payload) => {
-          const row = coerceFirstItem(extractWsDataArray(payload));
-          const normalized = normalizeOrderBookPayload(row);
+        }
+
+        if (depthSnapshot.status === "fulfilled") {
           wsSend(socket, {
-            type: "orderbook",
+            type: "snapshot:orderbook",
             symbol,
-            data: normalized
+            data: normalizeOrderBookPayload(depthSnapshot.value)
           });
-        })
-      );
-      unsubs.push(
-        (context.adapter as any).onTrades((payload: unknown) => {
-          const rows = extractWsDataArray(payload);
-          const normalized = normalizeTradesPayload(rows).map((trade) => ({
-            ...trade,
-            symbol: symbol
-          }));
+        }
+
+        if (tradesSnapshot.status === "fulfilled") {
           wsSend(socket, {
-            type: "trades",
+            type: "snapshot:trades",
             symbol,
-            data: normalized
+            data: normalizeTradesPayload(tradesSnapshot.value).map((trade) => ({
+              ...trade,
+              symbol
+            }))
           });
-        })
-      );
+        }
 
-      await Promise.all([
-        context.adapter.subscribeTicker(symbol),
-        context.adapter.subscribeDepth(symbol),
-        (context.adapter as any).subscribeTrades(symbol)
-      ]);
-
-      const exchangeSymbol = await context.adapter.toExchangeSymbol(symbol);
-
-      const [tickerSnapshot, depthSnapshot, tradesSnapshot] = await Promise.allSettled([
-        context.adapter.marketApi.getTicker(exchangeSymbol, context.adapter.productType),
-        context.adapter.marketApi.getDepth(exchangeSymbol, 50, context.adapter.productType),
-        context.adapter.marketApi.getTrades(exchangeSymbol, 60, context.adapter.productType)
-      ]);
-
-      if (tickerSnapshot.status === "fulfilled") {
         wsSend(socket, {
-          type: "snapshot:ticker",
+          type: "ready",
+          exchangeAccountId: resolved.accountId,
           symbol,
-          data: {
-            ...normalizeTickerPayload(coerceFirstItem(tickerSnapshot.value)),
-            symbol
-          }
+          marketType
         });
       }
-
-      if (depthSnapshot.status === "fulfilled") {
-        wsSend(socket, {
-          type: "snapshot:orderbook",
-          symbol,
-          data: normalizeOrderBookPayload(depthSnapshot.value)
-        });
-      }
-
-      if (tradesSnapshot.status === "fulfilled") {
-        wsSend(socket, {
-          type: "snapshot:trades",
-          symbol,
-          data: normalizeTradesPayload(tradesSnapshot.value).map((trade) => ({
-            ...trade,
-            symbol
-          }))
-        });
-      }
-
-      wsSend(socket, {
-        type: "ready",
-        exchangeAccountId: resolved.accountId,
-        symbol,
-        marketType
-      });
     }
   } catch (error) {
     const message = error instanceof Error ? error.message : "market_ws_failed";
@@ -20732,6 +21141,7 @@ async function handleUserWsConnection(
 
   let context: MarketWsContext | null = null;
   let spotClient: SpotClient | null = null;
+  let perpClient: PerpMarketDataClient | null = null;
   let cleaned = false;
   let balanceTimer: NodeJS.Timeout | null = null;
   const unsubs: Array<() => void> = [];
@@ -20742,7 +21152,9 @@ async function handleUserWsConnection(
     for (const unsub of unsubs) unsub();
     if (balanceTimer) clearInterval(balanceTimer);
     if (context) await context.stop();
+    if (perpClient) await perpClient.close();
     spotClient = null;
+    perpClient = null;
     balanceTimer = null;
     context = null;
   };
@@ -20823,83 +21235,133 @@ async function handleUserWsConnection(
         marketType
       });
     } else {
-      const resolved = await createMarketWsContext(
+      const preResolved = await resolveMarketDataTradingAccount(
         user.id,
         exchangeAccountId ?? settings.exchangeAccountId
       );
-      context = resolved.ctx;
-      const paperMode = isPaperTradingAccount(context.selectedAccount);
+      const paperBinancePerp =
+        isPaperTradingAccount(preResolved.selectedAccount) &&
+        normalizeExchangeValue(preResolved.marketDataAccount.exchange) === "binance";
+      if (paperBinancePerp) {
+        ensureManualPerpEligibility(preResolved);
+        perpClient = createManualPerpMarketDataClient(preResolved.marketDataAccount, "/ws/user");
 
-      await saveTradingSettings(user.id, {
-        exchangeAccountId: resolved.accountId,
-        marketType
-      });
+        await saveTradingSettings(user.id, {
+          exchangeAccountId: preResolved.selectedAccount.id,
+          marketType
+        });
 
-      if (!paperMode) {
-        unsubs.push(
-          context.adapter.onFill((event) => {
-            wsSend(socket, {
-              type: "fill",
-              data: event
-            });
-          })
-        );
-        unsubs.push(
-          context.adapter.onOrderUpdate((event) => {
-            wsSend(socket, {
-              type: "order",
-              data: event
-            });
-          })
-        );
-        unsubs.push(
-          context.adapter.onPositionUpdate((event) => {
-            wsSend(socket, {
-              type: "position",
-              data: event
-            });
-          })
-        );
-      }
+        const sendSummary = async () => {
+          if (!perpClient) return;
+          const [accountSummary, positions, openOrders] = await Promise.all([
+            getPaperAccountState(preResolved.selectedAccount, perpClient),
+            listPaperPositions(preResolved.selectedAccount, perpClient),
+            listPaperOpenOrders(preResolved.selectedAccount, perpClient)
+          ]);
+          wsSend(socket, {
+            type: "account",
+            data: {
+              exchangeAccountId: preResolved.selectedAccount.id,
+              marketType,
+              equity: accountSummary.equity ?? null,
+              availableMargin: accountSummary.availableMargin ?? null,
+              positions,
+              openOrders
+            }
+          });
+        };
 
-      const sendSummary = async () => {
-        if (!context) return;
-        const [accountSummary, positions, openOrders] = paperMode
-          ? await Promise.all([
-              getPaperAccountState(context.selectedAccount, context.adapter),
-              listPaperPositions(context.selectedAccount, context.adapter),
-              listPaperOpenOrders(context.selectedAccount, context.adapter)
-            ])
-          : await Promise.all([
-              context.adapter.getAccountState(),
-              listPositions(context.adapter),
-              listOpenOrders(context.adapter)
-            ]);
+        await sendSummary();
+        balanceTimer = setInterval(() => {
+          void sendSummary().catch(() => {
+            // ignore timer errors
+          });
+        }, 10_000);
+
         wsSend(socket, {
-          type: "account",
-          data: {
-            exchangeAccountId: resolved.accountId,
-            marketType,
-            equity: accountSummary.equity ?? null,
-            availableMargin: accountSummary.availableMargin ?? null,
-            positions,
-            openOrders
-          }
+          type: "ready",
+          exchangeAccountId: preResolved.selectedAccount.id,
+          marketType
         });
-      };
+      } else {
+        const resolved = await createMarketWsContext(
+          user.id,
+          exchangeAccountId ?? settings.exchangeAccountId
+        );
+        context = resolved.ctx;
+        const paperMode = isPaperTradingAccount(context.selectedAccount);
 
-      await sendSummary();
-      balanceTimer = setInterval(() => {
-        void sendSummary().catch(() => {
-          // ignore timer errors
+        await saveTradingSettings(user.id, {
+          exchangeAccountId: resolved.accountId,
+          marketType
         });
-      }, 10_000);
 
-      wsSend(socket, {
-        type: "ready",
-        exchangeAccountId: resolved.accountId,
-        marketType
-      });
+        if (!paperMode) {
+          unsubs.push(
+            context.adapter.onFill((event) => {
+              wsSend(socket, {
+                type: "fill",
+                data: event
+              });
+            })
+          );
+          unsubs.push(
+            context.adapter.onOrderUpdate((event) => {
+              wsSend(socket, {
+                type: "order",
+                data: event
+              });
+            })
+          );
+          unsubs.push(
+            context.adapter.onPositionUpdate((event) => {
+              wsSend(socket, {
+                type: "position",
+                data: event
+              });
+            })
+          );
+        }
+
+        const sendSummary = async () => {
+          if (!context) return;
+          const [accountSummary, positions, openOrders] = paperMode
+            ? await Promise.all([
+                getPaperAccountState(context.selectedAccount, context.adapter),
+                listPaperPositions(context.selectedAccount, context.adapter),
+                listPaperOpenOrders(context.selectedAccount, context.adapter)
+              ])
+            : await Promise.all([
+                context.adapter.getAccountState(),
+                listPositions(context.adapter),
+                listOpenOrders(context.adapter)
+              ]);
+          wsSend(socket, {
+            type: "account",
+            data: {
+              exchangeAccountId: resolved.accountId,
+              marketType,
+              equity: accountSummary.equity ?? null,
+              availableMargin: accountSummary.availableMargin ?? null,
+              positions,
+              openOrders
+            }
+          });
+        };
+
+        await sendSummary();
+        balanceTimer = setInterval(() => {
+          void sendSummary().catch(() => {
+            // ignore timer errors
+          });
+        }, 10_000);
+
+        wsSend(socket, {
+          type: "ready",
+          exchangeAccountId: resolved.accountId,
+          marketType
+        });
+      }
     }
   } catch (error) {
     const message = error instanceof Error ? error.message : "user_ws_failed";

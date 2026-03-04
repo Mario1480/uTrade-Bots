@@ -86,6 +86,8 @@ const MEXC_PERP_ENABLED = envEnabled(
   "MEXC_PERP_ENABLED",
   MEXC_FUTURES_ENABLED_LEGACY
 );
+const BINANCE_SPOT_ENABLED = envEnabled("BINANCE_SPOT_ENABLED", true);
+const BINANCE_PERP_ENABLED = envEnabled("BINANCE_PERP_ENABLED", true);
 
 function stableStringify(value: unknown): string {
   if (value === undefined || value === null) return "";
@@ -509,6 +511,67 @@ async function syncMexcSpotAccount(input: ExchangeSyncInput): Promise<ExchangeSy
   }
 }
 
+async function syncBinanceMarketDataAccount(): Promise<ExchangeSyncResult> {
+  const spotBaseUrl = (process.env.BINANCE_SPOT_BASE_URL ?? "https://api.binance.com").replace(/\/+$/, "");
+  const perpBaseUrl = (process.env.BINANCE_PERP_BASE_URL ?? "https://fapi.binance.com").replace(/\/+$/, "");
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 10_000);
+  try {
+    const [spotPing, perpPing] = await Promise.all([
+      fetch(`${spotBaseUrl}/api/v3/ping`, {
+        method: "GET",
+        headers: { Accept: "application/json" },
+        signal: controller.signal
+      }),
+      fetch(`${perpBaseUrl}/fapi/v1/ping`, {
+        method: "GET",
+        headers: { Accept: "application/json" },
+        signal: controller.signal
+      })
+    ]);
+
+    if (!spotPing.ok || !perpPing.ok) {
+      throw new ExchangeSyncError(
+        "Binance public market data endpoint not reachable.",
+        502,
+        "binance_market_data_unreachable"
+      );
+    }
+
+    return {
+      syncedAt: new Date(),
+      spotBudget: null,
+      futuresBudget: {
+        equity: null,
+        availableMargin: null,
+        marginCoin: null
+      },
+      pnlTodayUsd: null,
+      details: {
+        exchange: "binance",
+        endpoint: "public:/api/v3/ping + /fapi/v1/ping",
+        productType: "market_data_only"
+      }
+    };
+  } catch (error) {
+    if (error instanceof ExchangeSyncError) throw error;
+    if (error instanceof DOMException && error.name === "AbortError") {
+      throw new ExchangeSyncError(
+        "Binance market-data reachability check timed out.",
+        504,
+        "binance_timeout"
+      );
+    }
+    throw new ExchangeSyncError(
+      "Binance market-data reachability check failed.",
+      502,
+      "binance_network_error"
+    );
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
 export async function syncExchangeAccount(input: ExchangeSyncInput): Promise<ExchangeSyncResult> {
   const exchange = input.exchange.trim().toLowerCase();
   if (exchange === "bitget") {
@@ -529,6 +592,16 @@ export async function syncExchangeAccount(input: ExchangeSyncInput): Promise<Exc
       );
     }
     return syncMexcSpotAccount(input);
+  }
+  if (exchange === "binance") {
+    if (!BINANCE_SPOT_ENABLED && !BINANCE_PERP_ENABLED) {
+      throw new ExchangeSyncError(
+        "Binance integration is disabled by runtime flag.",
+        403,
+        "binance_disabled"
+      );
+    }
+    return syncBinanceMarketDataAccount();
   }
 
   throw new ExchangeSyncError(

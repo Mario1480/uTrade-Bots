@@ -834,7 +834,7 @@
       "marketWebsocketError": "Market-Websocket-Fehler",
       "marketStreamDisconnected": "Market-Stream getrennt.",
       "userStreamDisconnected": "User-Stream getrennt.",
-      "spotModeNotAvailableForAccount": "Spot-Modus ist nur für Bitget, MEXC und Paper-Konten mit Bitget-Marktdaten verfügbar.",
+      "spotModeNotAvailableForAccount": "Spot-Modus ist nur für Bitget, MEXC und Paper-Konten mit Bitget- oder Binance-Marktdaten verfügbar.",
       "perpModeNotAvailableForAccount": "Perp-Modus ist für dieses Konto aktuell nicht verfügbar.",
       "leverageNotSupportedForSpot": "Leverage wird im Spot-Modus nicht unterstützt.",
       "tpSlNotSupportedForSpot": "TP/SL wird im Spot-Modus (v1) nicht unterstützt.",
