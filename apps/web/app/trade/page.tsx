@@ -254,6 +254,13 @@ function errMsg(e: unknown): string {
   return String(e);
 }
 
+function isExecutionAccountEligible(account: ExchangeAccountItem): boolean {
+  if (typeof account.supportsSpotManual === "boolean" || typeof account.supportsPerpManual === "boolean") {
+    return Boolean(account.supportsSpotManual || account.supportsPerpManual);
+  }
+  return String(account.exchange ?? "").trim().toLowerCase() !== "binance";
+}
+
 function fmt(value: number | null | undefined, digits = 2): string {
   if (value === null || value === undefined || Number.isNaN(value)) return "-";
   return Number(value).toLocaleString(undefined, {
@@ -709,17 +716,19 @@ function TradePageContent() {
         apiGet<TradingSettings>("/api/trading/settings")
       ]);
 
-      const accountRows = accountPayload.items ?? [];
+      const accountRows = (accountPayload.items ?? []).filter(isExecutionAccountEligible);
       setAccounts(accountRows);
 
       const queryAccountId = searchParams.get("exchangeAccountId");
-      const chosenAccount =
+      const preferredAccount =
         preferredAccountId ??
         prefillPayload?.accountId ??
         queryAccountId ??
         settings.exchangeAccountId ??
-        accountRows[0]?.id ??
         "";
+      const chosenAccount = accountRows.some((row) => row.id === preferredAccount)
+        ? preferredAccount
+        : (accountRows[0]?.id ?? "");
 
       setSelectedAccountId(chosenAccount);
 
