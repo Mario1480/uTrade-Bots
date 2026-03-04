@@ -75,7 +75,7 @@ export const EXPLAINER_TAG_ALLOWLIST = [
 type ExplainerTag = (typeof EXPLAINER_TAG_ALLOWLIST)[number];
 
 const allowlist = new Set<string>(EXPLAINER_TAG_ALLOWLIST);
-const EXPLAINER_MAX_EXPLANATION_CHARS = 1000;
+const EXPLAINER_MAX_EXPLANATION_CHARS = 2000;
 
 const baseOutputSchema = z.object({
   // Keep this loose and enforce final constraints in validateExplainerOutput.
