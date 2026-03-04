@@ -139,7 +139,7 @@ export default function NewBotPage() {
     async function loadAccounts() {
       try {
         const [accountsResponse, accessResponse] = await Promise.all([
-          apiGet<{ items: ExchangeAccount[] }>("/exchange-accounts"),
+          apiGet<{ items: ExchangeAccount[] }>("/exchange-accounts?purpose=execution"),
           apiGet<SubscriptionQuotaSnapshot>("/settings/subscription")
         ]);
         if (!mounted) return;

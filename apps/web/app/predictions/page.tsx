@@ -969,7 +969,7 @@ export default function PredictionsPage() {
 
   async function loadAccounts() {
     try {
-      const payload = await apiGet<{ items: ExchangeAccountItem[] }>("/exchange-accounts");
+      const payload = await apiGet<{ items: ExchangeAccountItem[] }>("/exchange-accounts?purpose=execution");
       const list = (Array.isArray(payload.items) ? payload.items : [])
         .filter(isPredictionExecutionAccountEligible);
       setAccounts(list);

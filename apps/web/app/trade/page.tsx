@@ -712,7 +712,7 @@ function TradePageContent() {
     setError(null);
     try {
       const [accountPayload, settings] = await Promise.all([
-        apiGet<{ items: ExchangeAccountItem[] }>("/exchange-accounts"),
+        apiGet<{ items: ExchangeAccountItem[] }>("/exchange-accounts?purpose=execution"),
         apiGet<TradingSettings>("/api/trading/settings")
       ]);
 

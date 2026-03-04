@@ -17907,8 +17907,10 @@ app.post("/api/positions/close", requireAuth, async (req, res) => {
   }
 });
 
-app.get("/exchange-accounts", requireAuth, async (_req, res) => {
+app.get("/exchange-accounts", requireAuth, async (req, res) => {
   const user = getUserFromLocals(res);
+  const purpose = typeof req.query.purpose === "string" ? req.query.purpose.trim().toLowerCase() : "";
+  const executionOnly = purpose === "execution";
   const rows = await db.exchangeAccount.findMany({
     where: { userId: user.id },
     orderBy: { createdAt: "desc" }
@@ -17995,7 +17997,11 @@ app.get("/exchange-accounts", requireAuth, async (_req, res) => {
     };
   });
 
-  return res.json({ items });
+  const filteredItems = executionOnly
+    ? items.filter((item) => Boolean(item.supportsSpotManual || item.supportsPerpManual))
+    : items;
+
+  return res.json({ items: filteredItems });
 });
 
 app.get("/dashboard/overview", requireAuth, async (_req, res) => {
