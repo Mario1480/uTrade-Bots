@@ -1,5 +1,11 @@
 import { prisma } from "@mm/db";
-import { BitgetFuturesAdapter, HyperliquidFuturesAdapter, MexcFuturesAdapter } from "@mm/futures-exchange";
+import {
+  BitgetFuturesAdapter,
+  FuturesAdapterFactoryError,
+  HyperliquidFuturesAdapter,
+  MexcFuturesAdapter,
+  createFuturesAdapter as createSharedFuturesAdapter
+} from "@mm/futures-exchange";
 import { decryptSecret } from "./secret-crypto.js";
 
 type DbClient = typeof prisma;
@@ -938,54 +944,25 @@ export async function resolveMarketDataTradingAccount(
 }
 
 export function createFuturesAdapter(account: TradingAccount): BitgetFuturesAdapter | HyperliquidFuturesAdapter | MexcFuturesAdapter {
-  if (isPaperExchange(account.exchange)) {
-    throw new ManualTradingError(
-      "paper_account_requires_market_data_resolution",
-      400,
-      "paper_account_requires_market_data_resolution"
+  try {
+    return createSharedFuturesAdapter(
+      {
+        exchange: account.exchange,
+        apiKey: account.apiKey,
+        apiSecret: account.apiSecret,
+        passphrase: account.passphrase
+      },
+      {
+        allowMexcPerp: MEXC_PERP_ENABLED,
+        allowBinancePerp: false
+      }
     );
-  }
-  if (account.exchange === "hyperliquid") {
-    return new HyperliquidFuturesAdapter({
-      apiKey: account.apiKey,
-      apiSecret: account.apiSecret,
-      apiPassphrase: account.passphrase ?? undefined,
-      restBaseUrl: process.env.HYPERLIQUID_REST_BASE_URL,
-      productType: "USDT-FUTURES",
-      marginCoin: process.env.HYPERLIQUID_MARGIN_COIN ?? "USDC"
-    });
-  }
-  if (account.exchange === "mexc") {
-    if (!MEXC_PERP_ENABLED) {
-      throw new ManualTradingError(
-        "mexc_perp_disabled",
-        400,
-        "mexc_perp_disabled"
-      );
+  } catch (error) {
+    if (error instanceof FuturesAdapterFactoryError) {
+      throw new ManualTradingError(error.code, 400, error.code);
     }
-    return new MexcFuturesAdapter({
-      apiKey: account.apiKey,
-      apiSecret: account.apiSecret,
-      restBaseUrl: process.env.MEXC_REST_BASE_URL,
-      wsUrl: process.env.MEXC_WS_URL,
-      productType: process.env.MEXC_PRODUCT_TYPE ?? "USDT-FUTURES",
-      marginCoin: process.env.MEXC_MARGIN_COIN ?? "USDT"
-    });
+    throw error;
   }
-  if (account.exchange === "binance") {
-    throw new ManualTradingError(
-      "binance_market_data_only",
-      400,
-      "binance_market_data_only"
-    );
-  }
-  return new BitgetFuturesAdapter({
-    apiKey: account.apiKey,
-    apiSecret: account.apiSecret,
-    apiPassphrase: account.passphrase ?? undefined,
-    productType: (process.env.BITGET_PRODUCT_TYPE as any) ?? "USDT-FUTURES",
-    marginCoin: process.env.BITGET_MARGIN_COIN ?? "USDT"
-  });
 }
 
 export function createBitgetAdapter(account: TradingAccount): BitgetFuturesAdapter {

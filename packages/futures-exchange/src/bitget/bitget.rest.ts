@@ -6,7 +6,9 @@ import {
   BITGET_SUCCESS_CODE
 } from "./bitget.constants.js";
 import { BitgetApiError, toBitgetError } from "./bitget.errors.js";
+import { mapBitgetError } from "./bitget-error.mapper.js";
 import { buildQueryString, buildRestHeaders, stableStringify } from "./bitget.signing.js";
+import { computeRetryDelayMs, shouldRetryExchangeError } from "../core/retry-policy.js";
 import type { BitgetAdapterConfig, BitgetApiResponse, BitgetLogEntry, HttpMethod } from "./bitget.types.js";
 
 function sleep(ms: number) {
@@ -15,16 +17,6 @@ function sleep(ms: number) {
 
 function nowIso() {
   return new Date().toISOString();
-}
-
-function shouldRetry(error: unknown): boolean {
-  const msg = String(error).toLowerCase();
-  if (msg.includes("network")) return true;
-  if (msg.includes("timeout")) return true;
-  if (msg.includes("429")) return true;
-  if (msg.includes("5")) return true;
-  if (msg.includes("rate")) return true;
-  return false;
 }
 
 export type BitgetRestClientOptions = Pick<
@@ -163,18 +155,29 @@ export class BitgetRestClient {
     }
   }
 
-  private async withRetry<T>(fn: () => Promise<T>): Promise<T> {
+  private async withRetry<T>(params: {
+    operation: string;
+    idempotent: boolean;
+    fn: () => Promise<T>;
+  }): Promise<T> {
     let attempt = 0;
     let lastError: unknown;
 
     while (attempt < this.retryAttempts) {
       attempt += 1;
       try {
-        return await fn();
+        return await params.fn();
       } catch (error) {
         lastError = error;
-        if (!shouldRetry(error) || attempt >= this.retryAttempts) break;
-        const delay = this.retryBaseDelayMs * 2 ** (attempt - 1);
+        const mapped = mapBitgetError(error);
+        const retry = shouldRetryExchangeError(mapped.code, {
+          attempt,
+          maxAttempts: this.retryAttempts,
+          operation: params.operation,
+          idempotent: params.idempotent
+        });
+        if (!retry) break;
+        const delay = computeRetryDelayMs(attempt, this.retryBaseDelayMs);
         await sleep(delay);
       }
     }
@@ -187,14 +190,16 @@ export class BitgetRestClient {
     endpoint: string,
     query?: Record<string, unknown>
   ): Promise<T> {
-    return this.withRetry(() =>
-      this.doRequest<T>({
+    return this.withRetry({
+      operation: `${method} ${endpoint}`,
+      idempotent: method === "GET",
+      fn: () => this.doRequest<T>({
         method,
         endpoint,
         query,
         privateAuth: false
       })
-    );
+    });
   }
 
   async requestPrivate<T>(params: {
@@ -203,14 +208,16 @@ export class BitgetRestClient {
     query?: Record<string, unknown>;
     body?: unknown;
   }): Promise<T> {
-    return this.withRetry(() =>
-      this.doRequest<T>({
+    return this.withRetry({
+      operation: `${params.method} ${params.endpoint}`,
+      idempotent: params.method === "GET",
+      fn: () => this.doRequest<T>({
         method: params.method,
         endpoint: params.endpoint,
         query: params.query,
         body: params.body,
         privateAuth: true
       })
-    );
+    });
   }
 }

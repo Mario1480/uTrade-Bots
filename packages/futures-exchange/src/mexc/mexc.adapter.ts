@@ -114,7 +114,7 @@ function pickOrderId(response: MexcOrderResponse): string | null {
   return null;
 }
 
-function toContractInfo(detail: MexcContractDetail): MexcContractInfo {
+export function toMexcContractInfo(detail: MexcContractDetail): MexcContractInfo {
   const exchangeSymbol = String(detail.symbol ?? "").trim().toUpperCase();
   const canonicalSymbol = toCanonicalFallbackSymbol(exchangeSymbol);
 
@@ -217,7 +217,7 @@ export class MexcFuturesAdapter implements FuturesExchange {
       loader: async () => {
         const raw = await this.marketApi.getContractDetail();
         const details = Array.isArray(raw) ? raw : [raw];
-        return details.filter((row): row is MexcContractDetail => Boolean(row && row.symbol)).map(toContractInfo);
+        return details.filter((row): row is MexcContractDetail => Boolean(row && row.symbol)).map(toMexcContractInfo);
       }
     };
 

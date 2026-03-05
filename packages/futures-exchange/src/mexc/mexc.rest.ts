@@ -6,6 +6,8 @@ import {
   MEXC_DEFAULT_TIMEOUT_MS
 } from "./mexc.constants.js";
 import { toMexcError, type MexcApiError } from "./mexc.errors.js";
+import { mapMexcError } from "./mexc-error.mapper.js";
+import { computeRetryDelayMs, shouldRetryExchangeError } from "../core/retry-policy.js";
 import {
   buildParameterString,
   buildPrivateHeaders,
@@ -19,16 +21,6 @@ function sleep(ms: number) {
 
 function nowIso() {
   return new Date().toISOString();
-}
-
-function shouldRetry(error: unknown): boolean {
-  const value = String(error).toLowerCase();
-  if (value.includes("network")) return true;
-  if (value.includes("timeout")) return true;
-  if (value.includes("rate limit")) return true;
-  if (value.includes("429")) return true;
-  if (value.includes("5")) return true;
-  return false;
 }
 
 function asRecord(value: unknown): Record<string, unknown> {
@@ -215,17 +207,28 @@ export class MexcRestClient {
     }
   }
 
-  private async withRetry<T>(fn: () => Promise<T>): Promise<T> {
+  private async withRetry<T>(params: {
+    operation: string;
+    idempotent: boolean;
+    fn: () => Promise<T>;
+  }): Promise<T> {
     let attempt = 0;
     let lastError: unknown;
     while (attempt < this.retryAttempts) {
       attempt += 1;
       try {
-        return await fn();
+        return await params.fn();
       } catch (error) {
         lastError = error;
-        if (!shouldRetry(error) || attempt >= this.retryAttempts) break;
-        const delay = this.retryBaseDelayMs * 2 ** (attempt - 1);
+        const mapped = mapMexcError(error);
+        const retry = shouldRetryExchangeError(mapped.code, {
+          attempt,
+          maxAttempts: this.retryAttempts,
+          operation: params.operation,
+          idempotent: params.idempotent
+        });
+        if (!retry) break;
+        const delay = computeRetryDelayMs(attempt, this.retryBaseDelayMs);
         await sleep(delay);
       }
     }
@@ -237,14 +240,16 @@ export class MexcRestClient {
     endpoint: string,
     query?: Record<string, unknown>
   ): Promise<T> {
-    return this.withRetry(() =>
-      this.doRequest<T>({
+    return this.withRetry({
+      operation: `${method} ${endpoint}`,
+      idempotent: method === "GET",
+      fn: () => this.doRequest<T>({
         method,
         endpoint,
         query,
         privateAuth: false
       })
-    );
+    });
   }
 
   async requestPrivate<T>(params: {
@@ -253,14 +258,16 @@ export class MexcRestClient {
     query?: Record<string, unknown>;
     body?: unknown;
   }): Promise<T> {
-    return this.withRetry(() =>
-      this.doRequest<T>({
+    return this.withRetry({
+      operation: `${params.method} ${params.endpoint}`,
+      idempotent: params.method === "GET",
+      fn: () => this.doRequest<T>({
         method: params.method,
         endpoint: params.endpoint,
         query: params.query,
         body: params.body,
         privateAuth: true
       })
-    );
+    });
   }
 }

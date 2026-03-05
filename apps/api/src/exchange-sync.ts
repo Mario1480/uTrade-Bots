@@ -1,4 +1,9 @@
-import { HyperliquidFuturesAdapter, MexcFuturesAdapter } from "@mm/futures-exchange";
+import {
+  FuturesAdapterFactoryError,
+  HyperliquidFuturesAdapter,
+  MexcFuturesAdapter,
+  createFuturesAdapter as createSharedFuturesAdapter
+} from "@mm/futures-exchange";
 import { CcxtSpotClient, CcxtSpotError } from "@mm/exchange";
 import {
   BitgetHttpError,
@@ -307,13 +312,12 @@ async function syncHyperliquidAccount(input: ExchangeSyncInput): Promise<Exchang
     );
   }
 
-  const adapter = new HyperliquidFuturesAdapter({
+  const adapter = createSharedFuturesAdapter({
+    exchange: "hyperliquid",
     apiKey: input.apiKey.trim(),
     apiSecret: input.apiSecret.trim(),
-    apiPassphrase: input.passphrase?.trim() || undefined,
-    restBaseUrl: process.env.HYPERLIQUID_REST_BASE_URL,
-    marginCoin: process.env.HYPERLIQUID_MARGIN_COIN ?? "USDC"
-  });
+    passphrase: input.passphrase?.trim() || undefined
+  }) as HyperliquidFuturesAdapter;
 
   try {
     const [accountState, positions] = await Promise.all([
@@ -356,14 +360,22 @@ async function syncHyperliquidAccount(input: ExchangeSyncInput): Promise<Exchang
 }
 
 async function syncMexcFuturesAccount(input: ExchangeSyncInput): Promise<ExchangeSyncResult> {
-  const adapter = new MexcFuturesAdapter({
-    apiKey: input.apiKey.trim(),
-    apiSecret: input.apiSecret.trim(),
-    restBaseUrl: process.env.MEXC_REST_BASE_URL,
-    wsUrl: process.env.MEXC_WS_URL,
-    marginCoin: process.env.MEXC_MARGIN_COIN ?? "USDT",
-    productType: process.env.MEXC_PRODUCT_TYPE ?? "USDT-FUTURES"
-  });
+  let adapter: MexcFuturesAdapter;
+  try {
+    adapter = createSharedFuturesAdapter(
+      {
+        exchange: "mexc",
+        apiKey: input.apiKey.trim(),
+        apiSecret: input.apiSecret.trim()
+      },
+      { allowMexcPerp: MEXC_PERP_ENABLED }
+    ) as MexcFuturesAdapter;
+  } catch (error) {
+    if (error instanceof FuturesAdapterFactoryError && error.code === "mexc_perp_disabled") {
+      throw new ExchangeSyncError("MEXC futures sync is disabled.", 400, "mexc_perp_disabled");
+    }
+    throw error;
+  }
 
   try {
     const [accountState, positions] = await Promise.all([

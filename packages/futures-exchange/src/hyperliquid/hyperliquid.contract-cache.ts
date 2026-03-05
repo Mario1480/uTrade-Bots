@@ -15,7 +15,7 @@ function toStepSize(szDecimals: unknown): number | null {
   return 1 / 10 ** scale;
 }
 
-function toContractInfo(params: {
+export function toHyperliquidContractInfo(params: {
   index: number;
   universe: HyperliquidUniverseRaw;
   assetCtx: HyperliquidAssetCtxRaw | null;
@@ -70,7 +70,7 @@ export class HyperliquidContractCache {
         const universe = Array.isArray(meta?.universe) ? meta.universe : [];
         return universe
           .map((row, index) =>
-            toContractInfo({
+            toHyperliquidContractInfo({
               index,
               universe: row,
               assetCtx: Array.isArray(assetCtxs) ? (assetCtxs[index] ?? null) : null

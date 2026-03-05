@@ -1,7 +1,11 @@
 import crypto from "node:crypto";
 import type { TradeIntent } from "@mm/futures-core";
 import { FuturesEngine, isGlobalTradingEnabled } from "@mm/futures-engine";
-import { BitgetFuturesAdapter, HyperliquidFuturesAdapter, MexcFuturesAdapter } from "@mm/futures-exchange";
+import {
+  FuturesAdapterFactoryError,
+  createFuturesAdapter as createSharedFuturesAdapter,
+  type SupportedFuturesAdapter
+} from "@mm/futures-exchange";
 import type {
   ActiveFuturesBot,
   BotTradeHistoryCloseOutcome,
@@ -125,8 +129,6 @@ type NormalizedPosition = {
   entryPrice: number | null;
   markPrice: number | null;
 };
-
-type SupportedFuturesAdapter = BitgetFuturesAdapter | HyperliquidFuturesAdapter | MexcFuturesAdapter;
 
 const adapterCache = new Map<string, SupportedFuturesAdapter>();
 const DEFAULT_PAPER_EQUITY_USD = Math.max(
@@ -794,35 +796,27 @@ function getOrCreateAdapter(bot: ActiveFuturesBot): SupportedFuturesAdapter {
   if (cached) return cached;
 
   const marketDataExchange = String(bot.marketData.exchange ?? "").trim().toLowerCase();
-  if (marketDataExchange === "mexc" && !MEXC_PERP_ENABLED) {
-    throw new Error("mexc_perp_disabled");
-  }
 
-  const adapter: SupportedFuturesAdapter =
-    marketDataExchange === "hyperliquid"
-      ? new HyperliquidFuturesAdapter({
-          apiKey: bot.marketData.credentials.apiKey,
-          apiSecret: bot.marketData.credentials.apiSecret,
-          apiPassphrase: bot.marketData.credentials.passphrase ?? undefined,
-          restBaseUrl: process.env.HYPERLIQUID_REST_BASE_URL,
-          marginCoin: process.env.HYPERLIQUID_MARGIN_COIN ?? "USDC"
-        })
-      : marketDataExchange === "mexc"
-        ? new MexcFuturesAdapter({
-            apiKey: bot.marketData.credentials.apiKey,
-            apiSecret: bot.marketData.credentials.apiSecret,
-            restBaseUrl: process.env.MEXC_REST_BASE_URL,
-            wsUrl: process.env.MEXC_WS_URL,
-            productType: process.env.MEXC_PRODUCT_TYPE ?? "USDT-FUTURES",
-            marginCoin: process.env.MEXC_MARGIN_COIN ?? "USDT"
-          })
-      : new BitgetFuturesAdapter({
-          apiKey: bot.marketData.credentials.apiKey,
-          apiSecret: bot.marketData.credentials.apiSecret,
-          apiPassphrase: bot.marketData.credentials.passphrase ?? undefined,
-          productType: (process.env.BITGET_PRODUCT_TYPE as any) ?? "USDT-FUTURES",
-          marginCoin: process.env.BITGET_MARGIN_COIN ?? "USDT"
-        });
+  let adapter: SupportedFuturesAdapter;
+  try {
+    adapter = createSharedFuturesAdapter(
+      {
+        exchange: marketDataExchange,
+        apiKey: bot.marketData.credentials.apiKey,
+        apiSecret: bot.marketData.credentials.apiSecret,
+        passphrase: bot.marketData.credentials.passphrase ?? undefined
+      },
+      {
+        allowMexcPerp: MEXC_PERP_ENABLED,
+        allowBinancePerp: false
+      }
+    );
+  } catch (error) {
+    if (error instanceof FuturesAdapterFactoryError) {
+      throw new Error(error.code);
+    }
+    throw error;
+  }
   adapterCache.set(cacheKey, adapter);
   return adapter;
 }
